@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "yhtye",
+  "productName": "Yhtye",
   "version": "0.1.0",
   "identifier": "com.tom039224.yhtye",
   "build": {
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "yhtye",
-        "width": 800,
-        "height": 600
+        "title": "Yhtye",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1180,
+        "minHeight": 700,
+        "resizable": true,
+        "theme": "Dark"
       }
     ],
     "security": {

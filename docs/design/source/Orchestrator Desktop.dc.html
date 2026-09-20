@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;family=Noto+Sans+JP:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;padding:0;background:#181716;color:#e8e5df;font-family:"Noto Sans JP",system-ui,-apple-system,"Hiragino Kaku Gothic ProN",sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#d9a066;text-decoration:none}a:hover{color:#e8b884}
+*{box-sizing:border-box}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#3a3733;border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+@keyframes yspin{to{transform:rotate(360deg)}}
+@keyframes ysheen{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+@keyframes ypulse{0%,100%{opacity:.25}50%{opacity:1}}
+</style>
+</helmet>
+
+<div style="height:100vh;min-width:1180px;display:flex;flex-direction:column;background:#181716;font-size:13px;overflow:hidden">
+
+  <div style="height:34px;flex:none;display:flex;align-items:center;gap:14px;padding:0 12px;background:#141312;border-bottom:1px solid #2a2724">
+    <div style="font:600 14px/1 'Space Grotesk',system-ui,sans-serif;color:#e8e5df;letter-spacing:.1em">Yhtye</div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid #33302b;border-radius:5px;font:500 11px/1 'JetBrains Mono',monospace;color:#b5afa5">
+      <span style="width:6px;height:6px;border-radius:50%;background:oklch(0.72 0.13 150)"></span>feat/checkout-refactor
+    </div>
+    
+  </div>
+
+  <div style="flex:1;min-height:0;display:flex">
+
+    <!-- icon rail -->
+    <div style="width:44px;flex:none;background:#141312;border-right:1px solid #2a2724;display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 0">
+      <sc-if value="{{ isWork }}" hint-placeholder-val="{{ true }}">
+        <div onClick="{{ goWork }}" title="コーディング" style="position:relative;width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:-.04em;cursor:pointer;background:#2b2825;color:#d9a066">
+          <span style="position:absolute;left:-8px;top:6px;width:2px;height:16px;border-radius:1px;background:#d9a066"></span>&lt;/&gt;
+        </div>
+      </sc-if>
+      <sc-if value="{{ isRuns }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ goWork }}" title="コーディング" style="width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:600 11px/1 'JetBrains Mono',monospace;letter-spacing:-.04em;cursor:pointer;color:#8a847a" style-hover="background:#221f1d;color:#c9c3b9">&lt;/&gt;</div>
+      </sc-if>
+
+      <sc-if value="{{ isRuns }}" hint-placeholder-val="{{ false }}">
+        <div onClick="{{ goRuns }}" title="履歴" style="position:relative;width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:500 13px/1 'JetBrains Mono',monospace;cursor:pointer;background:#2b2825;color:#d9a066">
+          <span style="position:absolute;left:-8px;top:6px;width:2px;height:16px;border-radius:1px;background:#d9a066"></span>▤
+        </div>
+      </sc-if>
+      <sc-if value="{{ isWork }}" hint-placeholder-val="{{ true }}">
+        <div onClick="{{ goRuns }}" title="履歴" style="width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:500 13px/1 'JetBrains Mono',monospace;cursor:pointer;color:#8a847a" style-hover="background:#221f1d;color:#c9c3b9">▤</div>
+      </sc-if>
+    </div>
+
+    <sc-if value="{{ isWork }}" hint-placeholder-val="{{ true }}">
+    <!-- projects / branches -->
+    <div style="width:214px;flex:none;background:#1b1a18;border-right:1px solid #2a2724;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:12px 12px 6px;font:500 10px/1 'JetBrains Mono',monospace;letter-spacing:.14em;color:#9a948a">PROJECTS</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px">
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:#272420;color:#e8e5df;font-size:12.5px"><span style="width:11px;height:11px;flex:none;border-radius:50%;border:1.5px solid oklch(0.72 0.13 150 / .28);border-top-color:oklch(0.75 0.15 150);animation:yspin .9s linear infinite"></span>payments-web</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;color:#9a948a;font-size:12.5px" style-hover="background:#221f1d;color:#e8e5df"><span style="width:11px;height:11px;flex:none;border-radius:50%;border:1.5px solid oklch(0.72 0.13 150)"></span>ledger-core</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;color:#9a948a;font-size:12.5px" style-hover="background:#221f1d;color:#e8e5df"><span style="width:11px;height:11px;flex:none;border-radius:50%;border:1.5px solid #4a453f"></span>infra-tf</div>
+      </div>
+
+      <div style="padding:16px 12px 6px;font:500 10px/1 'JetBrains Mono',monospace;letter-spacing:.14em;color:#9a948a">BRANCHES</div>
+      <div style="display:flex;flex-direction:column;padding:0 6px;gap:1px">
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;background:#272420;font:500 11.5px/1.2 'JetBrains Mono',monospace;color:#e8e5df"><span style="width:6px;height:6px;border-radius:50%;background:oklch(0.72 0.13 150);flex:none"></span>feat/checkout-refactor</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;font:400 11.5px/1.2 'JetBrains Mono',monospace;color:#8e887e" style-hover="background:#221f1d;color:#e8e5df"><span style="width:6px;height:6px;border-radius:50%;background:#403c37;flex:none"></span>main</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;font:400 11.5px/1.2 'JetBrains Mono',monospace;color:#8e887e" style-hover="background:#221f1d;color:#e8e5df"><span style="width:6px;height:6px;border-radius:50%;background:#403c37;flex:none"></span>fix/webhook-retry</div>
+        <div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;font:400 11.5px/1.2 'JetBrains Mono',monospace;color:#8e887e" style-hover="background:#221f1d;color:#e8e5df"><span style="width:6px;height:6px;border-radius:50%;background:#403c37;flex:none"></span>chore/deps-sep</div>
+      </div>
+
+      <div style="flex:1"></div>
+      <div style="padding:9px 12px;border-top:1px solid #262320;display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;align-items:center;gap:7px;font:500 10.5px/1.4 'JetBrains Mono',monospace;color:#c9c3b9">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.72 0.13 150); flex: 0 0 auto;"></span>remote host 1<br></div>
+        <div style="font:400 10px/1.6 'JetBrains Mono',monospace;color:#8a847a">last sync 4s</div>
+      </div>
+    </div>
+
+    <!-- orchestrator chat -->
+    <div style="flex:1 1 44%;min-width:380px;display:flex;flex-direction:column;background:#1e1d1b;border-right:1px solid #2a2724;overflow:hidden">
+      <div style="height:36px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #2a2724">
+        <span style="font:500 12px/1 'JetBrains Mono',monospace;color:#e8e5df">orchestrator</span>
+        
+        <div style="flex:1"></div>
+        
+      </div>
+
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:16px">
+
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <div style="font:500 10px/1 'JetBrains Mono',monospace;letter-spacing:.1em;color:#9a948a">YOU · 14:02</div>
+          <div style="font-size:13px;line-height:1.75;color:#ddd9d2">チェックアウトのバリデーションを整理したい。まず現状を調べて、必要ならタスクに割って進めて。</div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <div style="font:500 10px/1 'JetBrains Mono',monospace;letter-spacing:.1em;color:#d9a066">ORCHESTRATOR · 14:02</div>
+          <div style="font-size:13px;line-height:1.75;color:#ddd9d2">4ファイルに重複したバリデーションがありました。3件のタスクに分割し、グループタスクとして起動します。</div>
+          <div style="margin-top:4px;border:1px solid #302d29;border-radius:6px;background:#1a1917;overflow:hidden">
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #2a2724;font:500 10.5px/1 'JetBrains Mono',monospace;color:#8e887e;letter-spacing:.08em">GROUP TASK · checkout バリデーション統合</div>
+            <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px;font:400 11.5px/1.4 'JetBrains Mono',monospace;color:#b5afa5">
+              <div style="display:flex;gap:8px"><span style="color:#57524b">1</span>T-108 スキーマ抽出</div>
+              <div style="display:flex;gap:8px"><span style="color:#57524b">2</span>T-109 フォーム層の差し替え</div>
+              <div style="display:flex;gap:8px"><span style="color:#57524b">3</span>T-110 API側の整合テスト</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <div style="font:500 10px/1 'JetBrains Mono',monospace;letter-spacing:.1em;color:#d9a066">ORCHESTRATOR · 14:19</div>
+          <div style="font-size:13px;line-height:1.75;color:#ddd9d2">T-110 で問題が発生したため、グループ完了を待たずに報告が届きました。API 側のスキーマが 2 バージョン混在しています。<span style="color:#e0a45c">v3 へ寄せる</span>方針で、こちらで対処しています。agent-c は待機させ、修正タスクを直接実行中です。</div>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <div style="padding:5px 11px;border-radius:5px;border:1px solid #302d29;font:500 11.5px/1 'JetBrains Mono',monospace;color:#8e887e" style-hover="color:#ddd9d2;border-color:#3d3830">対処の内容を見る</div>
+            <div style="padding:5px 11px;border-radius:5px;border:1px solid #302d29;font:500 11.5px/1 'JetBrains Mono',monospace;color:#8e887e" style-hover="color:#ddd9d2;border-color:#3d3830">差分を見る</div>
+          </div>
+        </div>
+
+        <sc-if value="{{ showGroupBanner }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px dashed #332f2a;border-radius:6px;font:400 11.5px/1 'JetBrains Mono',monospace;color:#7d776e">
+            <span style="width:6px;height:6px;border-radius:50%;background:#d9a066"></span>
+            グループ「checkout バリデーション統合」の全タスク完了まで待機中 — 1/3 完了 · 1 件 対処中
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="flex:none;padding:10px 14px 14px">
+        <div style="border:1px solid #302d29;border-radius:7px;background:#1a1917;padding:10px 12px;display:flex;flex-direction:column;gap:9px">
+          <div style="font-size:13px;color:#8a847a">オーケストレータに指示する…</div>
+          <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+            <sc-for list="{{ mentions }}" as="m" hint-placeholder-count="1">
+              <span onClick="{{ m.remove }}" style="display:flex;flex:none;align-items:center;gap:5px;max-width:180px;white-space:nowrap;overflow:hidden;padding:2px 7px;border-radius:4px;background:#2b2825;font:400 10.5px/1.5 'JetBrains Mono',monospace;color:#d5cfc5;cursor:pointer" style-hover="background:#33302b"><span style="color:#d9a066">@</span>{{ m.label }}<span style="color:#8a847a">×</span></span>
+            </sc-for>
+            <span style="padding:2px 7px;border-radius:4px;background:#232120;font:400 10.5px/1.5 'JetBrains Mono',monospace;color:#9a948a;flex:none;white-space:nowrap">orchestrate</span>
+            <div style="flex:1"></div>
+            <span style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a;flex:none;white-space:nowrap">⏎ 送信</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- tasks + git -->
+    <div style="flex:1 1 56%;min-width:420px;display:flex;flex-direction:column;background:#1b1a18;overflow:hidden">
+
+      <div style="flex:1;min-height:0;display:flex;flex-direction:column">
+        <div style="height:36px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #2a2724">
+          <span style="font:500 12px/1 'JetBrains Mono',monospace;color:#e8e5df">tasks</span>
+          <span style="padding:1.5px 6px;border-radius:4px;background:#232120;font:500 10.5px/1.5 'JetBrains Mono',monospace;color:#c9c3b9">checkout バリデーション統合</span>
+          <span style="font:400 11px/1 'JetBrains Mono',monospace;color:#9a948a">1/3 完了</span>
+          <div style="flex:1"></div>
+          <span style="font:400 11px/1 'JetBrains Mono',monospace;color:#9a948a">subagents 4</span>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:9px">
+
+          <div style="border:1px solid #302d29;border-radius:7px;background:#1f1e1c;padding:11px 12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="display:flex;align-items:center;gap:5px;padding:2.5px 7px;border-radius:4px;background:oklch(0.35 0.06 250);color:oklch(0.86 0.07 250);font:500 10.5px/1.4 'JetBrains Mono',monospace"><span style="width:5px;height:5px;border-radius:50%;background:oklch(0.86 0.07 250);animation:ypulse 1.4s ease-in-out infinite"></span>実装中</span>
+              <span style="font:500 11px/1 'JetBrains Mono',monospace;color:#9a948a">T-108</span>
+              <span style="font-size:12.5px;color:#e8e5df">バリデーションスキーマの抽出</span>
+              <div style="flex:1"></div>
+              <div style="display:flex;align-items:center;gap:3px">
+                <div onClick="{{ onAt108 }}" title="オーケストレータへ引用" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font:500 12.5px/1 'JetBrains Mono',monospace;color:#9a948a;cursor:pointer" style-hover="background:#33302b;color:#e0a45c">@</div>
+                <div onClick="{{ onStop108 }}" title="エージェントを停止" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer" style-hover="background:#33302b"><div style="width:8px;height:8px;border-radius:1.5px;background:#9a948a"></div></div>
+              </div>
+            </div>
+            <div style="position:relative;height:2px;background:#2a2724;border-radius:2px;overflow:hidden">
+              <div style="width:62%;height:100%;background:oklch(0.66 0.11 250)"></div>
+              <div style="position:absolute;inset:0;width:34%;background:linear-gradient(90deg,transparent,oklch(0.9 0.06 250 / .55),transparent);animation:ysheen 1.9s ease-in-out infinite"></div>
+            </div>
+            <sc-if value="{{ showTaskLog }}" hint-placeholder-val="{{ true }}">
+              <div style="font:400 10.5px/1.7 'JetBrains Mono',monospace;color:#9a948a">wrote src/checkout/schema.ts · +148 −12<br>running tsc --noEmit</div>
+            </sc-if>
+            <div style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">agent-a · 6m</div>
+          </div>
+
+          <div style="border:1px solid #302d29;border-radius:7px;background:#1f1e1c;padding:11px 12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="display:flex;align-items:center;gap:5px;padding:2.5px 7px;border-radius:4px;background:oklch(0.36 0.05 300);color:oklch(0.87 0.06 300);font:500 10.5px/1.4 'JetBrains Mono',monospace"><span style="width:5px;height:5px;border-radius:50%;background:oklch(0.87 0.06 300);animation:ypulse 1.4s ease-in-out infinite"></span>レビュー中</span>
+              <span style="font:500 11px/1 'JetBrains Mono',monospace;color:#9a948a">T-109</span>
+              <span style="font-size:12.5px;color:#e8e5df">フォーム層を新スキーマへ差し替え</span>
+              <div style="flex:1"></div>
+              <div style="display:flex;align-items:center;gap:3px">
+                <div onClick="{{ onAt109 }}" title="オーケストレータへ引用" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font:500 12.5px/1 'JetBrains Mono',monospace;color:#9a948a;cursor:pointer" style-hover="background:#33302b;color:#e0a45c">@</div>
+                <div onClick="{{ onStop109 }}" title="エージェントを停止" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer" style-hover="background:#33302b"><div style="width:8px;height:8px;border-radius:1.5px;background:#9a948a"></div></div>
+              </div>
+            </div>
+            <div style="position:relative;height:2px;background:#2a2724;border-radius:2px;overflow:hidden">
+              <div style="width:88%;height:100%;background:oklch(0.66 0.11 300)"></div>
+              <div style="position:absolute;inset:0;width:34%;background:linear-gradient(90deg,transparent,oklch(0.9 0.06 300 / .55),transparent);animation:ysheen 1.9s ease-in-out infinite"></div>
+            </div>
+            <sc-if value="{{ showTaskLog }}" hint-placeholder-val="{{ true }}">
+              <div style="font:400 10.5px/1.7 'JetBrains Mono',monospace;color:#9a948a">reviewer: 2 コメント · 命名の一貫性<br>self-review 2/3</div>
+            </sc-if>
+            <div style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">agent-b · 11m</div>
+          </div>
+
+          <div style="border:1px solid oklch(0.4 0.09 30);border-radius:7px;background:oklch(0.23 0.03 30);padding:11px 12px;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="padding:2.5px 7px;border-radius:4px;background:oklch(0.42 0.13 30);color:oklch(0.93 0.05 40);font:500 10.5px/1.4 'JetBrains Mono',monospace">対処中</span>
+              <span style="font:500 11px/1 'JetBrains Mono',monospace;color:#8e7f74">T-110</span>
+              <span style="font-size:12.5px;color:#f0e7df">API側の整合テスト</span>
+              <div style="flex:1"></div>
+              <div style="display:flex;align-items:center;gap:3px">
+                <div onClick="{{ onAt110 }}" title="オーケストレータへ引用" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font:500 12.5px/1 'JetBrains Mono',monospace;color:#c7ab97;cursor:pointer" style-hover="background:#33302b;color:#e0a45c">@</div>
+                <div onClick="{{ onStop110 }}" title="エージェントを停止" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;cursor:pointer" style-hover="background:#33302b"><div style="width:8px;height:8px;border-radius:1.5px;background:#c7ab97"></div></div>
+              </div>
+            </div>
+            <div style="font-size:12px;line-height:1.7;color:#d8c4b4">スキーマ v2/v3 の混在を検出。グループ完了を待たずオーケストレータへ報告 — オーケストレータが v3 へ統一する修正を実行中。</div>
+            <sc-if value="{{ showTaskLog }}" hint-placeholder-val="{{ true }}">
+              <div style="font:400 10.5px/1.7 'JetBrains Mono',monospace;color:#8e7f74">error: schema version mismatch (v2 ← v3)<br>at api/checkout/validate.ts:41</div>
+            </sc-if>
+            <div style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#bfa48f">agent-c 待機 · orchestrator 対処中</div>
+          </div>
+
+          <div style="border:1px solid #2c2926;border-radius:7px;background:#1d1c1a;padding:11px 12px;display:flex;flex-direction:column;gap:6px">
+            <div style="display:flex;align-items:center;gap:9px">
+              <span style="padding:2.5px 7px;border-radius:4px;background:oklch(0.33 0.05 150);color:oklch(0.85 0.09 150);font:500 10.5px/1.4 'JetBrains Mono',monospace">完了</span>
+              <span style="font:500 11px/1 'JetBrains Mono',monospace;color:#9a948a">T-107</span>
+              <span style="font-size:12.5px;color:#b5afa5">重複バリデーションの棚卸し</span>
+              <div style="flex:1"></div>
+              <div style="display:flex;align-items:center;gap:3px">
+                <div onClick="{{ onAt107 }}" title="オーケストレータへ引用" style="width:22px;height:22px;border-radius:5px;display:flex;align-items:center;justify-content:center;font:500 12.5px/1 'JetBrains Mono',monospace;color:#9a948a;cursor:pointer" style-hover="background:#33302b;color:#e0a45c">@</div>
+              </div>
+            </div>
+            <div style="font:400 10.5px/1.6 'JetBrains Mono',monospace;color:#8a847a">同グループの他タスク完了を待機 — 送信保留</div>
+            <div style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">agent-a · 4m</div>
+          </div>
+
+          
+        </div>
+      </div>
+
+      <!-- git tree -->
+      <sc-if value="{{ showGit }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:none;height:252px;border-top:1px solid #2a2724;background:#1a1917;display:flex;flex-direction:column;overflow:hidden">
+        <div style="height:32px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #262320">
+          <span style="font:500 11.5px/1 'JetBrains Mono',monospace;color:#b5afa5">git</span>
+          <span style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">feat/checkout-refactor ← main</span>
+          <div style="flex:1"></div>
+          <span style="font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">graph</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow-y:auto;position:relative;padding:8px 0">
+          <div style="position:absolute;left:19px;top:14px;bottom:8px;width:1.5px;background:#3a3733"></div>
+          <div style="position:absolute;left:41px;top:40px;height:112px;width:1.5px;background:oklch(0.55 0.09 250)"></div>
+          <div style="position:absolute;left:63px;top:96px;height:56px;width:1.5px;background:oklch(0.5 0.1 30)"></div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:14px;top:9px;width:11px;height:11px;border-radius:50%;background:#1a1917;border:2px solid #6f6a61"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#7d776e">a3f19c2</span>
+            <span style="font-size:11.5px;color:#9a948a">merge: ledger sync</span>
+            <div style="flex:1"></div>
+            <span style="padding:1px 6px;border-radius:3px;background:#232120;font:500 10px/1.5 'JetBrains Mono',monospace;color:#7d776e;margin-right:12px">main</span>
+          </div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:14px;top:9px;width:11px;height:11px;border-radius:50%;background:#1a1917;border:2px solid #4a453f"></div>
+            <div style="position:absolute;left:26px;top:14px;width:18px;height:1.5px;background:oklch(0.55 0.09 250);transform:rotate(-38deg);transform-origin:left center"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">7b0d441</span>
+            <span style="font-size:11.5px;color:#7d776e">chore: bump deps</span>
+          </div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:36px;top:9px;width:11px;height:11px;border-radius:50%;background:#1a1917;border:2px solid oklch(0.62 0.11 250)"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#7d776e">c91e07a</span>
+            <span style="font-size:11.5px;color:#9a948a">feat: extract schema (T-108)</span>
+            <div style="flex:1"></div>
+            <span style="padding:1px 6px;border-radius:3px;background:oklch(0.32 0.05 250);font:500 10px/1.5 'JetBrains Mono',monospace;color:oklch(0.85 0.06 250);margin-right:12px">agent-a</span>
+          </div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:36px;top:9px;width:11px;height:11px;border-radius:50%;background:#1a1917;border:2px solid oklch(0.62 0.11 250)"></div>
+            <div style="position:absolute;left:48px;top:14px;width:18px;height:1.5px;background:oklch(0.5 0.1 30);transform:rotate(-38deg);transform-origin:left center"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#7d776e">5da8e13</span>
+            <span style="font-size:11.5px;color:#9a948a">refactor: form layer (T-109)</span>
+            <div style="flex:1"></div>
+            <span style="padding:1px 6px;border-radius:3px;background:oklch(0.34 0.05 300);font:500 10px/1.5 'JetBrains Mono',monospace;color:oklch(0.86 0.06 300);margin-right:12px">review</span>
+          </div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:58px;top:9px;width:11px;height:11px;border-radius:50%;background:#1a1917;border:2px solid oklch(0.58 0.14 30)"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#8e7f74">e2c4f90</span>
+            <span style="font-size:11.5px;color:#d8c4b4">wip: api validate (T-110)</span>
+            <div style="flex:1"></div>
+            <span style="padding:1px 6px;border-radius:3px;background:oklch(0.38 0.11 30);font:500 10px/1.5 'JetBrains Mono',monospace;color:oklch(0.92 0.05 40);margin-right:12px">対処中</span>
+          </div>
+
+          <div style="position:relative;height:28px;display:flex;align-items:center;padding-left:86px;gap:10px">
+            <div style="position:absolute;left:36px;top:9px;width:11px;height:11px;border-radius:50%;background:oklch(0.62 0.11 250);border:2px solid oklch(0.62 0.11 250)"></div>
+            <span style="font:500 10.5px/1 'JetBrains Mono',monospace;color:#7d776e">HEAD</span>
+            <span style="font-size:11.5px;color:#9a948a">グループ作業中</span>
+          </div>
+        </div>
+      </div>
+      </sc-if>
+
+    </div>
+    </sc-if>
+
+    <sc-if value="{{ isRuns }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;display:flex;align-items:center;justify-content:center;background:#1b1a18">
+        <div style="font:400 12.5px/1 'JetBrains Mono',monospace;color:#8a847a">現状は何もありません</div>
+      </div>
+    </sc-if>
+
+  </div>
+
+  <div style="height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:#141312;border-top:1px solid #2a2724;font:400 10.5px/1 'JetBrains Mono',monospace;color:#8a847a">
+    <span style="color:#9a948a">claude max</span>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:7px">
+      <span style="color:#9a948a">5h</span>
+      <div style="width:46px;height:3px;background:#2a2724;border-radius:2px;overflow:hidden"><div style="width:94%;height:100%;background:oklch(0.7 0.14 55)"></div></div>
+      <span style="color:#d5cfc5">94%</span>
+      <span>(3h 35m)</span>
+    </div>
+    <div style="width:1px;height:12px;background:#2a2724"></div>
+    <div style="display:flex;align-items:center;gap:7px">
+      <span style="color:#9a948a">week</span>
+      <div style="width:46px;height:3px;background:#2a2724;border-radius:2px;overflow:hidden"><div style="width:40%;height:100%;background:oklch(0.72 0.11 150)"></div></div>
+      <span style="color:#d5cfc5">40%</span>
+      <span>(2d 4h)</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showGit&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;showTaskLog&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;},&quot;showGroupBanner&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;}}">
+class Component extends DCLogic {
+  state = { view: "work", mentions: ["重複バリデーションの棚卸し"], stopped: [] };
+
+  add(label) {
+    this.setState(s => s.mentions.includes(label) ? s : { mentions: [...s.mentions, label] });
+  }
+  stop(id) {
+    this.setState(s => ({ stopped: s.stopped.includes(id) ? s.stopped : [...s.stopped, id] }));
+  }
+
+  renderVals() {
+    const titles = { 107: "重複バリデーションの棚卸し", 108: "バリデーションスキーマの抽出", 109: "フォーム層を新スキーマへ差し替え", 110: "API側の整合テスト" };
+    const handlers = {};
+    for (const id of Object.keys(titles)) {
+      handlers["onAt" + id] = () => this.add(titles[id]);
+      handlers["onStop" + id] = () => this.stop(id);
+    }
+    return {
+      ...handlers,
+      mentions: this.state.mentions.map((label, i) => ({
+        label,
+        remove: () => this.setState(s => ({ mentions: s.mentions.filter((_, j) => j !== i) })),
+      })),
+      isWork: this.state.view === "work",
+      isRuns: this.state.view === "runs",
+      goWork: () => this.setState({ view: "work" }),
+      goRuns: () => this.setState({ view: "runs" }),
+      showGit: this.props.showGit ?? true,
+      showTaskLog: this.props.showTaskLog ?? true,
+      showGroupBanner: this.props.showGroupBanner ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>
