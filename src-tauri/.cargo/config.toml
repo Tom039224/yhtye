@@ -1,0 +1,16 @@
+# `cargo run` (= `pnpm tauri dev`) が起動するプロセスへ渡される環境変数。
+[env]
+# WebKitGTK の DMA-BUF レンダラは NVIDIA プロプライエタリドライバ + Wayland の
+# 組み合わせで Wayland プロトコルエラー (Gdk Error 71) を起こし、起動直後に落ちる。
+# このパスを切ると回避できる。
+#
+#   確認環境: Hyprland / wayland / NVIDIA RTX 5070 / webkit2gtk-4.1 2.52.6
+#   素のまま                            → rc=1  で即クラッシュ
+#   WEBKIT_DISABLE_DMABUF_RENDERER=1    → 正常動作・警告なし
+#
+# WEBKIT_DISABLE_COMPOSITING_MODE=1 でも回避できるが、GPU 合成を丸ごと切るので
+# デザインが依存するアニメーション (yspin / ysheen / ypulse) に不利。こちらを採る。
+#
+# NVIDIA 以外の環境では GPU の速いパスを 1 つ手放すだけなので実害は小さいが、
+# 不要になったらこのファイルごと消してよい。Linux 以外では無視される。
+WEBKIT_DISABLE_DMABUF_RENDERER = "1"

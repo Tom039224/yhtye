@@ -313,3 +313,11 @@ Rust 側が持つべきもの (想定):
 - ライトテーマ (デザインはダーク一本)
 - `prefers-reduced-motion` 対応
 - 1180px 未満での振る舞い (デザインは考慮していない)
+
+### 実装以外で未決のもの
+
+- **配布バイナリでの `WEBKIT_DISABLE_DMABUF_RENDERER`** — Wayland + NVIDIA で
+  WebKitGTK が起動直後に落ちるため dev では `src-tauri/.cargo/config.toml` で
+  設定しているが、これは `cargo run` にしか効かない。配布物では起動時に Rust 側で
+  設定するか、`.desktop` に持たせるか、そもそも全環境で切ってよいかを決める必要がある。
+  NVIDIA 以外では GPU の速いパスを 1 つ手放すことになる。

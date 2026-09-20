@@ -58,6 +58,22 @@ pnpm tauri dev      # デスクトップアプリとして起動
 pnpm dev            # ブラウザで frontend だけ (http://localhost:1420)
 ```
 
+#### Wayland + NVIDIA で起動直後に落ちる場合
+
+WebKitGTK の DMA-BUF レンダラが NVIDIA プロプライエタリドライバと噛み合わず、
+`Gdk-Message: Error 71 (プロトコルエラー) dispatching to Wayland display` を出して
+即クラッシュすることがある。
+
+`src-tauri/.cargo/config.toml` で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定済みなので
+`pnpm tauri dev` では対処されている。ビルド済みバイナリを直接叩くときは自分で渡す。
+
+```sh
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./src-tauri/target/debug/yhtye
+```
+
+この回避策は dev 時のみ効く。配布バイナリでどう扱うかは未決
+([`docs/design/orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §7)。
+
 ### ビルド・検証
 
 ```sh
