@@ -288,12 +288,19 @@ interface Quota { window: "5h" | "week"; percent: number; remainingLabel: string
 
 デザインには現れないが、実装で最初に決まっていないと進めない線。**まだ未決**。
 
+ハーネスとの接続方式・対象ハーネス・オーケストレーションのモデル
+(グループ/タスク/エージェントの機能設計) は [`docs/architecture/`](../architecture/) に
+別途まとめた。Rust / フロントエンドの境界は
+[`docs/architecture/core-design.md`](../architecture/core-design.md) で確定しており、
+そちらが優先する。以下は画面設計から読んだ当初の想定として残す。
+
 フロントエンド (React) が持つべきもの:
 - 描画と、`view` / `mentions` / スクロール位置といった純粋な UI 状態のみ
 
 Rust 側が持つべきもの (想定):
 - git 操作 (グラフ構築、ブランチ列挙、差分) — `git2` か `gix`
-- エージェントプロセスの起動・停止・出力のストリーミング
+- ACP クライアントとしてのハーネスプロセスの起動・停止・セッション管理
+  ([`docs/architecture/acp-harnesses.md`](../architecture/acp-harnesses.md))
 - リモートホストとの同期
 - タスク / グループ / 会話の永続化
 - 使用量 (quota) の取得

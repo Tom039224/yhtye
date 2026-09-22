@@ -7,8 +7,11 @@
 異常が出たタスクはグループ全体の完了を待たずに報告が上がり、
 オーケストレータ自身が対処に入る。
 
-現在の状態: **土台のみ。UI は未実装。**
-Claude Design の設計を [`docs/design/`](docs/design/) に記録した段階。
+現在の状態: **再構築中 (`rebuild` ブランチ)。** 静的モックの上に組んだ前回の実装は
+実際には動かなかったため破棄し、下層 (ACP コア → MCP サーバー → ドメインコア →
+フロントエンド → 統合) から「本物で動くこと」を各段の完了条件として積み直している。
+進捗と各段の範囲は [`PLAN.md`](PLAN.md)、機能設計は [`docs/architecture/`](docs/architecture/)、
+画面設計は [`docs/design/`](docs/design/)。現時点ではアプリとして使える機能はない。
 
 ## 構成
 
@@ -16,15 +19,19 @@ Claude Design の設計を [`docs/design/`](docs/design/) に記録した段階�
 |---|---|
 | シェル | Tauri 2 (Rust 2021) |
 | フロントエンド | React 19 / TypeScript / Vite |
+| ハーネス接続 | [ACP](https://agentclientprotocol.com) (Agent Client Protocol) — 当面 Claude Code |
+| 指示・報告の経路 | Yhtye がホストする MCP サーバー (streamable HTTP) |
 | パッケージマネージャ | pnpm |
 
 採用理由は [ADR-0001](docs/adr/0001-tauri-react-vite.md) を参照。
 
 ```
-docs/design/   Claude Design から起こした画面仕様・デザイントークン・原本スナップショット
-docs/adr/      設計判断の記録
-src/           React フロントエンド
-src-tauri/     Rust バックエンド
+docs/design/         Claude Design から起こした画面仕様・デザイントークン・原本スナップショット
+docs/architecture/   オーケストレーションモデル・MCP ツール・コア設計・ACP ハーネスの機能設計
+PLAN.md              再構築の段階計画と進捗
+docs/adr/            設計判断の記録
+src/                 React フロントエンド
+src-tauri/           Rust バックエンド
 ```
 
 ## 開発
