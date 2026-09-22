@@ -11,3 +11,4 @@ agent-client-protocol.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }

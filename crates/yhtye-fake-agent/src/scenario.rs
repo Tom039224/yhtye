@@ -15,6 +15,9 @@
 //! }
 //! ```
 //!
+//! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
+//! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
+//!
 //! A prompt runs the first turn whose `match` is a substring of the prompt text;
 //! otherwise the next turn without `match`, in order. A turn without a trailing
 //! `end` ends with `end_turn`.
@@ -81,10 +84,22 @@ pub enum Action {
     SpawnChild,
     /// Reports `state:mode=<m>;model=<v>;system_prompt=<s>;prompt=<text>`.
     ReportState,
+    /// Reports `meta:<json>` (the `_meta` received in `session/new` / `session/load`).
+    ReportMeta,
     WriteFile {
         path: String,
         text: String,
     },
+    /// Calls a tool on the session's HTTP MCP server; `${name}` placeholders in
+    /// `args` are substituted (see `mcp.rs`). Reports `mcp:<tool>:ok:<json>`,
+    /// `mcp:<tool>:error:<json>` or `mcp:<tool>:failed:<reason>` as a message.
+    McpCall {
+        tool: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    /// Reports `mcp:tools:<name>,<name>,...` (the session's `tools/list`).
+    McpList,
 }
 
 #[derive(Debug, Clone, Deserialize)]

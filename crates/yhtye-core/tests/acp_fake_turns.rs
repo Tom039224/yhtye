@@ -43,6 +43,31 @@ async fn handshake_applies_mode_model_and_system_prompt() {
 }
 
 #[tokio::test]
+async fn session_meta_is_merged_with_the_system_prompt() {
+    let dir = tmp();
+    let mut h = fake_harness(json!({"turns": [{"actions": ["report_meta"]}]}));
+    h.session_meta = json!({"claudeCode": {"options": {"tools": ["Read"]}}})
+        .as_object()
+        .cloned();
+    let opts = SpawnOptions {
+        system_prompt: Some("SYS".into()),
+        ..SpawnOptions::default()
+    };
+    let mut s = start(&h, dir.path(), opts).await;
+    s.next().await; // Ready
+    s.handle.prompt_text("meta?").expect("prompt");
+    let (events, _) = s.turn().await;
+    let text = message_text(&events);
+    let meta: serde_json::Value =
+        serde_json::from_str(text.strip_prefix("meta:").expect("meta report")).expect("json");
+    assert_eq!(
+        meta,
+        json!({"claudeCode": {"options": {"tools": ["Read"]}}, "systemPrompt": {"append": "SYS"}})
+    );
+    s.handle.shutdown().await;
+}
+
+#[tokio::test]
 async fn first_prompt_style_prepends_system_prompt_once() {
     let dir = tmp();
     let mut h = fake_harness(

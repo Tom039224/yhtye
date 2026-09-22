@@ -1,6 +1,8 @@
 //! Shared helpers for ACP integration tests.
 #![allow(dead_code)]
 
+pub mod orch;
+
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;

@@ -28,10 +28,17 @@ pub struct HarnessConfig {
     pub model: Option<ModelSelect>,
     #[serde(default)]
     pub system_prompt: SystemPromptStyle,
+    /// Extra harness-specific fields merged into `_meta` of `session/new` /
+    /// `session/load` (a JSON object; `systemPrompt` is added by Yhtye).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_meta: Option<serde_json::Map<String, serde_json::Value>>,
     /// Timeout applied to each startup step.
     #[serde(default = "default_startup_timeout", with = "duration_secs")]
     pub startup_timeout: Duration,
 }
+
+/// Claude Code built-in tools left to the orchestrator (read-only).
+pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
 
 /// Selects the model via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,15 +70,45 @@ impl HarnessConfig {
                 "-y".into(),
                 "@agentclientprotocol/claude-agent-acp@0.81".into(),
             ],
-            env: BTreeMap::from([("ANTHROPIC_MODEL".into(), model.into())]),
+            env: BTreeMap::from([
+                ("ANTHROPIC_MODEL".into(), model.into()),
+                // Keep MCP tools (mcp__yhtye__*) loaded instead of deferring them
+                // behind ToolSearch, and do not attach the user's claude.ai connectors.
+                ("ENABLE_TOOL_SEARCH".into(), "false".into()),
+                ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
+            ]),
             mode_after_new: Some("bypassPermissions".into()),
             model: Some(ModelSelect {
                 config_id: "model".into(),
                 value: model.into(),
             }),
             system_prompt: SystemPromptStyle::MetaAppend,
+            // Only the MCP servers Yhtye passes (not the user's .mcp.json / plugins).
+            session_meta:
+                serde_json::json!({ "claudeCode": { "options": { "strictMcpConfig": true } } })
+                    .as_object()
+                    .cloned(),
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
         }
+    }
+
+    /// [`HarnessConfig::claude_code`] for the orchestrator: only the read-only
+    /// built-in tools (`Read`, `Glob`, `Grep`) are enabled, so it cannot edit the
+    /// user's working tree or delegate to Claude Code's own sub-agents; MCP tools
+    /// (`mcp__yhtye__*`) stay available. Uses the adapter's
+    /// `_meta.claudeCode.options.tools` pass-through to the Agent SDK
+    /// (`docs/architecture/orchestration-model.md` §8.1).
+    #[must_use]
+    pub fn claude_code_orchestrator(model: &str) -> Self {
+        let mut h = Self::claude_code(model);
+        let meta = serde_json::json!({
+            "claudeCode": { "options": {
+                "strictMcpConfig": true,
+                "tools": ORCHESTRATOR_BUILTIN_TOOLS,
+            } }
+        });
+        h.session_meta = meta.as_object().cloned();
+        h
     }
 
     /// A bare harness running `command args...` with no mode/model configuration.
@@ -84,6 +121,7 @@ impl HarnessConfig {
             mode_after_new: None,
             model: None,
             system_prompt: SystemPromptStyle::MetaAppend,
+            session_meta: None,
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
         }
     }
@@ -126,6 +164,30 @@ mod tests {
             ("model", "haiku")
         );
         assert_eq!(h.system_prompt, SystemPromptStyle::MetaAppend);
+        let meta = serde_json::Value::Object(h.session_meta.clone().expect("meta"));
+        assert_eq!(
+            meta.pointer("/claudeCode/options/strictMcpConfig"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            h.env.get("ENABLE_TOOL_SEARCH").map(String::as_str),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn claude_code_orchestrator_restricts_builtin_tools() {
+        let h = HarnessConfig::claude_code_orchestrator("haiku");
+        let meta = serde_json::Value::Object(h.session_meta.clone().expect("meta"));
+        assert_eq!(
+            meta.pointer("/claudeCode/options/tools"),
+            Some(&serde_json::json!(["Read", "Glob", "Grep"]))
+        );
+        assert_eq!(
+            meta.pointer("/claudeCode/options/strictMcpConfig"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(h.mode_after_new.as_deref(), Some("bypassPermissions"));
     }
 
     #[test]

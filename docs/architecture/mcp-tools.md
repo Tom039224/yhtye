@@ -17,9 +17,15 @@ Yhtye は MCP サーバーをプロセス内でホストし、各 ACP セッシ�
 - 引数は JSON Schema で定義 (Rust 側は `serde` + `schemars` の構造体から生成)。
 - 成功時は `structuredContent` に JSON を返し、同じ内容を `text` にも入れる。
 - 失敗は MCP のツールエラー (`isError: true`) で返し、本文は
-  `{"error": {"code": "<code>", "message": "<人間向け説明>"}}`。LLM が読んで直せるよう
-  message に「何が不正で、どうすれば通るか」を書く。プロトコルエラー (JSON-RPC error) は
-  スキーマ不一致など MCP 層の問題にのみ使う。
+  `{"error": {"code": "<code>", "message": "<人間向け説明>"}}` (`structuredContent` と `text` の両方)。
+  LLM が読んで直せるよう message に「何が不正で、どうすれば通るか」を書く。
+  **引数がスキーマに合わない場合** (必須欠落・型違い・未知の enum 値・未知のフィールド) も
+  `invalid_argument` のツールエラーにする (Stage 2 で確定。JSON-RPC エラーにすると
+  クライアントが中身を LLM に見せないことがあるため)。プロトコルエラー (JSON-RPC error) は
+  未知のツール名など MCP 層の問題にのみ使う。
+- 失効済みトークン (セッション終了後) も未知と同じく HTTP 404。
+- MCP 2026-07-28 版のクライアント (Claude Code 2.1.280 以降) 向けに、`tools/list` には
+  `ttlMs: 0` / `cacheScope: "private"` を付ける ([`core-design.md`](core-design.md) §4)。
 - 全ツール呼び出しはイベントログに記録する (引数・結果・エラー)。
 - ツールは状態を変えたら即座に返る。**長時間ブロックするツールは作らない**
   (例: `help` は返答を待たずに返り、返答は後で新しいプロンプトとして届く)。

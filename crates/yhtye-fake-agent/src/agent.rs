@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, ContentBlock, InitializeRequest, InitializeResponse,
-    LoadSessionRequest, LoadSessionResponse, McpCapabilities, NewSessionRequest,
+    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, NewSessionRequest,
     NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, SessionConfigOption,
     SessionConfigSelectOption, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::watch;
 
+use crate::mcp;
 use crate::scenario::{Action, PermissionChoice, Scenario};
 
 /// Raw `session/update` so any update JSON can be sent.
@@ -30,7 +31,13 @@ struct State {
     mode: String,
     model: String,
     system_prompt: Option<String>,
+    /// Full `_meta` of `session/new` / `session/load`.
+    meta: Option<serde_json::Map<String, serde_json::Value>>,
     next_seq: usize,
+    /// URL of the first HTTP MCP server of the session.
+    mcp_url: Option<String>,
+    /// Placeholder values for `mcp_call` arguments.
+    vars: mcp::Vars,
 }
 
 struct Fake {
@@ -81,6 +88,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 gate(&f2, "session/new").await?;
                 let id = format!("fake-{}", std::process::id());
                 f2.remember_session(&id, req.meta.as_ref());
+                f2.remember_mcp(&req.mcp_servers);
                 responder.respond(
                     NewSessionResponse::new(id)
                         .modes(f2.modes())
@@ -93,6 +101,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             async move |req: LoadSessionRequest, responder, cx| {
                 gate(&f3, "session/load").await?;
                 f3.remember_session(&req.session_id.0, req.meta.as_ref());
+                f3.remember_mcp(&req.mcp_servers);
                 let replay = format!("replayed history of {}", req.session_id.0);
                 send_update(
                     &cx,
@@ -194,11 +203,19 @@ impl Fake {
     ) {
         let mut st = self.lock();
         st.session_id = id.to_string();
+        st.meta = meta.cloned();
         st.system_prompt = meta
             .and_then(|m| m.get("systemPrompt"))
             .and_then(|p| p.get("append"))
             .and_then(|a| a.as_str())
             .map(str::to_string);
+    }
+
+    fn remember_mcp(&self, servers: &[McpServer]) {
+        self.lock().mcp_url = servers.iter().find_map(|s| match s {
+            McpServer::Http(h) => Some(h.url.clone()),
+            _ => None,
+        });
     }
 
     fn modes(&self) -> SessionModeState {
@@ -252,6 +269,7 @@ async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -
     let prompt = prompt_text(req);
     let actions = {
         let mut st = fake.lock();
+        mcp::capture_prompt_vars(&prompt, &mut st.vars);
         fake.scenario.pick(&prompt, &mut st.next_seq)
     };
     let session = req.session_id.0.to_string();
@@ -354,8 +372,49 @@ async fn run_action(
         Action::WriteFile { path, text: body } => {
             std::fs::write(&path, body).map_err(Error::into_internal_error)?;
         }
+        Action::McpCall { tool, args } => {
+            let report = mcp_call(fake, &tool, &args).await;
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
+        Action::ReportMeta => {
+            let meta = serde_json::Value::Object(fake.lock().meta.clone().unwrap_or_default());
+            update(
+                json!({"sessionUpdate": "agent_message_chunk", "content": text(&format!("meta:{meta}"))}),
+            )?;
+        }
+        Action::McpList => {
+            let url = fake.lock().mcp_url.clone();
+            let report = match url {
+                Some(url) => mcp::list_tools(&url).await.map(|t| t.join(",")),
+                None => Err("no HTTP MCP server in session/new".into()),
+            };
+            let report = format!(
+                "mcp:tools:{}",
+                report.unwrap_or_else(|e| format!("failed:{e}"))
+            );
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
     }
     Ok(None)
+}
+
+/// Runs one `mcp_call` and returns its report line.
+async fn mcp_call(fake: &Fake, tool: &str, args: &serde_json::Value) -> String {
+    let (url, args) = {
+        let st = fake.lock();
+        (st.mcp_url.clone(), mcp::substitute(args, &st.vars))
+    };
+    let Some(url) = url else {
+        return format!("mcp:{tool}:failed:no HTTP MCP server in session/new");
+    };
+    let result = mcp::call_tool(&url, tool, &args).await;
+    if let Ok(r) = &result
+        && r.is_error != Some(true)
+        && let Some(structured) = &r.structured_content
+    {
+        mcp::capture_result_vars(structured, &mut fake.lock().vars);
+    }
+    mcp::report(tool, &result)
 }
 
 /// Waits for `timeout` (or forever) unless cancelled first; returns whether cancelled.

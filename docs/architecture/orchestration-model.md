@@ -204,6 +204,28 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 - ACP にはシステムプロンプトの標準フィールドが無いため、ハーネス固有の拡張
   (Claude Code の場合は `_meta`) を使い、使えない場合は最初の `session/prompt` の
   先頭に付ける ([`acp-harnesses.md`](acp-harnesses.md))。
+- 本文は `crates/yhtye-core/prompts/{orchestrator,implementer,reviewer}.md` (初版は Stage 2)。
+  LLM 向けなので英語で書き、オーケストレータには「ユーザーの言語で返答する」と指示する。
+
+### 8.1 オーケストレータに書き込ませない (Stage 2 で決定)
+
+オーケストレータもバイパス権限で動くため、そのままではメイン作業ツリーを直接書き換えられる
+(§11 に挙げていた未決事項)。Stage 2 で実機確認し、次のように決めた。
+
+- **組み込みツールを読み取り系だけにする。** Claude Code ではオーケストレータの
+  `session/new` の `_meta.claudeCode.options.tools = ["Read", "Glob", "Grep"]`
+  (`HarnessConfig::claude_code_orchestrator`)。Agent SDK の `tools` は組み込みツールだけを
+  絞るオプションで、MCP ツール (`mcp__yhtye__*`) は残る。`Write` / `Edit` / `Bash` /
+  `Agent` (Claude Code 自身のサブエージェント) も消える。
+  実 Haiku に「自分のツールで note.txt を作れ」と直接頼んでも作れないことを確認した
+  (`tests/orchestration_claude_real.rs::real_orchestrator_harness_cannot_write_files`。
+  Haiku は書き込みを試みたがツールが無く、`NO_WRITE_TOOL` と答えた)。
+- プロンプトでも「自分でファイルを書かない・コマンドを実行しない」と指示する (二重の防御)。
+- **採らなかった案**: cwd を読み取り専用の場所にする — オーケストレータは計画のために
+  プロジェクトを読む必要があり、また cwd の外への書き込みは防げない。
+  `disallowedTools` での除外 — 将来増える書き込み系ツールを取りこぼすので、許可リスト
+  (`tools`) の方が安全。
+- 他ハーネスを足すときは、そのハーネスで同等の制限ができるかを追加時に確認する。
 
 ## 9. キャンセル
 
@@ -237,6 +259,10 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 - オーケストレータは自分でコードを書かない方針にした (§8) が、画面設計の筋書き
   (`docs/design/orchestrator-desktop.md` §1: 「オーケストレータが自分で修正を実行中」) とは
   ずれる。必要ならオーケストレータ自身が担当する Task (担当役割 = orchestrator) を後で足す。
-- オーケストレータのセッションもバイパス権限で動くと、メイン作業ツリーを直接書き換えられて
-  しまう。cwd を読み取り専用の場所にする / Claude Code の `disallowedTools` で書き込み系ツールを
-  外す、などの制限方法は Stage 2 で実機確認して決める。
+- ~~オーケストレータのセッションもバイパス権限で動くと、メイン作業ツリーを直接書き換えられて
+  しまう。~~ → Stage 2 で決定 (§8.1: 組み込みツールを Read / Glob / Grep に限定)。
+- Yhtye が起動する Claude Code に**ユーザー自身の設定** (`~/.claude` の CLAUDE.md・フック・
+  プラグイン・スキル) をどこまで効かせるか。Stage 2 では MCP サーバーだけ隔離し
+  (`strictMcpConfig`、[`acp-harnesses.md`](acp-harnesses.md) §5.2)、それ以外は読み込んだまま。
+  ユーザーの全体ルール (例: 「planner エージェントを使え」) がサブエージェントの動きを変えうる。
+  `settingSources` を `["project", "local"]` に絞るかはユーザーと決める。

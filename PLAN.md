@@ -15,7 +15,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 |---|---|---|
 | 0 | 旧コード破棄・調査・設計 | **完了** |
 | 1 | ACP コア | **完了** |
-| 2 | MCP サーバー + マルチセッション | 未着手 |
+| 2 | MCP サーバー + マルチセッション | **完了** |
 | 3 | ドメインコア (状態機械・SQLite・git) | 未着手 |
 | 4 | フロントエンド (素の UI) | 未着手 |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
@@ -125,6 +125,65 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 - 実 Haiku: オーケストレータに「README に 1 行足すタスクを作って」と頼むと、
   MCP 経由で `create_group` / `create_task` が呼ばれ、サブエージェント (Haiku) セッションが
   起動して `report_step_done` まで到達する。
+
+**結果メモ (2026-09-23)**
+
+- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §4・§4.1):
+  - `domain/` — 共有の語彙 (`Role` / `StepKind` / `TaskKind` / `StepSpec` / `Verdict` /
+    `HelpKind` / `ErrorCode` / `ToolError`) と `normalize_steps` (Step 列の規則)。
+  - `mcp/` — `McpHost` (rmcp 3.4 + axum、`/mcp/{token}`、ステートレス)、`TokenRegistry`
+    (128bit トークン、`rebind` / `revoke`)、`tools` (mcp-tools.md の全 13 ツールの引数型・
+    スキーマ・役割、`ToolCall`)、`ToolPort` トレイト、`ToolCallRecord`。
+  - `prompts.rs` + `crates/yhtye-core/prompts/{orchestrator,implementer,reviewer}.md` (初版)。
+  - `runtime/` — `Board` (メモリ上の仮状態機械) / `MemoryToolPort` / `inbox` (§5 書式) /
+    `Orchestration` (公開 API と `OrchEvent`) / `driver` (単一タスクのループ)。
+  - `HarnessConfig.session_meta` と `HarnessConfig::claude_code_orchestrator`。
+  - 偽エージェントに `mcp_call` / `mcp_list` / `report_meta` (rmcp クライアント)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 59 件成功 (単体 29 + ACP 偽 19 + MCP サーバー 6 +
+    オーケストレーション偽 4 + 偽エージェント単体 1)、実エージェント 6 件は ignored。
+    偽エージェントの結合テストは 5 回連続で成功。
+    オーケストレーション偽: create_task → サブエージェント起動 → report_step_done →
+    group_settled でオーケストレータ起床 → finish_group / help → answer_help(resume) →
+    返答がサブエージェントの次プロンプト → 完了 / review Step が新しい reviewer セッションで
+    動き verdict 無しは invalid_argument / オーケストレータ起動失敗の報告。
+    MCP サーバー: 不正トークン 404・失効トークン 404・役割別 tools/list・役割外 `forbidden`・
+    引数不正 `invalid_argument`・未知ツールはプロトコルエラー・2026-07-28 版の `tools/list`。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 6/6 成功 (2 回実行):
+    Stage 1 の 4 件 + `orchestration_claude_real` 2 件:
+    (1) 実 Haiku のオーケストレータに「README.md に `hello from yhtye` を足すタスクを作って」→
+    `create_group` / `create_task` → 実 Haiku のサブエージェントが README を編集して
+    `report_step_done` → `group_settled` で起こされたオーケストレータが `finish_group` →
+    ユーザーに報告 (約 30 秒、2 回とも同じ流れ。全セッションで model=haiku・bypassPermissions を表明)。
+    (2) オーケストレータ用ハーネスでは直接頼んでもファイルを書けない。
+  - 実テスト後 `ps` で claude-agent-acp / yhtye-fake-agent の残存なし、各プロセスグループも空。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo check --workspace` / `pnpm build` 成功。
+- 実機で分かったこと (詳細 [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.2):
+  - **Claude Code 2.1.280 は MCP 2026-07-28 版で接続し、`tools/list` に `ttlMs`/`cacheScope`
+    が無いと `INVALID_RESULT` で一覧を捨てる** (rmcp 3.4 は任意扱い)。最初はこれで
+    オーケストレータに Yhtye のツールが見えなかった。明示して解決。
+  - 何も指定しないとユーザー自身の MCP サーバー (Todoist 等 100 個超) が全エージェントに付く。
+    `strictMcpConfig` + `ENABLE_CLAUDEAI_MCP_SERVERS=false` で隔離、`ENABLE_TOOL_SEARCH=false`
+    で yhtye のツールを遅延ロードさせない。
+  - Haiku はシステムプロンプトどおりにツールを呼んだ (instruction も自己完結に書いた)。
+- 設計への反映・決定:
+  - orchestration-model §11 のオーケストレータ書き込み問題 → §8.1 で決定 (組み込みツールを
+    Read/Glob/Grep に限定。cwd 案・disallowedTools 案は不採用、理由も記載)。
+  - mcp-tools §1: 引数のスキーマ不一致も `invalid_argument` のツールエラーにする (明確化)。
+  - core-design §4: keep-alive 延長ではなくステートレスモード、`tools/list` のキャッシュヒント、
+    `rebind`、`ToolCallRecord`。§3.4 に `session_meta`。§12 に偽エージェントの新動作。
+- 残課題 / Stage 3 への申し送り:
+  - `Board` は仮実装。Stage 3 の domain で置き換える: `modify_steps` / `cancel_group` 未実装、
+    review `needs_changes` の自動再挿入なし、git (サブエージェントも Stage 2 はプロジェクト
+    ディレクトリで作業)、永続化、ツールを呼ばずに終わったターンの催促と `protocol_violation`、
+    異常終了時の `agent_crashed` help、ターン中の `cancel_task` (今はセッション停止のみ)。
+  - `ToolPort` / `ToolCall` / `SessionBinding` / `OrchEvent` の形はそのまま使える想定。
+    `Board::apply` の戻り値 `(reply, effects)` は core-design §5 の `Transition` に近い。
+  - `settingSources` (ユーザーの CLAUDE.md・フック・プラグイン) を Yhtye のエージェントに
+    効かせるかは未決 (orchestration-model §11)。ユーザーに確認する。
+  - オーケストレータの MCP ツール一覧から help/report は除外済み。サブエージェントに
+    Claude Code の `Agent` ツール (自前のサブエージェント) が残っている — プロンプトで禁止のみ。
+  - `board.rs` は 722 行 (上限 800 に近い)。Stage 3 で domain に移すときに分割する。
 
 ## Stage 3 — ドメインコア
 

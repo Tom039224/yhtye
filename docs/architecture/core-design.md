@@ -26,7 +26,7 @@ crates/
       domain/     状態機械 (純粋関数。I/O なし)
       store/      SQLite (sqlx): イベントログ + 現在状態テーブル, migrations/
       git/        worktree / branch / merge (git CLI をサブプロセスで)
-      prompts/    役割別システムプロンプトのテンプレート
+      prompts.rs  役割別システムプロンプト (本文は crates/yhtye-core/prompts/*.md を include_str!)
       runtime/    上記を束ねる Core (Effect の実行・受信箱・再開処理)
     tests/        偽エージェントを使う結合テスト, 実エージェントテスト (#[ignore])
   yhtye-fake-agent/           偽 ACP エージェント (bin)
@@ -167,9 +167,11 @@ pub struct HarnessConfig {
     pub mode_after_new: Option<String>,        // Claude Code: "bypassPermissions"
     pub model: Option<ModelSelect>,            // { config_id: "model", value: "haiku" }
     pub system_prompt: SystemPromptStyle,      // MetaAppend | FirstPrompt
+    pub session_meta: Option<Map<String, Value>>, // session/new・load の _meta に足すハーネス固有フィールド (Stage 2)
     pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
 }
-// HarnessConfig::claude_code("haiku") が Claude Code 用の既定値。
+// HarnessConfig::claude_code("haiku") が Claude Code 用の既定値、
+// HarnessConfig::claude_code_orchestrator("haiku") がオーケストレータ用 (組み込みツールを読み取り系に限定)。
 ```
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
@@ -193,11 +195,21 @@ pub struct HarnessConfig {
   (rmcp `transport/streamable_http_server/tower.rs:990-1046, 1254`)。
   rmcp は API 変化が速い (9 月だけで 3.2→3.4) のでマイナーまで固定する。
 - 127.0.0.1 のみに bind (ポートは OS 任せ)。rmcp 既定の `allowed_hosts` (localhost 限定) を維持。
-- `LocalSessionManager` の `keep_alive` 既定 300 秒は長時間のエージェントセッションに短いので
-  無効化 (None) か十分長くする。新しいプロトコル版はステートレス扱いになるため、
+- **ステートレスモード** (`legacy_session_mode = false`, `json_response = true`) で動かす。
+  MCP セッション状態を持たないので `keep_alive` (既定 300 秒) の失効問題自体が無い。
   **識別は毎リクエストの token で行い、MCP セッション状態に依存しない。**
-- `TokenRegistry: token → SessionBinding { role, project, group?, task?, step? }`。
-  セッション終了時に失効させる。
+  トークンの検査は axum のミドルウェアで行い、未知・失効済みトークンは rmcp に渡す前に 404。
+- **Claude Code 2.1.280 は MCP 2026-07-28 版 ("modern" プロトコル) を話す。** この版では
+  `tools/list` の結果に `ttlMs` / `cacheScope` が必須で、無いと Claude Code は
+  `INVALID_RESULT` として一覧を捨てる (ツールが 1 つも見えない)。rmcp 3.4 はこれらを
+  任意扱いにしているので、Yhtye は `ttl_ms(0)` + `CacheScope::Private` を明示する
+  (一覧はトークンごとに異なるため private・キャッシュなし)。回帰テスト
+  `tests/mcp_server.rs::modern_protocol_tool_list_has_cache_hints`。
+- `TokenRegistry: token → SessionBinding { session, role, project, group?, task?, step? }`。
+  セッション終了時に失効させる。同じ implementer セッションで次の Step に進むときは
+  `rebind` で束縛先の Step を差し替える (トークンは URL に埋め込まれていて変えられないため)。
+- 全ツール呼び出しは `ToolCallRecord { binding, tool, args, result }` として observer
+  チャネルに流す (Stage 3 でイベントログに保存する)。
 - ツールハンドラは直接状態を触らず、`ToolPort` トレイト経由で runtime に
   `DomainCommand` を送り、結果を待って返す:
 
@@ -209,6 +221,32 @@ pub trait ToolPort: Send + Sync {
 ```
 
   これにより MCP 層はテストで `ToolPort` を差し替えて単体検証できる。
+- MCP 層の責務は「役割チェック (`forbidden`) と引数のデコード」まで。引数のデコード失敗
+  (必須欠落・型違い・未知の enum 値・未知のフィールド) は `invalid_argument` の
+  **ツールエラー**で返す (LLM が読んで直せるように)。JSON-RPC エラーは未知のツール名と
+  トークン失効 (404) だけ。値の検査 (空文字、Step 列の規則、verdict と役割) は ToolPort 側。
+
+### 4.1 Stage 2 の runtime (仮実装)
+
+Stage 3 の `domain` / `runtime::Core` の前に、ループ全体を実機で動かすための最小構成。
+
+- `runtime::Board` — メモリ上の状態 (Group / Task / Step / help)。`apply(binding, ToolCall)
+  -> (reply, Vec<Effect>)` と `on_turn_ended(task)`。Effect は `StartStep` / `Wake(InboxItem)` /
+  `PromptTask` / `TaskFinished`。Step 列の規則は `domain::normalize_steps` (Stage 3 でも使う)。
+  未実装: `modify_steps` / `cancel_group` (`internal` を返す)、review の `needs_changes`
+  自動再挿入、git、永続化、プロトコル違反の催促、異常終了時の help。
+- `runtime::MemoryToolPort` — Board を `ToolPort` にし、Effect をチャネルで流す。
+  Effect はツールの応答より前にキューされるので、ループは呼び出し元のターン終了より先に見る。
+- `runtime::Orchestration` — 公開 API (`start` / `send_user_message` /
+  `cancel_orchestrator_turn` / `shutdown`) と `OrchEvent` のストリーム
+  (`SessionStarted/Failed/Stopped`, `Agent{session, event}`, `ToolCalled`, `Prompted`)。
+- `runtime::driver` — 単一タスクのループ。セッションのキーは `orchestrator` /
+  `T-n/implementer` (タスク中は同じセッション) / `T-n/review-<step>` (毎回新規)。
+  エージェント起動・停止は `JoinSet` で裏で行い、ループを止めない。サブエージェントの
+  ターン終了で `Board::on_turn_ended` を呼び、次の Step を始める。タスク終端でそのタスクの
+  セッションを止め、トークンを失効させる。受信箱はオーケストレータがアイドルのときに
+  `render_batch` で 1 プロンプトにまとめて送る。
+- Stage 2 ではサブエージェントの cwd もプロジェクトディレクトリ (worktree は Stage 3)。
 
 ## 5. `domain` モジュール (状態機械)
 
@@ -321,9 +359,13 @@ export interface Transport {
   (結果を `permission:selected:<id>` / `permission:cancelled` というメッセージで返す) /
   `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `end(stop_reason)` / `crash(code)` /
   `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
-  `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `write_file{path,text}` /
-  `mcp_call(tool, args)` (**Stage 2 で追加**: rmcp のクライアント機能で `session/new` に渡された
-  HTTP MCP サーバーを実際に呼ぶ)。
+  `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
+  (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /
+  `mcp_call{tool, args}` (Stage 2: rmcp クライアントで `session/new` に渡された最初の HTTP
+  MCP サーバーを呼び、`mcp:<tool>:ok|error:<json>` / `mcp:<tool>:failed:<理由>` を返す。
+  `args` 中の `${name}` は、プロンプト中の `key=value` (例: 受信箱の `help_id=H-1`) と
+  それまでの成功結果のトップレベル値 (例: `group_id`) で置換) / `mcp_list`
+  (`mcp:tools:<名前,...>`)。
 - 起動段の異常系: `fail_at` (JSON-RPC エラー) / `exit_at` (stderr に書いて exit(2)) /
   `hang_at` (応答しない) に段名 (`initialize` / `session/new` / ...) を指定する。
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。

@@ -11,7 +11,10 @@ mod process;
 mod session;
 mod startup;
 
-pub use config::{DEFAULT_STARTUP_TIMEOUT, HarnessConfig, ModelSelect, SystemPromptStyle};
+pub use config::{
+    DEFAULT_STARTUP_TIMEOUT, HarnessConfig, ModelSelect, ORCHESTRATOR_BUILTIN_TOOLS,
+    SystemPromptStyle,
+};
 pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};
 pub use permission::{choose_permission, outcome_for};

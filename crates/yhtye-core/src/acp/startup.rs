@@ -34,14 +34,16 @@ impl StartupParams {
         }
     }
 
+    /// `_meta` of `session/new` / `session/load`: the harness' `session_meta` plus
+    /// `systemPrompt.append` for [`SystemPromptStyle::MetaAppend`].
     fn session_meta(&self) -> Option<Meta> {
-        let text = self.system_prompt.as_ref()?;
-        if self.harness.system_prompt != SystemPromptStyle::MetaAppend {
-            return None;
+        let mut meta = self.harness.session_meta.clone().unwrap_or_default();
+        if let Some(text) = &self.system_prompt
+            && self.harness.system_prompt == SystemPromptStyle::MetaAppend
+        {
+            meta.insert("systemPrompt".into(), serde_json::json!({ "append": text }));
         }
-        let mut meta = Meta::new();
-        meta.insert("systemPrompt".into(), serde_json::json!({ "append": text }));
-        Some(meta)
+        (!meta.is_empty()).then_some(meta)
     }
 }
 

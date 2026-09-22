@@ -4,6 +4,7 @@
 //! `YHTYE_FAKE_SCRIPT` environment variable (see [`scenario`]).
 
 mod agent;
+mod mcp;
 mod scenario;
 
 use std::process::ExitCode;

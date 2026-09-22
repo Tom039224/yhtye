@@ -137,10 +137,11 @@ Yhtye での Claude Code 用 `HarnessConfig` (初期値):
 [harness.claude-code]
 command = "npx"
 args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81"]
-env = { ANTHROPIC_MODEL = "haiku" }   # テスト・開発時。本番の既定は設定で変える
+env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false" }  # §5.2
 mode_after_new = "bypassPermissions"
 model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する
 system_prompt = "meta_append"          # _meta.systemPrompt.append
+session_meta = { claudeCode = { options = { strictMcpConfig = true } } }   # §5.2 (オーケストレータは + tools)
 startup_timeout = 120                  # 秒。各起動段ごと
 ```
 
@@ -157,6 +158,41 @@ startup_timeout = 120                  # 秒。各起動段ごと
 - `session/load` は同じセッション ID で復元でき、履歴 (ユーザー・エージェント両方のチャンク) を
   `Ready` 前に再生する。前の会話内容を覚えていた。
 - `Shutdown` 後、プロセスグループ (npx → node → claude) に生存プロセスは残らなかった。
+
+### 5.2 Yhtye から起動するときの隔離設定 (Stage 2)
+
+Stage 2 の実機確認で、何も指定しないと Yhtye のエージェントにユーザー自身の Claude Code 環境の
+**MCP サーバーがすべて付く** (`.mcp.json`・プラグイン・claude.ai コネクタ。この環境では
+Todoist / Claude Docs / chrome-devtools など 100 個超) ことが分かった。ツールが埋もれて
+Haiku が迷ううえ、エージェントがユーザーの外部サービスを触れてしまう。
+また既定では MCP ツールが ToolSearch の後ろに遅延ロードされる。
+`HarnessConfig::claude_code` は次を設定する:
+
+| 設定 | 経路 | 効果 |
+|---|---|---|
+| `strictMcpConfig: true` | `_meta.claudeCode.options` (SDK の `--strict-mcp-config`) | session/new で渡した MCP サーバー (= `yhtye`) だけを使う |
+| `ENABLE_CLAUDEAI_MCP_SERVERS=false` | プロセス env | claude.ai のコネクタを付けない (デバッグログで "Disabled via env var" を確認) |
+| `ENABLE_TOOL_SEARCH=false` | プロセス env | MCP ツールを遅延ロードせず最初から見せる |
+
+オーケストレータはさらに `tools: ["Read","Glob","Grep"]`
+([`orchestration-model.md`](orchestration-model.md) §8.1)。
+`settingSources` (ユーザーの CLAUDE.md・フック・プラグイン) は既定のまま — 未決
+([`orchestration-model.md`](orchestration-model.md) §11)。
+
+実機での観察 (Stage 2、2026-09-23、adapter 0.81.0 / Claude Code 2.1.280 + Haiku):
+
+- Claude Code は MCP の **2026-07-28 版** で接続する (デバッグログ `protocolEra: modern`)。
+  `tools/list` に `ttlMs` / `cacheScope` が無いと `INVALID_RESULT` で 3 回再試行後に
+  諦め、ツールが 1 つも無い状態でターンが始まる。このときエージェントは「Yhtye のツールが
+  無い」と答える ([`core-design.md`](core-design.md) §4)。原因調査には
+  `_meta.claudeCode.options.debugFile` で Claude Code のデバッグログを出すのが有効。
+- MCP サーバーへの接続は非同期 ("running fully async (nonblocking)") だが、ローカル HTTP
+  なので 30 ms 程度で終わり、最初のプロンプトに間に合っていた。
+- 「README に 1 行足すタスクを作って」相当の依頼で、Haiku のオーケストレータは
+  `create_group` → `create_task` (steps `[implement]`、自己完結した instruction 付き) を呼び、
+  サブエージェント (Haiku) が README を編集して `report_step_done` を呼び、
+  `group_settled` で起こされたオーケストレータが `finish_group` を呼んでユーザーに報告した。
+  全体で約 30 秒。2 回実行して 2 回とも同じ流れ。
 
 ## 6. フォールバック: Claude Code が ACP から脱退した場合
 
