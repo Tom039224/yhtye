@@ -25,3 +25,6 @@ dist-ssr
 
 # Orca worktree state
 .orca/
+
+# Rust workspace build output
+/target

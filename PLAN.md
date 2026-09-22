@@ -14,7 +14,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | Stage | 内容 | 状態 |
 |---|---|---|
 | 0 | 旧コード破棄・調査・設計 | **完了** |
-| 1 | ACP コア | 未着手 |
+| 1 | ACP コア | **完了** |
 | 2 | MCP サーバー + マルチセッション | 未着手 |
 | 3 | ドメインコア (状態機械・SQLite・git) | 未着手 |
 | 4 | フロントエンド (素の UI) | 未着手 |
@@ -73,6 +73,39 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
      (権限要求が来たら kind で承認されたことをイベントで確認)。
   4. `session/load` で同じセッションを復元でき、前の会話内容を覚えている。
 - `cargo check` (src-tauri) / `pnpm build` が通る。
+
+**結果メモ (2026-09-23)**
+
+- 構成: ルートに Cargo workspace (`crates/*` + `src-tauri`、`Cargo.lock` と release プロファイルを
+  ルートへ移動、`/target` を .gitignore)。`crates/yhtye-core/src/acp/` = `config` (HarnessConfig,
+  `claude_code("haiku")`) / `events` (AgentEvent・AgentOutput・AgentError) / `permission` /
+  `process` (プロセスグループ起動・stderr・終了) / `startup` (initialize〜set_config_option) /
+  `session` (アクター・コマンドループ) / `handle` (`spawn_agent`・`AgentHandle`)。
+  `crates/yhtye-fake-agent` (シナリオ JSON 駆動の偽エージェント)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 単体 6 + 偽エージェント結合 18 (turns 7 / lifecycle 11) すべて成功、実エージェント 4 は ignored。
+  - `cargo test -p yhtye-core --test acp_claude_real -- --ignored --test-threads=1 --nocapture`
+    → 4/4 成功 (約 30 秒、2 回実行): (1) haiku・bypassPermissions を表明 → "pong" と `end_turn`
+    (2) 長文生成中に Cancel → 約 33 ms で `cancelled` (3) 一時ディレクトリに hello.txt が
+    実際に作られた (4) `session/load` で同じ ID に復元し、合言葉を答えた。
+  - 各実テスト後に npx→node→claude のプロセスグループが空であることを /proc で確認。
+    `ps` でも claude-agent-acp / yhtye-fake-agent の残存なし。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo check` (src-tauri) / `pnpm build` 成功。
+- 実エージェントでの観察は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.1。
+  bypassPermissions では権限要求が**来なかった**ため、kind による自動承認は偽エージェントでのみ検証
+  (完了条件 3 の「来たら」の分岐は未発生)。
+- 設計からの変更 (理由は [`core-design.md`](docs/architecture/core-design.md) §3.5):
+  `AcpAgent` を使わず自前のプロセスグループ管理 / イベントチャネルを unbounded に /
+  `AgentCmd` を内部化してハンドルのメソッドに / `Exited{code, signal}` / `choose_permission` は
+  選択肢を返す + `outcome_for`。偽エージェントの動作に `update` (任意 JSON)・`spawn_child`・
+  `report_state`・`fail_at/exit_at/hang_at` を追加。
+- 残課題 / Stage 2 への申し送り:
+  - `session/load` の履歴再生は `Ready` より前の `Output` として届く (実機ではユーザーと
+    エージェント両方のチャンク)。runtime / UI はこれを「履歴」として扱う必要がある。
+  - プロセス管理は Unix 専用 (`process_group`, killpg)。Windows 対応は未着手。
+  - 偽エージェントの `mcp_call` は Stage 2 で追加する。`fake_agent_bin()` はテスト中に
+    `cargo build -p yhtye-fake-agent` を呼ぶ (Stage 2 以降の結合テストも同じヘルパを使う)。
+  - `yhtye-fake-agent` の `serve()` はビルダー連鎖で約 90 行 (関数 50 行目安を超過)。
 
 ## Stage 2 — MCP サーバーとマルチセッション
 

@@ -77,55 +77,85 @@ pub struct CoreConfig {
 
 エージェントプロセス 1 つ = ACP 接続 1 つ = tokio タスク 1 つ。
 Yhtye は 1 プロセスにつき 1 セッションだけを作る (プロセス単位で止められるように)。
+(Stage 1 で実装。実装に合わせて更新済み — 当初案との差分は §3.5。)
 
 ```rust
-pub struct AgentHandle { cmd_tx: mpsc::Sender<AgentCmd>, pub info: AgentInfo }
-
-pub enum AgentCmd {
-    Prompt { blocks: Vec<ContentBlock> },    // 応答は AgentEvent::TurnEnded で返る
-    Cancel,                                  // session/cancel 通知。ターン中でも即送れる
-    SetMode(String),
-    SetConfigOption { id: String, value: String },
-    Shutdown,
+pub struct SpawnOptions {
+    pub mcp_servers: Vec<McpServer>,
+    pub resume: Option<SessionId>,          // session/load で復元
+    pub system_prompt: Option<String>,
 }
 
 pub async fn spawn_agent(
-    harness: &HarnessConfig, cwd: &Path, mcp: Vec<McpServer>,
-    resume: Option<AcpSessionId>, system_prompt: Option<String>,
-    events: mpsc::Sender<AgentEvent>,
-) -> Result<AgentHandle>;
+    harness: &HarnessConfig, cwd: &Path, options: SpawnOptions,
+    events: mpsc::UnboundedSender<AgentEvent>,
+) -> Result<AgentHandle, AgentError>;       // Ready まで進んでから返る。失敗は段・終了コード・stderr 末尾付きの AgentError
+
+impl AgentHandle {
+    pub fn info(&self) -> &AgentInfo;                                   // session id / modes / config_options / capabilities
+    pub fn pid(&self) -> Option<u32>;                                   // プロセスグループのリーダー
+    pub fn prompt(&self, blocks: Vec<ContentBlock>) -> Result<(), AgentError>; // 応答は AgentEvent::TurnEnded。ターン中は Busy
+    pub fn prompt_text(&self, text: impl Into<String>) -> Result<(), AgentError>;
+    pub fn cancel(&self) -> Result<(), AgentError>;                    // session/cancel 通知。ターン中でも即送る
+    pub fn is_turn_running(&self) -> bool;
+    pub async fn set_mode(&self, mode) -> Result<(), AgentError>;
+    pub async fn set_config_option(&self, id, value) -> Result<Vec<SessionConfigOption>, AgentError>;
+    pub async fn shutdown(self);                                        // Exited 送出まで待つ
+}
+// drop しても終了処理が走る (コマンドチャネルが閉じる → Shutdown と同じ)。
 ```
 
-- 内部は `Client.builder()...connect_with(AcpAgent, |cx| loop { cmd_rx ... })`
+- 内部は `Client.builder()...connect_with(ByteStreams(stdin, stdout), |cx| loop { cmd_rx ... })`
   ([`acp-harnesses.md`](acp-harnesses.md) §4.4)。`Prompt` は `cx.spawn` に切り出し、
   **コマンドループは prompt の応答を待たない**。これで `Cancel` がターン中に届く。
-- 同時に実行中のターンは 1 つまで。ターン中の `Prompt` は `AgentError::Busy` を返す
-  (受信箱のまとめ送りは runtime の責務)。
+  `set_mode` / `set_config_option` も `cx.spawn` で送り、結果を oneshot で返す。
+- 同時に実行中のターンは 1 つまで。ターン中の `prompt` は `AgentError::Busy` を返す。
+  判定はハンドル側で同期的に行う (`watch` の check-and-set。アクターへの往復なし)。
+  受信箱のまとめ送りは runtime の責務。
 - `spawn_agent` の手順: プロセス起動 → `initialize` (fs / terminal は広告しない) →
-  `session/load` (resume 指定かつ `load_session` 対応時) または `session/new`
-  (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode` →
-  `model` 指定があれば `set_config_option`。各段にタイムアウト。
-- **終了処理**: `Shutdown` → ターン中なら `Cancel` し最大 10 秒 `TurnEnded` を待つ →
-  接続クロージャを抜ける → `AcpAgent` の drop でプロセスグループを kill。
-  プロセスの exit を `AgentEvent::Exited{status}` で必ず通知する。stderr は行ごとに
-  `AgentEvent::Stderr` (ログのみ、UI には出さない)。
+  `session/load` (resume 指定かつ `load_session` 対応時。非対応なら `session/new` に
+  フォールバックし `AgentInfo.resumed = false`) または `session/new`
+  (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode`
+  (`modes` に無ければ `Unsupported`) → `model` 指定があれば `set_config_option`
+  (応答の現在値が要求値と違えば起動失敗)。各段に `HarnessConfig::startup_timeout`。
+- **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
+  単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
+- **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
+  `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
+  グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
+  プロセスの exit を `AgentEvent::Exited{code, signal}` で必ず最後に通知する。
+  アクタータスクごと落ちた場合もガードの drop でグループを SIGKILL する。
+  stderr は行ごとに `AgentEvent::Stderr` (ログのみ、UI には出さない) + 起動エラー用に末尾 40 行を保持。
 
 ### 3.2 型付きイベント
 
 ```rust
 pub enum AgentEvent {
-    Ready { acp_session_id, modes, config_options, capabilities },
+    Ready(Box<AgentInfo>),             // { acp_session_id, resumed, modes, config_options, capabilities, agent }
     Output(AgentOutput),               // SessionUpdate を 1:1 で型付け。未知は Unknown(serde_json::Value)
-    PermissionAutoAnswered { tool_call, chosen: Option<PermissionOptionKind> },
+    PermissionAutoAnswered { tool_call, options, chosen: Option<PermissionOptionKind> },
     TurnEnded(Result<StopReason, AgentError>),
     Stderr(String),
-    Exited { status: Option<i32> },
+    Exited { code: Option<i32>, signal: Option<i32> },   // 常に最後
+}
+pub enum AgentOutput {
+    UserMessageChunk, MessageChunk, ThoughtChunk, ToolCall, ToolCallUpdate, Plan,
+    AvailableCommands, ModeChanged, ConfigOptions, SessionInfo, Usage, Unknown(serde_json::Value),
 }
 ```
 
+- `session/update` は生 JSON で受けてから `SessionUpdate` に変換する (変換できない種類を
+  落とさず `Unknown` にするため)。全イベントは `Serialize` (UI 転送用)。
+- 順序: `session/load` の履歴再生は `Ready` より**前**の `Output` として届く
+  (実 Claude Code ではユーザー・エージェント両方のチャンクが再生される)。
+  1 ターンの `Output` はその `TurnEnded` より前。`Exited` は常に最後。
+- `TurnEnded` を出すのはターンを終わらせた 1 者だけ (prompt 応答 / プロセス終了時の
+  `Err(Closed)`) — `watch` の true→false 遷移で調停する。
+
 ### 3.3 権限の自動承認
 
-`fn choose_permission(options: &[PermissionOption]) -> RequestPermissionOutcome` は純粋関数。
+`fn choose_permission(options: &[PermissionOption]) -> Option<&PermissionOption>` と
+`fn outcome_for(Option<&PermissionOption>) -> RequestPermissionOutcome` は純粋関数。
 `allow_always` → `allow_once` の順に kind で選び、どちらも無ければ `Cancelled`。
 **配列の先頭を選ぶことはしない。** ハンドラ内で即応答する (ブロックしない)。
 
@@ -137,10 +167,22 @@ pub struct HarnessConfig {
     pub mode_after_new: Option<String>,        // Claude Code: "bypassPermissions"
     pub model: Option<ModelSelect>,            // { config_id: "model", value: "haiku" }
     pub system_prompt: SystemPromptStyle,      // MetaAppend | FirstPrompt
+    pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
 }
+// HarnessConfig::claude_code("haiku") が Claude Code 用の既定値。
 ```
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
+
+### 3.5 Stage 1 で当初案から変えた点 (理由)
+
+| 当初案 | 実装 | 理由 |
+|---|---|---|
+| `AcpAgent` にプロセス起動と drop 時の kill を任せる | `tokio::process` + 自前のプロセスグループ管理 (`ByteStreams` で接続) | `AcpAgent` は終了コードを返さず (`Exited{status}` を出せない)、stderr も行イベントにしにくい。起動失敗メッセージに終了コードと stderr 末尾を含めるため |
+| `events: mpsc::Sender<AgentEvent>` | `mpsc::UnboundedSender` | 有界だとイベント送信で dispatch ループが止まり、利用側が `set_mode` の応答を待っていると相互待ちになる |
+| `AgentCmd` を公開し `handle.send(cmd)` | `AgentHandle` のメソッド (`AgentCmd` は内部) | 応答が要るコマンド (`set_mode` 等) に oneshot を持たせるため。Busy はハンドルで即判定 |
+| `choose_permission -> RequestPermissionOutcome` | `-> Option<&PermissionOption>` + `outcome_for` | 選んだ kind をイベントに載せるため |
+| `Exited { status }` | `Exited { code, signal }` | シグナル終了を区別するため |
 
 ## 4. `mcp` モジュール
 
@@ -271,14 +313,24 @@ export interface Transport {
 ## 12. 偽 ACP エージェント (`yhtye-fake-agent`)
 
 - `agent-client-protocol` の `Agent.builder()` で ACP のエージェント側を実装した bin。
-- 環境変数 `YHTYE_FAKE_SCRIPT=<json>` のシナリオに従って動く。シナリオは
-  「プロンプト (部分一致 or 順番) → 動作列」で、動作は:
-  `message(text)` / `thought(text)` / `tool_call(..)` / `plan(..)` /
-  `request_permission(options)` / `mcp_call(tool, args)` (rmcp のクライアント機能で
-  `session/new` に渡された HTTP MCP サーバーを実際に呼ぶ) / `write_file(path, text)` /
-  `sleep(ms)` / `wait_cancel` / `end(stop_reason)` / `crash`。
-- `initialize` で `load_session: true` と `mcp_capabilities.http: true` を広告する。
-  `set_mode` / `set_config_option` を記録し、テストから確認できるよう応答する。
+- 環境変数 `YHTYE_FAKE_SCRIPT=<json>` のシナリオに従って動く (書式は
+  `crates/yhtye-fake-agent/src/scenario.rs` の doc コメント)。シナリオは
+  「プロンプト (`match` の部分一致 or 順番) → 動作列」で、動作は:
+  `message` / `thought` / `tool_call{id,title}` / `tool_call_update{id,status}` / `plan([..])` /
+  `update(<任意の update JSON>)` (未知の種類も送れる) / `request_permission([{id,kind}])`
+  (結果を `permission:selected:<id>` / `permission:cancelled` というメッセージで返す) /
+  `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `end(stop_reason)` / `crash(code)` /
+  `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
+  `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `write_file{path,text}` /
+  `mcp_call(tool, args)` (**Stage 2 で追加**: rmcp のクライアント機能で `session/new` に渡された
+  HTTP MCP サーバーを実際に呼ぶ)。
+- 起動段の異常系: `fail_at` (JSON-RPC エラー) / `exit_at` (stderr に書いて exit(2)) /
+  `hang_at` (応答しない) に段名 (`initialize` / `session/new` / ...) を指定する。
+- `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
+  `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
+  `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+- テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
+  `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。
 - これで ACP・MCP・状態機械・git を含む全経路を LLM なしで決定的にテストする。
 
 ## 13. テスト方針

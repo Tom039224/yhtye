@@ -44,6 +44,13 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 - サブプロセス起動は `AcpAgent::new(AcpAgentConfig::new(cmd).args(..).env(k, v))`
   (`src/acp_agent.rs:53-189`)。stdin/stdout/stderr の配線と、drop 時のプロセスグループ kill
   (`acp_agent.rs:140, 311-321`) まで面倒を見る。
+  ただし終了コードを返さないため、Yhtye は使わず `tokio::process` で同じこと
+  (`process_group(0)` + グループ kill) を自前で行い、`ByteStreams` で接続する
+  ([`core-design.md`](core-design.md) §3.5)。
+- 接続先プロセスが stdout を閉じても `connect_with` はエラーにならない (未応答リクエストが
+  失敗し、`cx.incoming_closed()` が完了する)。コマンドループはこれも待つ。
+- 未登録の通知は無視、未登録のリクエストは `method_not_found` で応答される
+  (`src/jsonrpc/incoming_actor.rs:612-620`)。接続は落ちない。
 - ランタイム非依存。`Send + 'static` が前提で `LocalSet` / `spawn_local` は不要。
   `ConnectionTo<Agent>` は `Clone` (`jsonrpc.rs:3429-3440`) で、1 接続上で並行リクエスト可。
 - **ハンドラはディスパッチループ上で実行される。** ハンドラ内で応答待ち (`block_task`) を
@@ -132,9 +139,24 @@ command = "npx"
 args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81"]
 env = { ANTHROPIC_MODEL = "haiku" }   # テスト・開発時。本番の既定は設定で変える
 mode_after_new = "bypassPermissions"
-model_config_id = "model"              # set_config_option で上書きする場合
+model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する
 system_prompt = "meta_append"          # _meta.systemPrompt.append
+startup_timeout = 120                  # 秒。各起動段ごと
 ```
+
+(`HarnessConfig::claude_code("haiku")` がこの値を返す。)
+
+### 5.1 実機での観察 (Stage 1、2026-09-23、adapter 0.81.0 + Haiku)
+
+- 起動 (npx キャッシュ済み) から `Ready` まで数秒。`Ready` 前に `available_commands_update` と
+  `config_option_update` が届き、プロンプト直後にもう一度 `available_commands_update` が来る。
+  ターン中は `usage_update` が頻繁に来る。`current_mode_update` は set_mode では来なかった。
+- `bypassPermissions` ではファイル作成 (Write ツール) で `session/request_permission` は
+  **来なかった** (tool_call → tool_call_update のみ)。自動承認は偽エージェントでのみ検証済み。
+- 長文生成中の `session/cancel` は約 35 ms (2 回とも) で `stop_reason: cancelled` が返った。
+- `session/load` は同じセッション ID で復元でき、履歴 (ユーザー・エージェント両方のチャンク) を
+  `Ready` 前に再生する。前の会話内容を覚えていた。
+- `Shutdown` 後、プロセスグループ (npx → node → claude) に生存プロセスは残らなかった。
 
 ## 6. フォールバック: Claude Code が ACP から脱退した場合
 
