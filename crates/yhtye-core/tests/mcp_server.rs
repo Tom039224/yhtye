@@ -243,3 +243,30 @@ async fn modern_protocol_tool_list_has_cache_hints() {
     assert_eq!(result["tools"].as_array().map(Vec::len), Some(2), "{json}");
     f.host.shutdown().await;
 }
+
+/// Requests from web pages (they carry `Origin`) are refused even with a valid
+/// token and an allowed Host; agents send no `Origin` (Stage 6b review).
+#[tokio::test]
+async fn browser_requests_with_an_origin_are_forbidden() {
+    let f = fixture().await;
+    let token = f.host.registry().issue(sub_binding(Role::Implementer));
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}});
+    let post = |origin: Option<&'static str>| {
+        let mut req = reqwest::Client::new()
+            .post(f.host.url(&token))
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body.to_string());
+        if let Some(o) = origin {
+            req = req.header("origin", o);
+        }
+        req.send()
+    };
+    let res = post(Some("http://evil.example")).await.expect("request");
+    assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN);
+    let res = post(Some("http://localhost:1420")).await.expect("request");
+    assert_eq!(res.status(), reqwest::StatusCode::FORBIDDEN);
+    let res = post(None).await.expect("request");
+    assert_ne!(res.status(), reqwest::StatusCode::FORBIDDEN);
+    f.host.shutdown().await;
+}

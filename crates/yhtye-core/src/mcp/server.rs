@@ -184,6 +184,10 @@ impl McpHost {
             .with_legacy_session_mode(false)
             .with_json_response(true)
             .with_sse_keep_alive(None)
+            // Agents send no `Origin`; any request that has one comes from a
+            // browser page and is refused (defence in depth next to the token and
+            // rmcp's Host check against DNS rebinding).
+            .enforce_origin_validation()
             .with_cancellation_token(cancel.child_token());
         let service: StreamableHttpService<Handler, LocalSessionManager> =
             StreamableHttpService::new(move || Ok(handler.clone()), Arc::default(), config);

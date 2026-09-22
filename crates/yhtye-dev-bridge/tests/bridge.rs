@@ -146,6 +146,7 @@ async fn the_api_round_trips_over_the_websocket() {
     cfg.orchestrator = fake_harness(&bin, orch);
     cfg.implementer = fake_harness(&bin, json!({"turns": []}));
     cfg.reviewer = fake_harness(&bin, json!({"turns": []}));
+    cfg.usage = None;
     let core = Core::start(cfg).await.expect("core");
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

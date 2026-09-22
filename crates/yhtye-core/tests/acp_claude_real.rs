@@ -174,3 +174,27 @@ async fn real_session_load_restores_conversation() {
     assert!(text.contains("PINEAPPLE-42"), "{text}");
     stop(s).await;
 }
+
+/// `/usage` (a local command, no model call) through the probe harness is read
+/// into a usage report (Stage 6b): plan, 5-hour and weekly windows, reset times.
+#[tokio::test]
+#[ignore = "real Claude Code (subscription usage)"]
+async fn real_usage_command_reports_the_subscription() {
+    use yhtye_core::usage::{UsageWindowKind, probe_usage};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let harness = HarnessConfig::claude_code_usage_probe();
+    let report = probe_usage(&harness, dir.path())
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    eprintln!("usage: {report:?}");
+    assert!(report.plan.is_some(), "{report:?}");
+    for kind in [UsageWindowKind::FiveHour, UsageWindowKind::Week] {
+        let w = report
+            .window(kind)
+            .unwrap_or_else(|| panic!("{kind:?}: {report:?}"));
+        assert!((0.0..=100.0).contains(&w.percent));
+        assert!(w.resets_at_ms.is_some(), "{w:?}");
+    }
+    // Nothing was written to the probe's directory.
+    assert_eq!(std::fs::read_dir(dir.path()).expect("dir").count(), 0);
+}

@@ -9,7 +9,7 @@
 // - reconnect: re-open the project (idempotent; the core may have restarted)
 //   and catch up from `cursor`. Streamed text of the dead connection is dropped.
 
-import type { ApiCommand, ApiEvent, ApiResponse, GitOverview, ProjectInfo } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiResponse, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
@@ -34,12 +34,22 @@ export const GIT_REFRESH_MS = 400;
 /** Preference key: path of the project opened last (reopened after a reload). */
 export const LAST_PROJECT_KEY = "yhtye.lastProject";
 const MAX_ERRORS = 5;
+/** How often the usage meters are re-read while connected (the core caches for a minute). */
+export const USAGE_REFRESH_MS = 5 * 60_000;
 
 /** The git panel's data for the open project. */
 export interface GitView {
   project: string;
   overview: GitOverview | null;
   /** Why the last read failed (shown in the panel). */
+  error: string | null;
+  loading: boolean;
+}
+
+/** Subscription usage for the status bar (read from the harness by the core). */
+export interface UsageView {
+  report: UsageReport | null;
+  /** Why the last read failed (the meters then stay empty). */
   error: string | null;
   loading: boolean;
 }
@@ -64,6 +74,7 @@ export interface AppState {
   errors: AppError[];
   busy: { opening: boolean; sending: boolean };
   git: GitView | null;
+  usage: UsageView;
   /** When the last event of any project arrived (ms since the epoch). */
   lastEventAt: number | null;
 }
@@ -81,6 +92,7 @@ export class AppStore {
   private nextErrorId = 1;
   private gitTimer: ReturnType<typeof setTimeout> | null = null;
   private gitToken = 0;
+  private usageTimer: ReturnType<typeof setInterval> | null = null;
   private readonly prefs: Prefs;
   private readonly historyWindow: number;
   private readonly historyPage: number;
@@ -100,6 +112,7 @@ export class AppStore {
       errors: [],
       busy: { opening: false, sending: false },
       git: null,
+      usage: { report: null, error: null, loading: false },
       lastEventAt: null,
     };
   }
@@ -113,6 +126,7 @@ export class AppStore {
     for (const un of this.unsubscribe.splice(0)) un();
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
+    this.stopUsagePolling();
   }
 
   getState = (): AppState => this.state;
@@ -226,6 +240,22 @@ export class AppStore {
     }
   }
 
+  /**
+   * Re-reads the subscription usage. `refresh` asks the core to query the
+   * harness again (a click on the meters); otherwise its cached value may do.
+   * A failure keeps no values: the meters show "—" with the reason.
+   */
+  async refreshUsage(refresh = false): Promise<void> {
+    if (this.state.usage.loading) return;
+    this.set({ usage: { ...this.state.usage, loading: true } });
+    try {
+      const r = await this.invoke({ type: "get_usage", refresh }, "usage");
+      this.set({ usage: { report: r.usage, error: null, loading: false } });
+    } catch (e) {
+      this.set({ usage: { report: null, error: toCommandError(e).message, loading: false } });
+    }
+  }
+
   dismissError(id: number): void {
     this.set({ errors: this.state.errors.filter((e) => e.id !== id) });
   }
@@ -326,8 +356,10 @@ export class AppStore {
     this.set({ connection: status });
     if (status.state !== "open") {
       if (wasOpen) this.updateProject(clearStreaming);
+      this.stopUsagePolling();
       return;
     }
+    this.startUsagePolling();
     const reconnect = this.everOpen;
     this.everOpen = true;
     const view = this.state.project;
@@ -346,6 +378,17 @@ export class AppStore {
     const last = this.prefs.get(LAST_PROJECT_KEY);
     if (!last || this.state.project || this.state.busy.opening) return;
     if (this.state.projects.some((p) => p.path === last)) await this.openProject(last);
+  }
+
+  private startUsagePolling(): void {
+    void this.refreshUsage();
+    if (this.usageTimer) return;
+    this.usageTimer = setInterval(() => void this.refreshUsage(), USAGE_REFRESH_MS);
+  }
+
+  private stopUsagePolling(): void {
+    if (this.usageTimer) clearInterval(this.usageTimer);
+    this.usageTimer = null;
   }
 
   private scheduleGitRefresh(): void {

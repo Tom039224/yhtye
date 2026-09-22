@@ -37,6 +37,9 @@ pub struct HarnessConfig {
     pub startup_timeout: Duration,
 }
 
+/// The Claude Code ACP adapter run through `npx` (an exact version).
+pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.81.0";
+
 /// Claude Code built-in tools left to the orchestrator (read-only).
 pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
 
@@ -68,7 +71,9 @@ impl HarnessConfig {
             command: "npx".into(),
             args: vec![
                 "-y".into(),
-                "@agentclientprotocol/claude-agent-acp@0.81".into(),
+                // Exact version: `npx -y` runs whatever it resolves, so a range
+                // would pull and execute new releases automatically.
+                CLAUDE_AGENT_ACP.into(),
             ],
             env: BTreeMap::from([
                 ("ANTHROPIC_MODEL".into(), model.into()),
@@ -109,6 +114,28 @@ impl HarnessConfig {
             "claudeCode": { "options": {
                 "strictMcpConfig": true,
                 "tools": ORCHESTRATOR_BUILTIN_TOOLS,
+            } }
+        });
+        h.session_meta = meta.as_object().cloned();
+        h
+    }
+
+    /// [`HarnessConfig::claude_code`] for reading subscription usage with the
+    /// local `/usage` command (`crate::usage`): no tools, no MCP servers, the
+    /// session is not saved to `~/.claude/projects` (`persistSession: false`),
+    /// no mode / model switching (the command never reaches the model), and
+    /// `TZ=UTC` so the adapter prints reset times in UTC.
+    #[must_use]
+    pub fn claude_code_usage_probe() -> Self {
+        let mut h = Self::claude_code("haiku");
+        h.env.insert("TZ".into(), "UTC".into());
+        h.mode_after_new = None;
+        h.model = None;
+        let meta = serde_json::json!({
+            "claudeCode": { "options": {
+                "strictMcpConfig": true,
+                "tools": [],
+                "persistSession": false,
             } }
         });
         h.session_meta = meta.as_object().cloned();

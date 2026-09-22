@@ -113,12 +113,17 @@ pub struct CoreConfig {
     ループが停止完了を先に見て `session_stopped` を `turn_ended` / `exited` より前に出すことがあった
     (負荷時)。`driver::StopOrder` で「停止タスクの完了」と「そのセッションの `Exited` の処理」の
     両方が揃ってから出すようにした。
+- **Stage 6b の決定**:
+  - `GetUsage{refresh?}` → `ApiResponse::Usage{usage: UsageReport{plan, windows[{kind: five_hour|week|other, label, percent,
+    resets_at_ms}], fetched_at_ms}}` (§14)。取れなければ `unavailable` (値は作らない)。
+  - `Core::shutdown` は開いている途中のプロジェクトを待ち (`opening` ロック)、以後の `OpenProject` / `GetUsage` を
+    `unavailable` にし、実行中の使用量プローブを止める (終了と開く処理が競合してエージェントが残る問題、レビューの MEDIUM)。
 - `ApiCommand` (serde `type` タグ): `list_projects` / `open_project{path}` / `get_snapshot{project}` /
   `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
   `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
-  `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a)。
-  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview`。
+  `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b)。
+  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage`。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
@@ -258,6 +263,16 @@ pub struct HarnessConfig {
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
 
+**Stage 6b (セキュリティレビュー)**: エージェントの**プロセス**はプロジェクトではなくユーザーのホーム
+(無ければ `/`) で起動する。作業ディレクトリは ACP の `session/new` / `session/load` の `cwd` でだけ渡す。
+プロジェクトで起動すると、信頼できないリポジトリの `.npmrc` (registry の差し替え) や `node_modules` の
+同名パッケージを `npx` が読み、エージェントが動く前に任意コードが走りうるため。偽エージェントも
+`session/new` / `session/load` の `cwd` に `chdir` する (実エージェントと同じ振る舞い)。
+アダプタは `@agentclientprotocol/claude-agent-acp@0.81.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`)。
+Yhtye 自身の秘密 (`YHTYE_BRIDGE_TOKEN` / `VITE_YHTYE_BRIDGE_TOKEN`) はエージェントの環境から除く。
+回帰テスト `tests/acp_launch.rs`。
+`HarnessConfig::claude_code_usage_probe()` は §14 の使用量取得用 (ツールなし・`persistSession: false`・`TZ=UTC`)。
+
 ### 3.5 Stage 1 で当初案から変えた点 (理由)
 
 | 当初案 | 実装 | 理由 |
@@ -276,7 +291,9 @@ pub struct HarnessConfig {
   ツール側は `Extension<http::request::Parts>` から token を読む
   (rmcp `transport/streamable_http_server/tower.rs:990-1046, 1254`)。
   rmcp は API 変化が速い (9 月だけで 3.2→3.4) のでマイナーまで固定する。
-- 127.0.0.1 のみに bind (ポートは OS 任せ)。rmcp 既定の `allowed_hosts` (localhost 限定) を維持。
+- 127.0.0.1 のみに bind (ポートは OS 任せ)。rmcp 既定の `allowed_hosts` (localhost 限定 = DNS rebinding 対策) を維持。
+  Stage 6b: `enforce_origin_validation()` (許可リストは空) で **`Origin` ヘッダのある要求 (= ブラウザのページ) を 403**。
+  エージェント (Claude Code) は `Origin` を送らない。回帰テスト `mcp_server.rs::browser_requests_with_an_origin_are_forbidden`。
 - **ステートレスモード** (`legacy_session_mode = false`, `json_response = true`) で動かす。
   MCP セッション状態を持たないので `keep_alive` (既定 300 秒) の失効問題自体が無い。
   **識別は毎リクエストの token で行い、MCP セッション状態に依存しない。**
@@ -542,6 +559,14 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- **CSP (Stage 6b)**: `tauri.conf.json` の `app.security.csp` を `null` から
+  `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
+  img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'`
+  に。Tauri が自前のスクリプトに nonce を足す。React の `style={{}}` は CSSOM なので `unsafe-inline` 不要。
+  `devCsp` は設定しない: デスクトップの dev は devUrl (Vite) を直接読み込むので Tauri は CSP を注入しない。
+  本番バンドルに同じ CSP (IPC の代わりに `ws://127.0.0.1:1422`) を HTTP ヘッダで付けて Chrome で動かし、違反なしを確認した。
+  opener の権限は `opener:default` から `allow-open-url` + `allow-default-urls` (http/https/mailto/tel) に絞った
+  (`reveal-item-in-dir` は使わない)。
 - `WEBKIT_DISABLE_DMABUF_RENDERER=1` は従来どおり `src-tauri/.cargo/config.toml` の `[env]`
   (`pnpm tauri dev` = src-tauri での `cargo run` に効く)。配布バイナリでの扱いは未決のまま。
 
@@ -645,3 +670,25 @@ Stage 4 の構成 (`src/`):
 | フロント | `pnpm test` (Vitest) | reducer にイベント列を流す、transport の契約 |
 | 結合 (ブリッジ) | `cargo test -p yhtye-dev-bridge` | 実 WebSocket + 本物のコア + 偽エージェント: アクセス制御・要求-応答・エラー・イベント配信 |
 | E2E | Chrome + WS ブリッジ + 実 Haiku | 依頼 → グループ完了まで (Stage 5 は手動の自動操作) |
+
+## 14. 使用量 / quota (`usage`、Stage 6b)
+
+調べたデータ源 (2026-09-23、Claude Code 2.1.280 / claude-agent-acp 0.81.0):
+
+| 源 | 内容 | 判断 |
+|---|---|---|
+| ACP `usage_update` (live で既に配信) | コンテキストの `used` / `size` とターンの `cost` のみ | quota ではない |
+| `usage_update._meta["_claude/rateLimit"]` | SDK の `rate_limit_event` (`status`, `rateLimitType`, `utilization?`, `resetsAt?`)。**変化したときだけ**・1 窓ずつ | 実機の 1 ターンでは来なかった。常時表示の源にならない (補助には使える) |
+| **`/usage` (ローカルコマンド)** | アダプタが SDK の `usage_EXPERIMENTAL…()` を Markdown に整形: プラン名・5 時間・週 (全モデル)・モデル別週・リセット時刻 | **採用**。モデルを呼ばない。実機で 5〜7 秒 |
+| `~/.claude/.credentials.json` の OAuth トークンで `api/oauth/usage` | 非公開 API + 資格情報の読み出し | 不採用 |
+| statusline の `rate_limits` | 対話 UI の statusline にだけ渡る | 使えない |
+
+実装 (`crates/yhtye-core/src/usage/`):
+- `probe_usage`: `HarnessConfig::claude_code_usage_probe()` (ツール `[]`・MCP なし・`persistSession: false` で
+  `~/.claude/projects` に会話を残さない・mode / model を切り替えない・`TZ=UTC`) を `data_dir/usage-probe` で起動 →
+  `/usage` → 返答の Markdown を `parse_usage_markdown` で読む → 停止。
+- `parse_usage_markdown`: `> Claude <plan> subscription usage` と `**<label>** — **<n>%** · Resets <Mon D, h:mm AM UTC>`。
+  年は表示されないので「今に最も近い年」。読めない行は捨て、何も読めなければ `Unreadable` (**推測しない**)。
+  書式はアダプタのバージョン (固定) に依存する。実機テスト `acp_claude_real::real_usage_command_reports_the_subscription` で検知。
+- `UsageService`: 単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
+- UI: 接続時と 5 分ごとに `get_usage`、メーターのクリックで `refresh: true`。

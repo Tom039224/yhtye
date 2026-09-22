@@ -172,7 +172,7 @@ describe("App", () => {
     expect(screen.getByText(/グループはまだありません/)).toBeInTheDocument();
     expect(screen.getByText("コミットはまだありません。")).toBeInTheDocument();
     expect(screen.getByText("not started")).toBeInTheDocument();
-    // Usage is not read yet (Stage 6b): honest placeholders, no numbers.
+    // The fake core reports no usage: honest placeholders, no numbers.
     expect(screen.getByTestId("usage-5h")).toHaveTextContent("5h—");
     expect(screen.queryByTestId("wait-banner")).not.toBeInTheDocument();
   });

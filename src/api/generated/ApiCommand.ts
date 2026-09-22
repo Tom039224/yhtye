@@ -4,4 +4,4 @@ export type ApiCommand = { "type": "list_projects" } | { "type": "open_project",
 /**
  * Most commits to return (default [`DEFAULT_GRAPH_COMMITS`], at most 500).
  */
-limit?: number, };
+limit?: number, } | { "type": "get_usage", refresh?: boolean, };

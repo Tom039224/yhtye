@@ -9,6 +9,7 @@ import type {
   LoggedEvent,
   ProjectInfo,
   Snapshot,
+  UsageReport,
 } from "../api/generated";
 import { CommandError, type ConnectionStatus, Listeners, type Transport, toCommandError } from "../api/transport";
 
@@ -74,6 +75,8 @@ export class FakeCore {
   pageCap = Number.MAX_SAFE_INTEGER;
   /** Served for `get_git_overview`. */
   git: GitOverview = { head: "main", head_sha: null, branches: [], commits: [], truncated: false };
+  /** Served for `get_usage` (`null`: the core reports it unavailable). */
+  usage: UsageReport | null = null;
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -107,6 +110,9 @@ export class FakeCore {
       }
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
+      case "get_usage":
+        if (!this.usage) throw new CommandError("unavailable", "usage: no harness is configured to report usage");
+        return { type: "usage", usage: this.usage };
       default:
         return { type: "accepted" };
     }

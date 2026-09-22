@@ -2,7 +2,7 @@
 //! and terminate the whole group so wrapper launchers (`npx` → `node`) leave no orphans.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -95,16 +95,38 @@ impl Drop for GroupKillGuard {
     }
 }
 
-/// Launches the harness command in `cwd` as the leader of a new process group.
+/// Environment variables of Yhtye itself that agents must not inherit (the dev
+/// bridge's token would let an agent drive the core directly, bypassing MCP).
+const PRIVATE_ENV: &[&str] = &["YHTYE_BRIDGE_TOKEN", "VITE_YHTYE_BRIDGE_TOKEN"];
+
+/// Directory the agent *process* starts in: the user's home (or `/`), never the
+/// project. The session's working directory (`cwd`) reaches the agent through
+/// ACP (`session/new` / `session/load`). Starting in the project would let an
+/// untrusted repository steer the launcher before any agent runs — e.g. `npx`
+/// reads the project's `.npmrc` (registry) and prefers its `node_modules`
+/// (`core-design.md` §3.4, Stage 6b security review).
+fn launch_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// Launches the harness command as the leader of a new process group, for a
+/// session that will work in `cwd` (see [`launch_dir`]).
 pub(crate) fn spawn_process(
     harness: &HarnessConfig,
     cwd: &Path,
     events: UnboundedSender<AgentEvent>,
 ) -> Result<AgentProcess, AgentError> {
+    let launch = launch_dir();
     let mut cmd = Command::new(&harness.command);
+    for name in PRIVATE_ENV {
+        cmd.env_remove(name);
+    }
     cmd.args(&harness.args)
         .envs(&harness.env)
-        .current_dir(cwd)
+        .current_dir(&launch)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -114,9 +136,13 @@ pub(crate) fn spawn_process(
         command: harness.command.clone(),
         message,
     };
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| spawn_error(format!("{e} (cwd: {})", cwd.display())))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        spawn_error(format!(
+            "{e} (started in {} for a session in {})",
+            launch.display(),
+            cwd.display()
+        ))
+    })?;
     let group = GroupKillGuard {
         pgid: child
             .id()

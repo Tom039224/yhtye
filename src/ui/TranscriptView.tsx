@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { State } from "../api/generated";
 import type { TranscriptItem } from "../store/transcript";
 import { formatTime } from "./labels";
+import { Markdown } from "./Markdown";
 
 interface Props {
   items: TranscriptItem[];
@@ -30,7 +31,9 @@ export function TranscriptView({ items, streaming, agentLabel, queued, state, be
       {streaming?.message ? (
         <div className="msg msg-agent" data-testid="streaming">
           <div className="msg-label msg-label-agent">{agentLabel.toUpperCase()} · …</div>
-          <div className="msg-body">{streaming.message}</div>
+          <div className="msg-body msg-md">
+            <Markdown text={streaming.message} />
+          </div>
         </div>
       ) : null}
     </div>
@@ -115,7 +118,9 @@ function Item({
           <div className="msg-label msg-label-agent">
             {agentLabel.toUpperCase()} · {formatTime(item.ts)}
           </div>
-          <div className="msg-body">{item.text}</div>
+          <div className="msg-body msg-md">
+            <Markdown text={item.text} />
+          </div>
         </div>
       );
     case "tool":

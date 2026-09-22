@@ -9,9 +9,10 @@ use tokio::process::Command;
 /// Longest a single git command may take (git runs inside the runtime loop).
 pub(super) const GIT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Environment variables that would point git at another repository (e.g. when
-/// Yhtye itself runs inside a git hook). They are removed for every command.
-const REPO_ENV: [&str; 7] = [
+/// Environment variables that would point git at another repository or inject
+/// configuration (e.g. when Yhtye itself runs inside a git hook or under
+/// `git -c`). They are removed for every command.
+const REPO_ENV: [&str; 9] = [
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",
@@ -19,6 +20,8 @@ const REPO_ENV: [&str; 7] = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
 ];
 
 /// Output of a finished git command.

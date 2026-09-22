@@ -12,6 +12,7 @@ use super::{ApiEventBody, Snapshot};
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
 use crate::store::{StoreError, StoredEvent};
+use crate::usage::UsageReport;
 
 /// Default page size of [`ApiCommand::ListEvents`].
 pub const DEFAULT_EVENT_PAGE: u32 = 500;
@@ -83,6 +84,15 @@ pub enum ApiCommand {
         #[ts(optional)]
         limit: Option<u32>,
     },
+    /// Subscription usage / quota of the harness (5-hour and weekly windows,
+    /// plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
+    /// the cached report is only seconds old. `unavailable` when the harness
+    /// does not report it.
+    GetUsage {
+        #[serde(default)]
+        #[ts(optional)]
+        refresh: Option<bool>,
+    },
 }
 
 /// Default number of commits of [`ApiCommand::GetGitOverview`].
@@ -146,6 +156,9 @@ pub enum ApiResponse {
     Accepted,
     GitOverview {
         git: GitOverview,
+    },
+    Usage {
+        usage: UsageReport,
     },
 }
 

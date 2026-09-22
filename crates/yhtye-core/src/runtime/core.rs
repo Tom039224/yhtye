@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::broadcast;
@@ -20,10 +21,14 @@ use crate::api::{
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::store::{ProjectRecord, Store, db_path};
+use crate::usage::UsageService;
 
 /// How many events a slow subscriber may fall behind before it misses some
 /// (it then sees a `seq` gap and catches up with `ListEvents`).
 const EVENT_BUFFER: usize = 4096;
+
+/// Working directory of the usage probe agent, under the data directory.
+const USAGE_PROBE_DIR: &str = "usage-probe";
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -38,6 +43,9 @@ pub struct CoreConfig {
     /// Where each project's MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
     pub domain: DomainConfig,
+    /// Harness asked for subscription usage (`ApiCommand::GetUsage`); `None`
+    /// answers `unavailable`.
+    pub usage: Option<HarnessConfig>,
 }
 
 impl CoreConfig {
@@ -51,6 +59,7 @@ impl CoreConfig {
             reviewer: HarnessConfig::claude_code(model),
             mcp_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             domain: DomainConfig::default(),
+            usage: Some(HarnessConfig::claude_code_usage_probe()),
         }
     }
 }
@@ -68,6 +77,9 @@ struct Inner {
     /// Serializes `OpenProject` (starting an orchestrator takes a while).
     opening: tokio::sync::Mutex<()>,
     events: broadcast::Sender<ApiEvent>,
+    usage: UsageService,
+    /// Set by `shutdown`: no project may be opened any more.
+    closed: AtomicBool,
 }
 
 impl Core {
@@ -75,6 +87,7 @@ impl Core {
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
+        let usage = UsageService::new(cfg.usage.clone(), cfg.data_dir.join(USAGE_PROBE_DIR));
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -82,6 +95,8 @@ impl Core {
                 open: Mutex::new(HashMap::new()),
                 opening: tokio::sync::Mutex::new(()),
                 events,
+                usage,
+                closed: AtomicBool::new(false),
             }),
         })
     }
@@ -155,6 +170,15 @@ impl Core {
             ApiCommand::GetGitOverview { project, limit } => Ok(ApiResponse::GitOverview {
                 git: self.git_overview(&project, limit).await?,
             }),
+            ApiCommand::GetUsage { refresh } => {
+                let usage = self
+                    .inner
+                    .usage
+                    .get(refresh.unwrap_or(false))
+                    .await
+                    .map_err(|e| ApiError::unavailable(format!("usage: {e}")))?;
+                Ok(ApiResponse::Usage { usage })
+            }
         }
     }
 
@@ -200,8 +224,13 @@ impl Core {
             .map_err(orch_error)
     }
 
-    /// Stops every open project's agents and MCP server.
+    /// Stops every open project's agents and MCP server, and a running usage
+    /// probe. Waits for a project that is being opened (it is not left running)
+    /// and refuses later opens.
     pub async fn shutdown(&self) {
+        self.inner.closed.store(true, Ordering::SeqCst);
+        self.inner.usage.close().await;
+        let _opening = self.inner.opening.lock().await;
         let open: Vec<Arc<Orchestration>> = self.lock_open().drain().map(|(_, o)| o).collect();
         for orch in open {
             orch.shutdown().await;
@@ -220,6 +249,9 @@ impl Core {
     async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
         let dir = repository_root(path).await?;
         let _guard = self.inner.opening.lock().await;
+        if self.inner.closed.load(Ordering::SeqCst) {
+            return Err(ApiError::unavailable("Yhtye is shutting down"));
+        }
         let records = self.inner.store.projects().await?;
         let record = match records.iter().find(|r| r.path == dir) {
             Some(r) => r.clone(),
@@ -371,17 +403,11 @@ async fn repository_root(path: &str) -> Result<PathBuf, ApiError> {
             dir.display()
         )));
     }
-    let out = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(&dir)
-        .args(["rev-parse", "--show-toplevel"])
-        .env("LC_ALL", "C")
-        .output()
+    let top = git::show_toplevel(&dir)
         .await
-        .map_err(|e| ApiError::internal(format!("could not run git: {e}")))?;
-    let top = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let top = std::fs::canonicalize(&top).unwrap_or_else(|_| PathBuf::from(&top));
-    if !out.status.success() || top != dir {
+        .map_err(|e| ApiError::internal(format!("could not run git: {e}")))?
+        .map(|top| std::fs::canonicalize(&top).unwrap_or(top));
+    if top.as_deref() != Some(dir.as_path()) {
         return Err(ApiError::invalid_argument(format!(
             "{} is not the top directory of a git repository",
             dir.display()

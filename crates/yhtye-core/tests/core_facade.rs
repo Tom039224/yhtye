@@ -31,6 +31,7 @@ fn core_config(r: &TempRepo, orch: Value, implementer: Value, reviewer: Value) -
     cfg.orchestrator = fake_harness(orch);
     cfg.implementer = fake_harness(implementer);
     cfg.reviewer = fake_harness(reviewer);
+    cfg.usage = None;
     cfg
 }
 
@@ -552,4 +553,115 @@ async fn the_git_overview_shows_branches_and_the_commit_graph() {
     };
     assert_eq!(error_code(&core, unknown).await, ApiErrorCode::NotFound);
     core.shutdown().await;
+}
+
+/// `/usage` output of claude-agent-acp 0.81 (reset times in UTC, as the probe asks).
+const USAGE_MARKDOWN: &str = "## Usage\n\n> Claude max subscription usage\n\n### Limits\n\n\
+**5-hour limit** — **77%** · Resets Sep 22, 10:50 PM UTC\n\n`███████████████░░░░░`\n\n\
+**Weekly · all models** — **40%** · Resets Sep 24, 5:00 PM UTC\n\n`████████░░░░░░░░░░░░`\n";
+
+async fn usage(core: &Core, refresh: bool) -> yhtye_core::usage::UsageReport {
+    match run(
+        core,
+        ApiCommand::GetUsage {
+            refresh: Some(refresh),
+        },
+    )
+    .await
+    {
+        ApiResponse::Usage { usage } => usage,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn usage_is_read_from_the_harness_usage_command_and_cached() {
+    use yhtye_core::usage::UsageWindowKind;
+    let r = TempRepo::new();
+    let mut cfg = core_config(
+        &r,
+        json!({"turns": []}),
+        json!({"turns": []}),
+        json!({"turns": []}),
+    );
+    cfg.usage = Some(fake_harness(json!({"turns": [
+        {"match": "/usage", "actions": [{"message": USAGE_MARKDOWN}]}
+    ]})));
+    let core = Core::start(cfg).await.expect("core");
+
+    let first = usage(&core, false).await;
+    assert_eq!(first.plan.as_deref(), Some("max"));
+    let five = first.window(UsageWindowKind::FiveHour).expect("5h");
+    assert!((five.percent - 77.0).abs() < f64::EPSILON);
+    assert!(five.resets_at_ms.is_some());
+    let week = first.window(UsageWindowKind::Week).expect("week");
+    assert!((week.percent - 40.0).abs() < f64::EPSILON);
+    // Cached: neither a plain read nor an immediate refresh starts another agent.
+    assert_eq!(usage(&core, false).await, first);
+    assert_eq!(usage(&core, true).await, first);
+    // The probe's agent was stopped (the data dir holds only its empty cwd).
+    assert!(r.data.join("usage-probe").is_dir());
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn usage_is_unavailable_rather_than_guessed() {
+    let r = TempRepo::new();
+    // No harness configured.
+    let core = Core::start(core_config(
+        &r,
+        json!({"turns": []}),
+        json!({"turns": []}),
+        json!({"turns": []}),
+    ))
+    .await
+    .expect("core");
+    let cmd = ApiCommand::GetUsage { refresh: None };
+    assert_eq!(
+        error_code(&core, cmd.clone()).await,
+        ApiErrorCode::Unavailable
+    );
+    core.shutdown().await;
+
+    // The harness answers something that is not the usage Markdown.
+    let other = TempRepo::new();
+    let mut cfg = core_config(
+        &other,
+        json!({"turns": []}),
+        json!({"turns": []}),
+        json!({"turns": []}),
+    );
+    cfg.usage = Some(fake_harness(json!({"turns": [
+        {"match": "/usage", "actions": [{"message": "Unknown command: /usage"}]}
+    ]})));
+    let core = Core::start(cfg).await.expect("core");
+    let err = core.command(cmd).await.expect_err("unreadable");
+    assert_eq!(err.code, ApiErrorCode::Unavailable);
+    assert!(err.message.contains("could not be read"), "{err}");
+    core.shutdown().await;
+}
+
+/// After `shutdown` nothing may start agents again (an open that raced the
+/// shutdown would otherwise leave an orchestrator running after exit).
+#[tokio::test]
+async fn nothing_opens_after_shutdown() {
+    let r = TempRepo::new();
+    let mut cfg = core_config(
+        &r,
+        json!({"turns": []}),
+        json!({"turns": []}),
+        json!({"turns": []}),
+    );
+    cfg.usage = Some(fake_harness(json!({"turns": []})));
+    let core = Core::start(cfg).await.expect("core");
+    core.shutdown().await;
+    let cmd = ApiCommand::OpenProject {
+        path: r.repo.display().to_string(),
+    };
+    assert_eq!(error_code(&core, cmd).await, ApiErrorCode::Unavailable);
+    let err = core
+        .command(ApiCommand::GetUsage { refresh: None })
+        .await
+        .expect_err("closed");
+    assert!(err.message.contains("shutting down"), "{err}");
 }

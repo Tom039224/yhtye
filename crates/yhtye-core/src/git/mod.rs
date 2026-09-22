@@ -16,6 +16,14 @@ pub use graph::{GitBranch, GitCommit, GitOverview, MAX_GRAPH_COMMITS, overview};
 
 use crate::domain::{GitOp, GitResult};
 
+/// The top-level directory of the work tree containing `dir` (`None`: not in
+/// a git work tree). Runs with the same clean environment as every git command.
+pub async fn show_toplevel(dir: &Path) -> Result<Option<PathBuf>, String> {
+    let out = run::git(dir, &["rev-parse", "--show-toplevel"]).await?;
+    let top = out.stdout.trim();
+    Ok((out.ok && !top.is_empty()).then(|| PathBuf::from(top)))
+}
+
 /// Runs git for the orchestration. Every method is called from the runtime loop
 /// and should finish quickly (plain git commands, no network).
 #[async_trait]

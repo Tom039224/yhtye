@@ -86,6 +86,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         .on_receive_request(
             async move |req: NewSessionRequest, responder, _cx| {
                 gate(&f2, "session/new").await?;
+                enter_session_dir(&req.cwd)?;
                 let id = format!("fake-{}", std::process::id());
                 f2.remember_session(&id, req.meta.as_ref());
                 f2.remember_mcp(&req.mcp_servers);
@@ -100,6 +101,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         .on_receive_request(
             async move |req: LoadSessionRequest, responder, cx| {
                 gate(&f3, "session/load").await?;
+                enter_session_dir(&req.cwd)?;
                 f3.remember_session(&req.session_id.0, req.meta.as_ref());
                 f3.remember_mcp(&req.mcp_servers);
                 let replay = format!("replayed history of {}", req.session_id.0);
@@ -454,6 +456,13 @@ async fn request_permission(
         RequestPermissionOutcome::Selected(s) => format!("permission:selected:{}", s.option_id.0),
         _ => "permission:cancelled".into(),
     })
+}
+
+/// Works in the session's directory like a real agent (Yhtye starts agent
+/// processes elsewhere and passes the working directory only through ACP);
+/// `write_file`, `run` and `spawn_child` then act relative to it.
+fn enter_session_dir(cwd: &std::path::Path) -> Result<(), Error> {
+    std::env::set_current_dir(cwd).map_err(Error::into_internal_error)
 }
 
 /// Runs `argv` in the agent's working directory; reports `run:<exit code>`.

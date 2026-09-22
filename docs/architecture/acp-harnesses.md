@@ -136,7 +136,7 @@ Yhtye での Claude Code 用 `HarnessConfig` (初期値):
 ```toml
 [harness.claude-code]
 command = "npx"
-args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81"]
+args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81.0"]   # Stage 6b で完全一致に固定 (npx -y は解決したものを実行するため)
 env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1" }  # §5.2
 mode_after_new = "bypassPermissions"
 model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する

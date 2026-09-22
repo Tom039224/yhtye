@@ -8,6 +8,7 @@
 //! - [`prompts`]: role system prompts
 //! - [`store`]: SQLite persistence (event log + current-state tables)
 //! - [`runtime`]: the loop that ties sessions, MCP, git and the state machine together
+//! - [`usage`]: subscription usage / quota read from the harness
 
 pub mod acp;
 pub mod api;
@@ -17,3 +18,4 @@ pub mod mcp;
 pub mod prompts;
 pub mod runtime;
 pub mod store;
+pub mod usage;

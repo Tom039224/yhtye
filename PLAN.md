@@ -22,7 +22,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 4 | フロントエンド (素の UI) | **完了** |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | **完了** (アプリ内 UI の手動確認は残り) |
 | 6a | Claude Design の適用・UX / 堅牢性の修正 | **完了** |
-| 6b | 残機能 (使用量 / quota、runs 履歴ビューほか) | 未着手 |
+| 6b | Markdown 描画・使用量 / quota・ブランチ全体のレビュー | **完了** (設計判断が要る残機能は下の未決事項へ) |
 
 ## 再開の仕方
 
@@ -456,14 +456,33 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - git はループ内で await (大きなリポジトリで遅い場合はタスク化を検討)。
   - UI の git グラフ (Stage 6) はブランチ名 `yhtye/G-n` / `yhtye/G-n-T-m` を前提にできる。
 
-**未決事項 (ユーザー判断待ち)**
+**未決事項 (ユーザー判断待ち)** — 全 Stage 分をここにまとめる (朝の要約: [`docs/rebuild-summary.md`](docs/rebuild-summary.md))
 
-- Yhtye が起動するエージェントに**ユーザー自身の `~/.claude`** (CLAUDE.md・フック・プラグイン・
-  スキル) を効かせるか。現状は MCP サーバーだけ隔離し、それ以外は読み込んだまま
-  (orchestration-model §11)。ユーザーの全体ルール (例: 「planner エージェントを使え」) が
-  サブエージェントの動きを変えうる。`settingSources` を `["project", "local"]` に絞る案あり。
-  **3a では挙動を変えていない。** 3c の実 Haiku で、レビュアーがユーザーの Python コーディング
-  ルール (型注釈必須) を根拠に毎回 `needs_changes` を出すことを確認した (実害は 1 往復の増加)。
+1. **ユーザー自身の `~/.claude` (CLAUDE.md・フック・プラグイン・スキル) を Yhtye のエージェントに効かせるか。**
+   現状は MCP サーバーだけ隔離し、それ以外は読み込んだまま (orchestration-model §11)。3c の実 Haiku で、
+   レビュアーがユーザーの Python ルール (型注釈必須) を根拠に毎回 `needs_changes` を出すことを確認 (1 往復増)。
+   案: (a) 現状維持 (b) `settingSources: ["project", "local"]` に絞る (c) 設定で切替。**推奨: (c)、既定は (b)** —
+   Yhtye の役割プロンプトと衝突するルールで挙動が読めなくなるのを避け、必要な人だけ有効にする。
+2. **runs (履歴) ビューの中身** (デザインは「現状は何もありません」だけ)。案: (a) 過去のグループ一覧
+   (状態・所要時間・マージ先・タスク数) → クリックで会話のその位置へ (b) (a) + セッションごとのターン・コスト
+   (c) 全イベントの時系列ログ。**推奨: (a)** — データは既に `State.groups` / イベントログにあり、追加コマンド不要。
+3. **「対処の内容を見る」「差分を見る」の遷移先。** 案: (a) 対処の内容 = help の本文と返答の詳細パネル、
+   差分 = タスクブランチの `git diff merge-base..branch` をエージェント出力の位置にタブで (b) 外部の diff ツールを開く
+   (c) ボタンを出さない。**推奨: (a)** — 差分は `GetGitOverview` と同じ読み取り専用コマンド `GetDiff{project, branch}` を足すだけ。
+4. **他ハーネス (Codex / Gemini CLI 等) の追加。** 案: (a) 役割ごとにハーネスを選べる設定 (`HarnessConfig` は既に
+   設定だけで足せる形) (b) 当面 Claude Code のみ。**推奨: (b) を続け、要望が来たら (a)** — 実機検証 (モード名・MCP・
+   `session/load`・履歴再生の順序) がハーネスごとに要る。Stage 6b でプロセスをホームで起動するようにしたため、
+   ACP の `cwd` を守らないハーネスは使えない点も確認項目。
+5. **配布バイナリでの `WEBKIT_DISABLE_DMABUF_RENDERER` (Wayland + NVIDIA)。** 案: (a) 起動時に Rust で
+   NVIDIA + Wayland を検出したときだけ設定 (b) 常に設定 (c) `.desktop` に書く。**推奨: (a)** — 他環境の GPU 描画を保つ。
+6. **使用量の取得頻度** (Stage 6b)。現状: 接続時 + 5 分ごと + クリックで `/usage` 用の短命エージェントを起動
+   (約 5〜7 秒、モデル呼び出しなし)。案: (a) 現状 (b) 手動のみ (c) オーケストレータのターン終了時。**推奨: (a)**。
+7. **dev ブリッジのトークンを Vite のバンドルに埋めている件** (レビュー LOW、開発専用)。同じマシンの他ユーザーが
+   `localhost:1420` から読める。案: (a) 単一ユーザー機専用と明記して現状維持 (b) URL の `#token=` で渡す。**推奨: (a)**
+   (配布物には含まれない)。
+8. 以前からの要確認: タスクブランチ名 `yhtye/<G>-<T>` (3c)、UI からの中止経路 (4)、ブリッジのポート 1422 と
+   Origin の無い接続をトークンだけで通す点 (5、6b のレビューで「ブラウザは WS に必ず Origin を付けるので安全」と確認)、
+   デザインに無い要素の追加 (6a)。**`pnpm tauri dev` のウィンドウ内での手動確認も未実施。**
 
 ## Stage 4 — フロントエンド (素の UI)
 
@@ -697,12 +716,54 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   配布ビルドの課題 (DMABUF)。**`pnpm tauri dev` のウィンドウ内での確認は引き続きユーザーの手動確認待ち**。
   未決事項 (`~/.claude` の扱い) は変わらず。
 
-### Stage 6b — 残機能 (未着手)
+### Stage 6b — Markdown・使用量・ブランチ全体のレビュー (完了)
 
-**範囲** (実運用を見て優先度を決める)
-- 使用量 / quota 表示 (`usage_update`、`_meta.quota`)、runs (履歴) ビュー、差分表示、
-  他ハーネスの追加 (設定のみで足せることの確認)、配布ビルドの課題 (Wayland + NVIDIA 回避策の扱いなど)。
+**範囲** (オーケストレータの判断で絞った): オーケストレータ / エージェントの本文の Markdown 描画、使用量 / quota メーターを
+実データで、`main...rebuild` 全体のセキュリティ・品質レビューと修正。設計判断が要るもの (runs ビュー、「対処の内容を見る /
+差分を見る」、他ハーネス、配布の DMABUF) は上の**未決事項**へ。
 
-**完了条件**
-- 各機能について実データで表示されることを Chrome E2E で確認。デザイン仕様との差分を
-  `docs/design/` に記録。
+**結果メモ (2026-09-23)**
+
+- **Markdown** (`src/ui/Markdown.tsx`): react-markdown 10 + remark-gfm。`rehype-raw` なし + `skipHtml` (生 HTML は
+  要素にならない)、URL は http(s)/mailto のみ (Tauri では opener で外部に開く、webview は遷移しない)、画像は読み込まず
+  `[alt]`。会話とエージェント出力のエージェント発話 (ストリーミング中も) に適用。コード・表・引用はトークンの色。
+  Vitest 5 件 (書式・閉じていないフェンスのストリーミング・**XSS** (`<script>` / `onerror` / `javascript:` / `data:`) ・URL)。
+- **使用量 / quota** (`crates/yhtye-core/src/usage/`、設計 [`core-design.md`](docs/architecture/core-design.md) §14):
+  データ源を調査し、**Claude Code の `/usage` (ローカルコマンド、モデル呼び出しなし) を短命の ACP セッションで実行して
+  アダプタの Markdown を読む**方式を採用。`usage_update` はコンテキスト量とコストだけ、`_claude/rateLimit` は変化時のみで
+  常時表示には使えない、OAuth の非公開 API は不採用。`ApiCommand::GetUsage{refresh?}` (キャッシュ 60 秒・単一実行)。
+  UI: ステータスバー左にプラン名 (`claude max`)、右のメーターに実値と `(3h 35m)`、クリックで再取得、取れなければ「—」+ 理由。
+  実機: `real_usage_command_reports_the_subscription` 成功 (約 5〜7 秒、`~/.claude/projects` に会話は残らない)。
+  **観察: 作業開始時点で週 (全モデル) が 99%、終了時に 100% 表示** (5 時間枠はリセット直後)。実 Haiku テストは最小限にした。
+- **レビュー** (security-reviewer / code-reviewer、opus): CRITICAL / HIGH なし。直したもの:
+  - [M] エージェントの**プロセス**をプロジェクトで起動していた → 悪意あるリポジトリの `.npmrc` / `node_modules` で `npx` が
+    任意コードを実行しうる。ホーム (無ければ `/`) で起動し、作業ディレクトリは ACP の `cwd` だけで渡す。アダプタを
+    `@0.81.0` に完全一致で固定 (`tests/acp_launch.rs`)。偽エージェントはセッションの `cwd` に chdir。
+  - [M] Tauri の CSP が `null` → 厳格な CSP を設定 (`core-design.md` §9)。本番バンドル + 同 CSP ヘッダで Chrome の違反 0 を確認。
+  - [M] 終了と開く処理の競合でエージェントが残りうる / 使用量プローブが終了後も残りうる・失敗をキャッシュしない →
+    `Core::shutdown` が開く処理を待ち以後を拒否、プローブを `CancellationToken` で停止、失敗も 10 秒キャッシュ (`nothing_opens_after_shutdown`)。
+  - [L] エージェントの環境からブリッジのトークンを除く / MCP サーバーは `Origin` 付き要求を 403 (`browser_requests_with_an_origin_are_forbidden`) /
+    opener の権限を URL を開くだけに / `repository_root` も git の環境掃除を通す・`GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT` を除く /
+    起動失敗のメッセージに起動ディレクトリ。
+  - 確認して問題なし: WS ブリッジ (127.0.0.1・128bit トークンの定数時間比較・Origin 完全一致・Origin 無しはブラウザからは不可能)、
+    MCP (127.0.0.1・トークン失効・rmcp の Host 検査・本文サイズ制限)、git の引数 (argv 渡し・ブランチ名はコア生成)、
+    `open_project` のパス (canonicalize + toplevel 一致)。800 行超のファイルなし、実行時に落ちうる unwrap なし。
+  - 残した LOW (理由): ブリッジのトークンが Vite バンドルに入る (開発専用、未決 7) / `GroupKillGuard` が pgid 再利用で
+    無関係のグループを kill しうる (確率極小) / `RUST_LOG=trace` で ACP ライブラリが MCP の URL (トークン) を出しうる (明示的な
+    opt-in) / 終了時に古い停止が新しいセッションを `stopped` にしうる (再起動時に `session/load` せず新規になるだけ) /
+    終了が起動中のセッションで最大 120 秒待つ / `StopOrder` の小さなエントリが残りうる / ストリーミング中の Markdown は
+    チャンクごとに全文を再解析 (長文で重くなったら間引く) / opener の失敗は黙って無視 / `investigate` タスクも書き込み可能、
+    オーケストレータの `Read` は任意のファイルを読める (設計上の前提として記録)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 182 件成功 × 3 回 (新規: usage parse 5、core_facade 3 = 使用量の取得とキャッシュ /
+    取れないときは unavailable / shutdown 後は開かない、mcp_server 1、acp_launch 1)。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
+  - `pnpm test` → 10 ファイル 63 件成功 (新規: Markdown 5、StatusBar 4)。`pnpm build` 成功。
+  - 実 Haiku (週の quota が 99〜100% のため、変更した経路に絞った): `real_bypass_mode_writes_file` (プロセスをホームで
+    起動してもセッションの cwd にファイルが作られる)、`real_orchestrator_creates_task_and_sub_agent_reports_back`
+    (MCP の Origin 検査下で実 Claude Code がツールを呼べる)、`real_usage_command_reports_the_subscription` (2 回) — すべて成功。
+    **全 11 件の再実行はしていない** (quota)。終了後 `claude-agent-acp` 残存 0。
+  - Chrome (WS ブリッジ + 本番バンドル + CSP ヘッダ + 実 Haiku): プロジェクトを開き「見出し・太字・箇条書き・インラインコード・
+    コードブロック・表」の返答を依頼 → 正しく描画、ステータスバーに `claude max`・5h 4% (4h 52m)・week 100% (1d 18h)、
+    コンソールに CSP 違反なし。スクリーンショット [`docs/e2e/stage6b/1-markdown-and-usage.jpg`](docs/e2e/stage6b/1-markdown-and-usage.jpg)。
+    ブリッジ・プレビューは停止済み。

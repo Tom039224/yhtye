@@ -3,9 +3,10 @@ import type { GitOverview } from "./GitOverview";
 import type { LoggedEvent } from "./LoggedEvent";
 import type { ProjectInfo } from "./ProjectInfo";
 import type { Snapshot } from "./Snapshot";
+import type { UsageReport } from "./UsageReport";
 
 export type ApiResponse = { "type": "projects", projects: Array<ProjectInfo>, } | { "type": "project", project: ProjectInfo, } | { "type": "snapshot", snapshot: Snapshot, } | { "type": "events", events: Array<LoggedEvent>, 
 /**
  * More events follow (the page was full).
  */
-more: boolean, } | { "type": "accepted" } | { "type": "git_overview", git: GitOverview, };
+more: boolean, } | { "type": "accepted" } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, };
