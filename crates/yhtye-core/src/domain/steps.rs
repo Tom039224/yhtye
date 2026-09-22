@@ -30,6 +30,16 @@ pub fn normalize_steps(kind: TaskKind, steps: &[StepSpec]) -> Result<Vec<StepSpe
     Ok(out)
 }
 
+/// Validates the replacement for the not-yet-started steps of a task
+/// (`modify_steps`). Same rules as [`normalize_steps`], except that an empty list
+/// is allowed: it becomes just the final `done`.
+pub fn normalize_tail(kind: TaskKind, steps: &[StepSpec]) -> Result<Vec<StepSpec>, ToolError> {
+    if steps.is_empty() {
+        return Ok(vec![StepSpec::new(StepKind::Done)]);
+    }
+    normalize_steps(kind, steps)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +80,14 @@ mod tests {
             let err = normalize_steps(*kind, &specs(steps)).expect_err("must be rejected");
             assert_eq!(err.code, ErrorCode::InvalidArgument, "{steps:?}");
         }
+    }
+
+    #[test]
+    fn empty_tail_becomes_done_but_rules_still_apply() {
+        use StepKind::*;
+        let out = normalize_tail(TaskKind::Code, &[]).expect("valid");
+        assert_eq!(kinds(&out), vec![Done]);
+        let err = normalize_tail(TaskKind::Code, &specs(&[Done, Implement])).expect_err("bad");
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
     }
 }

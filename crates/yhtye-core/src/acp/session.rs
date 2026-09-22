@@ -273,12 +273,18 @@ impl CommandLoop {
         let request = PromptRequest::new(self.session.clone(), blocks);
         let spawned = self.cx.spawn(async move {
             let result = cx.send_request(request).block_task().await;
-            let result = result
-                .map(|r| r.stop_reason)
-                .map_err(|e| AgentError::Request {
-                    method: "session/prompt".into(),
-                    message: e.to_string(),
-                });
+            // A process that dies mid-turn fails the request with "incoming
+            // transport closed"; report that as `Closed` like the exit path does.
+            let result = result.map(|r| r.stop_reason).map_err(|e| {
+                if agent_client_protocol::is_incoming_transport_closed(&e) {
+                    AgentError::Closed
+                } else {
+                    AgentError::Request {
+                        method: "session/prompt".into(),
+                        message: e.to_string(),
+                    }
+                }
+            });
             turn.end(&events, result);
             Ok(())
         });

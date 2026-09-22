@@ -49,6 +49,8 @@ Project (git リポジトリ 1 つ)
 
 - **active なグループはプロジェクトごとに最大 1 つ。** データモデル上は複数持てるが、
   `create_group` 時の 1 か所のチェックでのみ制約する (将来の並行グループに備える)。
+  マージ中 (`finishing`) も数える。`merge_blocked` は数えない (ユーザーが整えるまで次の依頼を
+  止めないため。Stage 3a で明確化)。
 - 全タスクが終端 (`done` / `cancelled`) になると Yhtye はオーケストレータを起こす。
   オーケストレータはタスクを追加するか、`finish_group` を呼ぶ。
 - `finish_group` で Yhtye は `group_branch` を `base_branch` に自動マージする (§6)。
@@ -184,6 +186,18 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
   (`kind = agent_stopped`)。
 - エージェントプロセスが異常終了した場合は `help` (`kind = agent_crashed`)。
 
+Stage 3a で明確化した細部:
+
+- 「呼ばれたか」はドメイン状態で判定する (Step が `done` なら報告済み、タスクが `handling` なら
+  help 済み)。催促の回数は Step ごとに数え、help への返答 (新しいプロンプト) で 0 に戻る。
+- `cancelled` で終わったターン (Yhtye がタスクを止めた) は何もしない。
+- サブエージェントの**起動失敗**も `agent_crashed`。
+- 返答待ち (`help` 後) の間にそのエージェントのプロセスが死んだ場合は新しい help を上げず、
+  既存の help に「エージェント喪失」を記録する。`answer_help(resume)` は返答をプロンプトで送る
+  代わりに、新しいセッションで Step をやり直す (返答は note として付く)。
+- Yhtye 起因の help (`protocol_violation` / `agent_crashed` 等) の `resume` は最初の未完了 Step を
+  新しいプロンプトでやり直す (セッションが生きていれば同じセッション、死んでいれば新規)。
+
 ## 8. 権限とシステムプロンプト
 
 - **権限は自動承認。** ACP `session/request_permission` には、選択肢のうち `kind` が
@@ -266,3 +280,4 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
   (`strictMcpConfig`、[`acp-harnesses.md`](acp-harnesses.md) §5.2)、それ以外は読み込んだまま。
   ユーザーの全体ルール (例: 「planner エージェントを使え」) がサブエージェントの動きを変えうる。
   `settingSources` を `["project", "local"]` に絞るかはユーザーと決める。
+  **(未決。Stage 3a 時点でも現状の挙動 = 読み込んだまま を維持。PLAN.md の未決事項に記載)**

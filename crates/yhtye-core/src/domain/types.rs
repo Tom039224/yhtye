@@ -95,13 +95,31 @@ pub enum Verdict {
     NeedsChanges,
 }
 
-/// Kinds of `help` an agent can raise (Yhtye-raised kinds are added in Stage 3).
+/// Kinds of `help` an agent can raise with the `help` tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHelpKind {
+    Blocked,
+    Question,
+    Policy,
+}
+
+/// Every kind of help: the agent kinds plus the ones Yhtye raises itself
+/// (`mcp-tools.md` §4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HelpKind {
     Blocked,
     Question,
     Policy,
+    MergeConflict,
+    ReviewRoundsExhausted,
+    ProtocolViolation,
+    AgentStopped,
+    AgentCrashed,
+    DirtyReadonlyTree,
+    /// A git operation failed for a reason other than a conflict (Stage 3a addition).
+    GitFailed,
 }
 
 impl HelpKind {
@@ -111,6 +129,23 @@ impl HelpKind {
             Self::Blocked => "blocked",
             Self::Question => "question",
             Self::Policy => "policy",
+            Self::MergeConflict => "merge_conflict",
+            Self::ReviewRoundsExhausted => "review_rounds_exhausted",
+            Self::ProtocolViolation => "protocol_violation",
+            Self::AgentStopped => "agent_stopped",
+            Self::AgentCrashed => "agent_crashed",
+            Self::DirtyReadonlyTree => "dirty_readonly_tree",
+            Self::GitFailed => "git_failed",
+        }
+    }
+}
+
+impl From<AgentHelpKind> for HelpKind {
+    fn from(kind: AgentHelpKind) -> Self {
+        match kind {
+            AgentHelpKind::Blocked => Self::Blocked,
+            AgentHelpKind::Question => Self::Question,
+            AgentHelpKind::Policy => Self::Policy,
         }
     }
 }

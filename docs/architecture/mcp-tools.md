@@ -59,7 +59,7 @@ type Verdict = "approve" | "needs_changes";
 | 引数 | `title: string` (必須), `summary?: string` |
 | 戻り値 | `{ group_id, group_branch, base_branch }` |
 | 遷移 | 新しい Group を `active` で作成。group ブランチと統合 worktree を作る |
-| エラー | `conflict` (プロジェクトに active なグループが既にある), `invalid_state` (メイン作業ツリーが detached HEAD 等で base ブランチを決められない), `invalid_argument` |
+| エラー | `conflict` (プロジェクトに active / finishing のグループが既にある。`merge_blocked` は数えない), `invalid_state` (メイン作業ツリーが detached HEAD 等で base ブランチを決められない), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
 
 ### `create_task`
 
@@ -68,7 +68,9 @@ type Verdict = "approve" | "needs_changes";
 | 引数 | `group_id: string`, `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可) |
 | 戻り値 | `{ task_id, status, steps: StepSpec[] }` (末尾 `done` 補完後の正規化済み工程) |
 | 遷移 | Task を `pending` で作成。依存が全て `done` なら即座に評価し、`instruction` があれば `running` (最初の Step を開始)、無ければ `awaiting_instruction` として受信箱に `instruction_needed` を積む |
-| エラー | `not_found` (group / depends_on の ID), `invalid_state` (グループが `active` でない), `conflict` (依存の循環), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため) |
+| エラー | `not_found` (group / depends_on の ID。他グループのタスクも), `invalid_state` (グループが `active` でない / depends_on のタスクが `cancelled` か、それが原因で開始不能 — 決して始まらないため), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため) |
+
+`depends_on` は既存タスクしか指せないので循環は起こりえない (`conflict` は返らない)。重複は取り除く。
 
 ### `set_instruction`
 
@@ -85,8 +87,8 @@ type Verdict = "approve" | "needs_changes";
 |---|---|
 | 引数 | `task_id`, `steps: StepSpec[]` — **まだ開始していない Step 全体**をこれで置き換える |
 | 戻り値 | `{ task_id, steps: [{ index, kind, status, instruction? }] }` (完了済み含む全体) |
-| 遷移 | 状態は変えない。`checkpoint` / `handling` / `awaiting_instruction` / `pending` 中に使う想定。`running` 中でも可 (実行中の Step の後ろが置き換わる) |
-| エラー | `invalid_state` (終端状態), `invalid_argument` (空で `done` も補えない等) |
+| 遷移 | 状態は変えない。`checkpoint` / `handling` / `awaiting_instruction` / `pending` 中に使う想定。`running` 中でも可 (実行中の Step の後ろが置き換わる)。置き換わるのは「末尾から見て連続する pending の Step」全体 (マージのコンフリクトで `done` が pending に戻っている場合はそれも含む)。空配列は `[done]` になる |
+| エラー | `invalid_state` (終端状態、`merging` 中), `invalid_argument` (`done` が末尾以外、`investigate` に `review` 等) |
 
 ### `resolve_checkpoint`
 
@@ -105,7 +107,7 @@ type Verdict = "approve" | "needs_changes";
 |---|---|
 | 引数 | `help_id`, `action: "resume" \| "cancel_task"`, `reply?: string` |
 | 戻り値 | `{ help_id, task_id, task_status }` |
-| 遷移 | help を `answered` に。`resume`: タスクを `running` に戻す。help を上げたのがエージェントなら `reply` をそのセッションへの新しいプロンプトとして送り、同じ Step を続けさせる。Yhtye 起因 (merge_conflict 等) なら次の未完了 Step から再開 (`modify_steps` で足した Step があればそれ)。`cancel_task`: `cancelled` |
+| 遷移 | help を `answered` に。`resume`: タスクを `running` に戻す。help を上げたのがエージェントなら `reply` をそのセッションへの新しいプロンプトとして送り、同じ Step を続けさせる。Yhtye 起因 (merge_conflict 等) なら最初の未完了 Step から再開 (`modify_steps` で足した Step があればそれ)。このとき `reply` があれば再開する Step のプロンプトに「Note from the orchestrator」として付く。エージェント起因でも、返答待ちの間にそのエージェントのプロセスが死んでいたら Yhtye 起因と同じ扱い (新しいセッションで Step をやり直し、`reply` は note)。`cancel_task`: `cancelled` |
 | エラー | `not_found`, `invalid_state` (既に回答済み), `invalid_argument` (エージェント起因で `resume` なのに `reply` が空) |
 
 ### `cancel_task`
@@ -123,8 +125,8 @@ type Verdict = "approve" | "needs_changes";
 |---|---|
 | 引数 | `group_id`, `summary: string` (ユーザー向けの完了要約。イベントとして保存) |
 | 戻り値 | `{ group_id, status, merge: { ok: bool, detail } }` |
-| 遷移 | 全タスクが終端のときのみ。`active` → `finishing` → group ブランチを base ブランチへマージ → `done`。マージできない (dirty / 別ブランチ / コンフリクト) なら `merge_blocked` |
-| エラー | `invalid_state` (終端でないタスクがある — message に一覧を含める) |
+| 遷移 | 全タスクが終端のときのみ。`active` → `finishing` → group ブランチを base ブランチへマージ → `done`。マージできない (dirty / 別ブランチ / コンフリクト) なら `merge_blocked`。応答はマージが終わってから返す (戻り値の `merge` が結果) |
+| エラー | `invalid_state` (終端でないタスクがある — message に一覧を含める / グループが `active` でない), `not_found` |
 
 ### `cancel_group`
 
@@ -132,7 +134,8 @@ type Verdict = "approve" | "needs_changes";
 |---|---|
 | 引数 | `group_id`, `reason: string` |
 | 戻り値 | `{ group_id, status: "cancelled" }` |
-| 遷移 | 全非終端タスクを `cancel_task` 相当で止め、グループを `cancelled`。group ブランチは残し base へはマージしない |
+| 遷移 | 全非終端タスクを `cancel_task` 相当で止め、グループを `cancelled`。group ブランチは残し base へはマージしない。`group_settled` は送らない |
+| エラー | `not_found`, `invalid_state` (`active` / `merge_blocked` 以外 — 終端か、マージ中) |
 
 ### `get_status`
 
@@ -170,10 +173,12 @@ type Verdict = "approve" | "needs_changes";
 | 引数 | `kind: "blocked" \| "question" \| "policy"`, `message: string` |
 | 戻り値 | `{ help_id, next: "end_turn_and_wait" }` |
 | 遷移 | タスクを `handling` にし、受信箱に `help_raised` を積む (オーケストレータを即座に起こす)。オーケストレータの `answer_help` の `reply` が、このセッションへの次のプロンプトになる |
-| エラー | `invalid_state` (同じタスクに未回答 help が既にある) |
+| エラー | `invalid_state` (同じタスクに未回答 help が既にある / 自分の Step が実行中でない — 報告済みなど), `invalid_argument` (message 空) |
 
 Yhtye 起因の help の kind: `merge_conflict` / `review_rounds_exhausted` /
-`protocol_violation` / `agent_stopped` / `agent_crashed` / `dirty_readonly_tree`。
+`protocol_violation` / `agent_stopped` / `agent_crashed` / `dirty_readonly_tree` /
+`git_failed` (Stage 3a で追加: コンフリクト以外の理由で git 操作が失敗した。worktree の作成失敗など)。
+`agent_crashed` はサブエージェントの起動失敗でも上がる。
 
 ## 5. 受信箱メッセージ (Yhtye → オーケストレータ)
 
@@ -192,3 +197,6 @@ Yhtye 起因の help の kind: `merge_conflict` / `review_rounds_exhausted` /
 | `instruction_needed` | `task` | 依存先タスクの最終結果 | `set_instruction` |
 | `group_settled` | `group` | 全タスクの結果要約・開始不能タスク | タスク追加 or `finish_group` / `cancel_group` |
 | `merge_result` | `group`, `ok` | base へのマージ結果 | ユーザーへの報告 |
+
+`finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で
+マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 以降) にだけ使う (Stage 3a で決定)。

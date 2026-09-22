@@ -1,27 +1,28 @@
-//! Real Claude Code (always Haiku) through the Stage 2 runtime. Ignored by default:
+//! Real Claude Code (always Haiku) through the runtime and state machine. Ignored by default:
 //! `cargo test -p yhtye-core --test orchestration_claude_real -- --ignored --test-threads=1 --nocapture`.
 
 mod common;
 
 use std::time::Duration;
 
-use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until};
+use common::orch::{config, prompts_to, shutdown_and_check, summary, tool_calls, until};
 use common::{Session, assert_group_gone, message_text};
 use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions, spawn_agent};
-use yhtye_core::domain::Role;
+use yhtye_core::api::{ApiEvent, ApiEventBody};
+use yhtye_core::domain::{DomainEvent, Role, TaskStatus};
 use yhtye_core::prompts::system_prompt;
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, OrchEvent, Orchestration, OrchestrationConfig};
+use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration, OrchestrationConfig};
 
 const MODEL: &str = "haiku";
 const REAL_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn assert_haiku(events: &[OrchEvent]) {
+fn assert_haiku(events: &[ApiEvent]) {
     for e in events {
-        if let OrchEvent::Agent {
+        if let ApiEventBody::Agent {
             session,
             event: AgentEvent::Ready(info),
-        } = e
+        } = &e.body
         {
             assert_eq!(
                 info.config_value("model"),
@@ -34,11 +35,11 @@ fn assert_haiku(events: &[OrchEvent]) {
 }
 
 /// Tool calls (ACP `tool_call` titles) an agent session made, for the log.
-fn acp_tool_titles(events: &[OrchEvent], session: &str) -> Vec<String> {
+fn acp_tool_titles(events: &[ApiEvent], session: &str) -> Vec<String> {
     events
         .iter()
-        .filter_map(|e| match e {
-            OrchEvent::Agent {
+        .filter_map(|e| match &e.body {
+            ApiEventBody::Agent {
                 session: s,
                 event: AgentEvent::Output(AgentOutput::ToolCall(tc)),
             } if s == session => Some(tc.title.clone()),
@@ -47,8 +48,53 @@ fn acp_tool_titles(events: &[OrchEvent], session: &str) -> Vec<String> {
         .collect()
 }
 
-fn is_orchestrator_turn_end(e: &OrchEvent) -> bool {
-    matches!(e, OrchEvent::Agent { session, event: AgentEvent::TurnEnded(_) } if session == ORCHESTRATOR_SESSION)
+fn is_orchestrator_turn_end(e: &ApiEvent) -> bool {
+    matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(_) } if session == ORCHESTRATOR_SESSION)
+}
+
+fn real_config(dir: &std::path::Path) -> OrchestrationConfig {
+    config(
+        dir,
+        HarnessConfig::claude_code_orchestrator(MODEL),
+        HarnessConfig::claude_code(MODEL),
+        HarnessConfig::claude_code(MODEL),
+    )
+}
+
+/// Sends `request` and waits until the orchestrator has handled `group_settled`.
+async fn run_request(
+    orch: &Orchestration,
+    rx: &mut mpsc::UnboundedReceiver<ApiEvent>,
+    request: &str,
+) -> Vec<ApiEvent> {
+    let mut events = Vec::new();
+    orch.send_user_message(request).expect("send");
+    until(rx, &mut events, REAL_TIMEOUT, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, text }
+            if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))
+    })
+    .await;
+    until(rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    events
+}
+
+fn log_run(events: &[ApiEvent]) {
+    eprintln!("tool calls: {:#?}", tool_calls(events));
+    eprintln!(
+        "orchestrator ACP tools: {:?}",
+        acp_tool_titles(events, ORCHESTRATOR_SESSION)
+    );
+    eprintln!(
+        "orchestrator prompts: {:#?}",
+        prompts_to(events, ORCHESTRATOR_SESSION)
+    );
+    eprintln!(
+        "messages: {:#?}",
+        summary(events)
+            .iter()
+            .filter(|m| !m.starts_with("Agent") && !m.starts_with("Domain"))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -57,48 +103,18 @@ async fn real_orchestrator_creates_task_and_sub_agent_reports_back() {
     let dir = tempfile::tempdir().expect("tempdir");
     let readme = dir.path().join("README.md");
     std::fs::write(&readme, "# demo\n").expect("write README");
-    let cfg = OrchestrationConfig {
-        project: "P-1".into(),
-        project_dir: dir.path().to_path_buf(),
-        base_branch: "main".into(),
-        orchestrator: HarnessConfig::claude_code_orchestrator(MODEL),
-        implementer: HarnessConfig::claude_code(MODEL),
-        reviewer: HarnessConfig::claude_code(MODEL),
-        mcp_bind: "127.0.0.1:0".parse().expect("addr"),
-    };
-    let (orch, mut rx) = Orchestration::start(cfg)
+    let (orch, mut rx) = Orchestration::start(real_config(dir.path()))
         .await
         .unwrap_or_else(|e| panic!("{e}"));
-    let mut events = Vec::new();
-    orch.send_user_message("Create a task that appends the line `hello from yhtye` to README.md.")
-        .expect("send");
-
-    // Wait for the orchestrator to be woken with group_settled and to finish that turn.
-    until(&mut rx, &mut events, REAL_TIMEOUT, |e| {
-        matches!(e, OrchEvent::Prompted { session, text }
-            if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))
-    })
+    let events = run_request(
+        &orch,
+        &mut rx,
+        "Create a task that appends the line `hello from yhtye` to README.md.",
+    )
     .await;
-    until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
-
-    let calls = tool_calls(&events);
-    eprintln!("tool calls: {calls:#?}");
-    eprintln!(
-        "orchestrator ACP tools: {:?}",
-        acp_tool_titles(&events, ORCHESTRATOR_SESSION)
-    );
-    eprintln!(
-        "orchestrator prompts: {:#?}",
-        prompts_to(&events, ORCHESTRATOR_SESSION)
-    );
-    eprintln!(
-        "messages: {:#?}",
-        summary(&events)
-            .iter()
-            .filter(|m| !m.starts_with("Agent"))
-            .collect::<Vec<_>>()
-    );
+    log_run(&events);
     assert_haiku(&events);
+    let calls = tool_calls(&events);
 
     assert!(
         calls.contains(&(ORCHESTRATOR_SESSION.into(), "create_group".into(), true)),
@@ -109,8 +125,8 @@ async fn real_orchestrator_creates_task_and_sub_agent_reports_back() {
         "{calls:?}"
     );
     assert!(events.iter().any(|e| matches!(
-        e,
-        OrchEvent::SessionStarted {
+        &e.body,
+        ApiEventBody::SessionStarted {
             role: Role::Implementer,
             ..
         }
@@ -124,6 +140,79 @@ async fn real_orchestrator_creates_task_and_sub_agent_reports_back() {
     let body = std::fs::read_to_string(&readme).expect("README");
     eprintln!("README.md now: {body:?}");
     assert!(body.contains("hello from yhtye"), "{body}");
+    shutdown_and_check(orch, &events).await;
+}
+
+/// A `code` task with implement → review: the review runs in its own, separate
+/// reviewer session and reports a verdict (Stage 3a).
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku)"]
+async fn real_implement_then_review_uses_a_separate_reviewer_session() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let readme = dir.path().join("README.md");
+    std::fs::write(&readme, "# demo\n").expect("write README");
+    let (orch, mut rx) = Orchestration::start(real_config(dir.path()))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    let events = run_request(
+        &orch,
+        &mut rx,
+        "Create one code task with steps implement then review (steps: \
+         [{\"kind\":\"implement\"},{\"kind\":\"review\"}]) that appends the line \
+         `reviewed by yhtye` to README.md.",
+    )
+    .await;
+    log_run(&events);
+    assert_haiku(&events);
+    let calls = tool_calls(&events);
+
+    let reviewer_sessions: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionStarted {
+                session,
+                role: Role::Reviewer,
+                ..
+            } => Some(session.as_str()),
+            _ => None,
+        })
+        .collect();
+    eprintln!("reviewer sessions: {reviewer_sessions:?}");
+    assert!(
+        !reviewer_sessions.is_empty(),
+        "a reviewer session was started"
+    );
+    assert!(reviewer_sessions.iter().all(|s| s.contains("/review-")));
+    let verdicts: Vec<String> = events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::ToolCalled { record }
+                if record.tool == "report_step_done"
+                    && record.binding.role == Role::Reviewer
+                    && record.result.is_ok() =>
+            {
+                Some(record.args["verdict"].to_string())
+            }
+            _ => None,
+        })
+        .collect();
+    eprintln!("reviewer verdicts: {verdicts:?}");
+    assert!(
+        !verdicts.is_empty(),
+        "the reviewer reported a verdict: {calls:?}"
+    );
+    assert!(events.iter().any(|e| matches!(
+        &e.body,
+        ApiEventBody::Domain {
+            event: DomainEvent::TaskStatusChanged {
+                status: TaskStatus::Done,
+                ..
+            }
+        }
+    )));
+    let body = std::fs::read_to_string(&readme).expect("README");
+    eprintln!("README.md now: {body:?}");
+    assert!(body.contains("reviewed by yhtye"), "{body}");
     shutdown_and_check(orch, &events).await;
 }
 

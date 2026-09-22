@@ -1,16 +1,12 @@
-//! Multi-session runtime. Stage 2: an in-memory tool port ([`MemoryToolPort`]) and
-//! the orchestration loop that starts sub-agent sessions for tasks and wakes the
-//! orchestrator. Stage 3 replaces the board with the persistent state machine.
+//! Multi-session runtime: one loop that owns the state machine
+//! ([`crate::domain::Machine`]), every agent session and the MCP server, and
+//! publishes an [`crate::api::ApiEvent`] stream (`core-design.md` §8).
 
-mod board;
 mod driver;
-mod inbox;
-mod memory_port;
+mod emitter;
 mod orchestration;
+mod port;
+mod sessions;
 
-pub use board::{Board, Effect, StepStart, Task, TaskStatus};
-pub use inbox::{InboxItem, InboxKind, render_batch};
-pub use memory_port::MemoryToolPort;
-pub use orchestration::{
-    ORCHESTRATOR_SESSION, OrchError, OrchEvent, Orchestration, OrchestrationConfig,
-};
+pub use orchestration::{ORCHESTRATOR_SESSION, OrchError, Orchestration, OrchestrationConfig};
+pub use sessions::{agent_ref, session_key};

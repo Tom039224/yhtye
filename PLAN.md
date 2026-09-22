@@ -16,7 +16,9 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 0 | 旧コード破棄・調査・設計 | **完了** |
 | 1 | ACP コア | **完了** |
 | 2 | MCP サーバー + マルチセッション | **完了** |
-| 3 | ドメインコア (状態機械・SQLite・git) | 未着手 |
+| 3a | ドメインコア: 状態機械 (メモリ上) と UI 向けイベント列 | **完了** |
+| 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | 未着手 |
+| 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | 未着手 |
 | 4 | フロントエンド (素の UI) | 未着手 |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
 | 6 | Claude Design 適用・残機能 | 未着手 |
@@ -24,6 +26,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 ## 再開の仕方
 
 - Stage は**順番に**、それぞれ別のサブエージェントが実行する。前の Stage が完了している前提で始める。
+  Stage 3 は 3a → 3b → 3c の小 Stage に分かれている (表を参照)。
 - 始める前に: この PLAN.md、`docs/architecture/` 全体、`git log --oneline -20` を読む。
 - 設計と食い違う実装判断が必要になったら、**先に設計ドキュメントを更新**してから実装する。
   合意済みの決定 (`orchestration-model.md`) を変える必要がある場合は、変えずに報告する。
@@ -187,6 +190,17 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 ## Stage 3 — ドメインコア
 
+オーケストレータの判断で 3 つの小 Stage に分けて順に実行する (各小 Stage も「本物で動く」ことを
+完了条件にする):
+
+- **3a** — 状態機械 (純粋な reducer + 決定ロジック)、runtime への組み込み、UI 向けイベント列。
+  永続化なし (メモリ上)。git はトレイトの後ろに置き、何もしない `NoopGit` で動かす。
+- **3b** — `store` (sqlx SQLite: イベントログ + 現在状態テーブル)、再起動時の `interrupted` と再開。
+- **3c** — `git` の本実装 (group ブランチ・統合 worktree・タスク worktree・自動コミット・マージ・
+  コンフリクト→help)、実 Haiku で小さなグループを一時リポジトリ上で完走。
+
+以下の「範囲」「完了条件」は Stage 3 全体のもの。3a の結果メモの後に 3b / 3c の結果メモを足す。
+
 **範囲**
 - `domain` (状態機械全体: Task 状態、Step kind 4 種、review 自動再挿入、help、checkpoint、
   依存解消と instruction_needed、group_settled、受信箱)。
@@ -206,6 +220,90 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 - 実 Haiku: 一時リポジトリで「小さな関数とそのテストを追加して」を依頼し、
   グループ作成 → `code` タスク (implement → review → done) → base ブランチへのマージまで完走。
   結果のコミットが base に入っていることを git で確認。
+
+**3a 結果メモ (2026-09-23)**
+
+- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §4.1・§5・§7・§8):
+  - `domain/` — 純粋な状態機械。`decide(&State, DomainCommand) -> (State, Transition{events,
+    effects, reply})`。状態は `DomainEvent` を `State::apply` (reducer) で適用してしか変わらない
+    (`Tx` が作業用コピーにイベントを発行しながら判断する)。`state` / `event` / `command` /
+    `machine` / `flow` / `tools_orch` / `tools_sub` / `agent_rules` / `git_rules` / `inbox` / `steps`。
+    受信箱もドメイン状態 (3b で永続化)。
+  - `git/` — `GitService` トレイト (`current_branch` / `run(GitOp) -> GitResult`) と `NoopGit`。
+  - `api/` — `ApiEvent { seq, ts_ms, project, body }` (ドメインイベント・セッション・エージェント出力・
+    ツール呼び出し・プロンプト) と `Snapshot { seq, state }`。
+  - `runtime/` — `Board` / `MemoryToolPort` を削除し、`driver` (単一ループ: コマンド → decide →
+    イベント配信 → Effect。git はインラインで await して `GitDone` を同じ連鎖で処理) /
+    `sessions` (旧 driver から分離) / `port` (`LoopPort`) / `emitter` / `orchestration`
+    (`snapshot()` を追加、`OrchestrationConfig` に `domain` と `git`)。
+  - Stage 2 で無かったもの: `modify_steps` / `cancel_group` / `needs_changes` の自動再挿入と
+    `review_rounds_exhausted` / `cancel_task` でのセッション停止 + 状態更新 + worktree 削除 Effect /
+    催促 1 回 → `protocol_violation` / `agent_stopped` / 異常終了・起動失敗の `agent_crashed` /
+    返答待ち中の死亡 (help にエージェント喪失を記録し、resume で Step をやり直す) /
+    依存解消 + 空 instruction → `instruction_needed` / checkpoint / group_settled (開始不能タスク込み) /
+    active グループ 1 つの制約 / mcp-tools.md の全エラーケース。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 109 件成功 (yhtye-core 単体 73 + ACP 偽 19 + MCP 6 +
+    オーケストレーション偽 10 + 偽エージェント 1)、実エージェント 7 件は ignored。偽の結合テストは
+    3 回連続で成功。
+    - 単体 (`domain/tests/`): 遷移表 (タスク状態 10 種 × set_instruction / modify_steps /
+      resolve_checkpoint / cancel_task / report_step_done / help、answer_help)、フロー 16、
+      エラー 10 (mcp-tools.md の全エラーコード)、git 6 (コンフリクト → modify_steps → resume →
+      再マージ、dirty investigate、worktree 失敗、group ブランチ失敗、merge_blocked)、
+      エージェント 10 (help の返答がターン終了より先に来た場合に誤って催促しない、を含む)。**全コマンドで「旧状態 + イベント = 新状態」を検査**している。
+    - 偽エージェント: 通常 / help → resume / needs_changes → 再挿入 → approve (レビュアーは毎回
+      新しいセッション、実装者は 1 セッション) / checkpoint + note / 催促 → protocol_violation →
+      resume / crash(3) → agent_crashed → 新セッションで完走 / 実装者の起動失敗 → agent_crashed /
+      依存 + 空 instruction → set_instruction / ターン中の cancel_task (ACP cancel → `cancelled` →
+      セッション停止) / オーケストレータ起動失敗。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1 --nocapture` → 7/7 成功 (2 回実行、
+    オーケストレーション実テストは 2 回とも約 85 秒):
+    Stage 1 の 4 件、Stage 2 の 2 件 (新しい状態機械の上で)、新規
+    `real_implement_then_review_uses_a_separate_reviewer_session`: 実 Haiku のオーケストレータが
+    `steps: [implement, review]` のタスクを作成 → 実装者 (T-1/implementer) が README を編集して報告 →
+    別セッション `T-1/review-1` のレビュアーが差分を確認して `verdict: approve` → `done` →
+    `group_settled` → `finish_group`。2 回とも同じ流れ。
+  - 実テスト後 `pgrep claude-agent-acp` で残存なし、各プロセスグループも空。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` / `cargo check --workspace` /
+    `pnpm build` 成功。
+- 実装中に分かったこと・直したこと:
+  - **ターン中にエージェントのプロセスが死ぬと、`session/prompt` が `incoming_transport_closed`
+    で失敗し、それが先に `TurnEnded(Err(Request))` になっていた** (core-design §3.2 の
+    「プロセス終了時は `Err(Closed)`」と食い違い)。`is_incoming_transport_closed` で `Closed` に
+    写すよう `acp/session.rs` を修正。これが無いと crash が `agent_stopped` に化ける。
+  - タスクの最終結果 (`group_settled` / `instruction_needed` の本文) は `done` Step のマージ詳細ではなく、
+    最後のエージェント / checkpoint の結果にした。
+- 設計への反映・明確化 (合意済みの決定は変えていない。細部の確定のみ):
+  - core-design §2 (`ApiEvent` の中身)、§4.1 (runtime を Stage 3a の形に)、§5 (実際の
+    `decide` / `DomainEvent` / `Effect` とイベントソーシングの不変条件。`now` 引数は無し)、
+    §7 (`GitService` トレイト)、§8 (git はループ内で await、ツール応答は連鎖の後、
+    プロトコル違反はドメイン状態で判定)。
+  - mcp-tools: `finish_group` はマージ結果込みで同期応答 → `merge_result` は再試行時のみ /
+    help kind に `git_failed` を追加 / `create_task` の循環 `conflict` は起こりえない、cancelled への
+    依存は `invalid_state` / `modify_steps` の空配列は `[done]`、`merging` 中は `invalid_state` /
+    `cancel_group` のエラーと「group_settled を送らない」/ `create_group` の `internal` /
+    Yhtye 起因 help の resume で reply は note になる / 返答待ち中の死亡の扱い。
+  - orchestration-model: `finishing` も active 数に含め `merge_blocked` は含めない / §7 の細部。
+- 3b / 3c への申し送り:
+  - 3b: `Transition.events` を 1 トランザクションで追記し、現在状態テーブルも同じイベントから
+    更新する (reducer が唯一の変更経路なので、イベント再生で状態を作ってもよい)。`ApiEvent.seq` と
+    DB の seq を揃える。セッション (ACP セッション ID・トークン) は現在ドメイン外 (runtime の
+    `sessions`) — `session/load` での再開には保存が必要。`TaskStatus::Interrupted` は定義済み・未使用。
+    `create_group` 時の base ブランチは runtime が `GitService::current_branch` で読んで渡す。
+  - 3c: `GitService` の git CLI 実装。`PrepareWorkspace` の結果パスがサブエージェントの cwd になる。
+    レビュアーのプロンプトに「どのブランチとの差分を見るか」を足す (今は earlier results のみ)。
+    git はループ内で await するので、遅い操作 (大きなマージ) が入るならタスク化を検討。
+  - ts-rs による TS 型生成は Stage 4 へ (`AgentEvent` は ACP の型を含むので `unknown` 扱いが要る)。
+  - 複数プロジェクトを束ねる `Core` / `ApiCommand` は 3b 以降 (現状は 1 プロジェクトの `Orchestration`)。
+  - サブエージェントに Claude Code の `Agent` ツールが残っている (プロンプトで禁止のみ。Stage 2 から継続)。
+
+**未決事項 (ユーザー判断待ち)**
+
+- Yhtye が起動するエージェントに**ユーザー自身の `~/.claude`** (CLAUDE.md・フック・プラグイン・
+  スキル) を効かせるか。現状は MCP サーバーだけ隔離し、それ以外は読み込んだまま
+  (orchestration-model §11)。ユーザーの全体ルール (例: 「planner エージェントを使え」) が
+  サブエージェントの動きを変えうる。`settingSources` を `["project", "local"]` に絞る案あり。
+  **3a では挙動を変えていない。**
 
 ## Stage 4 — フロントエンド (素の UI)
 

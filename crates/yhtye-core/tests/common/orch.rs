@@ -1,19 +1,43 @@
 //! Helpers for orchestration tests (fake and real agents).
 
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
-use yhtye_core::acp::{AgentEvent, AgentOutput};
-use yhtye_core::runtime::{OrchEvent, Orchestration};
+use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig};
+use yhtye_core::api::{ApiEvent, ApiEventBody};
+use yhtye_core::domain::{DomainConfig, DomainEvent, TaskStatus};
+use yhtye_core::git::NoopGit;
+use yhtye_core::runtime::{Orchestration, OrchestrationConfig};
 
 use super::assert_group_gone;
 
+/// Config with [`NoopGit`] on `main`.
+pub fn config(
+    dir: &Path,
+    orchestrator: HarnessConfig,
+    implementer: HarnessConfig,
+    reviewer: HarnessConfig,
+) -> OrchestrationConfig {
+    OrchestrationConfig {
+        project: "P-1".into(),
+        project_dir: dir.to_path_buf(),
+        orchestrator,
+        implementer,
+        reviewer,
+        mcp_bind: "127.0.0.1:0".parse().expect("addr"),
+        domain: DomainConfig::default(),
+        git: Arc::new(NoopGit::new(dir, Some("main".into()))),
+    }
+}
+
 /// Collects events until one matches `done` (inclusive).
 pub async fn until(
-    rx: &mut mpsc::UnboundedReceiver<OrchEvent>,
-    seen: &mut Vec<OrchEvent>,
+    rx: &mut mpsc::UnboundedReceiver<ApiEvent>,
+    seen: &mut Vec<ApiEvent>,
     timeout: Duration,
-    done: impl Fn(&OrchEvent) -> bool,
+    done: impl Fn(&ApiEvent) -> bool,
 ) {
     loop {
         let ev = tokio::time::timeout(timeout, rx.recv())
@@ -28,9 +52,9 @@ pub async fn until(
     }
 }
 
-pub fn message<'a>(ev: &'a OrchEvent, session: &str) -> Option<&'a str> {
-    match ev {
-        OrchEvent::Agent {
+pub fn message<'a>(ev: &'a ApiEvent, session: &str) -> Option<&'a str> {
+    match &ev.body {
+        ApiEventBody::Agent {
             session: s,
             event: AgentEvent::Output(o @ AgentOutput::MessageChunk(_)),
         } if s == session => o.chunk_text(),
@@ -38,29 +62,42 @@ pub fn message<'a>(ev: &'a OrchEvent, session: &str) -> Option<&'a str> {
     }
 }
 
-pub fn is_message(ev: &OrchEvent, session: &str, needle: &str) -> bool {
+pub fn is_message(ev: &ApiEvent, session: &str, needle: &str) -> bool {
     message(ev, session).is_some_and(|t| t.contains(needle))
 }
 
-pub fn summary(events: &[OrchEvent]) -> Vec<String> {
+/// Whether `ev` changes task `task` to `status`.
+pub fn is_task_status(ev: &ApiEvent, task: &str, status: TaskStatus) -> bool {
+    match &ev.body {
+        ApiEventBody::Domain {
+            event: DomainEvent::TaskStatusChanged { task: t, status: s },
+        } => t == task && *s == status,
+        ApiEventBody::Domain {
+            event: DomainEvent::TaskCancelled { task: t, .. },
+        } => t == task && status == TaskStatus::Cancelled,
+        _ => false,
+    }
+}
+
+pub fn summary(events: &[ApiEvent]) -> Vec<String> {
     events
         .iter()
-        .filter_map(|e| match e {
-            OrchEvent::Agent {
+        .filter_map(|e| match &e.body {
+            ApiEventBody::Agent {
                 session,
                 event: AgentEvent::Output(o @ AgentOutput::MessageChunk(_)),
             } => Some(format!("{session}: {}", o.chunk_text().unwrap_or_default())),
-            OrchEvent::Agent { .. } => None,
+            ApiEventBody::Agent { .. } => None,
             other => Some(format!("{other:?}")),
         })
         .collect()
 }
 
-pub fn tool_calls(events: &[OrchEvent]) -> Vec<(String, String, bool)> {
+pub fn tool_calls(events: &[ApiEvent]) -> Vec<(String, String, bool)> {
     events
         .iter()
-        .filter_map(|e| match e {
-            OrchEvent::ToolCalled(r) => {
+        .filter_map(|e| match &e.body {
+            ApiEventBody::ToolCalled { record: r } => {
                 Some((r.binding.session.clone(), r.tool.clone(), r.result.is_ok()))
             }
             _ => None,
@@ -68,27 +105,54 @@ pub fn tool_calls(events: &[OrchEvent]) -> Vec<(String, String, bool)> {
         .collect()
 }
 
-pub fn prompts_to<'a>(events: &'a [OrchEvent], session: &str) -> Vec<&'a str> {
+pub fn prompts_to<'a>(events: &'a [ApiEvent], session: &str) -> Vec<&'a str> {
     events
         .iter()
-        .filter_map(|e| match e {
-            OrchEvent::Prompted { session: s, text } if s == session => Some(text.as_str()),
+        .filter_map(|e| match &e.body {
+            ApiEventBody::Prompted { session: s, text } if s == session => Some(text.as_str()),
             _ => None,
         })
         .collect()
 }
 
-pub fn started_pids(events: &[OrchEvent]) -> Vec<u32> {
+pub fn domain_events(events: &[ApiEvent]) -> Vec<&DomainEvent> {
     events
         .iter()
-        .filter_map(|e| match e {
-            OrchEvent::SessionStarted { pid, .. } => *pid,
+        .filter_map(|e| match &e.body {
+            ApiEventBody::Domain { event } => Some(event),
             _ => None,
         })
         .collect()
 }
 
-pub async fn shutdown_and_check(orch: Orchestration, events: &[OrchEvent]) {
+pub fn started_sessions(events: &[ApiEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionStarted { session, .. } => Some(session.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+pub fn started_pids(events: &[ApiEvent]) -> Vec<u32> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionStarted { pid, .. } => *pid,
+            _ => None,
+        })
+        .collect()
+}
+
+/// Sequence numbers are gapless from 1.
+pub fn assert_gapless(events: &[ApiEvent]) {
+    for (i, e) in events.iter().enumerate() {
+        assert_eq!(e.seq, i as u64 + 1, "seq gap at {i}: {:?}", e.body);
+    }
+}
+
+pub async fn shutdown_and_check(orch: Orchestration, events: &[ApiEvent]) {
     orch.shutdown().await;
     for pid in started_pids(events) {
         assert_group_gone(pid, Duration::from_secs(5)).await;

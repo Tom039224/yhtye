@@ -1,8 +1,8 @@
 //! Inbox messages from Yhtye to the orchestrator (`mcp-tools.md` §5).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxKind {
     UserMessage,
@@ -28,7 +28,7 @@ impl InboxKind {
 }
 
 /// One reason to wake the orchestrator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxItem {
     pub kind: InboxKind,
     pub attrs: Vec<(String, String)>,

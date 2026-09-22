@@ -2,12 +2,16 @@
 //!
 //! - [`acp`]: ACP client (agent processes and sessions)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
-//! - [`domain`]: shared vocabulary and pure rules
+//! - [`domain`]: the orchestration state machine (pure)
+//! - [`git`]: git operations behind a trait
+//! - [`api`]: the UI-facing event stream and snapshot
 //! - [`prompts`]: role system prompts
-//! - [`runtime`]: multi-session orchestration (Stage 2: in-memory board as the tool port)
+//! - [`runtime`]: the loop that ties sessions, MCP, git and the state machine together
 
 pub mod acp;
+pub mod api;
 pub mod domain;
+pub mod git;
 pub mod mcp;
 pub mod prompts;
 pub mod runtime;

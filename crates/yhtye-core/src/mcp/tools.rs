@@ -8,7 +8,7 @@ use rmcp::model::{JsonObject, Tool};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{HelpKind, Role, StepSpec, TaskKind, ToolError, Verdict};
+use crate::domain::{AgentHelpKind, Role, StepSpec, TaskKind, ToolError, Verdict};
 
 const ORCH: &[Role] = &[Role::Orchestrator];
 const SUB: &[Role] = &[Role::Implementer, Role::Reviewer];
@@ -145,7 +145,7 @@ pub struct ReportStepDoneArgs {
 pub struct HelpArgs {
     /// `blocked` (cannot proceed), `question` (instruction unclear) or
     /// `policy` (want to change the approach).
-    pub kind: HelpKind,
+    pub kind: AgentHelpKind,
     /// What you need from the orchestrator.
     pub message: String,
 }

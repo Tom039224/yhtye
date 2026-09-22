@@ -27,6 +27,10 @@ pub struct StepPrompt<'a> {
     pub step_count: usize,
     pub step_kind: StepKind,
     pub instruction: &'a str,
+    /// Results of earlier steps (given to reviewers).
+    pub context: Option<&'a str>,
+    /// Note from the orchestrator (checkpoint `note`, help reply on restart).
+    pub note: Option<&'a str>,
 }
 
 fn task_kind_str(kind: TaskKind) -> &'static str {
@@ -48,9 +52,8 @@ fn step_kind_str(kind: StepKind) -> &'static str {
 /// The prompt that starts a step: a machine-readable header, then the instruction.
 #[must_use]
 pub fn step_prompt(p: &StepPrompt<'_>) -> String {
-    format!(
-        "[yhtye:step] task={} kind={} step={}/{} step_kind={}\nTask: {}\n\nInstruction:\n{}\n\n\
-         When finished, call report_step_done; if stuck, call help. Then end your turn.",
+    let mut text = format!(
+        "[yhtye:step] task={} kind={} step={}/{} step_kind={}\nTask: {}\n\nInstruction:\n{}\n",
         p.task_id,
         task_kind_str(p.task_kind),
         p.step_index + 1,
@@ -58,6 +61,31 @@ pub fn step_prompt(p: &StepPrompt<'_>) -> String {
         step_kind_str(p.step_kind),
         p.task_title,
         p.instruction.trim(),
+    );
+    if let Some(context) = p.context {
+        text.push_str(&format!(
+            "\nResults of earlier steps:\n{}\n",
+            context.trim()
+        ));
+    }
+    if let Some(note) = p.note {
+        text.push_str(&format!("\nNote from the orchestrator:\n{}\n", note.trim()));
+    }
+    text.push_str(
+        "\nWhen finished, call report_step_done; if stuck, call help. Then end your turn.",
+    );
+    text
+}
+
+/// Sent once when a sub-agent's turn ends without `report_step_done` or `help`.
+#[must_use]
+pub fn reminder_prompt(task_id: &str, step_index: usize) -> String {
+    format!(
+        "[yhtye:reminder] task={task_id} step={}\nYour turn ended without calling \
+         report_step_done or help. If the step is finished, call report_step_done with your \
+         result now. Otherwise finish the work and then call it, or call help if you are stuck. \
+         Then end your turn.",
+        step_index + 1
     )
 }
 
@@ -88,8 +116,19 @@ mod tests {
             step_count: 2,
             step_kind: StepKind::Implement,
             instruction: "  Append 'hello' to README.md\n",
+            context: Some("step 0 (implement): added"),
+            note: Some("keep it short"),
         });
         assert!(text.starts_with("[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\n"));
         assert!(text.contains("Instruction:\nAppend 'hello' to README.md\n"));
+        assert!(text.contains("Results of earlier steps:\nstep 0 (implement): added\n"));
+        assert!(text.contains("Note from the orchestrator:\nkeep it short\n"));
+    }
+
+    #[test]
+    fn reminder_names_both_tools() {
+        let text = reminder_prompt("T-2", 0);
+        assert!(text.starts_with("[yhtye:reminder] task=T-2 step=1\n"));
+        assert!(text.contains("report_step_done") && text.contains("help"));
     }
 }

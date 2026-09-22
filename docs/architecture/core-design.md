@@ -20,12 +20,12 @@ Cargo.toml                    [workspace] members = crates/*, src-tauri
 crates/
   yhtye-core/                 ライブラリ。Tauri 非依存
     src/
-      api/        ApiCommand / ApiResponse / ApiEvent (serde + ts-rs で TS 型を生成)
+      api/        ApiEvent / Snapshot (3a)、ApiCommand / ApiResponse (serde + ts-rs で TS 型を生成)
       acp/        ACP クライアント: ハーネス起動・セッション・イベント型付け・自動承認
       mcp/        Yhtye MCP サーバー (rmcp + axum, streamable HTTP)
       domain/     状態機械 (純粋関数。I/O なし)
       store/      SQLite (sqlx): イベントログ + 現在状態テーブル, migrations/
-      git/        worktree / branch / merge (git CLI をサブプロセスで)
+      git/        GitService トレイト + NoopGit (3a)、git CLI 実装 (3c)
       prompts.rs  役割別システムプロンプト (本文は crates/yhtye-core/prompts/*.md を include_str!)
       runtime/    上記を束ねる Core (Effect の実行・受信箱・再開処理)
     tests/        偽エージェントを使う結合テスト, 実エージェントテスト (#[ignore])
@@ -62,10 +62,17 @@ pub struct CoreConfig {
 - `ApiCommand` (例): `OpenProject{path}` / `SendUserMessage{project, text}` /
   `CancelOrchestratorTurn{project}` / `CancelTask{task}` / `RetryGroupMerge{group}` /
   `GetSnapshot{project}` / `ListEvents{project, after_seq, limit}`。
-- `ApiEvent` = `{ seq, ts, project, body }`。`body` はドメインイベント
-  (`GroupCreated`, `TaskStatusChanged`, `StepStarted`, `HelpRaised`, `MergeCompleted`, …) と
-  エージェントのストリーム (`AgentOutput{session, kind: MessageChunk|ThoughtChunk|ToolCall|
-  ToolCallUpdate|Plan|Usage|ModeChanged|…}`, `TurnEnded{session, stop_reason}`)。
+- `ApiEvent` = `{ seq, ts_ms, project, body }` (Stage 3a で `yhtye_core::api` に定義)。
+  `body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
+  - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
+  - `session_started { session, role, task, pid }` / `session_failed { session, error }` /
+    `session_stopped { session }`
+  - `agent { session, event: AgentEvent }` — エージェントの出力とライフサイクル
+    (`Output(MessageChunk|ThoughtChunk|ToolCall|…)`, `TurnEnded`, `Exited` …)。`Stderr` は流さない。
+  - `tool_called { record: ToolCallRecord }` / `prompted { session, text }`
+  - `seq` は 1 から欠番なし。`Snapshot = { seq, state: State }` (`Orchestration::snapshot`)。
+  - ts-rs による TS 型生成は Stage 4 (フロントが使い始めるとき) に回す。`AgentEvent` は
+    ACP スキーマの型を含むので、その部分は `unknown` 相当で出す必要がある。
 - **クライアント同期の規則**: 接続時に `snapshot` (その時点の `seq` を含む) を取り、
   以降 `seq > snapshot.seq` のイベントだけ適用する。取りこぼし (seq の飛び) を
   検知したら snapshot を取り直す。
@@ -226,65 +233,83 @@ pub trait ToolPort: Send + Sync {
   **ツールエラー**で返す (LLM が読んで直せるように)。JSON-RPC エラーは未知のツール名と
   トークン失効 (404) だけ。値の検査 (空文字、Step 列の規則、verdict と役割) は ToolPort 側。
 
-### 4.1 Stage 2 の runtime (仮実装)
+### 4.1 runtime (Stage 3a)
 
-Stage 3 の `domain` / `runtime::Core` の前に、ループ全体を実機で動かすための最小構成。
+Stage 2 の仮実装 (`Board` / `MemoryToolPort`) は Stage 3a で本物の状態機械 (§5) に置き換えた。
 
-- `runtime::Board` — メモリ上の状態 (Group / Task / Step / help)。`apply(binding, ToolCall)
-  -> (reply, Vec<Effect>)` と `on_turn_ended(task)`。Effect は `StartStep` / `Wake(InboxItem)` /
-  `PromptTask` / `TaskFinished`。Step 列の規則は `domain::normalize_steps` (Stage 3 でも使う)。
-  未実装: `modify_steps` / `cancel_group` (`internal` を返す)、review の `needs_changes`
-  自動再挿入、git、永続化、プロトコル違反の催促、異常終了時の help。
-- `runtime::MemoryToolPort` — Board を `ToolPort` にし、Effect をチャネルで流す。
-  Effect はツールの応答より前にキューされるので、ループは呼び出し元のターン終了より先に見る。
-- `runtime::Orchestration` — 公開 API (`start` / `send_user_message` /
-  `cancel_orchestrator_turn` / `shutdown`) と `OrchEvent` のストリーム
-  (`SessionStarted/Failed/Stopped`, `Agent{session, event}`, `ToolCalled`, `Prompted`)。
-- `runtime::driver` — 単一タスクのループ。セッションのキーは `orchestrator` /
-  `T-n/implementer` (タスク中は同じセッション) / `T-n/review-<step>` (毎回新規)。
-  エージェント起動・停止は `JoinSet` で裏で行い、ループを止めない。サブエージェントの
-  ターン終了で `Board::on_turn_ended` を呼び、次の Step を始める。タスク終端でそのタスクの
-  セッションを止め、トークンを失効させる。受信箱はオーケストレータがアイドルのときに
-  `render_batch` で 1 プロンプトにまとめて送る。
-- Stage 2 ではサブエージェントの cwd もプロジェクトディレクトリ (worktree は Stage 3)。
+- `runtime::Orchestration` — 1 プロジェクト分の公開 API: `start(cfg)` →
+  `(Orchestration, UnboundedReceiver<ApiEvent>)`、`send_user_message` / `cancel_orchestrator_turn` /
+  `snapshot` / `shutdown`。`OrchestrationConfig` に `domain: DomainConfig` (`max_review_rounds`) と
+  `git: Arc<dyn GitService>` を持つ。複数プロジェクト・DB を束ねる `Core` は 3b 以降。
+- `runtime::driver` — ループ本体 (§8)。`runtime::port::LoopPort` が `ToolPort` を実装し、
+  ツール呼び出しを oneshot 付きでループへ送る (ループが処理して応答する)。
+- `runtime::sessions` — セッションの起動 (裏で `JoinSet`)・プロンプトのキュー・トークンの
+  `rebind` / `revoke`・停止。セッションキーは `orchestrator` / `T-n/implementer` (タスク中は同じ
+  セッション) / `T-n/review-<step>` (毎回新規)。起動中に止められたセッションは起動完了時に即停止する。
+- `runtime::emitter` — `ApiEvent` に `seq` / `ts_ms` を付けて送る。
+- サブエージェントの cwd は `WorkspaceReady` で記録された作業場所 (`NoopGit` ではプロジェクト
+  ディレクトリ)。
 
 ## 5. `domain` モジュール (状態機械)
 
-I/O を持たない純粋な状態遷移。すべての変化はここを通る。
+I/O を持たない純粋な状態遷移。すべての変化はここを通る (Stage 3a で実装)。
 
 ```rust
-pub fn apply(state: &State, cmd: DomainCommand, now: Timestamp)
-    -> Result<Transition, DomainError>;
+pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), ToolError>;
+// Machine { state } は decide の結果で state を置き換えるだけの薄い包み。エラー時は何も変えない。
+
+impl State { pub fn apply(&mut self, event: &DomainEvent); }   // 純粋な reducer。失敗しない
 
 pub struct Transition {
-    pub events: Vec<DomainEvent>,   // 永続化・UI 配信される事実
-    pub effects: Vec<Effect>,       // runtime が実行する副作用の要求
-    pub reply: serde_json::Value,   // ツール呼び出しへの戻り値
+    pub events: Vec<DomainEvent>,                     // 永続化・UI 配信される事実
+    pub effects: Vec<Effect>,                         // runtime が実行する副作用の要求
+    pub reply: Option<Result<Value, ToolError>>,      // ツール呼び出しへの戻り値
 }
 
 pub enum DomainCommand {
-    Tool { binding: SessionBinding, call: ToolCall },          // MCP から
-    UserMessage { project, text },
-    TurnEnded { session, stop_reason, tools_called: bool },    // ACP から
-    AgentExited { session },
-    GitResult { op_id, result },                               // git から
-    Resume,                                                     // 起動時
-    ...
+    CreateGroup { args, base_branch: Option<String> },   // runtime が git から base を読んで渡す
+    Tool { binding: SessionBinding, call: ToolCall },    // create_group 以外の全ツール
+    UserMessage { text },
+    TurnEnded { agent: AgentRef, outcome: TurnOutcome,  // EndTurn / Cancelled / Stopped(reason) / Closed / Error
+                prompt_queued: bool },                   // 次のプロンプト (ターン中に届いた help の返答) が待機中
+    AgentExited { agent: AgentRef, detail },             // Yhtye が止めていないのに終了した
+    AgentStartFailed { agent: AgentRef, error },
+    GitDone { op: GitOp, result: GitResult },
+    InboxDelivered { up_to: u64 },
 }
 
 pub enum Effect {
-    StartAgent { session, role, cwd, resume },
-    Prompt { session, text },
-    Cancel { session },
-    StopAgent { session },
-    Git(GitOp),     // CreateGroupBranch / CreateTaskWorktree / CommitAll / MergeTask / MergeGroup / RemoveWorktree / CheckClean
+    RunStep { agent: AgentRef, group, prompt, workdir },  // 無ければセッションを起動してから送る
+    PromptAgent { agent: AgentRef, text },                // help の返答・催促
+    StopAgent { agent: AgentRef },                        // レビュー済みのレビュアー
+    StopTaskAgents { task },                              // タスク終端
+    Git(GitOp),     // CreateGroupBranch / PrepareWorkspace / FinishTask / RemoveWorkspace / MergeGroup
     WakeOrchestrator,
 }
+// AgentRef { task, role, step } — ステップを担当するセッションの論理名
 ```
 
-- Step kind の追加は `StepKind` の列挙と `on_step_start` / `on_step_done` の 2 関数に閉じる。
+- **イベントソーシング向けの構造**: 決定ロジックは状態を直接書き換えない。作業用コピーに
+  `DomainEvent` を発行して `State::apply` で適用しながら判断を進める (`machine.rs` の `Tx`)。
+  したがって「旧状態にその遷移のイベントを順に適用すると新状態になる」が常に成り立つ
+  (単体テストの全コマンドでこれを検査している)。3b ではイベントを追記し、現在状態テーブルは
+  同じイベントから更新すればよい。
+- `DomainEvent` (serde `type` タグ付き): `group_created` / `group_finishing` /
+  `group_merge_finished` / `group_cancelled` / `task_created` / `instruction_set` /
+  `task_status_changed` / `task_cancelled` / `workspace_ready` / `step_started` /
+  `step_completed` / `step_reset` / `steps_replaced` / `review_steps_inserted` / `nudge_sent` /
+  `help_raised` / `help_answered` / `help_closed` / `help_agent_lost` / `inbox_queued` /
+  `inbox_delivered`。
+- `State` は `groups` / `tasks` (steps を含む) / `helps` / `inbox` (未配達分) / ID カウンタ /
+  `DomainConfig`。すべて `Serialize + Deserialize`。受信箱もドメイン状態の一部 (3b で永続化)。
+- 時刻は状態機械に入れない (`now` 引数は無し)。時刻は `ApiEvent.ts_ms` で runtime が付ける。
+- ファイル構成: `state.rs` (データ) / `event.rs` (イベントと reducer) / `command.rs` /
+  `machine.rs` (`decide`・`Tx`) / `flow.rs` (タスク・ステップの開始/完了/中止、help、依存解消、
+  group_settled) / `tools_orch.rs` / `tools_sub.rs` / `agent_rules.rs` (ターン終了・異常終了) /
+  `git_rules.rs` (git 結果)。Step kind の追加は `flow.rs::start_step` と
+  `agent_rules.rs::turn_ended` に閉じる。
 - 規則 (「active グループは 1 つ」「`done` は末尾」「review の自動再挿入は N 回まで」など) は
-  すべてここに置き、テーブル駆動の単体テストで網羅する。
+  すべてここに置き、単体テスト (`domain/tests/`: 遷移表・フロー・エラー・git・エージェント) で網羅する。
 
 ## 6. `store` モジュール
 
@@ -300,21 +325,48 @@ pub enum Effect {
 
 ## 7. `git` モジュール
 
-`git` CLI をサブプロセスで実行する `GitService`。
-操作: `current_branch`, `is_clean`, `create_branch`, `worktree_add`, `worktree_remove`,
-`commit_all`, `merge_no_ff` (コンフリクト時は `merge --abort` して `Conflict{files}` を返す),
-`diff_stat`。テストは `tempfile` 上の実リポジトリで行う。
+状態機械からは `GitOp` (§5) として要求され、runtime が `GitService` トレイト経由で実行する
+(Stage 3a で定義。3a の実装は何もしない `NoopGit` — 作業場所はプロジェクトディレクトリ、
+マージは常に成功)。
+
+```rust
+#[async_trait]
+pub trait GitService: Send + Sync + 'static {
+    async fn current_branch(&self) -> Result<Option<String>, String>;   // None = detached HEAD
+    async fn run(&self, op: &GitOp) -> GitResult;
+    // CreateGroupBranch / RemoveWorkspace → Done, PrepareWorkspace → Workspace{path},
+    // FinishTask → Merged / Conflict{files} / Dirty{files}, MergeGroup → Merged / Blocked,
+    // それ以外の失敗 → Failed{message}
+}
+```
+
+3c では `git` CLI をサブプロセスで実行する実装を足す。内部の操作は `current_branch`, `is_clean`,
+`create_branch`, `worktree_add`, `worktree_remove`, `commit_all`, `merge_no_ff`
+(コンフリクト時は `merge --abort` して `Conflict{files}` を返す), `diff_stat`。
+テストは `tempfile` 上の実リポジトリで行う。
 
 ## 8. `runtime` モジュール
 
 - 単一のイベントループ (tokio タスク) が `DomainCommand` を受けて
-  `domain::apply` → `store` に永続化 → `ApiEvent` 配信 → `Effect` 実行 を**直列に**行う。
-  状態の同時更新を排除する。Effect の実行 (エージェント起動・git) は別タスクで行い、
-  結果を `DomainCommand` としてループに戻す。
+  `domain::decide` → (3b: `store` に永続化) → `ApiEvent` 配信 → `Effect` 実行 を**直列に**行う。
+  状態の同時更新を排除する。
+- エージェントの起動・停止は別タスク (`JoinSet`) で行い、失敗は `AgentStartFailed` として戻す。
+- **git の Effect はループ内で await し**、結果を `GitDone` として同じ連鎖の中で続けて処理する
+  (3a で決定)。ツール呼び出しへの応答は連鎖全体が終わってから返し、連鎖の中で最後に
+  `reply` を持った遷移の値を使う。これで `finish_group` はマージ結果込みで同期的に応答でき、
+  `create_group` もブランチ作成失敗をエラーとして返せる。git 操作は短い前提 (ネットワークなし)。
+- ツール呼び出しは MCP ハンドラから `LoopPort` 経由でループに送られ、ループが処理してから
+  応答する。応答を受けたエージェントのターン終了はその後にしか来ないので、
+  「report_step_done の効果 → ターン終了」の順序が保証される。
 - オーケストレータの受信箱: アイドル時にまとめて 1 プロンプトにする
   ([`orchestration-model.md`](orchestration-model.md) §5)。
-- ターン終了時の検査 (`report_step_done` / `help` が呼ばれたか) はセッションごとの
-  「このターン中に呼ばれたツール」の記録で判定する。
+- ターン終了時の検査 (`report_step_done` / `help` が呼ばれたか) は runtime の記録ではなく
+  ドメイン状態で判定する (3a で変更): ステップが `done` になっていれば報告済み、タスクが
+  `handling` なら help 済み。どちらでもなく `end_turn` なら催促 (`nudge_sent`、1 回まで)、
+  2 回目は `protocol_violation`。`max_tokens` 等は `agent_stopped`。`cancelled` と
+  `Closed` (プロセス終了。`AgentExited` が続く) は何もしない。
+- ACP: ターン中にプロセスが死ぬと `session/prompt` が `incoming_transport_closed` で失敗する。
+  これを `AgentError::Closed` として扱う (§3.2 の「プロセス終了時は `Err(Closed)`」に揃えた。3a で修正)。
 
 ## 9. Tauri アプリ層 (`src-tauri`)
 

@@ -1,37 +1,53 @@
-//! Public face of the Stage 2 multi-session runtime: one orchestrator session,
-//! sub-agent sessions started on demand by tool calls, and the orchestrator inbox.
+//! Public face of the runtime for one project: one orchestrator session,
+//! sub-agent sessions started by the state machine, and the [`ApiEvent`] stream.
 
+use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use super::driver::{Cmd, Driver};
-use super::memory_port::MemoryToolPort;
-use crate::acp::{AgentError, AgentEvent, HarnessConfig};
-use crate::domain::Role;
-use crate::mcp::{McpHost, TokenRegistry, ToolCallRecord};
+use super::driver::{Channels, Cmd, Driver};
+use super::emitter::Emitter;
+use super::port::LoopPort;
+use super::sessions::Sessions;
+use crate::acp::{AgentError, HarnessConfig};
+use crate::api::{ApiEvent, Snapshot};
+use crate::domain::{DomainConfig, Machine, Role, State};
+use crate::git::GitService;
+use crate::mcp::{McpHost, TokenRegistry};
 
 /// Session key of the orchestrator.
 pub const ORCHESTRATOR_SESSION: &str = "orchestrator";
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OrchestrationConfig {
-    /// Project id used in session bindings.
+    /// Project id used in session bindings and events.
     pub project: String,
-    /// Working directory of the orchestrator. In Stage 2 sub-agents also run here
-    /// (per-task worktrees arrive with the git module in Stage 3).
+    /// Main worktree of the project (the orchestrator's working directory, and
+    /// the fallback working directory of sub-agents).
     pub project_dir: PathBuf,
-    /// Reported as `base_branch` by `create_group`.
-    pub base_branch: String,
     pub orchestrator: HarnessConfig,
     pub implementer: HarnessConfig,
     pub reviewer: HarnessConfig,
     /// Where the MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
+    pub domain: DomainConfig,
+    /// Branches, worktrees and merges ([`crate::git::NoopGit`] until Stage 3c).
+    pub git: Arc<dyn GitService>,
+}
+
+impl fmt::Debug for OrchestrationConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OrchestrationConfig")
+            .field("project", &self.project)
+            .field("project_dir", &self.project_dir)
+            .field("mcp_bind", &self.mcp_bind)
+            .field("domain", &self.domain)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OrchestrationConfig {
@@ -43,37 +59,6 @@ impl OrchestrationConfig {
             Role::Reviewer => &self.reviewer,
         }
     }
-}
-
-/// What happens in the runtime, in order (for the UI later; for tests now).
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum OrchEvent {
-    SessionStarted {
-        session: String,
-        role: Role,
-        task: Option<String>,
-        pid: Option<u32>,
-    },
-    SessionFailed {
-        session: String,
-        error: String,
-    },
-    /// The session was shut down (or its process exited) and its token revoked.
-    SessionStopped {
-        session: String,
-    },
-    Agent {
-        session: String,
-        event: AgentEvent,
-    },
-    ToolCalled(ToolCallRecord),
-    /// A prompt was sent to a session (for the orchestrator: an inbox batch).
-    Prompted {
-        session: String,
-        text: String,
-    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -95,36 +80,46 @@ pub struct Orchestration {
 }
 
 impl Orchestration {
-    /// Starts the MCP server and the orchestrator session (returns once it is ready).
+    /// Starts the MCP server and the orchestrator session (returns once it is
+    /// ready) with an empty state. Events arrive on the returned receiver.
     pub async fn start(
         cfg: OrchestrationConfig,
-    ) -> Result<(Self, mpsc::UnboundedReceiver<OrchEvent>), OrchError> {
-        let (port, effects_rx) = MemoryToolPort::new(&cfg.base_branch);
-        let (tool_tx, tool_rx) = mpsc::unbounded_channel();
+    ) -> Result<(Self, mpsc::UnboundedReceiver<ApiEvent>), OrchError> {
+        let state = State::new(cfg.project.clone(), cfg.domain);
+        let (port, tools_rx) = LoopPort::new();
+        let (record_tx, records_rx) = mpsc::unbounded_channel();
         let host = McpHost::start(
             cfg.mcp_bind,
             TokenRegistry::new(),
-            Arc::new(port.clone()),
-            Some(tool_tx),
+            Arc::new(port),
+            Some(record_tx),
         )
         .await?;
         let mcp_addr = host.addr();
         let (out_tx, out_rx) = mpsc::unbounded_channel();
-        let mut driver = Driver::new(Arc::new(cfg), host, port, out_tx);
-        if let Err(e) = driver.start_orchestrator().await {
-            driver.shutdown().await;
+        let emit = Emitter::new(&cfg.project, out_tx);
+        let (agent_tx, agents_rx) = mpsc::unbounded_channel();
+        let cfg = Arc::new(cfg);
+        let mut sessions = Sessions::new(cfg.clone(), host, emit.clone(), agent_tx);
+        if let Err(e) = sessions.start_orchestrator().await {
+            sessions.shutdown().await;
             return Err(e.into());
         }
+        let driver = Driver::new(cfg, Machine::new(state), sessions, emit);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let task = tokio::spawn(driver.run(cmd_rx, effects_rx, tool_rx));
-        Ok((
-            Self {
-                cmd_tx,
-                task,
-                mcp_addr,
-            },
-            out_rx,
-        ))
+        let channels = Channels {
+            cmd: cmd_rx,
+            tools: tools_rx,
+            records: records_rx,
+            agents: agents_rx,
+        };
+        let task = tokio::spawn(driver.run(channels));
+        let handle = Self {
+            cmd_tx,
+            task,
+            mcp_addr,
+        };
+        Ok((handle, out_rx))
     }
 
     /// Address of the MCP server.
@@ -141,6 +136,13 @@ impl Orchestration {
     /// Cancels the orchestrator's running turn, if any.
     pub fn cancel_orchestrator_turn(&self) -> Result<(), OrchError> {
         self.send(Cmd::CancelOrchestrator)
+    }
+
+    /// The current state and the `seq` of the last event it includes.
+    pub async fn snapshot(&self) -> Result<Snapshot, OrchError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::Snapshot(tx))?;
+        rx.await.map_err(|_| OrchError::Closed)
     }
 
     /// Stops all agent sessions (reaping their processes) and the MCP server.
