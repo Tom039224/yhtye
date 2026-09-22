@@ -202,7 +202,7 @@ Yhtye が stash に退避済み (resume でそのまま完了できる。Stage 3
 | `restarted` | — | Yhtye の再起動で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
 
 `finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で
-マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 以降) にだけ使う (Stage 3a で決定)。
+マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 で実装) にだけ使う (Stage 3a で決定)。
 再起動時にグループのマージ中 (`finishing`) だった場合も `ok=false` の `merge_result` を送る
 (グループは `merge_blocked`。Stage 3b)。`restarted` は Stage 3b で追加した
 ([`core-design.md`](core-design.md) §8.1)。

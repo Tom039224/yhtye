@@ -11,7 +11,8 @@
 実際には動かなかったため破棄し、下層 (ACP コア → MCP サーバー → ドメインコア →
 フロントエンド → 統合) から「本物で動くこと」を各段の完了条件として積み直している。
 進捗と各段の範囲は [`PLAN.md`](PLAN.md)、機能設計は [`docs/architecture/`](docs/architecture/)、
-画面設計は [`docs/design/`](docs/design/)。現時点ではアプリとして使える機能はない。
+画面設計は [`docs/design/`](docs/design/)。現時点では素の UI で依頼 → タスク分割 → 実装 → base への
+マージまでが動く (デザインの適用は Stage 6)。
 
 ## 構成
 
@@ -61,9 +62,32 @@ sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
 
 ```sh
 pnpm install
-pnpm tauri dev      # デスクトップアプリとして起動
-pnpm dev            # ブラウザで frontend だけ (http://localhost:1420)
+pnpm tauri dev      # デスクトップアプリとして起動 (本物のコア + Claude Code)
+pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に起動 → http://localhost:1420
 ```
+
+- エージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
+  モデルは `YHTYE_MODEL` (既定 `haiku`)。
+- アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/com.tom039224.yhtye`。
+  Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
+- アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
+  次の起動時に自動で開き、中断したタスクを再開する。
+
+#### ブラウザで動かす (開発・E2E 用)
+
+素の Chrome には Tauri の IPC が無いので、同じ API を WebSocket で出す開発用ブリッジ
+`yhtye-dev-bridge` を使う ([`core-design.md`](docs/architecture/core-design.md) §10)。
+
+```sh
+pnpm dev:browser                              # ブリッジ (ws://127.0.0.1:1422/ws) + Vite (1420)
+pnpm dev:browser --data-dir /tmp/yhtye-dev    # 以降の引数はブリッジへ (--port / --model / --token)
+```
+
+- ブリッジは 127.0.0.1 のみで待ち受け、`Origin` が `http://localhost:1420` / `http://127.0.0.1:1420`
+  (ブラウザからの接続) で、`?token=` が一致する接続だけ受け付ける。`pnpm dev:browser` はランダムな
+  トークンを作ってブリッジ (`YHTYE_BRIDGE_TOKEN`) と Vite (`VITE_YHTYE_BRIDGE_TOKEN`) の両方に渡す。
+- ブリッジのデータは既定で `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリとは別)。
+- 別々に起動する場合: `pnpm bridge -- --token T` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
 
 #### Wayland + NVIDIA で起動直後に落ちる場合
 
@@ -75,7 +99,7 @@ WebKitGTK の DMA-BUF レンダラが NVIDIA プロプライエタリドライ�
 `pnpm tauri dev` では対処されている。ビルド済みバイナリを直接叩くときは自分で渡す。
 
 ```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./src-tauri/target/debug/yhtye
+WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/debug/yhtye
 ```
 
 この回避策は dev 時のみ効く。配布バイナリでどう扱うかは未決
@@ -84,9 +108,13 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 ./src-tauri/target/debug/yhtye
 ### ビルド・検証
 
 ```sh
-pnpm build                      # tsc --noEmit 相当 + vite build
-cd src-tauri && cargo check     # Rust 側の型検査
-pnpm tauri build                # 配布用バイナリ
+pnpm build                                         # tsc + vite build
+pnpm test                                          # Vitest
+cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
+cargo test -p yhtye-core -- --ignored --test-threads=1   # 実 Claude Code (Haiku)
+cargo clippy --workspace --all-targets && cargo fmt --check
+pnpm tauri build --debug --no-bundle               # アプリのデバッグビルド (target/debug/yhtye)
+pnpm tauri build                                   # 配布用バイナリ
 ```
 
 ## 設計の参照元

@@ -154,3 +154,110 @@ fn blocked_group_merge_is_merge_blocked_and_can_be_cancelled() {
     );
     sim.group();
 }
+
+#[test]
+fn cancelling_a_group_removes_its_integration_worktree_after_the_tasks() {
+    let mut sim = Sim::new();
+    sim.group();
+    sim.task(json!({}));
+    let (_, chain) = sim.orch_ok(
+        ToolName::CancelGroup,
+        json!({"group_id": "G-1", "reason": "drop"}),
+    );
+    let git: Vec<&GitOp> = chain
+        .effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Git(op) => Some(op),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        matches!(
+            git[..],
+            [
+                GitOp::RemoveWorkspace { .. },
+                GitOp::RemoveGroupWorkspace { .. }
+            ]
+        ),
+        "{git:?}"
+    );
+}
+
+/// A git whose group merge is blocked until `unblocked` is set.
+fn blocked_until(unblocked: Rc<Cell<bool>>) -> GitResponder {
+    Box::new(move |op| match op {
+        GitOp::MergeGroup { .. } if !unblocked.get() => GitResult::Blocked {
+            detail: "main worktree is dirty".into(),
+        },
+        other => noop_git(other),
+    })
+}
+
+#[test]
+fn retrying_a_blocked_merge_merges_and_tells_the_orchestrator() {
+    let unblocked = Rc::new(Cell::new(false));
+    let mut sim = Sim::new();
+    sim.git = blocked_until(unblocked.clone());
+    sim.group();
+    sim.orch_ok(
+        ToolName::FinishGroup,
+        json!({"group_id": "G-1", "summary": "did it"}),
+    );
+    sim.deliver_inbox();
+    let retry = || DomainCommand::RetryGroupMerge {
+        group: "G-1".into(),
+    };
+
+    // Still blocked: merge_blocked again, and the orchestrator hears about it.
+    sim.run(retry()).expect("retry runs");
+    assert_eq!(
+        sim.state.group("G-1").map(|g| g.status),
+        Some(GroupStatus::MergeBlocked)
+    );
+    assert_eq!(sim.inbox_kinds(), vec![InboxKind::MergeResult]);
+    sim.deliver_inbox();
+
+    unblocked.set(true);
+    let chain = sim.run(retry()).expect("retry runs");
+    let g = sim.state.group("G-1").expect("group");
+    assert_eq!(g.status, GroupStatus::Done);
+    assert_eq!(g.finish_summary.as_deref(), Some("did it"), "summary kept");
+    assert!(has_effect(&chain, |e| matches!(
+        e,
+        Effect::Git(GitOp::MergeGroup { notify: true, .. })
+    )));
+    let item = &sim.state.inbox.last().expect("merge_result").item;
+    assert_eq!(item.kind, InboxKind::MergeResult);
+    assert!(item.attrs.contains(&("ok".into(), "true".into())));
+}
+
+#[test]
+fn only_a_blocked_merge_can_be_retried_and_not_while_another_group_is_open() {
+    let mut sim = Sim::new();
+    let retry = |g: &str| DomainCommand::RetryGroupMerge { group: g.into() };
+    assert_eq!(
+        sim.run(retry("G-9")).map(|_| ()).unwrap_err().code,
+        ErrorCode::NotFound
+    );
+    sim.group();
+    assert_eq!(
+        sim.run(retry("G-1")).map(|_| ()).unwrap_err().code,
+        ErrorCode::InvalidState
+    );
+    sim.git = Box::new(|op| match op {
+        GitOp::MergeGroup { .. } => GitResult::Blocked {
+            detail: "dirty".into(),
+        },
+        other => noop_git(other),
+    });
+    sim.orch_ok(
+        ToolName::FinishGroup,
+        json!({"group_id": "G-1", "summary": "s"}),
+    );
+    sim.group(); // G-2 is active now
+    assert_eq!(
+        sim.run(retry("G-1")).map(|_| ()).unwrap_err().code,
+        ErrorCode::Conflict
+    );
+}

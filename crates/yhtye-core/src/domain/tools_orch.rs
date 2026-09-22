@@ -319,6 +319,7 @@ impl Tx {
             group: g.id.clone(),
             group_branch: g.group_branch.clone(),
             base_branch: g.base_branch.clone(),
+            notify: false,
         };
         self.emit(DomainEvent::GroupFinishing {
             group: a.group_id.clone(),
@@ -354,6 +355,10 @@ impl Tx {
         for id in open {
             self.cancel_task(&id, &format!("group cancelled: {}", a.reason));
         }
+        // After the tasks' own worktrees (their effects run first).
+        self.effect(Effect::Git(GitOp::RemoveGroupWorkspace {
+            group: a.group_id.clone(),
+        }));
         Ok(json!({ "group_id": a.group_id, "status": "cancelled" }))
     }
 }

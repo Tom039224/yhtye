@@ -89,6 +89,7 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
         }
         DomainCommand::Restart { orchestrator } => tx.restart(orchestrator),
         DomainCommand::ResumeTask { task } => tx.resume_task(&task),
+        DomainCommand::RetryGroupMerge { group } => tx.retry_group_merge(&group)?,
     }
     Ok(tx.finish())
 }

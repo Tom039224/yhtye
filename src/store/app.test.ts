@@ -146,11 +146,13 @@ describe("AppStore sync", () => {
     await store.cancelTurn();
     await store.cancelTask("T-1");
     await store.cancelGroup("G-1");
-    expect(transport.calls.slice(-4)).toEqual([
+    await store.retryGroupMerge("G-2");
+    expect(transport.calls.slice(-5)).toEqual([
       { type: "send_user_message", project: "repo", text: "do it" },
       { type: "cancel_orchestrator_turn", project: "repo" },
       { type: "cancel_task", project: "repo", task: "T-1" },
       { type: "cancel_group", project: "repo", group: "G-1" },
+      { type: "retry_group_merge", project: "repo", group: "G-2" },
     ]);
   });
 

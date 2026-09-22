@@ -198,6 +198,23 @@ impl GitCli {
         Ok(GitResult::Done)
     }
 
+    /// A cancelled group: an interrupted merge in its integration worktree is
+    /// aborted, what is left there is committed to the group branch (which is
+    /// kept, like task branches), then the worktree is removed.
+    async fn remove_group(&self, group: &str) -> Step<GitResult> {
+        let dir = self.group_dir(group);
+        if is_worktree(&self.repo, &dir).await? {
+            if repo::operation_in_progress(&dir).await? == Some("a merge") {
+                super::run::git_ok(&dir, &["merge", "--abort"]).await?;
+            }
+            refuse_unfinished(&dir, &[]).await?;
+            let msg = format!("{group}: work in progress (group cancelled; saved by Yhtye)");
+            repo::commit_all(&dir, &msg).await?;
+        }
+        remove_worktree(&self.repo, &dir).await?;
+        Ok(GitResult::Done)
+    }
+
     /// Merges the group branch into the base branch in the main worktree, if
     /// it has the base branch checked out and no uncommitted changes to tracked
     /// files. Anything in the way is `Blocked`; the user's tree is never changed
@@ -305,10 +322,12 @@ impl GitCli {
                 }
             }
             GitOp::RemoveWorkspace { group, task } => self.remove_task(group, task).await,
+            GitOp::RemoveGroupWorkspace { group } => self.remove_group(group).await,
             GitOp::MergeGroup {
                 group,
                 group_branch,
                 base_branch,
+                ..
             } => {
                 let b = branches(group, group_branch, base_branch);
                 self.merge_group(&b).await

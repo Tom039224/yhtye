@@ -1,5 +1,5 @@
 //! Messages of the development WebSocket bridge (`core-design.md` §10). The
-//! bridge itself is Stage 5; the message types live here so both sides share
+//! bridge is `crates/yhtye-dev-bridge`; the message types live here so both sides share
 //! one generated definition.
 
 use serde::{Deserialize, Serialize};

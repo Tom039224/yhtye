@@ -47,6 +47,7 @@ Stage 4 で実装 (`runtime/core.rs`)。当初案からの変更点は下の「S
 
 impl Core {
     pub async fn start(cfg: CoreConfig) -> Result<Core, ApiError>;  // DB を開くだけ。プロジェクトは OpenProject で起動
+    pub async fn resume_unfinished(&self) -> Vec<(String, Result<ProjectInfo, ApiError>)>; // Stage 5: 未完了の作業があるプロジェクトを開く
     pub async fn command(&self, cmd: ApiCommand) -> Result<ApiResponse, ApiError>;
     pub fn subscribe(&self) -> broadcast::Receiver<ApiEvent>;       // 全プロジェクトの durable + live
     pub async fn snapshot(&self, project: &str) -> Result<Snapshot, ApiError>;
@@ -76,11 +77,28 @@ pub struct CoreConfig {
     (`cancel_group` は `group_settled` を送らないため、知らせないとオーケストレータが気づかない)。
   - `Snapshot` に `sessions: Vec<SessionRecord>` (agent_sessions) を足した。UI がオーケストレータの
     ターン中かどうか・各セッションの状態を snapshot 時点から畳み込めるように。
-  - `RetryGroupMerge` は Stage 5 以降 (まだ無い)。
+  - `RetryGroupMerge` は Stage 5 で実装 (下の「Stage 5 の決定」)。
+- **Stage 5 の決定**:
+  - **起動時の再開**: `Core::start` 自体は DB を開くだけのまま (テストや他の用途で勝手にエージェントを
+    起こさないため)。アプリ (src-tauri) と WS ブリッジは起動直後に `Core::resume_unfinished()` を
+    バックグラウンドで呼ぶ。これは **未完了の作業があるプロジェクト** (active / finishing のグループが
+    ある、または受信箱に未配達がある) だけを `OpenProject` と同じ経路で開くので、中断したタスクは UI を
+    待たずに再開する。作業の無いプロジェクトは開かない (オーケストレータを無駄に起こさない)。
+    「前回開いていたか」は記録していない (必要になったら `projects` に列を足す)。
+  - `RetryGroupMerge{project, group}`: `DomainCommand::RetryGroupMerge` → `merge_blocked` を `finishing` に
+    戻して `GitOp::MergeGroup{notify: true}`。結果は状態 (`done` / `merge_blocked`) と受信箱の
+    `merge_result` (本文に「ユーザーが UI から再試行した」)。他に active / finishing のグループがあれば
+    `conflict`、`merge_blocked` 以外は `invalid_state`。応答は `accepted` (マージは応答前に終わっている)。
+  - `cancel_group` は各タスクの後片付けの後に `GitOp::RemoveGroupWorkspace` で統合 worktree も消す
+    (Stage 4 で残っていた問題)。
+  - 履歴の読み込みは先頭からのページングのまま (変更なし、Stage 6 以降の課題として PLAN に記録)。
+    新しい順のページングは UI の同期規則 (cursor から先を順に畳み込む) と噛み合わないため、
+    別の「過去の会話だけを遅延で読む」経路として設計が要る。
 - `ApiCommand` (serde `type` タグ): `list_projects` / `open_project{path}` / `get_snapshot{project}` /
   `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
   `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
-  `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}`。
+  `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
+  `retry_group_merge{project, group}` (Stage 5)。
   `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted`。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
@@ -497,18 +515,38 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
   `#[tauri::command] async fn yhtye_command(cmd: ApiCommand) -> Result<ApiResponse, ApiError>`
-  の 1 本だけ。`subscribe` した `ApiEvent` を `app.emit("yhtye://event", ev)` で流す。
+  の 1 本だけ。`subscribe` した `ApiEvent` を `app.emit("yhtye://event", ev)` で流す
+  (broadcast の `Lagged` は捨てる。UI が seq 飛びで補う)。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
+- Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
+  app data dir (Linux: `~/.local/share/com.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
+  再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
+  `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
+  変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1` は従来どおり `src-tauri/.cargo/config.toml` の `[env]`
+  (`pnpm tauri dev` = src-tauri での `cargo run` に効く)。配布バイナリでの扱いは未決のまま。
 
 ## 10. 開発用 WS ブリッジ (`yhtye-dev-bridge`)
 
-- `yhtye-dev-bridge --data-dir <dir> --port 1421` で Core を起動し、`ws://127.0.0.1:1421/ws` を公開。
+- `yhtye-dev-bridge --data-dir <dir> --port 1422` で Core を起動し、`ws://127.0.0.1:1422/ws` を公開。
+  **既定ポートは 1421 → 1422 に変更 (Stage 5)**: Vite の HMR が `TAURI_DEV_HOST` 設定時に 1421 を使うため。
 - メッセージ: 要求 `{ "id": n, "cmd": ApiCommand }` → 応答 `{ "id": n, "ok": ApiResponse }` /
   `{ "id": n, "err": ApiError }`。イベントは `{ "event": ApiEvent }` をプッシュ。
 - 127.0.0.1 のみに bind。ブラウザ上の他サイトから叩かれないよう、`Origin` を
   `http://localhost:1420` / `http://127.0.0.1:1420` に限定し、起動時に表示する
   ランダムトークンを `?token=` で要求する (Vite には env で渡す)。
 - 開発・E2E 専用。配布物には含めない。
+- Stage 5 の実装 (`crates/yhtye-dev-bridge`、lib = `router` / `serve` + bin): axum 0.8 の `ws`。
+  `Origin` ヘッダが**ある**接続 (= ブラウザ) だけ Origin を検査し、無い接続 (スクリプト・テスト) は
+  トークンだけで通す。拒否は 403 (Origin) / 401 (トークン)。要求は接続ごとに並行実行 (OpenProject の
+  間もキャンセルが通る。応答は順不同で id で対応付け)。接続が切れても実行中の要求は中断しない
+  (半端な OpenProject を残さない)。id の無い不正メッセージは無視、id があれば `invalid_argument`。
+  トークンは `--token` / `YHTYE_BRIDGE_TOKEN`、無ければランダムで、起動時に stdout に
+  `YHTYE_BRIDGE_URL=ws://...?token=...` を 1 行出す。データディレクトリは `--data-dir` /
+  `YHTYE_DATA_DIR`、無ければ `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリの DB とは分ける)。
+  SIGINT / SIGTERM で `Core::shutdown` してから終了。起動後に `resume_unfinished`。
+- `pnpm dev:browser [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
+  起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
 
 ## 11. フロントエンドの transport 抽象
 
@@ -521,7 +559,7 @@ export interface Transport {
   close(): void;
 }
 // createTransport(): Tauri 内 (window.__TAURI_INTERNALS__ がある) なら TauriTransport,
-// それ以外は WsTransport (VITE_YHTYE_BRIDGE_URL 既定 ws://127.0.0.1:1421/ws, VITE_YHTYE_BRIDGE_TOKEN)。
+// それ以外は WsTransport (VITE_YHTYE_BRIDGE_URL 既定 ws://127.0.0.1:1422/ws, VITE_YHTYE_BRIDGE_TOKEN)。
 ```
 
 Stage 4 の構成 (`src/`):
@@ -582,4 +620,5 @@ Stage 4 の構成 (`src/`):
 | 結合 (偽エージェント) | `cargo test` | ACP ストリーミング・ターン中キャンセル・MCP 経由のタスク生成・グループ完走 |
 | 実エージェント | `cargo test -- --ignored` | Claude Code を **必ず Haiku** で。テストヘルパが `ANTHROPIC_MODEL=haiku` を設定し、`Ready` の config_options で現在モデルが haiku であることを表明してから始める |
 | フロント | `pnpm test` (Vitest) | reducer にイベント列を流す、transport の契約 |
-| E2E | Chrome + WS ブリッジ + 実 Haiku | 依頼 → グループ完了まで |
+| 結合 (ブリッジ) | `cargo test -p yhtye-dev-bridge` | 実 WebSocket + 本物のコア + 偽エージェント: アクセス制御・要求-応答・エラー・イベント配信 |
+| E2E | Chrome + WS ブリッジ + 実 Haiku | 依頼 → グループ完了まで (Stage 5 は手動の自動操作) |

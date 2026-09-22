@@ -125,6 +125,11 @@ export class AppStore {
     if (project) await this.run({ type: "cancel_group", project, group }, "accepted");
   }
 
+  async retryGroupMerge(group: string): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (project) await this.run({ type: "retry_group_merge", project, group }, "accepted");
+  }
+
   dismissError(id: number): void {
     this.set({ errors: this.state.errors.filter((e) => e.id !== id) });
   }

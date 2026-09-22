@@ -289,6 +289,18 @@ impl Orchestration {
         self.user_tool(call).await
     }
 
+    /// Retries the base merge of a `merge_blocked` group (after the user made
+    /// the main worktree mergeable). The result is in the group's status and
+    /// is also sent to the orchestrator as `merge_result`.
+    pub async fn retry_group_merge(
+        &self,
+        group: impl Into<String>,
+    ) -> Result<Value, UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::RetryGroupMerge(group.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     async fn user_tool(&self, call: ToolCall) -> Result<Value, UserActionError> {
         let (tx, rx) = oneshot::channel();
         self.send(Cmd::UserTool(call, tx))?;

@@ -201,6 +201,11 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
   コミットもマージもせず `git_failed` の help (その作業を黙って捨てないため。マージ途中だけは上記の
   とおりコミットで完了させる)。
 - **中止したタスク**: worktree を削除する前に未コミットの変更をタスクブランチに WIP コミットして残す。
+- **中止したグループ** (Stage 5): 各タスクの後片付けの後で統合 worktree `_group` も削除する
+  (中断マージは abort、残った変更は group ブランチに WIP コミット)。ブランチは残す。
+- **マージの再試行** (Stage 5): `merge_blocked` のグループはユーザーが UI から `RetryGroupMerge` で
+  `finishing` に戻して base へのマージをやり直せる (他に active / finishing のグループがあれば `conflict`)。
+  結果はオーケストレータに `merge_result` で知らせる。
 - **後片付け**: タスクのマージ成功で task worktree、base へのマージ成功で統合 worktree を削除する。
   ブランチはすべて残す。
 - **冪等性** (再起動で git 操作がやり直されるため): 既存の worktree が正しいブランチなら再利用、

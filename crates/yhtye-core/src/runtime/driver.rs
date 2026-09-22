@@ -38,6 +38,8 @@ pub(super) enum Cmd {
     CancelOrchestrator,
     /// An orchestrator tool (`cancel_task` / `cancel_group`) invoked by the user.
     UserTool(ToolCall, oneshot::Sender<Reply>),
+    /// The user retries the base merge of a `merge_blocked` group.
+    RetryGroupMerge(String, oneshot::Sender<Reply>),
     Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
     Shutdown(oneshot::Sender<()>),
 }
@@ -156,6 +158,13 @@ impl Driver {
             Some(Cmd::CancelOrchestrator) => self.sessions.cancel_turn(ORCHESTRATOR_SESSION),
             Some(Cmd::UserTool(call, tx)) => {
                 let reply = self.user_tool(call).await;
+                let _ = tx.send(reply);
+            }
+            Some(Cmd::RetryGroupMerge(group, tx)) => {
+                let reply = self
+                    .execute(DomainCommand::RetryGroupMerge { group })
+                    .await
+                    .unwrap_or_else(|| Err(ToolError::internal("the retry produced no reply")));
                 let _ = tx.send(reply);
             }
             Some(Cmd::Snapshot(tx)) => {

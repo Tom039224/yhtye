@@ -158,8 +158,10 @@ describe("App", () => {
 
     await user.click(within(screen.getByRole("article", { name: "task T-2" })).getByRole("button", { name: "■ 中止" }));
     await user.click(within(tasks).getByRole("button", { name: "グループを中止" }));
+    await user.click(within(tasks).getByRole("button", { name: "マージを再試行" }));
     expect(transport.callsOf("cancel_task")[0].task).toBe("T-2");
     expect(transport.callsOf("cancel_group")[0].group).toBe("G-1");
+    expect(transport.callsOf("retry_group_merge")[0].group).toBe("G-1");
   });
 
   it("shows empty states for a new project", async () => {

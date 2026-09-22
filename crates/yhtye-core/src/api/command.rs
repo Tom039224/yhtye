@@ -66,6 +66,13 @@ pub enum ApiCommand {
         #[ts(optional)]
         reason: Option<String>,
     },
+    /// Retries the base merge of a `merge_blocked` group. Accepted means the
+    /// merge ran; whether it succeeded is in the group's status (and the
+    /// orchestrator gets a `merge_result`).
+    RetryGroupMerge {
+        project: String,
+        group: String,
+    },
 }
 
 /// A project known to Yhtye.

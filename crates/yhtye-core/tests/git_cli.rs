@@ -44,6 +44,7 @@ fn merge_group() -> GitOp {
         group: "G-1".into(),
         group_branch: "yhtye/G-1".into(),
         base_branch: "main".into(),
+        notify: false,
     }
 }
 
@@ -282,6 +283,27 @@ async fn removing_a_cancelled_workspace_keeps_its_work_on_the_branch() {
         GitResult::Done,
         "re-run is a no-op"
     );
+}
+
+#[tokio::test]
+async fn removing_a_cancelled_group_keeps_its_branch_and_removes_every_worktree() {
+    let (r, dirs) = with_tasks(&["T-1"]).await;
+    let git = r.git_cli();
+    let group_dir = git.group_dir("G-1");
+    write_in(&group_dir, "notes.txt", "left by an investigate task\n");
+    assert_eq!(git.run(&remove("T-1")).await, GitResult::Done);
+    let op = GitOp::RemoveGroupWorkspace {
+        group: "G-1".into(),
+    };
+    assert_eq!(git.run(&op).await, GitResult::Done);
+    assert!(!dirs[0].exists() && !group_dir.exists());
+    assert!(r.extra_worktrees().is_empty(), "{:?}", r.extra_worktrees());
+    assert_eq!(
+        r.show("yhtye/G-1", "notes.txt"),
+        "left by an investigate task\n"
+    );
+    assert_eq!(git.run(&op).await, GitResult::Done, "re-run is a no-op");
+    assert_eq!(r.status(), "", "the user's tree is untouched");
 }
 
 #[tokio::test]

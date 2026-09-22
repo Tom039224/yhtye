@@ -65,7 +65,9 @@ impl GitService for NoopGit {
 
     async fn run(&self, op: &GitOp) -> GitResult {
         match op {
-            GitOp::CreateGroupBranch { .. } | GitOp::RemoveWorkspace { .. } => GitResult::Done,
+            GitOp::CreateGroupBranch { .. }
+            | GitOp::RemoveWorkspace { .. }
+            | GitOp::RemoveGroupWorkspace { .. } => GitResult::Done,
             GitOp::PrepareWorkspace { .. } => GitResult::Workspace {
                 path: self.project_dir.clone(),
             },
@@ -105,6 +107,7 @@ mod tests {
                 group: "G-1".into(),
                 group_branch: "yhtye/G-1".into(),
                 base_branch: "main".into(),
+                notify: false,
             })
             .await;
         assert!(matches!(merged, GitResult::Merged { .. }));

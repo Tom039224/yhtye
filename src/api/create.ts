@@ -5,7 +5,8 @@ import { TauriTransport } from "./tauri";
 import type { Transport } from "./transport";
 import { WsTransport } from "./ws";
 
-export const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:1421/ws";
+// 1420 is Vite, 1421 Vite's HMR under `TAURI_DEV_HOST`; the bridge takes 1422.
+export const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:1422/ws";
 
 export interface BridgeEnv {
   VITE_YHTYE_BRIDGE_URL?: string;

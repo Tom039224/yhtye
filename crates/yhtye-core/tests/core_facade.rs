@@ -93,7 +93,20 @@ async fn until(
     loop {
         let ev = tokio::time::timeout(TIMEOUT, rx.recv())
             .await
-            .unwrap_or_else(|_| panic!("timed out after {} events", seen.len()))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out after {} events: {:#?}",
+                    seen.len(),
+                    seen.iter()
+                        .filter(|e| !e.live)
+                        .map(|e| serde_json::to_string(&e.body)
+                            .unwrap_or_default()
+                            .chars()
+                            .take(200)
+                            .collect::<String>())
+                        .collect::<Vec<_>>()
+                )
+            })
             .expect("event stream open");
         let stop = done(&ev);
         seen.push(ev);
@@ -370,6 +383,12 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     let snap = snapshot(&core, &project).await;
     assert_eq!(snap.state.groups[0].status, GroupStatus::Cancelled);
     assert_eq!(snap.state.tasks[1].status, TaskStatus::Cancelled);
+    assert!(
+        r.extra_worktrees().is_empty(),
+        "the task and integration worktrees are gone: {:?}",
+        r.extra_worktrees()
+    );
+    assert!(r.branch_exists("yhtye/G-1"), "the group branch is kept");
     assert_eq!(
         error_code(&core, cancel_group).await,
         ApiErrorCode::InvalidState
@@ -385,6 +404,68 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     core.shutdown().await;
     let after = ApiCommand::GetSnapshot { project };
     assert_eq!(error_code(&core, after).await, ApiErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
+    let r = TempRepo::new();
+    let idle_repo = TempRepo::new();
+    let orch = json!({"turns": [
+        {"match": "start one", "actions": [
+            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+                "kind": "code", "steps": [{"kind": "implement"}], "instruction": "write-a"}}}
+        ]},
+        {"actions": [{"message": "noted"}]}
+    ]});
+    // Before the restart the implementer never finishes; afterwards (restored
+    // or started again with the step's prompt) it reports.
+    let waiting = json!({"turns": [{"actions": [
+        {"write_file": {"path": "a.txt", "text": "a\n"}}, "wait_cancel"]}]});
+    let reporting = json!({"turns": [{"actions": [
+        {"mcp_call": {"tool": "report_step_done", "args": {"result": "wrote a.txt"}}}]}]});
+    let cfg = core_config(&r, orch.clone(), waiting, json!({"turns": []}));
+    let core = Core::start(cfg).await.expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r.repo).await.id;
+    let idle = open(&core, &idle_repo.repo).await.id;
+    let send = ApiCommand::SendUserMessage {
+        project: project.clone(),
+        text: "start one".into(),
+    };
+    run(&core, send).await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |e| {
+        is_domain(
+            e,
+            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "T-1"),
+        )
+    })
+    .await;
+    core.shutdown().await;
+
+    let cfg = core_config(&r, orch, reporting, json!({"turns": []}));
+    let core = Core::start(cfg).await.expect("core");
+    let mut rx = core.subscribe();
+    let resumed = core.resume_unfinished().await;
+    let ids: Vec<&str> = resumed.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, vec![project.as_str()], "{idle} has no unfinished work");
+    assert!(resumed[0].1.as_ref().is_ok_and(|p| p.open));
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |e| {
+        is_domain(e, |d| matches!(d, DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1"))
+    })
+    .await;
+    let ApiResponse::Projects { projects } = run(&core, ApiCommand::ListProjects).await else {
+        panic!("expected projects");
+    };
+    let open_ids: Vec<&str> = projects
+        .iter()
+        .filter(|p| p.open)
+        .map(|p| p.id.as_str())
+        .collect();
+    assert_eq!(open_ids, vec![project.as_str()]);
+    core.shutdown().await;
 }
 
 #[test]

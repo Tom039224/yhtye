@@ -217,6 +217,48 @@ async fn a_dirty_base_tree_makes_the_group_merge_blocked() {
 }
 
 #[tokio::test]
+async fn a_blocked_group_merge_is_retried_after_the_user_cleans_the_tree() {
+    let r = TempRepo::new();
+    r.write("README.md", "# the user's unsaved edit\n");
+    let orch_script = json!({"turns": [
+        plan(vec![task("c", json!([{"kind": "implement"}]), "write-c")]),
+        finish_turn(),
+        {"match": "[yhtye:merge_result]", "actions": [{"message": "told the user"}]}
+    ]});
+    let impl_script = json!({"turns": [write_turn("write-c", "c.txt", "c\n")]});
+    let cfg = git_config(
+        &r,
+        fake_harness(orch_script),
+        fake_harness(impl_script),
+        fake_harness(json!({})),
+    );
+    let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
+    let mut events = Vec::new();
+    orch.send_user_message("do the work").expect("send");
+    until(&mut rx, &mut events, TIMEOUT, finished).await;
+    assert!(finish_reply(&events).contains("merge_blocked"));
+
+    r.git(&["checkout", "--", "README.md"]);
+    let reply = orch.retry_group_merge("G-1").await.expect("retry");
+    assert_eq!(reply["merge"]["ok"], json!(true), "{reply}");
+    assert_eq!(r.read("c.txt"), "c\n");
+    assert!(r.extra_worktrees().is_empty(), "{:?}", r.extra_worktrees());
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        is_message(e, ORCHESTRATOR_SESSION, "told the user")
+    })
+    .await;
+    let told = prompts_to(&events, ORCHESTRATOR_SESSION);
+    assert!(
+        told.iter()
+            .any(|p| p.contains("[yhtye:merge_result] group=G-1 ok=true")),
+        "{told:?}"
+    );
+    let err = orch.retry_group_merge("G-1").await.expect_err("done now");
+    assert!(err.to_string().contains("merge_blocked"), "{err}");
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
 async fn a_restarted_step_in_a_new_session_is_shown_the_work_already_done() {
     let r = TempRepo::new();
     // First run: the implementer writes part of the work, then Yhtye "quits".

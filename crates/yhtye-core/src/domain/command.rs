@@ -64,10 +64,17 @@ pub enum GitOp {
     },
     /// A cancelled `code` task: commit leftovers to its branch, remove the worktree.
     RemoveWorkspace { group: String, task: String },
+    /// A cancelled group: remove its integration worktree (the branch is kept).
+    RemoveGroupWorkspace { group: String },
     MergeGroup {
         group: String,
         group_branch: String,
         base_branch: String,
+        /// Retried by the user (`RetryGroupMerge`): the result goes to the
+        /// orchestrator's inbox as `merge_result` (`finish_group` gets it as its
+        /// reply instead).
+        #[serde(default)]
+        notify: bool,
     },
 }
 
@@ -149,6 +156,10 @@ pub enum DomainCommand {
     /// Continues an `interrupted` task (sent by the runtime after `Restart`).
     ResumeTask {
         task: String,
+    },
+    /// The user retries the base merge of a `merge_blocked` group (Stage 5).
+    RetryGroupMerge {
+        group: String,
     },
 }
 

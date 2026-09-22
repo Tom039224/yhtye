@@ -20,7 +20,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | **完了** |
 | 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | **完了** (Stage 3 完了) |
 | 4 | フロントエンド (素の UI) | **完了** |
-| 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
+| 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | **完了** (アプリ内 UI の手動確認は残り) |
 | 6 | Claude Design 適用・残機能 | 未着手 |
 
 ## 再開の仕方
@@ -544,6 +544,71 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   マージされたことが UI と git の両方で確認できる。ターン中キャンセルも UI から効く。
 - `pnpm tauri dev` でアプリが起動し、同じ依頼が通る (手動確認でよい)。終了後に
   エージェントプロセスが残っていない。
+
+**結果メモ (2026-09-23)**
+
+- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §2「Stage 5 の決定」・§9・§10):
+  - `src-tauri/src/lib.rs`: `Core::start(CoreConfig::claude_code(data_dir, model))` を manage、
+    `yhtye_command` 1 本、`subscribe` → `emit("yhtye://event")`、起動後に `resume_unfinished`、
+    `RunEvent::Exit` で `block_on(core.shutdown())`、SIGINT/SIGTERM → `app.exit(0)`。
+    データは `YHTYE_DATA_DIR` / app data dir、モデルは `YHTYE_MODEL` (既定 haiku)。
+    `WEBKIT_DISABLE_DMABUF_RENDERER` は `src-tauri/.cargo/config.toml` のまま (変更なし)。
+  - `crates/yhtye-dev-bridge` (lib `router`/`serve` + bin): axum ws、Origin (ある場合) + トークン、
+    要求は並行実行・id で対応付け、SIGINT/SIGTERM で `Core::shutdown`。
+    **既定ポートを 1422 に変更** (Vite HMR の 1421 と衝突するため。`src/api/create.ts` も 1422)。
+  - `pnpm dev:browser` (`scripts/dev-browser.mjs`): ブリッジをビルドして Vite と同時に起動、同じ
+    ランダムトークンを両方に渡し、一緒に止める。`pnpm bridge` はブリッジ単体。
+  - Stage 4 の残り: **起動時の再開** = `Core::resume_unfinished()` (active / finishing のグループか未配達の
+    受信箱があるプロジェクトだけ開く。アプリとブリッジが起動直後に呼ぶ。`Core::start` は DB を開くだけのまま)。
+    **`RetryGroupMerge`** (API コマンド + ドメイン `RetryGroupMerge` + `GitOp::MergeGroup{notify}` → 受信箱
+    `merge_result`、UI は merge_blocked の警告に「マージを再試行」ボタン)。**`cancel_group` の統合 worktree** は
+    `GitOp::RemoveGroupWorkspace` で削除 (中断マージは abort、残りは group ブランチに WIP コミット)。
+    **履歴の読み込み**は先頭からのページングのまま (新しい順は同期規則と噛み合わず別経路の設計が要る → Stage 6)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 168 件成功 (新規: domain 3 = 再試行 / 再試行の拒否 / cancel_group の後片付け順、
+    git_cli 1 = グループ worktree の削除、偽 + 実 git 1 = merge_blocked → ユーザーがツリーを戻す →
+    `retry_group_merge` → base にマージ + `merge_result`、core_facade 1 = 再起動で未完了プロジェクトだけ再開し
+    タスク完走 (+ グループ中止後に worktree が残らない検査)、ブリッジ 4 = Origin/トークン・要求の解析・
+    トークン生成 + 実 WebSocket で 401/403・エラー・並行要求・ストリーミング・2 クライアント配信)。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 9/9 成功 (実 Haiku)。終了後 `claude-agent-acp` 0 個。
+  - `pnpm test` → 41 件成功 (再試行ボタン・`retryGroupMerge` を追加)。`pnpm build` 成功。
+  - `pnpm tauri build --debug --no-bundle` 成功 → `WEBKIT_DISABLE_DMABUF_RENDERER=1 YHTYE_DATA_DIR=<E2E の data>
+    ./target/debug/yhtye` を 25 秒起動: クラッシュなし、中断していたタスクのプロジェクトを自動で開き
+    オーケストレータと実装者 (実 Haiku) が live → SIGTERM → 「all agents stopped」(約 30 ms)、エージェント残存 0。
+- **Chrome E2E (claude-in-chrome、WS ブリッジ + Vite + 実 Haiku、一時リポジトリ `scratchpad/e2e/demo`)**:
+  1. プロジェクトを開く → 依頼「README に 1 行追加 + hello.txt を作成、2 タスク」→ 会話がストリーミング表示、
+     G-1 に T-1/T-2 が並行で running → 途中でページを再読み込み → プロジェクトを選ぶと完了済みまで追いつき、
+     続きのストリーミングも表示 → G-1 done、`main` にマージ (git log でマージコミット 3 つ、README と hello.txt、
+     worktree は main のみ)。
+  2. 長文を頼んでストリーミング中に「ターンを中止」→ `turn ended: cancelled`、idle に戻る。
+  3. 再起動: 実装中 (T-4 implement running) にブリッジへ SIGTERM → 2 秒で終了、エージェント残存 0、
+     セッションは `suspended` → ブリッジを再起動 → `resume_unfinished` で自動再開、T-4 の実装者は
+     **同じ ACP セッション ID で `session/load` 復元** → review → base にマージ。開いたままのページは再接続して追いついた。
+  4. 追加: base を dirty にして依頼 → G-4 merge_blocked → ツリーを戻して UI の「マージを再試行」→ done、
+     オーケストレータに `merge_result ok=true` が届き報告。コンソールエラーなし。
+  - 観察: 「`sleep 45` してからファイル作成」の依頼では Haiku の実装者が 2 回報告なしでターンを終え
+    `protocol_violation` → オーケストレータがタスクを中止した (Claude Code が長いコマンドを背景実行した
+    とみられる)。Yhtye の規則どおりの挙動。ページ再読み込み後はプロジェクトを自動では選ばない (クリックが要る)。
+  - スクリーンショット (一時ディレクトリ。セッション後に消える): `/tmp/claude-1000/-home-tom039224-Projects-QOL-Yhtye/e98f6003-2add-4355-8acc-1e317e142acb/scratchpad/e2e/screens/`
+    `screenshot-1790113751614-0.jpg` (依頼直後) / `-1764633-1` (タスク並行実行) /
+    `-1774856-2` (再読み込み後・完了) / `-1793900-3` (長文ストリーミング) / `-1800917-4` (中止後) /
+    `-4019206-5` (再起動後に完走) / `-4073530-6` (マージ再試行後)。
+- 開発での起動コマンド:
+  - アプリ: `pnpm tauri dev` (データ: `~/.local/share/com.tom039224.yhtye`、`YHTYE_DATA_DIR` / `YHTYE_MODEL` で変更)。
+  - ブラウザ: `pnpm dev:browser [--data-dir DIR]` → Chrome で `http://localhost:1420`。
+    別々に: `pnpm bridge -- --token T --data-dir DIR` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
+- 設計への反映: core-design §2 (Stage 5 の決定・コマンド一覧)・§9・§10 (ポート 1422、Origin が無い接続の扱い、
+  並行実行)・§11・§13、orchestration-model §6 (中止したグループ・マージの再試行)、mcp-tools §5。
+  **要確認**: ブリッジの既定ポート変更 (1421 → 1422) と、`Origin` ヘッダの無い接続 (ブラウザ以外) を
+  トークンだけで通す点。起動時の自動再開は「未完了の作業があるプロジェクトだけ」にした。
+- Stage 6 への申し送り:
+  - **`pnpm tauri dev` のウィンドウ内で依頼を通す確認は未実施** (自動操作できないため。アプリの起動・
+    自動再開・終了時の後始末は確認済み)。ユーザーの手動確認が要る。
+  - 再読み込み後に前回のプロジェクトを自動で選ぶ (localStorage か `open` のプロジェクト)。
+  - 履歴の遅延読み込み (新しい順) は未実装 (上記)。
+  - 長いシェルコマンドを背景実行した実装者が報告せずターンを終える件 (プロンプトで「待ってから報告」を促すか)。
+  - 未決事項 (`~/.claude` の扱い、配布バイナリでの DMABUF 回避策) は変わらず。
 
 ## Stage 6 — Claude Design の適用と残機能
 

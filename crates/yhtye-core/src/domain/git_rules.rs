@@ -2,10 +2,11 @@
 
 use serde_json::json;
 
-use super::command::{GitOp, GitResult};
+use super::command::{Effect, GitOp, GitResult};
 use super::event::DomainEvent;
+use super::inbox::{InboxItem, InboxKind};
 use super::machine::Tx;
-use super::state::TaskStatus;
+use super::state::{GroupStatus, TaskStatus};
 use super::types::{HelpKind, ToolError};
 
 impl Tx {
@@ -19,7 +20,14 @@ impl Tx {
                     tracing::warn!("removing the worktree of {task} failed: {message}");
                 }
             }
-            GitOp::MergeGroup { group, .. } => self.group_merged(&group, result),
+            GitOp::RemoveGroupWorkspace { group } => {
+                if let GitResult::Failed { message } = result {
+                    tracing::warn!(
+                        "removing the integration worktree of {group} failed: {message}"
+                    );
+                }
+            }
+            GitOp::MergeGroup { group, notify, .. } => self.group_merged(&group, result, notify),
         }
     }
 
@@ -123,7 +131,43 @@ impl Tx {
         self.raise_yhtye_help(task, kind, &message);
     }
 
-    fn group_merged(&mut self, group: &str, result: GitResult) {
+    /// `RetryGroupMerge`: a `merge_blocked` group goes back to `finishing` and
+    /// the base merge runs again (the user fixed what blocked it).
+    pub(super) fn retry_group_merge(&mut self, group: &str) -> Result<(), ToolError> {
+        let g = self
+            .state
+            .group(group)
+            .ok_or_else(|| ToolError::not_found(format!("no group {group}")))?;
+        if g.status != GroupStatus::MergeBlocked {
+            return Err(ToolError::invalid_state(format!(
+                "group {} is {}; only a merge_blocked group can retry its merge",
+                g.id,
+                g.status.as_str()
+            )));
+        }
+        if let Some(open) = self.state.open_group() {
+            return Err(ToolError::conflict(format!(
+                "group {} is {}; retry after it is done",
+                open.id,
+                open.status.as_str()
+            )));
+        }
+        let op = GitOp::MergeGroup {
+            group: g.id.clone(),
+            group_branch: g.group_branch.clone(),
+            base_branch: g.base_branch.clone(),
+            notify: true,
+        };
+        let summary = g.finish_summary.clone().unwrap_or_default();
+        self.emit(DomainEvent::GroupFinishing {
+            group: group.to_string(),
+            summary,
+        });
+        self.effect(Effect::Git(op));
+        Ok(())
+    }
+
+    fn group_merged(&mut self, group: &str, result: GitResult, notify: bool) {
         let (ok, detail) = match result {
             GitResult::Merged { detail } => (true, detail),
             GitResult::Done => (true, "merged".to_string()),
@@ -134,6 +178,14 @@ impl Tx {
             ok,
             detail: detail.clone(),
         });
+        if notify {
+            let ok_text = if ok { "true" } else { "false" };
+            self.queue_inbox(InboxItem::new(
+                InboxKind::MergeResult,
+                &[("group", group), ("ok", ok_text)],
+                format!("The user retried the merge from the Yhtye UI: {detail}"),
+            ));
+        }
         let status = self.state.group(group).map(|g| g.status);
         self.reply(Ok(json!({
             "group_id": group,

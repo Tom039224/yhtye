@@ -145,7 +145,48 @@ impl Core {
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
+            ApiCommand::RetryGroupMerge { project, group } => {
+                let orch = self.orchestration(&project)?;
+                orch.retry_group_merge(group)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
+            }
         }
+    }
+
+    /// Opens every known project that has unfinished work — an active or
+    /// finishing group, or undelivered inbox entries — so its interrupted tasks
+    /// resume right away instead of waiting for the UI to open it (Stage 5
+    /// decision, `core-design.md` §2). Projects are opened one after another;
+    /// the result of each is returned (and failures logged).
+    pub async fn resume_unfinished(&self) -> Vec<(String, Result<ProjectInfo, ApiError>)> {
+        let records = match self.inner.store.projects().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("could not list the projects to resume: {e}");
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for r in records {
+            match self.inner.store.load_state(&r.id).await {
+                Ok(Some(state)) if state.open_group().is_some() || !state.inbox.is_empty() => {}
+                Ok(_) => continue,
+                Err(e) => {
+                    tracing::error!("could not read the state of {}: {e}", r.id);
+                    continue;
+                }
+            }
+            let path = r.path.display().to_string();
+            let result = self.open_project(&path).await;
+            match &result {
+                Ok(_) => tracing::info!("resumed project {} ({path})", r.id),
+                Err(e) => tracing::error!("could not resume project {} ({path}): {e}", r.id),
+            }
+            out.push((r.id, result));
+        }
+        out
     }
 
     /// The state of an open project (for tests and the app shell).

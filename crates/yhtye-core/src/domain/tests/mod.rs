@@ -42,7 +42,9 @@ fn noop_git(op: &GitOp) -> GitResult {
         GitOp::FinishTask { .. } | GitOp::MergeGroup { .. } => GitResult::Merged {
             detail: "merged".into(),
         },
-        GitOp::CreateGroupBranch { .. } | GitOp::RemoveWorkspace { .. } => GitResult::Done,
+        GitOp::CreateGroupBranch { .. }
+        | GitOp::RemoveWorkspace { .. }
+        | GitOp::RemoveGroupWorkspace { .. } => GitResult::Done,
     }
 }
 

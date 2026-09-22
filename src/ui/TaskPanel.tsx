@@ -50,6 +50,11 @@ function GroupCard({ group, state, selectedTask, onSelectTask }: { group: Group 
       {group.status === "merge_blocked" ? (
         <div className="alert alert-handling" role="alert">
           base ブランチへのマージが保留されています: {group.detail ?? "理由不明"}
+          <div>
+            <button type="button" className="btn btn-small" onClick={() => void store.retryGroupMerge(group.id)}>
+              マージを再試行
+            </button>
+          </div>
         </div>
       ) : null}
       {group.detail && group.status !== "merge_blocked" ? <div className="mono dim">{group.detail}</div> : null}

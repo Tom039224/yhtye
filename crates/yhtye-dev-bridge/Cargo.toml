@@ -1,0 +1,22 @@
+[package]
+name = "yhtye-dev-bridge"
+description = "Development WebSocket bridge: the Yhtye core API for the React app in a plain browser"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+yhtye-core = { path = "../yhtye-core" }
+axum = { workspace = true, features = ["ws"] }
+tokio = { workspace = true, features = ["signal", "net"] }
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+getrandom.workspace = true
+
+[dev-dependencies]
+tokio-tungstenite = "0.29"
+tempfile.workspace = true
