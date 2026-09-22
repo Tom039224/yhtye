@@ -230,7 +230,7 @@ async fn cancel_task_stops_the_agent_mid_turn() {
     .await;
     orch.send_user_message("cancel it").expect("send");
     until(&mut rx, &mut events, TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::SessionStopped { session } if session == "T-1/implementer")
+        matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")
     })
     .await;
     assert!(

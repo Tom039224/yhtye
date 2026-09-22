@@ -197,6 +197,10 @@ Yhtye 起因の help の kind: `merge_conflict` / `review_rounds_exhausted` /
 | `instruction_needed` | `task` | 依存先タスクの最終結果 | `set_instruction` |
 | `group_settled` | `group` | 全タスクの結果要約・開始不能タスク | タスク追加 or `finish_group` / `cancel_group` |
 | `merge_result` | `group`, `ok` | base へのマージ結果 | ユーザーへの報告 |
+| `restarted` | — | Yhtye の再起動で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
 
 `finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で
 マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 以降) にだけ使う (Stage 3a で決定)。
+再起動時にグループのマージ中 (`finishing`) だった場合も `ok=false` の `merge_result` を送る
+(グループは `merge_blocked`。Stage 3b)。`restarted` は Stage 3b で追加した
+([`core-design.md`](core-design.md) §8.1)。

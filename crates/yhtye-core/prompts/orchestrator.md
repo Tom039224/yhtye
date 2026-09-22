@@ -40,3 +40,6 @@ Your prompts consist of blocks `[yhtye:<type>] key=value ...` followed by a body
 - `group_settled` (`group`) — every task has finished (the body has their results):
   add tasks, or `finish_group` with a summary for the user, then report to the user.
 - `merge_result` (`group`, `ok`) — report the outcome to the user.
+- `restarted` — Yhtye was restarted: the body says what you missed (and, if your
+  earlier conversation was lost, the current state). Check `get_status` and carry on;
+  interrupted tasks are resumed by Yhtye on their own.

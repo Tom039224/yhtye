@@ -108,7 +108,7 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
         "[yhtye:group_settled] group=G-1\nT-1 done: added hello"
     );
     assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionStopped { session } if session == "T-1/implementer")));
+        ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")));
     let domain = domain_events(&events);
     assert!(domain.iter().any(|e| matches!(e,
         DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1")));
@@ -119,7 +119,7 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     );
     assert_gapless(&events);
     let snapshot = orch.snapshot().await.expect("snapshot");
-    assert!(snapshot.seq >= events.len() as u64);
+    assert!(snapshot.seq >= events.iter().filter(|e| !e.live).count() as u64);
     assert_eq!(snapshot.state.tasks[0].status, TaskStatus::Done);
     shutdown_and_check(orch, &events).await;
 }
@@ -220,7 +220,7 @@ async fn needs_changes_loops_through_fresh_reviewer_sessions() {
     let review_prompts = prompts_to(&events, "T-1/review-3");
     assert!(review_prompts[0].contains("step 2 (implement): added the test"));
     assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionStopped { session } if session == "T-1/review-1")));
+        ApiEventBody::SessionStopped { session, .. } if session == "T-1/review-1")));
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],

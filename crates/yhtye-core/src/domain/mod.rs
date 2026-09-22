@@ -12,6 +12,7 @@ mod flow;
 mod git_rules;
 mod inbox;
 mod machine;
+mod restart;
 mod state;
 mod steps;
 mod tools_orch;
@@ -19,7 +20,9 @@ mod tools_sub;
 mod types;
 
 pub use agent_rules::MAX_NUDGES;
-pub use command::{AgentRef, DomainCommand, Effect, GitOp, GitResult, Transition, TurnOutcome};
+pub use command::{
+    AgentRef, DomainCommand, Effect, GitOp, GitResult, OrchestratorResume, Transition, TurnOutcome,
+};
 pub use event::DomainEvent;
 pub use inbox::{InboxItem, InboxKind, render_batch};
 pub use machine::{Machine, decide};

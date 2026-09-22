@@ -17,7 +17,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 1 | ACP コア | **完了** |
 | 2 | MCP サーバー + マルチセッション | **完了** |
 | 3a | ドメインコア: 状態機械 (メモリ上) と UI 向けイベント列 | **完了** |
-| 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | 未着手 |
+| 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | **完了** |
 | 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | 未着手 |
 | 4 | フロントエンド (素の UI) | 未着手 |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
@@ -296,6 +296,96 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - ts-rs による TS 型生成は Stage 4 へ (`AgentEvent` は ACP の型を含むので `unknown` 扱いが要る)。
   - 複数プロジェクトを束ねる `Core` / `ApiCommand` は 3b 以降 (現状は 1 プロジェクトの `Orchestration`)。
   - サブエージェントに Claude Code の `Agent` ツールが残っている (プロンプトで禁止のみ。Stage 2 から継続)。
+
+**3b 結果メモ (2026-09-23)**
+
+- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §2・§4.1・§6・§8.1):
+  - `store/` — sqlx 0.9 (SQLite bundled、WAL + NORMAL)。`migrations/0001_init.sql`
+    (`sqlx::migrate!` で埋め込み)。`events` (追記のみ、`(project_id, seq)` が主キー、`kind` /
+    `session` に索引) + 現在状態 `projects` / `task_groups` / `tasks` / `task_deps` / `steps` /
+    `helps` / `inbox` + `agent_sessions`。`Store::commit` = ドメイン遷移のイベント + 変わった行を
+    1 トランザクション。`load_state` (テーブルから) / `replay_state` (ログから、検査用) /
+    `events_after` / `session_events` / `sessions`。DB の場所は `store::db_path(data_dir)`
+    (`OrchestrationConfig::db_path`)。
+  - `api` — `ApiEvent.live` を追加。durable イベントの `seq` = DB の seq (1 から欠番なし)。
+    チャンク (`MessageChunk` / `ThoughtChunk` / `UserMessageChunk`) と `Usage` は live
+    (保存せず、seq を進めない)。チャンク列はブロックの終わりに `agent_text` として 1 行で保存・配信
+    (**トークン単位の行を積まない**選択)。`session_started` に `acp_session_id` / `resumed`、
+    `session_stopped` に `suspended`、`session_interrupted` を追加。
+  - `runtime` — `emitter` を `Emitter` (バッファ) + `Publisher` (seq 付け・保存・配信) に。
+    ループは「decide → DB にコミット → 状態を置き換え → 配信 → Effect」の順 (コミットに失敗した
+    遷移は捨てて `internal`)。`transcript` (チャンクの合体)、`launch` (起動・`session/load`・
+    履歴再生を捨てる転送)、launch 番号で置き換えられたプロセスのイベントを捨てる。
+    `Orchestration::start` が保存状態を読み、再起動処理 (core-design §8.1) をする。
+  - `domain` — `DomainCommand::Restart { orchestrator }` / `ResumeTask { task }`、
+    `Effect::ResumeStep { prompt, fallback }`、受信箱 `restarted`、`restart.rs`。
+    `TaskStatus::Interrupted` を使い始めた。オーケストレータのプロンプトに `restarted` を追記。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 128 件成功 (yhtye-core 単体 89 + ACP 偽 19 + MCP 6 +
+    オーケストレーション偽 13 + 偽エージェント 1)、実エージェント 8 件は ignored。3 回連続で成功。
+    - 単体 (新規): store 5 (空 DB へのマイグレーションと再オープン / 全フィールドを持つ状態の
+      往復と差分書き込み / **トリガで steps の INSERT を失敗させ、遷移の途中で落ちてもイベントも
+      状態も残らない**ことと、その後の再コミット / イベント再生 / agent_sessions の導出)、
+      domain restart 8 (中断 → 再開で同じセッションへ / 報告済みでターン終了を失った Step は進む /
+      マージ中 → FinishTask やり直し / 作業場所の準備やり直し / オーケストレータ待ちのタスクは
+      そのまま / help 待ちエージェントの喪失 / マージ中のグループ → merge_blocked /
+      オーケストレータへの `restarted`)、transcript 2、prompts 1。
+    - **replay-equivalence**: 偽エージェントの全オーケストレーションシナリオ (既存 10 + 新規 3) の
+      終わりに「ライブの状態 == テーブルから読んだ状態 == ログの再生」と「ログの最後の seq ==
+      配信した seq」を検査 (`tests/common/orch.rs::assert_persisted`)。
+    - 偽エージェントの再起動 3 (`tests/orchestration_fake_restart.rs`): ターン中に止めて同じ DB で
+      起動 → `session_interrupted` → `interrupted` → `running` → `session/load` で同じ ACP ID
+      (`resumed=true`) に `[yhtye:resume]` → 完走、seq は前回の続きから欠番なし、
+      履歴再生は配信されない、前回の出力は `agent_text` 1 行でログにある /
+      `session/load` 失敗 → 新しいセッションに Step の全プロンプト + 注記、オーケストレータには
+      状態の要約つき `restarted` / `load_session` 非対応 → 同様にフォールバック。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 8/8 成功 (Stage 1 の 4、
+    3a までの 3、新規 1)。新規 `orchestration_claude_restart` は 2 回実行して 2 回とも成功 (約 36 秒):
+    実 Haiku のオーケストレータが `create_group` / `create_task` → 実 Haiku の実装者がターンを
+    始めた直後に停止 (アプリ終了相当) → 同じ DB で起動 → 実装者もオーケストレータも同じ
+    Claude Code セッション UUID に `session/load` で復元 → `[yhtye:resume]` だけで実装者が
+    README に 1 行足して**新しいトークンの URL で** `report_step_done` → `done` →
+    `group_settled` → `finish_group`。README の行は 1 つ (二重作業なし)。
+    観察は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.3。
+  - 実テスト後 `pgrep` で claude-agent-acp / yhtye-fake-agent の残存なし、各プロセスグループも空。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` / `cargo check --workspace` /
+    `pnpm build` 成功。
+- 設計への反映・決定 (合意済みの決定は変えていない):
+  - `ApiEvent` の durable / live の区別と `agent_text` (core-design §2)。「seq は 1 から欠番なし」は
+    durable イベントについての規則になった。
+  - MCP トークンは保存しない (復元時に新しいトークン。実機で確認)。ACP セッション ID は
+    `agent_sessions` に保存。
+  - 受信箱に `restarted` を追加 (mcp-tools §5、orchestration-model §5・§10)。
+  - 再起動の細部 (help 待ちエージェントは喪失扱い、マージ中のグループは `merge_blocked`) は
+    orchestration-model §10 に明記。
+  - テーブル名 `groups` → `task_groups` (SQL の予約語)。
+  - 3b で見つけて直したもの: 失敗した起動 (例: `session/load` の失敗) のプロセスの `Exited` が、
+    同じキーで起動し直したセッションの終了と誤認されていた → launch 番号で区別。
+  - コードレビュー (rust-reviewer) で直したもの: 遅れて終わった停止の `session_stopped` が同じキーの
+    新しいセッションを `stopped` にしうる → 停止も launch 番号付きにし、置き換え済みなら出さない /
+    durable イベントの保存に失敗したとき seq を進めたまま配信していた → seq を戻して live として配信 /
+    連鎖の途中 (git 結果など) の保存失敗も `internal` を返す / オーケストレータ起動時のトークン漏れ /
+    起動・停止タスクの panic をログに / ドメインイベントの取得を索引が効く範囲条件に。
+- 3c / 4 への申し送り:
+  - 3c: 再開は git 操作をやり直しうる — `PrepareWorkspace` (作業場所の準備中に落ちた) と
+    `FinishTask` (マージ中に落ちた) を**冪等に**すること (既存の worktree・ブランチ・マージ済み
+    コミットを受け入れる)。マージ中に落ちたグループは `merge_blocked` にしているので、
+    `RetryGroupMerge` (Stage 5) で再試行する。フォールバック時のプロンプトに worktree の `git diff`
+    を添える案 (orchestration-model §10) は 3c で `GitService` に diff を足してから。
+  - 3c: テストの DB はプロジェクトディレクトリの `.yhtye/` に置いている (`tests/common/orch.rs::test_db`)。
+    一時 git リポジトリでは作業ツリーを汚すので、別の一時ディレクトリへ移すこと。
+  - 4: UI は durable イベントだけを畳み込み、live のチャンクはストリーミング表示にだけ使い
+    `agent_text` で置き換える。履歴は `Orchestration::events` / `Store::session_events` から
+    (`ListEvents` はまだ無い)。`agent_text` と `tool_called` (MCP) の相対順序はチャネルが別なので
+    厳密ではない (ACP の `tool_call` 出力でブロックは閉じるので実用上は揃う)。
+  - 複数プロジェクトを束ねる `Core` / `ApiCommand` は未着手 (DB は 1 ファイルを共有する前提で
+    `project_id` 列を持たせてある)。ts-rs も未着手。
+  - レビューで残した MEDIUM: 受信箱の配達は「送ってから `InboxDelivered` を保存」なので、保存に
+    失敗すると再送されうる (at-least-once) / `projects.config` は起動時の設定で上書きしても DB に
+    書き戻さない (再生は設定を引数に取るので実害なし) / 履歴再生の除外は「再生は `Ready` より前に
+    届く」前提 (実 Claude Code では成り立っている。他ハーネス追加時に確認)。
+  - Yhtye 自体が SIGKILL された場合 (シャットダウンなし) は、`agent_sessions` が `live` のまま残り
+    起動時に `interrupted` になる (偽エージェントでは未検証。子プロセスは stdin が閉じて終了する想定)。
 
 **未決事項 (ユーザー判断待ち)**
 

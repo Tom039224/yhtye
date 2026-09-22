@@ -136,6 +136,28 @@ pub enum DomainCommand {
     InboxDelivered {
         up_to: u64,
     },
+    /// Yhtye started again on a stored state (`orchestration-model.md` §10):
+    /// tasks that were mid-turn or mid-merge become `interrupted`, agents that were
+    /// waiting for a help answer are marked lost, an interrupted group merge is
+    /// reported as blocked, and the orchestrator is told what it missed.
+    Restart {
+        orchestrator: OrchestratorResume,
+    },
+    /// Continues an `interrupted` task (sent by the runtime after `Restart`).
+    ResumeTask {
+        task: String,
+    },
+}
+
+/// What happened to the orchestrator's session on restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrchestratorResume {
+    /// There was a session before the restart.
+    pub had_session: bool,
+    /// That session was restored with `session/load`.
+    pub restored: bool,
+    /// Its turn was still running when Yhtye stopped.
+    pub turn_was_running: bool,
 }
 
 /// Side effects for the runtime, in order.
@@ -147,6 +169,16 @@ pub enum Effect {
         agent: AgentRef,
         group: String,
         prompt: String,
+        workdir: Option<PathBuf>,
+    },
+    /// Continue an interrupted step after a restart: restore the step's session
+    /// with `session/load` and send `prompt`; if it cannot be restored, start a new
+    /// session and send `fallback` (the full step prompt with a restart note).
+    ResumeStep {
+        agent: AgentRef,
+        group: String,
+        prompt: String,
+        fallback: String,
         workdir: Option<PathBuf>,
     },
     /// Send a follow-up prompt (help answer, reminder) to the step's session.

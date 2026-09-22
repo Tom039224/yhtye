@@ -1,7 +1,7 @@
 //! Agent sessions owned by the runtime loop: starting them in the background,
 //! queueing prompts until a session is idle, rebinding MCP tokens and stopping.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,12 +9,22 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
+use super::launch::{FirstPrompts, replace_first};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
-use crate::acp::{AgentError, AgentEvent, AgentHandle, HarnessConfig, SpawnOptions, spawn_agent};
+use crate::acp::{AgentError, AgentEvent, AgentHandle, spawn_agent};
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
-use crate::prompts::system_prompt;
+
+/// The prompts to send first: the queued ones, with the fallback in front if
+/// the stored session was to be restored but was not (`session/load` unsupported).
+fn first_queue(starting: Starting, resumed: bool) -> VecDeque<String> {
+    let mut queued = starting.queued;
+    if !resumed && let Some(fallback) = starting.fallback {
+        replace_first(&mut queued, fallback);
+    }
+    queued
+}
 
 /// Session key of the agent for `agent`: one implementer session per task, a
 /// fresh reviewer session per review step.
@@ -36,7 +46,12 @@ pub fn agent_ref(binding: &SessionBinding) -> Option<AgentRef> {
     })
 }
 
+/// An agent event tagged with its session key and launch number.
+pub(super) type AgentMsg = (String, u64, AgentEvent);
+
 struct Live {
+    /// Launch number: tells events of this process from a replaced one's.
+    launch: u64,
     handle: AgentHandle,
     token: McpToken,
     binding: SessionBinding,
@@ -44,33 +59,47 @@ struct Live {
     queued: VecDeque<String>,
 }
 
-struct Starting {
-    token: McpToken,
-    queued: VecDeque<String>,
+/// A session being started in the background.
+pub(super) struct Starting {
+    pub(super) launch: u64,
+    pub(super) token: McpToken,
+    pub(super) queued: VecDeque<String>,
+    /// Replaces the first queued prompt if the stored session is not restored.
+    pub(super) fallback: Option<String>,
+    /// Started with `session/load` of a stored ACP session.
+    pub(super) resuming: bool,
+    pub(super) cwd: PathBuf,
 }
 
 /// Result of a background `spawn_agent`.
 pub(super) struct Spawned {
-    token: McpToken,
-    binding: SessionBinding,
-    result: Result<AgentHandle, AgentError>,
+    pub(super) launch: u64,
+    pub(super) token: McpToken,
+    pub(super) binding: SessionBinding,
+    pub(super) result: Result<AgentHandle, AgentError>,
 }
 
-type Launch = (
-    HarnessConfig,
-    SpawnOptions,
-    mpsc::UnboundedSender<AgentEvent>,
-);
+/// How the orchestrator session came up.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OrchestratorStart {
+    pub(super) had_session: bool,
+    pub(super) restored: bool,
+}
 
 pub(super) struct Sessions {
-    cfg: Arc<OrchestrationConfig>,
+    pub(super) cfg: Arc<OrchestrationConfig>,
     host: Option<McpHost>,
     emit: Emitter,
-    agent_tx: mpsc::UnboundedSender<(String, AgentEvent)>,
+    pub(super) agent_tx: mpsc::UnboundedSender<AgentMsg>,
+    /// Number of the last launch (see [`AgentMsg`]).
+    pub(super) launches: u64,
     live: HashMap<String, Live>,
-    starting: HashMap<String, Starting>,
+    pub(super) starting: HashMap<String, Starting>,
+    /// Stored ACP session ids to restore (`session/load`), by session key.
+    pub(super) resume: HashMap<String, String>,
     pub(super) spawning: JoinSet<Spawned>,
-    pub(super) stopping: JoinSet<String>,
+    /// Shutdowns in progress; each yields its session key and launch number.
+    pub(super) stopping: JoinSet<(String, u64)>,
 }
 
 impl Sessions {
@@ -78,21 +107,24 @@ impl Sessions {
         cfg: Arc<OrchestrationConfig>,
         host: McpHost,
         emit: Emitter,
-        agent_tx: mpsc::UnboundedSender<(String, AgentEvent)>,
+        agent_tx: mpsc::UnboundedSender<AgentMsg>,
+        resume: HashMap<String, String>,
     ) -> Self {
         Self {
             cfg,
             host: Some(host),
             emit,
             agent_tx,
+            launches: 0,
             live: HashMap::new(),
             starting: HashMap::new(),
+            resume,
             spawning: JoinSet::new(),
             stopping: JoinSet::new(),
         }
     }
 
-    fn host(&self) -> Result<&McpHost, AgentError> {
+    pub(super) fn host(&self) -> Result<&McpHost, AgentError> {
         self.host.as_ref().ok_or(AgentError::Closed)
     }
 
@@ -100,57 +132,76 @@ impl Sessions {
         self.live.get(key).map(|l| &l.binding)
     }
 
-    /// Starts the orchestrator session and waits until it is ready.
-    pub(super) async fn start_orchestrator(&mut self) -> Result<(), AgentError> {
+    /// Whether an event of launch `launch` of `key` comes from a process that was
+    /// replaced (e.g. a failed start followed by a new one under the same key).
+    pub(super) fn is_stale(&self, key: &str, launch: u64) -> bool {
+        let current = self
+            .live
+            .get(key)
+            .map(|l| l.launch)
+            .or_else(|| self.starting.get(key).map(|s| s.launch));
+        current.is_some_and(|c| c != launch)
+    }
+
+    /// Starts the orchestrator session and waits until it is ready, restoring the
+    /// stored one if there is one (a new session if that fails).
+    pub(super) async fn start_orchestrator(&mut self) -> Result<OrchestratorStart, AgentError> {
+        let resume = self.take_resume(ORCHESTRATOR_SESSION);
+        let had_session = resume.is_some();
+        let result = match self.spawn_orchestrator(resume).await {
+            Err(e) if had_session => {
+                self.failed_text(
+                    ORCHESTRATOR_SESSION,
+                    format!("could not restore the session ({e}); starting a new session"),
+                );
+                self.spawn_orchestrator(None).await
+            }
+            other => other,
+        };
+        let restored = result?;
+        Ok(OrchestratorStart {
+            had_session,
+            restored,
+        })
+    }
+
+    /// Returns whether the session was restored.
+    async fn spawn_orchestrator(
+        &mut self,
+        resume: Option<crate::acp::schema::SessionId>,
+    ) -> Result<bool, AgentError> {
         let binding = SessionBinding::orchestrator(ORCHESTRATOR_SESSION, self.cfg.project.clone());
         let token = self.host()?.registry().issue(binding.clone());
-        let (harness, options, events) = self.launch_parts(&binding, &token)?;
+        let launch = self.next_launch();
+        let (harness, options, events) = self
+            .launch_parts(&binding, &token, resume, launch)
+            .inspect_err(|_| self.revoke(&token))?;
         let result = spawn_agent(&harness, &self.cfg.project_dir, options, events).await;
-        if let Err(e) = &result {
-            self.revoke(&token);
-            return Err(e.clone());
-        }
+        let restored = match &result {
+            Ok(handle) => handle.info().resumed,
+            Err(e) => {
+                self.revoke(&token);
+                return Err(e.clone());
+            }
+        };
         self.starting.insert(
             binding.session.clone(),
             Starting {
+                launch,
                 token: token.clone(),
                 queued: VecDeque::new(),
+                fallback: None,
+                resuming: false,
+                cwd: self.cfg.project_dir.clone(),
             },
         );
         self.on_spawned(Spawned {
+            launch,
             token,
             binding,
             result,
         });
-        Ok(())
-    }
-
-    fn launch_parts(
-        &self,
-        binding: &SessionBinding,
-        token: &McpToken,
-    ) -> Result<Launch, AgentError> {
-        let options = SpawnOptions {
-            mcp_servers: vec![self.host()?.acp_server(token)],
-            resume: None,
-            system_prompt: Some(system_prompt(binding.role).to_string()),
-        };
-        let harness = self.cfg.harness(binding.role).clone();
-        Ok((harness, options, self.forwarder(binding.session.clone())))
-    }
-
-    /// A per-session event sender whose events arrive tagged with `key`.
-    fn forwarder(&self, key: String) -> mpsc::UnboundedSender<AgentEvent> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let agent_tx = self.agent_tx.clone();
-        tokio::spawn(async move {
-            while let Some(ev) = rx.recv().await {
-                if agent_tx.send((key.clone(), ev)).is_err() {
-                    break;
-                }
-            }
-        });
-        tx
+        Ok(restored)
     }
 
     /// Sends `text` to the session of `binding` (bound to the given step),
@@ -173,51 +224,54 @@ impl Sessions {
             }
             return starting.queued.push_back(text);
         }
-        self.start(binding, cwd, text);
+        let first = FirstPrompts {
+            queued: VecDeque::from([text]),
+            fallback: None,
+        };
+        self.start(binding, cwd, first);
     }
 
-    fn start(&mut self, binding: SessionBinding, cwd: PathBuf, first_prompt: String) {
-        let key = binding.session.clone();
-        let launch = self.host().map(|h| h.registry().issue(binding.clone()));
-        let token = match launch {
-            Ok(t) => t,
-            Err(e) => return self.failed(&key, &e),
+    /// Continues an interrupted step: restores the step's stored session and sends
+    /// `prompt`, or starts a new session with `fallback` if it cannot be restored.
+    pub(super) fn resume_step(
+        &mut self,
+        binding: SessionBinding,
+        cwd: PathBuf,
+        prompt: String,
+        fallback: String,
+    ) {
+        if self.live.contains_key(&binding.session) || self.starting.contains_key(&binding.session)
+        {
+            return self.prompt(binding, cwd, prompt);
+        }
+        let first = FirstPrompts {
+            queued: VecDeque::from([prompt]),
+            fallback: Some(fallback),
         };
-        let (harness, options, events) = match self.launch_parts(&binding, &token) {
-            Ok(p) => p,
-            Err(e) => {
-                self.revoke(&token);
-                return self.failed(&key, &e);
-            }
-        };
-        self.starting.insert(
-            key,
-            Starting {
-                token: token.clone(),
-                queued: VecDeque::from([first_prompt]),
-            },
-        );
-        self.spawning.spawn(async move {
-            let result = spawn_agent(&harness, &cwd, options, events).await;
-            Spawned {
-                token,
-                binding,
-                result,
-            }
-        });
+        self.start(binding, cwd, first);
     }
 
-    fn failed(&self, key: &str, e: &AgentError) {
+    pub(super) fn failed(&self, key: &str, e: &AgentError) {
+        self.failed_text(key, e.to_string());
+    }
+
+    pub(super) fn failed_text(&self, key: &str, error: String) {
         self.emit.send(ApiEventBody::SessionFailed {
             session: key.to_string(),
-            error: e.to_string(),
+            error,
         });
     }
 
     /// A background start finished. Returns the binding and error if it failed.
     pub(super) fn on_spawned(&mut self, s: Spawned) -> Option<(SessionBinding, String)> {
         let key = s.binding.session.clone();
-        let starting = self.starting.remove(&key);
+        // Only this launch's entry (the key may have been started again since).
+        let starting = self
+            .starting
+            .get(&key)
+            .is_some_and(|st| st.launch == s.launch)
+            .then(|| self.starting.remove(&key))
+            .flatten();
         // The token may have been rebound while starting; use its current binding.
         let binding = self
             .host
@@ -226,38 +280,56 @@ impl Sessions {
             .unwrap_or(s.binding);
         let handle = match s.result {
             Ok(h) => h,
-            Err(e) => {
-                self.revoke(&s.token);
-                self.failed(&key, &e);
-                return starting.map(|_| (binding, e.to_string()));
-            }
+            Err(e) => return self.start_failed(&s.token, binding, starting, &e),
+        };
+        let Some(starting) = starting else {
+            // Stopped (or started again) while it was starting: not announced, so a
+            // newer session under the same key is not overwritten in the store.
+            self.revoke(&s.token);
+            self.shut_down(key, s.launch, handle);
+            return None;
         };
         self.emit.send(ApiEventBody::SessionStarted {
             session: key.clone(),
             role: binding.role,
             task: binding.task.clone(),
             pid: handle.pid(),
+            acp_session_id: handle.info().acp_session_id.0.to_string(),
+            resumed: handle.info().resumed,
         });
-        let queued = starting
-            .as_ref()
-            .map(|s| s.queued.clone())
-            .unwrap_or_default();
-        self.live.insert(
-            key.clone(),
-            Live {
-                handle,
-                token: s.token,
-                binding,
-                queued,
-            },
-        );
-        if starting.is_none() {
-            // Stopped while it was starting.
-            self.stop(&key);
-        } else {
-            self.deliver(&key);
-        }
+        let queued = first_queue(starting, handle.info().resumed);
+        let live = Live {
+            launch: s.launch,
+            handle,
+            token: s.token,
+            binding,
+            queued,
+        };
+        self.live.insert(key.clone(), live);
+        self.deliver(&key);
         None
+    }
+
+    /// A start failed: retry a failed restore with a new session, otherwise
+    /// report it (returns the binding and error unless it was stopped meanwhile).
+    fn start_failed(
+        &mut self,
+        token: &McpToken,
+        binding: SessionBinding,
+        starting: Option<Starting>,
+        e: &AgentError,
+    ) -> Option<(SessionBinding, String)> {
+        self.revoke(token);
+        match starting {
+            Some(st) if st.resuming => {
+                self.retry_fresh(binding, st, &e.to_string());
+                None
+            }
+            other => {
+                self.failed(&binding.session, e);
+                other.map(|_| (binding, e.to_string()))
+            }
+        }
     }
 
     /// Sends the next queued prompt of `key` if no turn is running.
@@ -310,6 +382,7 @@ impl Sessions {
         self.revoke(&live.token);
         self.emit.send(ApiEventBody::SessionStopped {
             session: key.to_string(),
+            suspended: false,
         });
         Some(live.binding)
     }
@@ -345,21 +418,30 @@ impl Sessions {
             return;
         };
         self.revoke(&live.token);
-        let key = key.to_string();
+        self.shut_down(key.to_string(), live.launch, live.handle);
+    }
+
+    /// Shuts `handle` down in the background (reported as `SessionStopped`
+    /// unless the key has been started again meanwhile).
+    fn shut_down(&mut self, key: String, launch: u64, handle: AgentHandle) {
         self.stopping.spawn(async move {
-            live.handle.shutdown().await;
-            key
+            handle.shutdown().await;
+            (key, launch)
         });
     }
 
-    fn revoke(&self, token: &McpToken) {
+    pub(super) fn revoke(&self, token: &McpToken) {
         if let Some(host) = &self.host {
             host.registry().revoke(token);
         }
     }
 
     /// Stops every session (including ones still starting) and the MCP server.
+    /// Sessions that were live are reported as suspended: they are restored when
+    /// their task continues after the next start.
     pub(super) async fn shutdown(&mut self) {
+        let mut suspended: HashSet<String> = self.starting.keys().cloned().collect();
+        suspended.extend(self.live.keys().cloned());
         self.starting.clear();
         while let Some(res) = self.spawning.join_next().await {
             if let Ok(spawned) = res {
@@ -371,9 +453,12 @@ impl Sessions {
             self.stop(&key);
         }
         while let Some(res) = self.stopping.join_next().await {
-            if let Ok(key) = res {
-                self.emit
-                    .send(ApiEventBody::SessionStopped { session: key });
+            if let Ok((key, _)) = res {
+                let suspended = suspended.contains(&key);
+                self.emit.send(ApiEventBody::SessionStopped {
+                    session: key,
+                    suspended,
+                });
             }
         }
         if let Some(host) = self.host.take() {

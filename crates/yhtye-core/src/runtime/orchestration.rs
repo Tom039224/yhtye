@@ -1,6 +1,7 @@
 //! Public face of the runtime for one project: one orchestrator session,
 //! sub-agent sessions started by the state machine, and the [`ApiEvent`] stream.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -9,15 +10,16 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use super::driver::{Channels, Cmd, Driver};
-use super::emitter::Emitter;
-use super::port::LoopPort;
+use super::driver::{Channels, Cmd, Driver, Restarted};
+use super::emitter::{Emitter, Publisher};
+use super::port::{LoopPort, ToolRequest};
 use super::sessions::Sessions;
 use crate::acp::{AgentError, HarnessConfig};
-use crate::api::{ApiEvent, Snapshot};
-use crate::domain::{DomainConfig, Machine, Role, State};
+use crate::api::{ApiEvent, ApiEventBody, Snapshot};
+use crate::domain::{DomainConfig, OrchestratorResume, Role, State};
 use crate::git::GitService;
-use crate::mcp::{McpHost, TokenRegistry};
+use crate::mcp::{McpHost, TokenRegistry, ToolCallRecord};
+use crate::store::{SessionRecord, Store, StoreError, StoredEvent};
 
 /// Session key of the orchestrator.
 pub const ORCHESTRATOR_SESSION: &str = "orchestrator";
@@ -37,6 +39,9 @@ pub struct OrchestrationConfig {
     pub domain: DomainConfig,
     /// Branches, worktrees and merges ([`crate::git::NoopGit`] until Stage 3c).
     pub git: Arc<dyn GitService>,
+    /// SQLite database (created if missing). The app uses
+    /// [`crate::store::db_path`] of its data directory.
+    pub db_path: PathBuf,
 }
 
 impl fmt::Debug for OrchestrationConfig {
@@ -46,6 +51,7 @@ impl fmt::Debug for OrchestrationConfig {
             .field("project_dir", &self.project_dir)
             .field("mcp_bind", &self.mcp_bind)
             .field("domain", &self.domain)
+            .field("db_path", &self.db_path)
             .finish_non_exhaustive()
     }
 }
@@ -67,6 +73,8 @@ pub enum OrchError {
     Mcp(#[from] std::io::Error),
     #[error("orchestrator session failed to start: {0}")]
     Orchestrator(#[from] AgentError),
+    #[error("database: {0}")]
+    Store(#[from] StoreError),
     #[error("the orchestration loop has stopped")]
     Closed,
 }
@@ -77,35 +85,114 @@ pub struct Orchestration {
     cmd_tx: mpsc::UnboundedSender<Cmd>,
     task: JoinHandle<()>,
     mcp_addr: SocketAddr,
+    store: Store,
+    project: String,
+}
+
+/// The stored state of a project, and what its sessions were doing.
+struct Stored {
+    state: State,
+    restarted: bool,
+    sessions: Vec<SessionRecord>,
+}
+
+impl Stored {
+    /// Reports every session that was running (or suspended) when Yhtye stopped
+    /// as interrupted; returns their ACP session ids to restore, by session key.
+    fn interrupt_sessions(&self, emit: &Emitter) -> HashMap<String, String> {
+        for s in &self.sessions {
+            emit.send(ApiEventBody::SessionInterrupted {
+                session: s.session_key.clone(),
+            });
+        }
+        self.sessions
+            .iter()
+            .map(|s| (s.session_key.clone(), s.acp_session_id.clone()))
+            .collect()
+    }
+}
+
+type McpParts = (
+    McpHost,
+    mpsc::UnboundedReceiver<ToolRequest>,
+    mpsc::UnboundedReceiver<ToolCallRecord>,
+);
+
+/// Starts the MCP server; tool calls and their records go to the loop.
+async fn start_mcp(cfg: &OrchestrationConfig) -> std::io::Result<McpParts> {
+    let (port, tools_rx) = LoopPort::new();
+    let (record_tx, records_rx) = mpsc::unbounded_channel();
+    let host = McpHost::start(
+        cfg.mcp_bind,
+        TokenRegistry::new(),
+        Arc::new(port),
+        Some(record_tx),
+    )
+    .await?;
+    Ok((host, tools_rx, records_rx))
+}
+
+async fn open_project(store: &Store, cfg: &OrchestrationConfig) -> Result<Stored, StoreError> {
+    let (state, restarted) = match store.load_state(&cfg.project).await? {
+        Some(mut state) => {
+            state.config = cfg.domain; // settings, not history
+            (state, true)
+        }
+        None => {
+            let state = State::new(cfg.project.clone(), cfg.domain);
+            store.create_project(&state, &cfg.project_dir).await?;
+            (state, false)
+        }
+    };
+    let sessions = store
+        .sessions(&cfg.project)
+        .await?
+        .into_iter()
+        .filter(|s| s.status.is_resumable())
+        .collect();
+    Ok(Stored {
+        state,
+        restarted,
+        sessions,
+    })
 }
 
 impl Orchestration {
-    /// Starts the MCP server and the orchestrator session (returns once it is
-    /// ready) with an empty state. Events arrive on the returned receiver.
+    /// Opens the project's stored state (or creates it), starts the MCP server
+    /// and the orchestrator session (returns once it is ready). After a restart,
+    /// in-flight tasks become `interrupted` and are resumed, restoring their
+    /// agent sessions with `session/load` where possible. Events arrive on the
+    /// returned receiver.
     pub async fn start(
         cfg: OrchestrationConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<ApiEvent>), OrchError> {
-        let state = State::new(cfg.project.clone(), cfg.domain);
-        let (port, tools_rx) = LoopPort::new();
-        let (record_tx, records_rx) = mpsc::unbounded_channel();
-        let host = McpHost::start(
-            cfg.mcp_bind,
-            TokenRegistry::new(),
-            Arc::new(port),
-            Some(record_tx),
-        )
-        .await?;
-        let mcp_addr = host.addr();
+        let store = Store::open(&cfg.db_path).await?;
+        let stored = open_project(&store, &cfg).await?;
         let (out_tx, out_rx) = mpsc::unbounded_channel();
-        let emit = Emitter::new(&cfg.project, out_tx);
+        let publisher = Publisher::new(&cfg.project, store.clone(), out_tx).await?;
+        let emit = publisher.emitter();
+        let resume = stored.interrupt_sessions(&emit);
+        let (host, tools_rx, records_rx) = start_mcp(&cfg).await?;
+        let mcp_addr = host.addr();
         let (agent_tx, agents_rx) = mpsc::unbounded_channel();
+        let project = cfg.project.clone();
         let cfg = Arc::new(cfg);
-        let mut sessions = Sessions::new(cfg.clone(), host, emit.clone(), agent_tx);
-        if let Err(e) = sessions.start_orchestrator().await {
-            sessions.shutdown().await;
-            return Err(e.into());
-        }
-        let driver = Driver::new(cfg, Machine::new(state), sessions, emit);
+        let mut sessions = Sessions::new(cfg.clone(), host, emit, agent_tx, resume);
+        let started = match sessions.start_orchestrator().await {
+            Ok(s) => s,
+            Err(e) => {
+                sessions.shutdown().await;
+                return Err(e.into());
+            }
+        };
+        let restarted = stored.restarted.then(|| Restarted {
+            orchestrator: OrchestratorResume {
+                had_session: started.had_session,
+                restored: started.restored,
+                turn_was_running: orchestrator_turn_running(&stored.sessions),
+            },
+        });
+        let driver = Driver::new(cfg, stored.state, sessions, publisher);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let channels = Channels {
             cmd: cmd_rx,
@@ -113,13 +200,29 @@ impl Orchestration {
             records: records_rx,
             agents: agents_rx,
         };
-        let task = tokio::spawn(driver.run(channels));
+        let task = tokio::spawn(driver.run(channels, restarted));
         let handle = Self {
             cmd_tx,
             task,
             mcp_addr,
+            store,
+            project,
         };
         Ok((handle, out_rx))
+    }
+
+    /// The database of this orchestration (history, stored state).
+    #[must_use]
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Stored (durable) events with `seq > after_seq`, oldest first.
+    pub async fn events(&self, after_seq: u64, limit: u32) -> Result<Vec<StoredEvent>, OrchError> {
+        Ok(self
+            .store
+            .events_after(&self.project, after_seq, limit)
+            .await?)
     }
 
     /// Address of the MCP server.
@@ -159,4 +262,10 @@ impl Orchestration {
     fn send(&self, cmd: Cmd) -> Result<(), OrchError> {
         self.cmd_tx.send(cmd).map_err(|_| OrchError::Closed)
     }
+}
+
+fn orchestrator_turn_running(sessions: &[SessionRecord]) -> bool {
+    sessions
+        .iter()
+        .any(|s| s.session_key == ORCHESTRATOR_SESSION && s.turn_running)
 }

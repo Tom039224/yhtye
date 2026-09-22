@@ -119,7 +119,7 @@ impl Tx {
         ));
     }
 
-    fn start_finish(&mut self, id: &str) {
+    pub(super) fn start_finish(&mut self, id: &str) {
         self.set_status(id, TaskStatus::Merging);
         let Some(t) = self.state.task(id) else { return };
         let op = GitOp::FinishTask {
@@ -298,7 +298,8 @@ pub(super) fn runs_current_step(t: &Task, agent: &AgentRef) -> bool {
             .is_some_and(|s| s.kind.role() == Some(agent.role))
 }
 
-fn render_step_prompt(t: &Task, index: usize) -> String {
+/// The prompt that starts step `index`.
+pub(super) fn render_step_prompt(t: &Task, index: usize) -> String {
     let Some(step) = t.steps.get(index) else {
         return String::new();
     };

@@ -6,6 +6,7 @@
 //! - [`git`]: git operations behind a trait
 //! - [`api`]: the UI-facing event stream and snapshot
 //! - [`prompts`]: role system prompts
+//! - [`store`]: SQLite persistence (event log + current-state tables)
 //! - [`runtime`]: the loop that ties sessions, MCP, git and the state machine together
 
 pub mod acp;
@@ -15,3 +16,4 @@ pub mod git;
 pub mod mcp;
 pub mod prompts;
 pub mod runtime;
+pub mod store;

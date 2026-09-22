@@ -89,6 +89,24 @@ pub fn reminder_prompt(task_id: &str, step_index: usize) -> String {
     )
 }
 
+/// Sent to a sub-agent session restored with `session/load` after a restart.
+#[must_use]
+pub fn resume_prompt(task_id: &str, step_index: usize) -> String {
+    format!(
+        "[yhtye:resume] task={task_id} step={}\nYhtye was restarted and your previous turn was \
+         interrupted. Continue the current step where you left off (check the working directory \
+         for work you already did). When finished, call report_step_done; if stuck, call help. \
+         Then end your turn.",
+        step_index + 1
+    )
+}
+
+/// Appended to the step prompt when a restarted step gets a new session because
+/// its previous session could not be restored.
+pub const RESTART_NOTE: &str = "Note from Yhtye: Yhtye was restarted and the session that was \
+    working on this step could not be restored. Part of the work may already be done in the \
+    working directory; check it (for example with git status and git diff) before continuing.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +141,13 @@ mod tests {
         assert!(text.contains("Instruction:\nAppend 'hello' to README.md\n"));
         assert!(text.contains("Results of earlier steps:\nstep 0 (implement): added\n"));
         assert!(text.contains("Note from the orchestrator:\nkeep it short\n"));
+    }
+
+    #[test]
+    fn resume_prompt_has_header() {
+        let text = resume_prompt("T-3", 1);
+        assert!(text.starts_with("[yhtye:resume] task=T-3 step=2\n"));
+        assert!(text.contains("report_step_done"));
     }
 
     #[test]

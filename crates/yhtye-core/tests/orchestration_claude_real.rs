@@ -5,34 +5,15 @@ mod common;
 
 use std::time::Duration;
 
-use common::orch::{config, prompts_to, shutdown_and_check, summary, tool_calls, until};
+use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until};
+use common::real::{MODEL, REAL_TIMEOUT, assert_haiku, is_orchestrator_turn_end, real_config};
 use common::{Session, assert_group_gone, message_text};
 use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions, spawn_agent};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, Role, TaskStatus};
 use yhtye_core::prompts::system_prompt;
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration, OrchestrationConfig};
-
-const MODEL: &str = "haiku";
-const REAL_TIMEOUT: Duration = Duration::from_secs(300);
-
-fn assert_haiku(events: &[ApiEvent]) {
-    for e in events {
-        if let ApiEventBody::Agent {
-            session,
-            event: AgentEvent::Ready(info),
-        } = &e.body
-        {
-            assert_eq!(
-                info.config_value("model"),
-                Some(MODEL),
-                "{session} must run on haiku"
-            );
-            assert_eq!(info.current_mode(), Some("bypassPermissions"), "{session}");
-        }
-    }
-}
+use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
 
 /// Tool calls (ACP `tool_call` titles) an agent session made, for the log.
 fn acp_tool_titles(events: &[ApiEvent], session: &str) -> Vec<String> {
@@ -46,19 +27,6 @@ fn acp_tool_titles(events: &[ApiEvent], session: &str) -> Vec<String> {
             _ => None,
         })
         .collect()
-}
-
-fn is_orchestrator_turn_end(e: &ApiEvent) -> bool {
-    matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(_) } if session == ORCHESTRATOR_SESSION)
-}
-
-fn real_config(dir: &std::path::Path) -> OrchestrationConfig {
-    config(
-        dir,
-        HarnessConfig::claude_code_orchestrator(MODEL),
-        HarnessConfig::claude_code(MODEL),
-        HarnessConfig::claude_code(MODEL),
-    )
 }
 
 /// Sends `request` and waits until the orchestrator has handled `group_settled`.

@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub mod orch;
+pub mod real;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

@@ -87,6 +87,8 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
         DomainCommand::InboxDelivered { up_to } => {
             tx.emit(DomainEvent::InboxDelivered { up_to });
         }
+        DomainCommand::Restart { orchestrator } => tx.restart(orchestrator),
+        DomainCommand::ResumeTask { task } => tx.resume_task(&task),
     }
     Ok(tx.finish())
 }

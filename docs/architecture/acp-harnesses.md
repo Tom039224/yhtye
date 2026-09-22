@@ -194,6 +194,22 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
   `group_settled` で起こされたオーケストレータが `finish_group` を呼んでユーザーに報告した。
   全体で約 30 秒。2 回実行して 2 回とも同じ流れ。
 
+### 5.3 再起動後の `session/load` (Stage 3b、2026-09-23、Haiku)
+
+`tests/orchestration_claude_restart.rs` (実 Haiku、2 回実行して 2 回とも成功):
+サブエージェントがターン中 (最初の出力の直後) に Yhtye を止め (ターンは `session/cancel` で
+打ち切られる)、同じ DB で起動し直した。
+
+- サブエージェントもオーケストレータも、保存していた ACP セッション ID (Claude Code の
+  セッション UUID) で `session/load` でき、`resumed = true` で同じ ID に戻った。
+- **`session/load` で渡した新しい `mcpServers` (新しいポート・新しいトークンの URL) が使われる。**
+  復元したサブエージェントは新しい URL で `report_step_done` を呼べた。したがってトークンを
+  DB に保存する必要はない (core-design §6)。
+- 短い `[yhtye:resume]` プロンプト (「再起動でターンが中断された。続けよ」) だけで、Haiku は
+  履歴から元の指示を読み取り、README に 1 行足して報告した。途中まで進んでいた作業を
+  二重に行うこともなかった (README の行は 1 つ)。
+- 履歴の再生 (`Ready` より前の `Output`) は Yhtye 側で捨てている (core-design §4.1)。
+
 ## 6. フォールバック: Claude Code が ACP から脱退した場合
 
 Claude Code は Yhtye にとって最重要ハーネスであるため、Claude Code が将来 ACP サポートを

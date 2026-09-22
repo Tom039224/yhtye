@@ -62,20 +62,33 @@ pub struct CoreConfig {
 - `ApiCommand` (例): `OpenProject{path}` / `SendUserMessage{project, text}` /
   `CancelOrchestratorTurn{project}` / `CancelTask{task}` / `RetryGroupMerge{group}` /
   `GetSnapshot{project}` / `ListEvents{project, after_seq, limit}`。
-- `ApiEvent` = `{ seq, ts_ms, project, body }` (Stage 3a で `yhtye_core::api` に定義)。
-  `body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
+- `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
+  3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
-  - `session_started { session, role, task, pid }` / `session_failed { session, error }` /
-    `session_stopped { session }`
+  - `session_started { session, role, task, pid, acp_session_id, resumed }` /
+    `session_failed { session, error }` / `session_stopped { session, suspended }` /
+    `session_interrupted { session }` (3b: 起動時、前回動いていたセッション。`suspended` は
+    Yhtye の終了で止めた = 次回の起動で復元する)
   - `agent { session, event: AgentEvent }` — エージェントの出力とライフサイクル
     (`Output(MessageChunk|ThoughtChunk|ToolCall|…)`, `TurnEnded`, `Exited` …)。`Stderr` は流さない。
+  - `agent_text { session, kind: message|thought, text }` (3b) — ストリーミングされたチャンクを
+    まとめた 1 ブロック (下記)。
   - `tool_called { record: ToolCallRecord }` / `prompted { session, text }`
-  - `seq` は 1 から欠番なし。`Snapshot = { seq, state: State }` (`Orchestration::snapshot`)。
+  - **durable と live** (3b): `live == false` のイベントはイベントログ (§6) に保存され、
+    `seq` はログの行番号と一致し 1 から欠番なし。`live == true` のイベント
+    (`agent` のうち `MessageChunk` / `ThoughtChunk` / `UserMessageChunk` / `Usage`) は保存せず、
+    直前の durable イベントの `seq` を持つ (`seq` を進めない)。チャンク列はブロックの終わり
+    (同じセッションの別種の出力・ツール呼び出し・ターン終了・終了・シャットダウン) で
+    `agent_text` として 1 回だけ保存・配信される。UI はストリーミング表示をこの
+    `agent_text` で置き換える。トークン単位の行を DB に積まないための選択。
+  - `Snapshot = { seq, state: State }` (`Orchestration::snapshot`。`seq` は最後の durable イベント)。
   - ts-rs による TS 型生成は Stage 4 (フロントが使い始めるとき) に回す。`AgentEvent` は
     ACP スキーマの型を含むので、その部分は `unknown` 相当で出す必要がある。
 - **クライアント同期の規則**: 接続時に `snapshot` (その時点の `seq` を含む) を取り、
-  以降 `seq > snapshot.seq` のイベントだけ適用する。取りこぼし (seq の飛び) を
-  検知したら snapshot を取り直す。
+  以降 `seq > snapshot.seq` の durable イベントだけ適用する。durable イベント間の取りこぼし
+  (seq の飛び) を検知したら snapshot を取り直す。live イベントは表示用で、状態には畳み込まない。
+  履歴 (過去の会話・エージェント出力) はイベントログから読む (`Orchestration::events` /
+  `Store::session_events`、Stage 4 で `ListEvents` に)。
 - Rust の API 型から ts-rs で `src/api/generated/*.ts` を生成し、手書きの重複定義をしない。
 
 ## 3. `acp` モジュール
@@ -216,7 +229,7 @@ pub struct HarnessConfig {
   セッション終了時に失効させる。同じ implementer セッションで次の Step に進むときは
   `rebind` で束縛先の Step を差し替える (トークンは URL に埋め込まれていて変えられないため)。
 - 全ツール呼び出しは `ToolCallRecord { binding, tool, args, result }` として observer
-  チャネルに流す (Stage 3 でイベントログに保存する)。
+  チャネルに流す (runtime が `tool_called` イベントとしてイベントログに保存する。3b)。
 - ツールハンドラは直接状態を触らず、`ToolPort` トレイト経由で runtime に
   `DomainCommand` を送り、結果を待って返す:
 
@@ -239,14 +252,26 @@ Stage 2 の仮実装 (`Board` / `MemoryToolPort`) は Stage 3a で本物の状�
 
 - `runtime::Orchestration` — 1 プロジェクト分の公開 API: `start(cfg)` →
   `(Orchestration, UnboundedReceiver<ApiEvent>)`、`send_user_message` / `cancel_orchestrator_turn` /
-  `snapshot` / `shutdown`。`OrchestrationConfig` に `domain: DomainConfig` (`max_review_rounds`) と
-  `git: Arc<dyn GitService>` を持つ。複数プロジェクト・DB を束ねる `Core` は 3b 以降。
+  `snapshot` / `events(after_seq, limit)` / `store()` / `shutdown`。`OrchestrationConfig` に
+  `domain: DomainConfig` (`max_review_rounds`)、`git: Arc<dyn GitService>`、`db_path` (3b) を持つ。
+  `start` は DB を開き、プロジェクトの状態があれば読み込んで再起動処理 (§8.1) をする。
+  複数プロジェクトを束ねる `Core` は未着手 (Stage 5 までに。DB は `store::db_path(data_dir)` 1 つを共有)。
 - `runtime::driver` — ループ本体 (§8)。`runtime::port::LoopPort` が `ToolPort` を実装し、
   ツール呼び出しを oneshot 付きでループへ送る (ループが処理して応答する)。
 - `runtime::sessions` — セッションの起動 (裏で `JoinSet`)・プロンプトのキュー・トークンの
   `rebind` / `revoke`・停止。セッションキーは `orchestrator` / `T-n/implementer` (タスク中は同じ
   セッション) / `T-n/review-<step>` (毎回新規)。起動中に止められたセッションは起動完了時に即停止する。
-- `runtime::emitter` — `ApiEvent` に `seq` / `ts_ms` を付けて送る。
+- `runtime::emitter` (3b) — `Emitter` (セッション管理側が持つ。本文をバッファするだけ) と
+  `Publisher` (ループが持つ)。`Publisher::flush` はループの 1 周ごとにバッファを取り出し、
+  durable イベントに `seq` を振って DB に書いてから購読者へ送る。`Publisher::commit` は
+  ドメイン遷移のイベントと現在状態テーブルの変更を 1 トランザクションで書く (§6)。
+  したがって購読者は DB に無い durable イベントを見ない。
+- `runtime::transcript` (3b) — チャンクを `agent_text` ブロックにまとめる (§2)。
+- `runtime::launch` (3b) — セッション起動 (トークン発行・`session/load` 指定・イベント転送)。
+  **転送タスクは `session/load` の履歴再生 (`Ready` より前の `Output`) を捨てる** — 既にログにある
+  履歴なので、新しい出力として配信・保存しない。起動ごとに launch 番号を振り、置き換えられた
+  プロセス (失敗した起動の後に同じキーで起動し直した場合など) のイベントはループで捨てる
+  (3b で発見: 失敗した `session/load` のプロセスの `Exited` が新しいセッションの終了と誤認されていた)。
 - サブエージェントの cwd は `WorkspaceReady` で記録された作業場所 (`NoopGit` ではプロジェクト
   ディレクトリ)。
 
@@ -276,10 +301,14 @@ pub enum DomainCommand {
     AgentStartFailed { agent: AgentRef, error },
     GitDone { op: GitOp, result: GitResult },
     InboxDelivered { up_to: u64 },
+    Restart { orchestrator: OrchestratorResume },       // 3b: 再起動時。§8.1
+    ResumeTask { task },                                 // 3b: interrupted のタスクを再開
 }
 
 pub enum Effect {
     RunStep { agent: AgentRef, group, prompt, workdir },  // 無ければセッションを起動してから送る
+    ResumeStep { agent, group, prompt, fallback, workdir }, // 3b: session/load で復元して prompt、
+                                                          // 復元できなければ新セッションに fallback
     PromptAgent { agent: AgentRef, text },                // help の返答・催促
     StopAgent { agent: AgentRef },                        // レビュー済みのレビュアー
     StopTaskAgents { task },                              // タスク終端
@@ -306,22 +335,46 @@ pub enum Effect {
 - ファイル構成: `state.rs` (データ) / `event.rs` (イベントと reducer) / `command.rs` /
   `machine.rs` (`decide`・`Tx`) / `flow.rs` (タスク・ステップの開始/完了/中止、help、依存解消、
   group_settled) / `tools_orch.rs` / `tools_sub.rs` / `agent_rules.rs` (ターン終了・異常終了) /
-  `git_rules.rs` (git 結果)。Step kind の追加は `flow.rs::start_step` と
+  `git_rules.rs` (git 結果) / `restart.rs` (3b: 再起動と再開)。Step kind の追加は `flow.rs::start_step` と
   `agent_rules.rs::turn_ended` に閉じる。
 - 規則 (「active グループは 1 つ」「`done` は末尾」「review の自動再挿入は N 回まで」など) は
   すべてここに置き、単体テスト (`domain/tests/`: 遷移表・フロー・エラー・git・エージェント) で網羅する。
 
 ## 6. `store` モジュール
 
-- sqlx (`sqlite`, `runtime-tokio`, `migrate`)。コンパイル時に DB を要する `query!` マクロは
-  使わず `query_as` + `FromRow` にする (ビルドを単純に保つ)。WAL モード。
-- テーブル: `projects` / `groups` / `tasks` / `task_deps` / `steps` / `agent_sessions`
-  (role, task, harness, acp_session_id, mcp_token, status) / `helps` / `inbox` /
-  `events (seq INTEGER PRIMARY KEY, ts, project_id, kind, payload JSON)`。
-- `Transition` 1 回 = 1 トランザクション: イベント追記 + 現在状態テーブル更新。
-  コミット後に `ApiEvent` を broadcast する (DB と UI の順序が一致する)。
-- 起動時は現在状態テーブルから `State` を組み立てる (イベントの再生はしない。
-  イベントログは履歴表示・デバッグ用)。
+Stage 3b で実装。
+
+- sqlx **0.9** (`sqlite-bundled`, `runtime-tokio`, `migrate`, `macros`)。コンパイル時に DB を要する
+  `query!` マクロは使わず `query_as` + `FromRow` にする (ビルドを単純に保つ)。マイグレーションは
+  `crates/yhtye-core/migrations/*.sql` を `sqlx::migrate!` で埋め込み、`Store::open` で適用する。
+  WAL + `synchronous = NORMAL` (コミット済みトランザクションはアプリのクラッシュで失われない。
+  電源断では直近が失われうるが、トランザクションが半端に残ることはない)。
+- 場所: アプリはデータディレクトリの `yhtye.sqlite3` (`store::db_path(data_dir)`)。
+  `OrchestrationConfig::db_path` で指定する (テストは一時ディレクトリ)。
+- テーブル (`0001_init.sql`): `projects` (id, path, config, counters) / `task_groups`
+  (`groups` は SQL の予約語のため改名) / `tasks` / `task_deps` / `steps` / `helps` / `inbox` /
+  `agent_sessions` (session_key, role, task, acp_session_id, status, turn_running) /
+  `events (project_id, seq, ts_ms, kind, session, payload JSON)` — 主キー `(project_id, seq)`、
+  `kind` は `domain.task_created` / `agent.turn_ended` / `agent_text` など。enum 列は JSON と同じ
+  snake_case 名。
+- **`Transition` 1 回 = 1 トランザクション**: イベント追記 + 現在状態テーブル更新
+  (`Store::commit`)。現在状態は遷移前後の `State` を比べて変わった行だけ書く (タスクが変われば
+  その steps / deps を書き直す。受信箱は増減分)。コミット後に `ApiEvent` を配信する。
+  DB 書き込みに失敗した遷移は捨てる (状態を変えず、Effect も実行せず、ツール呼び出しには
+  `internal` を返す)。ドメイン以外の durable イベントは `Store::append` (まとめて 1 トランザクション)。
+- `agent_sessions` はセッションのイベント (`session_started` / `session_stopped` /
+  `session_interrupted` / `prompted` / `agent.turn_ended`) から同じトランザクションで導く。
+  status は `live` / `stopped` (Yhtye が止めた・プロセスが終了した) / `suspended` (Yhtye の終了で
+  止めた) / `interrupted` (起動時に live か suspended だった)。`stopped` 以外は次に同じキーの
+  セッションを使うとき `session/load` で復元する。
+- **MCP トークンは保存しない。** 復元したセッションにも `session/load` の `mcpServers` で新しい
+  トークン (新しいポート) を渡す。実 Claude Code が新しい URL で `report_step_done` できることを
+  確認した (§8.1)。
+- 起動時は現在状態テーブルから `State` を組み立てる (`Store::load_state`。イベントの再生はしない)。
+  `Store::replay_state` はイベントログだけから `State` を作る (検査用)。テストでは偽エージェントの
+  全シナリオの最後に「ライブの状態 == テーブルから読んだ状態 == イベント再生の状態」と
+  「ログの最後の seq == 配信した seq」を検査している。
+- `DomainConfig` は設定なので、起動時は保存値ではなく現在の設定で上書きする。
 
 ## 7. `git` モジュール
 
@@ -348,8 +401,8 @@ pub trait GitService: Send + Sync + 'static {
 ## 8. `runtime` モジュール
 
 - 単一のイベントループ (tokio タスク) が `DomainCommand` を受けて
-  `domain::decide` → (3b: `store` に永続化) → `ApiEvent` 配信 → `Effect` 実行 を**直列に**行う。
-  状態の同時更新を排除する。
+  `domain::decide` → `store` に永続化 (3b) → `ApiEvent` 配信 → `Effect` 実行 を**直列に**行う。
+  状態の同時更新を排除する。Effect は DB に書けた遷移についてだけ実行する。
 - エージェントの起動・停止は別タスク (`JoinSet`) で行い、失敗は `AgentStartFailed` として戻す。
 - **git の Effect はループ内で await し**、結果を `GitDone` として同じ連鎖の中で続けて処理する
   (3a で決定)。ツール呼び出しへの応答は連鎖全体が終わってから返し、連鎖の中で最後に
@@ -367,6 +420,31 @@ pub trait GitService: Send + Sync + 'static {
   `Closed` (プロセス終了。`AgentExited` が続く) は何もしない。
 - ACP: ターン中にプロセスが死ぬと `session/prompt` が `incoming_transport_closed` で失敗する。
   これを `AgentError::Closed` として扱う (§3.2 の「プロセス終了時は `Err(Closed)`」に揃えた。3a で修正)。
+
+### 8.1 再起動と再開 (Stage 3b)
+
+[`orchestration-model.md`](orchestration-model.md) §10 の実装。
+
+1. `Orchestration::start` が DB からプロジェクトの状態を読む。`agent_sessions` のうち復元対象
+   (`stopped` 以外) を `session_interrupted` として配信し、そのキー → ACP セッション ID を
+   セッション管理に渡す (各キーで 1 回だけ使う)。
+2. オーケストレータを起動する。保存済みセッションがあれば `session/load`、失敗したら
+   新しいセッション (`session_failed` に理由)。
+3. ドメインに `Restart { orchestrator: { had_session, restored, turn_was_running } }`:
+   `running` / `merging` のタスク → `interrupted`。help の返答待ちだったエージェントは
+   `help_agent_lost` (プロセスは Yhtye と一緒に消えている。`answer_help(resume)` で Step を
+   やり直す — そのセッションは `session/load` で復元され、返答は note として付く)。
+   `finishing` のグループ (git のマージ中に落ちた) → `merge_blocked` + 受信箱 `merge_result`。
+   オーケストレータのセッションを復元できなかった → 受信箱 `restarted` に状態の要約。
+   復元できたがターン中に止まった → `restarted` に「ターンが途中で切れた」。
+4. `interrupted` の各タスクに `ResumeTask`: エージェントの Step なら `ResumeStep`
+   (`session/load` で復元して短い `[yhtye:resume]` プロンプト。復元できない / ハーネスが
+   非対応なら新しいセッションに Step の全プロンプト + 「再起動で前のセッションを失った。
+   作業ツリーを確認せよ」の注記)。報告済みでターン終了だけ失われた Step は次へ進む。
+   `done` Step (マージ中) は `FinishTask` をやり直す (git 操作の冪等性は 3c)。作業場所の
+   準備中だったタスクは準備からやり直す。
+- 停止 (`shutdown`) はタスクの状態を変えない。止めたセッションは `session_stopped { suspended: true }`
+  になり、次回の起動で復元対象になる。
 
 ## 9. Tauri アプリ層 (`src-tauri`)
 

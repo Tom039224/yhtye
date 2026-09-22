@@ -12,14 +12,18 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
-use super::emitter::Emitter;
+use super::emitter::{Emitter, Publisher};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
 use super::port::ToolRequest;
-use super::sessions::{Sessions, Spawned, agent_ref, session_key};
+use super::sessions::{AgentMsg, Sessions, Spawned, agent_ref, session_key};
+use super::transcript::Transcript;
 use crate::acp::schema::StopReason;
 use crate::acp::{AgentError, AgentEvent};
 use crate::api::{ApiEventBody, Snapshot};
-use crate::domain::{DomainCommand, Effect, Machine, ToolError, TurnOutcome, render_batch};
+use crate::domain::{
+    DomainCommand, Effect, OrchestratorResume, State, TaskStatus, ToolError, TurnOutcome, decide,
+    render_batch,
+};
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 
@@ -30,19 +34,27 @@ pub(super) enum Cmd {
     Shutdown(oneshot::Sender<()>),
 }
 
+/// Set when the loop starts on a stored state (a restart).
+pub(super) struct Restarted {
+    pub(super) orchestrator: OrchestratorResume,
+}
+
 pub(super) struct Channels {
     pub(super) cmd: mpsc::UnboundedReceiver<Cmd>,
     pub(super) tools: mpsc::UnboundedReceiver<ToolRequest>,
     pub(super) records: mpsc::UnboundedReceiver<ToolCallRecord>,
-    pub(super) agents: mpsc::UnboundedReceiver<(String, AgentEvent)>,
+    pub(super) agents: mpsc::UnboundedReceiver<AgentMsg>,
 }
 
 pub(super) struct Driver {
     cfg: Arc<OrchestrationConfig>,
-    machine: Machine,
+    /// The current domain state; replaced only after its transition is stored.
+    state: State,
     git: Arc<dyn GitService>,
     pub(super) sessions: Sessions,
+    publisher: Publisher,
     emit: Emitter,
+    transcript: Transcript,
 }
 
 type Reply = Result<Value, ToolError>;
@@ -50,21 +62,30 @@ type Reply = Result<Value, ToolError>;
 impl Driver {
     pub(super) fn new(
         cfg: Arc<OrchestrationConfig>,
-        machine: Machine,
+        state: State,
         sessions: Sessions,
-        emit: Emitter,
+        publisher: Publisher,
     ) -> Self {
         let git = cfg.git.clone();
+        let emit = publisher.emitter();
         Self {
             cfg,
-            machine,
+            state,
             git,
             sessions,
+            publisher,
             emit,
+            transcript: Transcript::default(),
         }
     }
 
-    pub(super) async fn run(mut self, mut ch: Channels) {
+    pub(super) async fn run(mut self, mut ch: Channels, restarted: Option<Restarted>) {
+        self.publisher.flush().await;
+        if let Some(r) = restarted {
+            self.restart(r).await;
+            self.flush_inbox().await;
+            self.publisher.flush().await;
+        }
         loop {
             tokio::select! {
                 biased;
@@ -77,13 +98,44 @@ impl Driver {
                 Some(record) = ch.records.recv() => {
                     self.emit.send(ApiEventBody::ToolCalled { record });
                 }
-                Some(Ok(spawned)) = self.sessions.spawning.join_next() => self.on_spawned(spawned).await,
-                Some(Ok(key)) = self.sessions.stopping.join_next() => {
-                    self.emit.send(ApiEventBody::SessionStopped { session: key });
+                Some(res) = self.sessions.spawning.join_next() => match res {
+                    Ok(spawned) => self.on_spawned(spawned).await,
+                    Err(e) => tracing::error!("an agent start task failed: {e}"),
+                },
+                Some(res) = self.sessions.stopping.join_next() => match res {
+                    // A newer session under the same key must not be marked stopped.
+                    Ok((key, launch)) if !self.sessions.is_stale(&key, launch) => {
+                        self.emit.send(ApiEventBody::SessionStopped { session: key, suspended: false });
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::error!("an agent stop task failed: {e}"),
+                },
+                Some((key, launch, event)) = ch.agents.recv() => {
+                    if self.sessions.is_stale(&key, launch) {
+                        tracing::debug!(session = %key, "dropping an event of a replaced process: {event:?}");
+                    } else {
+                        self.on_agent_event(key, event).await;
+                    }
                 }
-                Some((key, event)) = ch.agents.recv() => self.on_agent_event(key, event).await,
             }
             self.flush_inbox().await;
+            self.publisher.flush().await;
+        }
+    }
+
+    /// Marks what was in flight as interrupted, then resumes each interrupted task.
+    async fn restart(&mut self, r: Restarted) {
+        let orchestrator = r.orchestrator;
+        self.execute(DomainCommand::Restart { orchestrator }).await;
+        let interrupted: Vec<String> = self
+            .state
+            .tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Interrupted)
+            .map(|t| t.id.clone())
+            .collect();
+        for task in interrupted {
+            self.execute(DomainCommand::ResumeTask { task }).await;
         }
     }
 
@@ -95,22 +147,31 @@ impl Driver {
             }
             Some(Cmd::CancelOrchestrator) => self.sessions.cancel_turn(ORCHESTRATOR_SESSION),
             Some(Cmd::Snapshot(tx)) => {
+                self.publisher.flush().await;
                 let _ = tx.send(Snapshot {
-                    seq: self.emit.seq(),
-                    state: self.machine.state().clone(),
+                    seq: self.publisher.seq(),
+                    state: self.state.clone(),
                 });
             }
             Some(Cmd::Shutdown(done)) => {
-                self.sessions.shutdown().await;
+                self.shutdown().await;
                 let _ = done.send(());
                 return false;
             }
             None => {
-                self.sessions.shutdown().await;
+                self.shutdown().await;
                 return false;
             }
         }
         true
+    }
+
+    async fn shutdown(&mut self) {
+        for body in self.transcript.close_all() {
+            self.emit.send(body);
+        }
+        self.sessions.shutdown().await;
+        self.publisher.flush().await;
     }
 
     async fn on_tool(&mut self, req: ToolRequest) {
@@ -141,11 +202,20 @@ impl Driver {
         let mut queue = VecDeque::from([cmd]);
         let mut first = true;
         while let Some(cmd) = queue.pop_front() {
-            match self.machine.handle(cmd) {
-                Ok(t) => {
-                    for event in t.events {
-                        self.emit.send(ApiEventBody::Domain { event });
+            match decide(&self.state, cmd) {
+                Ok((next, t)) => {
+                    // Store first: effects run only for a transition that is on disk.
+                    if let Err(e) = self.publisher.commit(&self.state, &next, t.events).await {
+                        // Also for a follow-up (e.g. a git result): the call did not
+                        // fully take effect, so it must not be reported as a success.
+                        tracing::error!("storing a transition failed; it was dropped: {e}");
+                        reply = Some(Err(ToolError::internal(format!(
+                            "Yhtye could not save the change: {e}"
+                        ))));
+                        first = false;
+                        continue;
                     }
+                    self.state = next;
                     if t.reply.is_some() {
                         reply = t.reply;
                     }
@@ -176,8 +246,19 @@ impl Driver {
                 let binding = self.binding(&agent, Some(group));
                 self.sessions.prompt(binding, cwd, prompt);
             }
+            Effect::ResumeStep {
+                agent,
+                group,
+                prompt,
+                fallback,
+                workdir,
+            } => {
+                let cwd = workdir.unwrap_or_else(|| self.cfg.project_dir.clone());
+                let binding = self.binding(&agent, Some(group));
+                self.sessions.resume_step(binding, cwd, prompt, fallback);
+            }
             Effect::PromptAgent { agent, text } => {
-                let t = self.machine.state().task(&agent.task);
+                let t = self.state.task(&agent.task);
                 let group = t.map(|t| t.group.clone());
                 let cwd = t
                     .and_then(|t| t.workdir.clone())
@@ -224,6 +305,9 @@ impl Driver {
             tracing::debug!(session = %key, "{line}");
             return;
         }
+        if let Some(block) = self.transcript.observe(&key, &event) {
+            self.emit.send(block);
+        }
         self.emit.send(ApiEventBody::Agent {
             session: key.clone(),
             event: event.clone(),
@@ -262,7 +346,7 @@ impl Driver {
 
     /// Wakes the orchestrator with every undelivered inbox entry if it is idle.
     async fn flush_inbox(&mut self) {
-        let inbox = &self.machine.state().inbox;
+        let inbox = &self.state.inbox;
         let Some(up_to) = inbox.last().map(|e| e.id) else {
             return;
         };

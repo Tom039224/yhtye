@@ -11,6 +11,8 @@ pub enum InboxKind {
     InstructionNeeded,
     GroupSettled,
     MergeResult,
+    /// Yhtye restarted and the orchestrator missed something (Stage 3b).
+    Restarted,
 }
 
 impl InboxKind {
@@ -23,6 +25,7 @@ impl InboxKind {
             Self::InstructionNeeded => "instruction_needed",
             Self::GroupSettled => "group_settled",
             Self::MergeResult => "merge_result",
+            Self::Restarted => "restarted",
         }
     }
 }

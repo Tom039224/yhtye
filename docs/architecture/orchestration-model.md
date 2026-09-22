@@ -149,7 +149,7 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 溜まったものを 1 つの `session/prompt` にまとめて送る。
 
 - 受信箱の種類: `user_message` / `checkpoint_reached` / `help_raised` /
-  `instruction_needed` / `group_settled` / `merge_result`。
+  `instruction_needed` / `group_settled` / `merge_result` / `restarted` (Stage 3b で追加、§10)。
 - 各項目は機械可読な見出し + 本文の決まった書式のテキストにする
   (例: `[yhtye:help_raised] help_id=H-3 task=T-110 kind=blocked\n<本文>`)。
 - ターン中に新しい項目が来ても、そのターンを中断しない。ユーザーが明示的に
@@ -263,6 +263,22 @@ Stage 3a で明確化した細部:
   - そうでなければ新しいセッションを作り、タスクの instruction・Step の履歴・worktree の
     `git diff` を添えて現在の Step をやり直させる。
 - オーケストレータのセッションも同様に復元する。
+
+Stage 3b で実装した細部 (合意事項は変えていない。詳細は [`core-design.md`](core-design.md) §6・§8.1):
+
+- 「現在状態テーブル」には groups (`task_groups`) / tasks / task_deps / steps / helps / inbox /
+  agent_sessions を置く。イベントログにはドメインイベントに加えて、セッションの起動・停止、
+  プロンプト、ツール呼び出し、エージェントの出力 (チャンクはまとめたブロック単位) を保存し、
+  UI の履歴に使う。
+- アプリの終了 (`shutdown`) ではタスクの状態を変えない。次回の起動で `running` / `merging` を
+  `interrupted` にしてから再開する (UI には `interrupted` → `running` の両方が届く)。
+- help の返答待ちだったエージェントは再起動でプロセスを失っているので「エージェント喪失」と
+  同じ扱い (§7) にする。`answer_help(resume)` で Step をやり直すとき、そのセッションは
+  `session/load` で復元される (返答は note として付く)。
+- マージ中 (`finishing`) に落ちたグループは `merge_blocked` にして `merge_result` で知らせる
+  (再試行はユーザー / オーケストレータが確認してから)。
+- オーケストレータが前のセッションを失った、またはターンの途中で止まった場合は、受信箱の
+  新しい種類 `restarted` で知らせる ([`mcp-tools.md`](mcp-tools.md) §5)。
 
 ## 11. まだ決まっていないこと
 
