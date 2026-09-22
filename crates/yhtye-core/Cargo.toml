@@ -22,6 +22,7 @@ schemars.workspace = true
 async-trait.workspace = true
 getrandom.workspace = true
 sqlx.workspace = true
+ts-rs.workspace = true
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }

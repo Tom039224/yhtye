@@ -7,6 +7,7 @@ use agent_client_protocol::schema::v1::{
     SessionUpdate, StopReason, ToolCall, ToolCallUpdate, UsageUpdate,
 };
 use serde::Serialize;
+use ts_rs::TS;
 
 /// Everything an agent session reports, in order.
 ///
@@ -15,19 +16,22 @@ use serde::Serialize;
 // Events are moved through a channel once; boxing every `Output` would cost more
 // than the size difference.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AgentEvent {
-    Ready(Box<AgentInfo>),
+    Ready(#[ts(type = "unknown")] Box<AgentInfo>),
     /// One `session/update`, typed 1:1 (unknown kinds become [`AgentOutput::Unknown`]).
     Output(AgentOutput),
     PermissionAutoAnswered {
+        #[ts(type = "unknown")]
         tool_call: Box<ToolCallUpdate>,
+        #[ts(type = "Array<unknown>")]
         options: Vec<PermissionOption>,
         /// `None` means the request was answered `Cancelled` (no allow option).
+        #[ts(type = "string | null")]
         chosen: Option<PermissionOptionKind>,
     },
-    TurnEnded(Result<StopReason, AgentError>),
+    TurnEnded(#[ts(as = "Result<String, AgentError>")] Result<StopReason, AgentError>),
     /// One stderr line of the agent process (for logs, not for the UI).
     Stderr(String),
     /// The agent process is gone (always the final event).
@@ -76,22 +80,22 @@ pub fn config_value<'a>(options: &'a [SessionConfigOption], config_id: &str) -> 
 }
 
 /// A `session/update`, typed. Mirrors `SessionUpdate` of the ACP schema.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "kind", content = "update", rename_all = "snake_case")]
 pub enum AgentOutput {
-    UserMessageChunk(ContentChunk),
-    MessageChunk(ContentChunk),
-    ThoughtChunk(ContentChunk),
-    ToolCall(Box<ToolCall>),
-    ToolCallUpdate(Box<ToolCallUpdate>),
-    Plan(Plan),
-    AvailableCommands(AvailableCommandsUpdate),
-    ModeChanged(CurrentModeUpdate),
-    ConfigOptions(ConfigOptionUpdate),
-    SessionInfo(SessionInfoUpdate),
-    Usage(UsageUpdate),
+    UserMessageChunk(#[ts(type = "unknown")] ContentChunk),
+    MessageChunk(#[ts(type = "unknown")] ContentChunk),
+    ThoughtChunk(#[ts(type = "unknown")] ContentChunk),
+    ToolCall(#[ts(type = "unknown")] Box<ToolCall>),
+    ToolCallUpdate(#[ts(type = "unknown")] Box<ToolCallUpdate>),
+    Plan(#[ts(type = "unknown")] Plan),
+    AvailableCommands(#[ts(type = "unknown")] AvailableCommandsUpdate),
+    ModeChanged(#[ts(type = "unknown")] CurrentModeUpdate),
+    ConfigOptions(#[ts(type = "unknown")] ConfigOptionUpdate),
+    SessionInfo(#[ts(type = "unknown")] SessionInfoUpdate),
+    Usage(#[ts(type = "unknown")] UsageUpdate),
     /// An update kind this build does not know (kept verbatim, never dropped).
-    Unknown(serde_json::Value),
+    Unknown(#[ts(type = "unknown")] serde_json::Value),
 }
 
 impl AgentOutput {
@@ -138,7 +142,7 @@ impl AgentOutput {
 }
 
 /// Errors surfaced by the ACP client. Messages are meant to be shown to people.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, TS)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AgentError {
     #[error("failed to launch agent `{command}`: {message}")]

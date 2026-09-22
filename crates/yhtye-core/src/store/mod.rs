@@ -52,6 +52,15 @@ pub enum StoreError {
     Corrupt(String),
 }
 
+/// A registered project (a row of `projects`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectRecord {
+    pub id: String,
+    /// The project's main worktree, as given when it was registered.
+    pub path: PathBuf,
+    pub created_ms: u64,
+}
+
 /// Handle to the database (cheap to clone; a small connection pool).
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -160,6 +169,23 @@ impl Store {
         session: &str,
     ) -> Result<Vec<StoredEvent>, StoreError> {
         events::of_session(&self.pool, project, session).await
+    }
+
+    /// Every registered project, oldest first.
+    pub async fn projects(&self) -> Result<Vec<ProjectRecord>, StoreError> {
+        let rows: Vec<(String, String, i64)> =
+            sqlx::query_as("SELECT id, path, created_ms FROM projects ORDER BY created_ms, id")
+                .fetch_all(&self.pool)
+                .await?;
+        rows.into_iter()
+            .map(|(id, path, created_ms)| {
+                Ok(ProjectRecord {
+                    id,
+                    path: PathBuf::from(path),
+                    created_ms: codec::uint(created_ms)?,
+                })
+            })
+            .collect()
     }
 
     /// Every agent session recorded for `project`.

@@ -28,11 +28,17 @@ use crate::domain::{
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 use crate::prompts::workspace_changes_note;
+use crate::store::StoreError;
+
+/// Session key of tool calls made by the user through the API (not an agent).
+pub const USER_SESSION: &str = "user";
 
 pub(super) enum Cmd {
     UserMessage(String),
     CancelOrchestrator,
-    Snapshot(oneshot::Sender<Snapshot>),
+    /// An orchestrator tool (`cancel_task` / `cancel_group`) invoked by the user.
+    UserTool(ToolCall, oneshot::Sender<Reply>),
+    Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -148,12 +154,12 @@ impl Driver {
                 self.execute(DomainCommand::UserMessage { text }).await;
             }
             Some(Cmd::CancelOrchestrator) => self.sessions.cancel_turn(ORCHESTRATOR_SESSION),
+            Some(Cmd::UserTool(call, tx)) => {
+                let reply = self.user_tool(call).await;
+                let _ = tx.send(reply);
+            }
             Some(Cmd::Snapshot(tx)) => {
-                self.publisher.flush().await;
-                let _ = tx.send(Snapshot {
-                    seq: self.publisher.seq(),
-                    state: self.state.clone(),
-                });
+                let _ = tx.send(self.snapshot().await);
             }
             Some(Cmd::Shutdown(done)) => {
                 self.shutdown().await;
@@ -166,6 +172,49 @@ impl Driver {
             }
         }
         true
+    }
+
+    /// The state as of the last durable event (everything buffered is published
+    /// first, so the sessions read from the store match the same `seq`).
+    async fn snapshot(&mut self) -> Result<Snapshot, StoreError> {
+        self.publisher.flush().await;
+        let sessions = self.publisher.store().sessions(&self.cfg.project).await?;
+        Ok(Snapshot {
+            seq: self.publisher.seq(),
+            state: self.state.clone(),
+            sessions,
+        })
+    }
+
+    /// Runs an orchestrator tool for the user, records it like an agent's tool
+    /// call, and tells the orchestrator what the user did.
+    async fn user_tool(&mut self, call: ToolCall) -> Reply {
+        let binding = SessionBinding {
+            session: USER_SESSION.into(),
+            role: crate::domain::Role::Orchestrator,
+            project: self.cfg.project.clone(),
+            group: None,
+            task: None,
+            step: None,
+        };
+        let note = user_action_note(&call);
+        let record_call = serde_json::to_value(&call).unwrap_or_default();
+        let reply = self.tool_reply(binding.clone(), call).await;
+        self.emit.send(ApiEventBody::ToolCalled {
+            record: ToolCallRecord {
+                binding,
+                tool: record_call["tool"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string(),
+                args: record_call["args"].clone(),
+                result: reply.clone(),
+            },
+        });
+        if let (Ok(_), Some(text)) = (&reply, note) {
+            self.execute(DomainCommand::UserMessage { text }).await;
+        }
+        reply
     }
 
     async fn shutdown(&mut self) {
@@ -380,6 +429,21 @@ impl Driver {
         self.sessions
             .queue_and_deliver(ORCHESTRATOR_SESSION, render_batch(&items));
         self.execute(DomainCommand::InboxDelivered { up_to }).await;
+    }
+}
+
+/// What the orchestrator is told when the user acts directly from the UI.
+fn user_action_note(call: &ToolCall) -> Option<String> {
+    match call {
+        ToolCall::CancelTask(a) => Some(format!(
+            "(Yhtye note: the user cancelled task {} from the Yhtye UI. Reason: {})",
+            a.task_id, a.reason
+        )),
+        ToolCall::CancelGroup(a) => Some(format!(
+            "(Yhtye note: the user cancelled group {} from the Yhtye UI. Reason: {})",
+            a.group_id, a.reason
+        )),
+        _ => None,
     }
 }
 

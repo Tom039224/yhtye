@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use super::state::{
     Group, GroupStatus, Help, HelpState, InboxEntry, State, Step, StepStatus, Task, TaskStatus,
@@ -16,7 +17,7 @@ use super::state::{
 use super::types::{StepSpec, Verdict};
 use crate::mcp::tools::HelpAction;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainEvent {
     GroupCreated {

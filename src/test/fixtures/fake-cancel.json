@@ -1,0 +1,1117 @@
+{
+  "note": "Recorded by crates/yhtye-core/tests/core_facade.rs (YHTYE_RECORD_FIXTURE=1). Test input only.",
+  "start": {
+    "seq": 1,
+    "state": {
+      "project": "repo",
+      "config": {
+        "max_review_rounds": 2
+      },
+      "groups": [],
+      "tasks": [],
+      "helps": [],
+      "inbox": [],
+      "counters": {
+        "groups": 0,
+        "tasks": 0,
+        "helps": 0,
+        "inbox": 0
+      }
+    },
+    "sessions": [
+      {
+        "session_key": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "acp_session_id": "fake-652962",
+        "status": "live",
+        "turn_running": false
+      }
+    ]
+  },
+  "events": [
+    {
+      "seq": 1,
+      "ts_ms": 1790112609818,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "pid": 652962,
+        "acp_session_id": "fake-652962",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 2,
+      "ts_ms": 1790112609820,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-652962",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "ts_ms": 1790112609820,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 1,
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "hold on"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "ts_ms": 1790112609821,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:user_message]\nhold on"
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790112609821,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 1
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790112609822,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "thinking..."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790112609822,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "message",
+        "text": "thinking..."
+      }
+    },
+    {
+      "seq": 7,
+      "ts_ms": 1790112609822,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "cancelled"
+          }
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "ts_ms": 1790112609823,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 2,
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "start two"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "ts_ms": 1790112609823,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:user_message]\nstart two"
+      }
+    },
+    {
+      "seq": 10,
+      "ts_ms": 1790112609824,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 2
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "ts_ms": 1790112609828,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_created",
+          "group": {
+            "id": "G-1",
+            "title": "two",
+            "summary": null,
+            "base_branch": "main",
+            "group_branch": "yhtye/G-1",
+            "status": "active",
+            "finish_summary": null,
+            "detail": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "ts_ms": 1790112609848,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "create_group",
+          "args": {
+            "title": "two"
+          },
+          "result": {
+            "Ok": {
+              "group_id": "G-1",
+              "group_branch": "yhtye/G-1",
+              "base_branch": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "ts_ms": 1790112609849,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "ts_ms": 1790112609852,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_created",
+          "task": {
+            "id": "T-1",
+            "group": "G-1",
+            "title": "a",
+            "kind": "code",
+            "depends_on": [],
+            "instruction": "wait-a",
+            "steps": [
+              {
+                "kind": "implement",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              },
+              {
+                "kind": "done",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              }
+            ],
+            "current": 0,
+            "status": "pending",
+            "review_rounds": 0,
+            "workdir": null,
+            "cancel_reason": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "ts_ms": 1790112609852,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_status_changed",
+          "task": "T-1",
+          "status": "running"
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "ts_ms": 1790112609863,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "workspace_ready",
+          "task": "T-1",
+          "path": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-1"
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "ts_ms": 1790112609863,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_started",
+          "task": "T-1",
+          "step": 0,
+          "note": null
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "ts_ms": 1790112609864,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "create_task",
+          "args": {
+            "group_id": "G-1",
+            "title": "a",
+            "kind": "code",
+            "steps": [
+              {
+                "kind": "implement"
+              }
+            ],
+            "instruction": "wait-a"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-1",
+              "status": "running",
+              "steps": [
+                {
+                  "kind": "implement"
+                },
+                {
+                  "kind": "done"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "ts_ms": 1790112609866,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 18,
+      "ts_ms": 1790112609869,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_created",
+          "task": {
+            "id": "T-2",
+            "group": "G-1",
+            "title": "b",
+            "kind": "code",
+            "depends_on": [],
+            "instruction": "wait-b",
+            "steps": [
+              {
+                "kind": "implement",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              },
+              {
+                "kind": "done",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              }
+            ],
+            "current": 0,
+            "status": "pending",
+            "review_rounds": 0,
+            "workdir": null,
+            "cancel_reason": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 19,
+      "ts_ms": 1790112609869,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_status_changed",
+          "task": "T-2",
+          "status": "running"
+        }
+      }
+    },
+    {
+      "seq": 20,
+      "ts_ms": 1790112609881,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "workspace_ready",
+          "task": "T-2",
+          "path": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-2"
+        }
+      }
+    },
+    {
+      "seq": 21,
+      "ts_ms": 1790112609881,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_started",
+          "task": "T-2",
+          "step": 0,
+          "note": null
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "ts_ms": 1790112609882,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "T-1/implementer",
+        "role": "implementer",
+        "task": "T-1",
+        "pid": 653095,
+        "acp_session_id": "fake-653095",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 23,
+      "ts_ms": 1790112609882,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "T-1/implementer",
+        "text": "[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\nTask: a\n\nInstruction:\nwait-a\n\nWhen finished, call report_step_done; if stuck, call help. Then end your turn."
+      }
+    },
+    {
+      "seq": 24,
+      "ts_ms": 1790112609884,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_task",
+          "args": {
+            "task_id": "T-9",
+            "reason": "cancelled by the user"
+          },
+          "result": {
+            "Err": {
+              "code": "not_found",
+              "message": "no task T-9"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 25,
+      "ts_ms": 1790112609884,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_cancelled",
+          "task": "T-1",
+          "reason": "cancelled by the user"
+        }
+      }
+    },
+    {
+      "seq": 26,
+      "ts_ms": 1790112609897,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_task",
+          "args": {
+            "task_id": "T-1",
+            "reason": "cancelled by the user"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-1",
+              "status": "cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 27,
+      "ts_ms": 1790112609898,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 3,
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 28,
+      "ts_ms": 1790112609898,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
+      }
+    },
+    {
+      "seq": 29,
+      "ts_ms": 1790112609899,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 3
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "ts_ms": 1790112609900,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "create_task",
+          "args": {
+            "group_id": "G-1",
+            "title": "b",
+            "kind": "code",
+            "steps": [
+              {
+                "kind": "implement"
+              }
+            ],
+            "instruction": "wait-b"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-2",
+              "status": "running",
+              "steps": [
+                {
+                  "kind": "implement"
+                },
+                {
+                  "kind": "done"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 31,
+      "ts_ms": 1790112609900,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_cancelled",
+          "group": "G-1",
+          "reason": "changed my mind"
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "ts_ms": 1790112609900,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_cancelled",
+          "task": "T-2",
+          "reason": "group cancelled: changed my mind"
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "ts_ms": 1790112609911,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_group",
+          "args": {
+            "group_id": "G-1",
+            "reason": "changed my mind"
+          },
+          "result": {
+            "Ok": {
+              "group_id": "G-1",
+              "status": "cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "ts_ms": 1790112609912,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 4,
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 35,
+      "ts_ms": 1790112609912,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
+      }
+    },
+    {
+      "seq": 36,
+      "ts_ms": 1790112609912,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 4
+        }
+      }
+    },
+    {
+      "seq": 37,
+      "ts_ms": 1790112609913,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-1/implementer",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 38,
+      "ts_ms": 1790112609914,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_group",
+          "args": {
+            "group_id": "G-1",
+            "reason": "changed my mind"
+          },
+          "result": {
+            "Err": {
+              "code": "invalid_state",
+              "message": "group G-1 is cancelled; only active or merge_blocked groups can be cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 39,
+      "ts_ms": 1790112609914,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-653095",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 40,
+      "ts_ms": 1790112609915,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-2/implementer",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 40,
+      "ts_ms": 1790112609915,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:create_task:ok:{\"task_id\":\"T-2\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 41,
+      "ts_ms": 1790112609915,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "message",
+        "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}mcp:create_task:ok:{\"task_id\":\"T-2\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}"
+      }
+    },
+    {
+      "seq": 42,
+      "ts_ms": 1790112609915,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    }
+  ],
+  "end": {
+    "seq": 43,
+    "state": {
+      "project": "repo",
+      "config": {
+        "max_review_rounds": 2
+      },
+      "groups": [
+        {
+          "id": "G-1",
+          "title": "two",
+          "summary": null,
+          "base_branch": "main",
+          "group_branch": "yhtye/G-1",
+          "status": "cancelled",
+          "finish_summary": null,
+          "detail": "changed my mind"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T-1",
+          "group": "G-1",
+          "title": "a",
+          "kind": "code",
+          "depends_on": [],
+          "instruction": "wait-a",
+          "steps": [
+            {
+              "kind": "implement",
+              "instruction": null,
+              "status": "running",
+              "result": null,
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            },
+            {
+              "kind": "done",
+              "instruction": null,
+              "status": "pending",
+              "result": null,
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            }
+          ],
+          "current": 0,
+          "status": "cancelled",
+          "review_rounds": 0,
+          "workdir": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-1",
+          "cancel_reason": "cancelled by the user"
+        },
+        {
+          "id": "T-2",
+          "group": "G-1",
+          "title": "b",
+          "kind": "code",
+          "depends_on": [],
+          "instruction": "wait-b",
+          "steps": [
+            {
+              "kind": "implement",
+              "instruction": null,
+              "status": "running",
+              "result": null,
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            },
+            {
+              "kind": "done",
+              "instruction": null,
+              "status": "pending",
+              "result": null,
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            }
+          ],
+          "current": 0,
+          "status": "cancelled",
+          "review_rounds": 0,
+          "workdir": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-2",
+          "cancel_reason": "group cancelled: changed my mind"
+        }
+      ],
+      "helps": [],
+      "inbox": [],
+      "counters": {
+        "groups": 1,
+        "tasks": 2,
+        "helps": 0,
+        "inbox": 4
+      }
+    },
+    "sessions": [
+      {
+        "session_key": "T-1/implementer",
+        "role": "implementer",
+        "task": "T-1",
+        "acp_session_id": "fake-653095",
+        "status": "stopped",
+        "turn_running": false
+      },
+      {
+        "session_key": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "acp_session_id": "fake-652962",
+        "status": "live",
+        "turn_running": false
+      }
+    ]
+  }
+}

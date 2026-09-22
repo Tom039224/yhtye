@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use super::inbox::InboxItem;
 use super::types::{HelpKind, Role, StepKind, StepSpec, TaskKind, Verdict};
@@ -12,7 +13,7 @@ use super::types::{HelpKind, Role, StepKind, StepSpec, TaskKind, Verdict};
 /// Default `max_review_rounds` (`orchestration-model.md` §2.3).
 pub const DEFAULT_MAX_REVIEW_ROUNDS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct DomainConfig {
     /// How many times a `needs_changes` review may insert implement + review.
     pub max_review_rounds: u32,
@@ -26,7 +27,7 @@ impl Default for DomainConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupStatus {
     Active,
@@ -49,7 +50,7 @@ impl GroupStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Pending,
@@ -86,7 +87,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
     Pending,
@@ -108,7 +109,7 @@ pub fn task_branch(group: &str, task: &str) -> String {
     format!("yhtye/{group}-{task}")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Group {
     pub id: String,
     pub title: String,
@@ -122,7 +123,7 @@ pub struct Group {
     pub detail: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Step {
     pub kind: StepKind,
     pub instruction: Option<String>,
@@ -150,7 +151,7 @@ impl Step {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Task {
     pub id: String,
     pub group: String,
@@ -211,7 +212,7 @@ impl Task {
 }
 
 /// Who raised a help.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "by", rename_all = "snake_case")]
 pub enum HelpSource {
     /// The agent of `role` working on the help's step (via the `help` tool).
@@ -220,7 +221,7 @@ pub enum HelpSource {
     Yhtye,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum HelpState {
     Open,
@@ -229,7 +230,7 @@ pub enum HelpState {
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Help {
     pub id: String,
     pub task: String,
@@ -251,14 +252,14 @@ impl Help {
 }
 
 /// An undelivered reason to wake the orchestrator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct InboxEntry {
     pub id: u64,
     pub item: InboxItem,
 }
 
 /// Id counters (the number of each kind created so far).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Counters {
     pub groups: u32,
     pub tasks: u32,
@@ -267,7 +268,7 @@ pub struct Counters {
 }
 
 /// Everything the state machine knows about one project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct State {
     pub project: String,
     pub config: DomainConfig,

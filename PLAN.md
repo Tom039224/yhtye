@@ -19,7 +19,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 3a | ドメインコア: 状態機械 (メモリ上) と UI 向けイベント列 | **完了** |
 | 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | **完了** |
 | 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | **完了** (Stage 3 完了) |
-| 4 | フロントエンド (素の UI) | 未着手 |
+| 4 | フロントエンド (素の UI) | **完了** |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
 | 6 | Claude Design 適用・残機能 | 未着手 |
 
@@ -478,6 +478,58 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 - `pnpm test` (Vitest): reducer にイベント列を流して期待状態になる / seq 飛びで再同期要求 /
   WsTransport の要求-応答の対応付けとイベント配信。
 - `pnpm build` が通る。
+
+**結果メモ (2026-09-23)**
+
+- Rust (API ファサード、詳細は [`core-design.md`](docs/architecture/core-design.md) §2・§11):
+  - `runtime::Core` / `CoreConfig` (`runtime/core.rs`): 共有 DB + 開いたプロジェクトごとの `Orchestration`
+    (`GitCli`)、`command(ApiCommand) -> Result<ApiResponse, ApiError>`、`subscribe()` (broadcast、全プロジェクト)、
+    `shutdown()`。Tauri コマンドと WS ブリッジはこの 2 つを中継するだけで済む形。
+  - `api::{ApiCommand, ApiResponse, ApiError, ProjectInfo, LoggedEvent}` (`api/command.rs`)、WS のメッセージ型
+    (`api/wire.rs`)。`Snapshot` に `sessions` を追加。`Store::projects()`。
+  - ユーザーによる中止: `Orchestration::cancel_task` / `cancel_group` (driver の `Cmd::UserTool`。状態機械の
+    `cancel_task` / `cancel_group` をセッションキー `user` で通し、成功したらオーケストレータに `user_message`)。
+    `Orchestration::shutdown` は `&self` に。
+  - **TS 型生成は ts-rs 12**: `api/typegen.rs` のテストが `src/api/generated/` と一致を検査
+    (`cargo test` に含まれる)。更新は `pnpm gen:types`。ACP の型は `unknown`、`u64` は `number`。
+- フロント (`src/`): `api/` (Transport 抽象・Tauri・WS・環境で選択・ACP ペイロードの実行時検査)、`store/`
+  (`State::apply` の TS 移植、セッション導出、会話・出力の畳み込み、`AppStore` = 唯一のストアと同期処理)、
+  `ui/` (素の画面。トークン CSS 変数のみ: `styles/tokens.css`)。モック / フィクスチャは実行経路に無い
+  (テスト用は `src/test/` のみ)。未実装の領域は空状態。接続状態とコマンドのエラーは常にバナーに出す。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 158 件成功 (新規: `core_facade` 4 件 = プロジェクトの検証・登録・再オープン・
+    エラーコード / 偽エージェントで依頼 → implement → review → base へマージまでを Core 経由で完走し、
+    `ListEvents` のページングが配信と一致 / ターン中止・タスク中止・グループ中止と通知・エラー、
+    Core 単体 2、typegen 1)。実エージェント 9 件は ignored (Stage 4 では挙動を変えていないので未実行)。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
+  - `pnpm test` (Vitest 5 + Testing Library, jsdom) → 6 ファイル 41 件成功:
+    reducer が本物のコア (偽エージェント) で記録した 2 つのイベント列 (`src/test/fixtures/fake-{run,cancel}.json`、
+    `pnpm record:fixtures`) を畳み込んでコアの最終 state / sessions と一致 + 記録に無い遷移の構成テスト /
+    ストリーミングの合体と置き換え / 読み込み中のバッファと重複排除 / seq 飛び → ListEvents で補完 /
+    再接続で OpenProject + cursor 以降の補完・途中ストリームの破棄 / エラー表示 /
+    WsTransport を実際の ws サーバー (テスト内) に対して: 要求-応答の対応付け (順不同)・エラーコード・
+    イベント配信・不正メッセージの無視・切断で保留中の要求を失敗 → 再接続・タイムアウト・トークン /
+    画面: 会話・思考の折りたたみ・ツール呼び出し・タスク状態・エージェント出力・Enter/Shift+Enter・
+    送信失敗で本文を保持・待機中表示・ターン中止・help / interrupted / merge_blocked 表示・空状態。
+  - `pnpm build` 成功 (tsconfig の target/lib を ES2022 に上げた)。
+  - `pnpm dev` を Chrome で開き、コア未接続で「切断: … 再接続」バナーと空状態が出ることだけ確認
+    (本物のコアとの E2E は Stage 5)。dev サーバーは停止済み。
+- 設計への反映: core-design §2 (Core の形・コマンド一覧・ts-rs の選択・ユーザー中止・Snapshot.sessions)、
+  §11 (Transport と同期規則の実装)。合意済みのモデルは変えていない。
+  **要確認**: UI からのタスク / グループ中止はユーザーがオーケストレータを介さず状態を変える経路
+  (orchestration-model §9 に「ユーザーによるタスク中止」はあったが経路は未定義だった)。オーケストレータには
+  `user_message` で必ず知らせる形にした。
+- Stage 5 への申し送り:
+  - src-tauri: `Core::start(CoreConfig::claude_code(data_dir, "haiku"))` を manage し、
+    `yhtye_command(cmd: ApiCommand) -> Result<ApiResponse, ApiError>` と `subscribe()` → `emit("yhtye://event")`、
+    終了時 `shutdown()`。broadcast の `Lagged` は捨ててよい (クライアントが seq 飛びで補う)。
+  - WS ブリッジ: `WsRequest` / `WsServerMessage` をそのまま使う。**ポートの衝突注意**: `vite.config.ts` の HMR が
+    `TAURI_DEV_HOST` 設定時に 1421 を使う (§10 のブリッジ既定も 1421)。
+  - `Core::start` は保存済みプロジェクトを自動で開かない (中断タスクの再開は OpenProject 時)。起動時に
+    前回開いていたものを開くかは Stage 5 で決める。
+  - 履歴は毎回ログの先頭から読む (長いプロジェクトで重くなったらページングの遅延読み込みを検討)。
+  - `RetryGroupMerge` (merge_blocked の再試行) は未実装。UI は merge_blocked を表示するだけ。
+  - 未決事項 (`~/.claude` の扱い) は変わらず。
 
 ## Stage 5 — 統合
 

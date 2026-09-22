@@ -1,0 +1,1473 @@
+{
+  "note": "Recorded by crates/yhtye-core/tests/core_facade.rs (YHTYE_RECORD_FIXTURE=1). Test input only.",
+  "start": {
+    "seq": 1,
+    "state": {
+      "project": "repo",
+      "config": {
+        "max_review_rounds": 2
+      },
+      "groups": [],
+      "tasks": [],
+      "helps": [],
+      "inbox": [],
+      "counters": {
+        "groups": 0,
+        "tasks": 0,
+        "helps": 0,
+        "inbox": 0
+      }
+    },
+    "sessions": [
+      {
+        "session_key": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "acp_session_id": "fake-652963",
+        "status": "live",
+        "turn_running": false
+      }
+    ]
+  },
+  "events": [
+    {
+      "seq": 1,
+      "ts_ms": 1790112609818,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "pid": 652963,
+        "acp_session_id": "fake-652963",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 2,
+      "ts_ms": 1790112609820,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-652963",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "ts_ms": 1790112609820,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 1,
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "Add hello.txt please"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "ts_ms": 1790112609821,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:user_message]\nAdd hello.txt please"
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790112609821,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 1
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790112609822,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "thought_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "The user wants a greeting file. "
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790112609822,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "thought_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "One code task with a review."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790112609823,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "thought",
+        "text": "The user wants a greeting file. One code task with a review."
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790112609823,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "I will create "
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790112609824,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "a group for this."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "ts_ms": 1790112609824,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "message",
+        "text": "I will create a group for this."
+      }
+    },
+    {
+      "seq": 8,
+      "ts_ms": 1790112609824,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "tool_call",
+            "update": {
+              "toolCallId": "read-1",
+              "title": "Read README.md",
+              "kind": "edit"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "ts_ms": 1790112609824,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "tool_call_update",
+            "update": {
+              "toolCallId": "read-1",
+              "status": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "ts_ms": 1790112609827,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_created",
+          "group": {
+            "id": "G-1",
+            "title": "greeting",
+            "summary": null,
+            "base_branch": "main",
+            "group_branch": "yhtye/G-1",
+            "status": "active",
+            "finish_summary": null,
+            "detail": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "ts_ms": 1790112609844,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "create_group",
+          "args": {
+            "title": "greeting"
+          },
+          "result": {
+            "Ok": {
+              "group_id": "G-1",
+              "group_branch": "yhtye/G-1",
+              "base_branch": "main"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "ts_ms": 1790112609846,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "ts_ms": 1790112609849,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_created",
+          "task": {
+            "id": "T-1",
+            "group": "G-1",
+            "title": "add hello.txt",
+            "kind": "code",
+            "depends_on": [],
+            "instruction": "write-hello",
+            "steps": [
+              {
+                "kind": "implement",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              },
+              {
+                "kind": "review",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              },
+              {
+                "kind": "done",
+                "instruction": null,
+                "status": "pending",
+                "result": null,
+                "verdict": null,
+                "note": null,
+                "nudges": 0
+              }
+            ],
+            "current": 0,
+            "status": "pending",
+            "review_rounds": 0,
+            "workdir": null,
+            "cancel_reason": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "ts_ms": 1790112609849,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_status_changed",
+          "task": "T-1",
+          "status": "running"
+        }
+      }
+    },
+    {
+      "seq": 14,
+      "ts_ms": 1790112609860,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "workspace_ready",
+          "task": "T-1",
+          "path": "/tmp/.tmpVTX5cj/data/worktrees/repo/G-1/T-1"
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "ts_ms": 1790112609860,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_started",
+          "task": "T-1",
+          "step": 0,
+          "note": null
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "ts_ms": 1790112609862,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "create_task",
+          "args": {
+            "group_id": "G-1",
+            "title": "add hello.txt",
+            "kind": "code",
+            "steps": [
+              {
+                "kind": "implement"
+              },
+              {
+                "kind": "review"
+              }
+            ],
+            "instruction": "write-hello"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-1",
+              "status": "running",
+              "steps": [
+                {
+                  "kind": "implement"
+                },
+                {
+                  "kind": "review"
+                },
+                {
+                  "kind": "done"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "ts_ms": 1790112609863,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"review\"},{\"kind\":\"done\"}]}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 16,
+      "ts_ms": 1790112609864,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "Task T-1 is running."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 17,
+      "ts_ms": 1790112609864,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "message",
+        "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"review\"},{\"kind\":\"done\"}]}Task T-1 is running."
+      }
+    },
+    {
+      "seq": 18,
+      "ts_ms": 1790112609864,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    },
+    {
+      "seq": 19,
+      "ts_ms": 1790112609867,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "T-1/implementer",
+        "role": "implementer",
+        "task": "T-1",
+        "pid": 653077,
+        "acp_session_id": "fake-653077",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 20,
+      "ts_ms": 1790112609867,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "T-1/implementer",
+        "text": "[yhtye:step] task=T-1 kind=code step=1/3 step_kind=implement\nTask: add hello.txt\n\nInstruction:\nwrite-hello\n\nWhen finished, call report_step_done; if stuck, call help. Then end your turn."
+      }
+    },
+    {
+      "seq": 21,
+      "ts_ms": 1790112609868,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-653077",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 21,
+      "ts_ms": 1790112609869,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "Writing the file."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 22,
+      "ts_ms": 1790112609869,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "T-1/implementer",
+        "kind": "message",
+        "text": "Writing the file."
+      }
+    },
+    {
+      "seq": 23,
+      "ts_ms": 1790112609869,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "tool_call",
+            "update": {
+              "toolCallId": "w-1",
+              "title": "Write hello.txt",
+              "kind": "edit"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 24,
+      "ts_ms": 1790112609870,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "tool_call_update",
+            "update": {
+              "toolCallId": "w-1",
+              "status": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 25,
+      "ts_ms": 1790112609872,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_completed",
+          "task": "T-1",
+          "step": 0,
+          "result": "wrote hello.txt",
+          "verdict": null
+        }
+      }
+    },
+    {
+      "seq": 26,
+      "ts_ms": 1790112609872,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "T-1/implementer",
+            "role": "implementer",
+            "project": "repo",
+            "group": "G-1",
+            "task": "T-1",
+            "step": 0
+          },
+          "tool": "report_step_done",
+          "args": {
+            "result": "wrote hello.txt"
+          },
+          "result": {
+            "Ok": {
+              "ok": true,
+              "next": "end_turn"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 26,
+      "ts_ms": 1790112609874,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:report_step_done:ok:{\"ok\":true,\"next\":\"end_turn\"}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 27,
+      "ts_ms": 1790112609874,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "T-1/implementer",
+        "kind": "message",
+        "text": "mcp:report_step_done:ok:{\"ok\":true,\"next\":\"end_turn\"}"
+      }
+    },
+    {
+      "seq": 28,
+      "ts_ms": 1790112609874,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    },
+    {
+      "seq": 29,
+      "ts_ms": 1790112609874,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_started",
+          "task": "T-1",
+          "step": 1,
+          "note": null
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "ts_ms": 1790112609881,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "T-1/review-1",
+        "role": "reviewer",
+        "task": "T-1",
+        "pid": 653120,
+        "acp_session_id": "fake-653120",
+        "resumed": false
+      }
+    },
+    {
+      "seq": 31,
+      "ts_ms": 1790112609881,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "T-1/review-1",
+        "text": "[yhtye:step] task=T-1 kind=code step=2/3 step_kind=review\nTask: add hello.txt\n\nInstruction:\nwrite-hello\n\nChanges to review: your working directory is the task branch `yhtye/G-1-T-1`, forked from the group branch `yhtye/G-1`. Run `git status --short` and `git diff $(git merge-base yhtye/G-1 HEAD)` there: the diff includes commits and uncommitted changes; read new (untracked) files listed by git status directly.\n\nResults of earlier steps:\nstep 0 (implement): wrote hello.txt\n\nWhen finished, call report_step_done; if stuck, call help. Then end your turn."
+      }
+    },
+    {
+      "seq": 32,
+      "ts_ms": 1790112609881,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/review-1",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-653120",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 32,
+      "ts_ms": 1790112609882,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "T-1/review-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "Looks good."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "ts_ms": 1790112609884,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_completed",
+          "task": "T-1",
+          "step": 1,
+          "result": "fine",
+          "verdict": "approve"
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "ts_ms": 1790112609885,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "T-1/review-1",
+            "role": "reviewer",
+            "project": "repo",
+            "group": "G-1",
+            "task": "T-1",
+            "step": 1
+          },
+          "tool": "report_step_done",
+          "args": {
+            "result": "fine",
+            "verdict": "approve"
+          },
+          "result": {
+            "Ok": {
+              "ok": true,
+              "next": "end_turn"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "ts_ms": 1790112609887,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "T-1/review-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:report_step_done:ok:{\"ok\":true,\"next\":\"end_turn\"}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 35,
+      "ts_ms": 1790112609887,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "T-1/review-1",
+        "kind": "message",
+        "text": "Looks good.mcp:report_step_done:ok:{\"ok\":true,\"next\":\"end_turn\"}"
+      }
+    },
+    {
+      "seq": 36,
+      "ts_ms": 1790112609887,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/review-1",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    },
+    {
+      "seq": 37,
+      "ts_ms": 1790112609887,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_started",
+          "task": "T-1",
+          "step": 2,
+          "note": null
+        }
+      }
+    },
+    {
+      "seq": 38,
+      "ts_ms": 1790112609887,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_status_changed",
+          "task": "T-1",
+          "status": "merging"
+        }
+      }
+    },
+    {
+      "seq": 39,
+      "ts_ms": 1790112609934,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "step_completed",
+          "task": "T-1",
+          "step": 2,
+          "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (add7a4be25)",
+          "verdict": null
+        }
+      }
+    },
+    {
+      "seq": 40,
+      "ts_ms": 1790112609934,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_status_changed",
+          "task": "T-1",
+          "status": "done"
+        }
+      }
+    },
+    {
+      "seq": 41,
+      "ts_ms": 1790112609934,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 2,
+            "item": {
+              "kind": "group_settled",
+              "attrs": [
+                [
+                  "group",
+                  "G-1"
+                ]
+              ],
+              "body": "T-1 done: fine"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 42,
+      "ts_ms": 1790112609935,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator",
+        "text": "[yhtye:group_settled] group=G-1\nT-1 done: fine"
+      }
+    },
+    {
+      "seq": 43,
+      "ts_ms": 1790112609936,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "up_to": 2
+        }
+      }
+    },
+    {
+      "seq": 44,
+      "ts_ms": 1790112609937,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-1/review-1",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 45,
+      "ts_ms": 1790112609938,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-1/implementer",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 46,
+      "ts_ms": 1790112609938,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/review-1",
+        "event": {
+          "type": "exited",
+          "data": {
+            "code": 0,
+            "signal": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 47,
+      "ts_ms": 1790112609939,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "exited",
+          "data": {
+            "code": 0,
+            "signal": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 48,
+      "ts_ms": 1790112609940,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_finishing",
+          "group": "G-1",
+          "summary": "hello.txt added"
+        }
+      }
+    },
+    {
+      "seq": 49,
+      "ts_ms": 1790112609961,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_merge_finished",
+          "group": "G-1",
+          "ok": true,
+          "detail": "merged yhtye/G-1 into main (beec943baa)"
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "ts_ms": 1790112609961,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "finish_group",
+          "args": {
+            "group_id": "G-1",
+            "summary": "hello.txt added"
+          },
+          "result": {
+            "Ok": {
+              "group_id": "G-1",
+              "status": "done",
+              "merge": {
+                "ok": true,
+                "detail": "merged yhtye/G-1 into main (beec943baa)"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "ts_ms": 1790112609963,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (beec943baa)\"}}"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "ts_ms": 1790112609963,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "Done: hello.txt is on main."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 51,
+      "ts_ms": 1790112609963,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator",
+        "kind": "message",
+        "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (beec943baa)\"}}Done: hello.txt is on main."
+      }
+    },
+    {
+      "seq": 52,
+      "ts_ms": 1790112609963,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    }
+  ],
+  "end": {
+    "seq": 52,
+    "state": {
+      "project": "repo",
+      "config": {
+        "max_review_rounds": 2
+      },
+      "groups": [
+        {
+          "id": "G-1",
+          "title": "greeting",
+          "summary": null,
+          "base_branch": "main",
+          "group_branch": "yhtye/G-1",
+          "status": "done",
+          "finish_summary": "hello.txt added",
+          "detail": "merged yhtye/G-1 into main (beec943baa)"
+        }
+      ],
+      "tasks": [
+        {
+          "id": "T-1",
+          "group": "G-1",
+          "title": "add hello.txt",
+          "kind": "code",
+          "depends_on": [],
+          "instruction": "write-hello",
+          "steps": [
+            {
+              "kind": "implement",
+              "instruction": null,
+              "status": "done",
+              "result": "wrote hello.txt",
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            },
+            {
+              "kind": "review",
+              "instruction": null,
+              "status": "done",
+              "result": "fine",
+              "verdict": "approve",
+              "note": null,
+              "nudges": 0
+            },
+            {
+              "kind": "done",
+              "instruction": null,
+              "status": "done",
+              "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (add7a4be25)",
+              "verdict": null,
+              "note": null,
+              "nudges": 0
+            }
+          ],
+          "current": 2,
+          "status": "done",
+          "review_rounds": 0,
+          "workdir": "/tmp/.tmpVTX5cj/data/worktrees/repo/G-1/T-1",
+          "cancel_reason": null
+        }
+      ],
+      "helps": [],
+      "inbox": [],
+      "counters": {
+        "groups": 1,
+        "tasks": 1,
+        "helps": 0,
+        "inbox": 2
+      }
+    },
+    "sessions": [
+      {
+        "session_key": "T-1/implementer",
+        "role": "implementer",
+        "task": "T-1",
+        "acp_session_id": "fake-653077",
+        "status": "stopped",
+        "turn_running": false
+      },
+      {
+        "session_key": "T-1/review-1",
+        "role": "reviewer",
+        "task": "T-1",
+        "acp_session_id": "fake-653120",
+        "status": "stopped",
+        "turn_running": false
+      },
+      {
+        "session_key": "orchestrator",
+        "role": "orchestrator",
+        "task": null,
+        "acp_session_id": "fake-652963",
+        "status": "live",
+        "turn_running": false
+      }
+    ]
+  }
+}

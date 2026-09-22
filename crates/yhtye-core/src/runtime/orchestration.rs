@@ -7,7 +7,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, oneshot};
+use serde_json::Value;
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::driver::{Channels, Cmd, Driver, Restarted};
@@ -16,9 +17,10 @@ use super::port::{LoopPort, ToolRequest};
 use super::sessions::Sessions;
 use crate::acp::{AgentError, HarnessConfig};
 use crate::api::{ApiEvent, ApiEventBody, Snapshot};
-use crate::domain::{DomainConfig, OrchestratorResume, Role, State};
+use crate::domain::{DomainConfig, OrchestratorResume, Role, State, ToolError};
 use crate::git::GitService;
-use crate::mcp::{McpHost, TokenRegistry, ToolCallRecord};
+use crate::mcp::tools::{CancelGroupArgs, CancelTaskArgs};
+use crate::mcp::{McpHost, TokenRegistry, ToolCall, ToolCallRecord};
 use crate::store::{SessionRecord, Store, StoreError, StoredEvent};
 
 /// Session key of the orchestrator.
@@ -81,11 +83,21 @@ pub enum OrchError {
     Closed,
 }
 
+/// Why a user action (cancelling a task or group) failed.
+#[derive(Debug, thiserror::Error)]
+pub enum UserActionError {
+    /// Refused by the state machine (unknown id, wrong state, ...).
+    #[error("{0}")]
+    Rejected(#[from] ToolError),
+    #[error(transparent)]
+    Orchestration(#[from] OrchError),
+}
+
 /// Handle to a running orchestration. Call [`Orchestration::shutdown`] to stop
 /// every agent and the MCP server.
 pub struct Orchestration {
     cmd_tx: mpsc::UnboundedSender<Cmd>,
-    task: JoinHandle<()>,
+    task: Mutex<Option<JoinHandle<()>>>,
     mcp_addr: SocketAddr,
     store: Store,
     project: String,
@@ -205,7 +217,7 @@ impl Orchestration {
         let task = tokio::spawn(driver.run(channels, restarted));
         let handle = Self {
             cmd_tx,
-            task,
+            task: Mutex::new(Some(task)),
             mcp_addr,
             store,
             project,
@@ -247,16 +259,53 @@ impl Orchestration {
     pub async fn snapshot(&self) -> Result<Snapshot, OrchError> {
         let (tx, rx) = oneshot::channel();
         self.send(Cmd::Snapshot(tx))?;
-        rx.await.map_err(|_| OrchError::Closed)
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// Cancels a task as the user (`cancel_task` with the orchestrator's rules);
+    /// the orchestrator gets a `user_message` saying so.
+    pub async fn cancel_task(
+        &self,
+        task: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Value, UserActionError> {
+        let call = ToolCall::CancelTask(CancelTaskArgs {
+            task_id: task.into(),
+            reason: reason.into(),
+        });
+        self.user_tool(call).await
+    }
+
+    /// Cancels a group as the user (`cancel_group`); the orchestrator is told.
+    pub async fn cancel_group(
+        &self,
+        group: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<Value, UserActionError> {
+        let call = ToolCall::CancelGroup(CancelGroupArgs {
+            group_id: group.into(),
+            reason: reason.into(),
+        });
+        self.user_tool(call).await
+    }
+
+    async fn user_tool(&self, call: ToolCall) -> Result<Value, UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::UserTool(call, tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
     /// Stops all agent sessions (reaping their processes) and the MCP server.
-    pub async fn shutdown(self) {
+    /// Later calls (and every other method afterwards) find the loop closed.
+    pub async fn shutdown(&self) {
         let (done_tx, done_rx) = oneshot::channel();
         if self.cmd_tx.send(Cmd::Shutdown(done_tx)).is_ok() {
             let _ = done_rx.await;
         }
-        if let Err(e) = self.task.await {
+        let Some(task) = self.task.lock().await.take() else {
+            return;
+        };
+        if let Err(e) = task.await {
             tracing::error!("orchestration loop panicked: {e}");
         }
     }

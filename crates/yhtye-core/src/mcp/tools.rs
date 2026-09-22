@@ -7,6 +7,7 @@ use std::sync::Arc;
 use rmcp::model::{JsonObject, Tool};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::domain::{AgentHelpKind, Role, StepSpec, TaskKind, ToolError, Verdict};
 
@@ -77,7 +78,7 @@ pub struct ResolveCheckpointArgs {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum HelpAction {
     Resume,

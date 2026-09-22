@@ -1,0 +1,60 @@
+/* Design tokens (docs/design/tokens.md). Use these variables only; no ad-hoc colors. */
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;600&display=swap");
+
+:root {
+  --surface-base: #181716;
+  --surface-chrome: #141312;
+  --surface-panel: #1b1a18;
+  --surface-chat: #1e1d1b;
+  --surface-card: #1f1e1c;
+  --surface-card-muted: #1d1c1a;
+  --surface-inset: #1a1917;
+  --surface-selected: #272420;
+  --surface-chip: #2b2825;
+  --surface-chip-dim: #232120;
+  --surface-hover: #221f1d;
+  --surface-hover-strong: #33302b;
+
+  --border: #2a2724;
+  --border-card: #302d29;
+  --border-subtle: #262320;
+  --border-muted: #2c2926;
+  --border-dashed: #332f2a;
+  --border-hover: #3d3830;
+
+  --text-primary: #e8e5df;
+  --text-body: #ddd9d2;
+  --text-secondary: #d5cfc5;
+  --text-tertiary: #c9c3b9;
+  --text-quaternary: #b5afa5;
+  --text-muted: #9a948a;
+  --text-dim: #8a847a;
+  --text-dim-alt: #8e887e;
+  --text-faint: #7d776e;
+  --text-faintest: #57524b;
+
+  --accent: #d9a066;
+  --accent-hover: #e8b884;
+  --accent-strong: #e0a45c;
+
+  /* Status: fixed hue, lightness/chroma varied (tokens.md "ステータス"). */
+  --status-implementing-fg: oklch(0.86 0.07 250);
+  --status-implementing-bg: oklch(0.35 0.06 250);
+  --status-implementing-bar: oklch(0.66 0.11 250);
+  --status-reviewing-fg: oklch(0.87 0.06 300);
+  --status-reviewing-bg: oklch(0.36 0.05 300);
+  --status-reviewing-bar: oklch(0.66 0.11 300);
+  --status-handling-fg: oklch(0.93 0.05 40);
+  --status-handling-bg: oklch(0.42 0.13 30);
+  --status-handling-bar: oklch(0.58 0.14 30);
+  --status-handling-card-border: oklch(0.4 0.09 30);
+  --status-handling-card-bg: oklch(0.23 0.03 30);
+  --status-handling-card-text: #d8c4b4;
+  --status-done-fg: oklch(0.85 0.09 150);
+  --status-done-bg: oklch(0.33 0.05 150);
+  --status-done-bar: oklch(0.72 0.13 150);
+
+  --font-wordmark: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-text: "Noto Sans JP", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;
+}

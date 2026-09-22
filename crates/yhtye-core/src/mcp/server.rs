@@ -21,6 +21,7 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use ts_rs::TS;
 
 use super::binding::{McpToken, SessionBinding, TokenRegistry};
 use super::port::ToolPort;
@@ -31,7 +32,7 @@ use crate::domain::ToolError;
 pub const MCP_SERVER_NAME: &str = "yhtye";
 
 /// One tool call as seen by the server (for logging / observation).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct ToolCallRecord {
     pub binding: SessionBinding,
     pub tool: String,

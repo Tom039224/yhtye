@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
+use ts_rs::TS;
 
 use super::StoreError;
 use super::codec::{int, name, parse};
@@ -11,7 +12,7 @@ use crate::acp::AgentEvent;
 use crate::api::{ApiEvent, ApiEventBody};
 use crate::domain::Role;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Live,
@@ -31,8 +32,8 @@ impl SessionStatus {
     }
 }
 
-/// One row of `agent_sessions`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One row of `agent_sessions` (also part of [`crate::api::Snapshot`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 pub struct SessionRecord {
     pub session_key: String,
     pub role: Role,

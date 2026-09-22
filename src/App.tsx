@@ -1,16 +1,32 @@
+import "./styles/tokens.css";
 import "./App.css";
 
+import { useAppState } from "./store/useStore";
+import { ConnectionBanner } from "./ui/ConnectionBanner";
+import { ProjectPicker } from "./ui/ProjectPicker";
+import { Workspace } from "./ui/Workspace";
+
 /**
- * UI は未実装。
- * 画面仕様は docs/design/orchestrator-desktop.md、
- * 色とタイポグラフィは docs/design/tokens.md を参照。
+ * Plain functional UI (Stage 4): design tokens only; the Claude Design layout
+ * (docs/design/orchestrator-desktop.md) is applied in Stage 6.
  */
 function App() {
+  const view = useAppState((s) => s.project);
   return (
-    <main className="shell">
-      <h1 className="wordmark">Yhtye</h1>
-      <p className="note">UI は未実装です</p>
-    </main>
+    <div className="app">
+      <header className="titlebar">
+        <span className="wordmark">Yhtye</span>
+      </header>
+      <ConnectionBanner />
+      <div className="main">
+        <ProjectPicker />
+        {view ? (
+          <Workspace key={view.info.id} view={view} />
+        ) : (
+          <p className="empty main-empty">プロジェクト (git リポジトリ) を開いてください。</p>
+        )}
+      </div>
+    </div>
   );
 }
 

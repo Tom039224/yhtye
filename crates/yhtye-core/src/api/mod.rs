@@ -1,12 +1,26 @@
-//! The UI-facing API (`core-design.md` §2). Stage 3a defines the event stream and
-//! snapshot; commands (`ApiCommand`) and TypeScript generation come with the
-//! Tauri / WS integration.
+//! The UI-facing API (`core-design.md` §2): the event stream ([`ApiEvent`]),
+//! the [`Snapshot`], and the commands of [`crate::runtime::Core`]
+//! ([`ApiCommand`] → [`ApiResponse`] / [`ApiError`]). The TypeScript types in
+//! `src/api/generated/` are generated from these with ts-rs (see `typegen`).
+
+mod command;
+#[cfg(test)]
+mod typegen;
+mod wire;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::acp::{AgentEvent, AgentOutput};
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
+use crate::store::SessionRecord;
+
+pub use command::{
+    ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE, LoggedEvent,
+    MAX_EVENT_PAGE, ProjectInfo,
+};
+pub use wire::{WsReply, WsRequest, WsServerMessage};
 
 /// One event of a project.
 ///
@@ -18,8 +32,10 @@ use crate::mcp::ToolCallRecord;
 /// [`ApiEventBody::AgentText`] when the block ends.
 ///
 /// Sync rule for clients: take a [`Snapshot`], then apply only durable events with
-/// `seq > snapshot.seq`; on a gap between durable events, take a new snapshot.
-#[derive(Debug, Clone, Serialize)]
+/// `seq > snapshot.seq`; on a gap between durable events, fetch the missing ones
+/// with [`ApiCommand::ListEvents`] (or take a new snapshot). Live events are for
+/// display only and never folded into state.
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct ApiEvent {
     pub seq: u64,
     /// Milliseconds since the Unix epoch.
@@ -30,7 +46,7 @@ pub struct ApiEvent {
 }
 
 /// Kind of a coalesced text block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TextKind {
     Message,
@@ -38,7 +54,7 @@ pub enum TextKind {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiEventBody {
     /// A state change (apply it with the same reducer as [`State::apply`]).
@@ -125,9 +141,11 @@ impl ApiEventBody {
     }
 }
 
-/// The state of a project as of event `seq`.
-#[derive(Debug, Clone, Serialize)]
+/// The state of a project as of event `seq`: the domain state and the agent
+/// sessions (`agent_sessions`, derived from the same events).
+#[derive(Debug, Clone, Serialize, TS)]
 pub struct Snapshot {
     pub seq: u64,
     pub state: State,
+    pub sessions: Vec<SessionRecord>,
 }

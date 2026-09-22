@@ -40,28 +40,49 @@ src/                          React フロントエンド
 
 ## 2. 公開 API (`yhtye_core::api` / `runtime::Core`)
 
+Stage 4 で実装 (`runtime/core.rs`)。当初案からの変更点は下の「Stage 4 の決定」。
+
 ```rust
-pub struct Core { /* Arc 内部 */ }
+#[derive(Clone)] pub struct Core { /* Arc 内部 */ }
 
 impl Core {
-    pub async fn start(cfg: CoreConfig) -> Result<Core>;           // DB を開き, MCP サーバーを起動し, 中断タスクを再開
+    pub async fn start(cfg: CoreConfig) -> Result<Core, ApiError>;  // DB を開くだけ。プロジェクトは OpenProject で起動
     pub async fn command(&self, cmd: ApiCommand) -> Result<ApiResponse, ApiError>;
-    pub fn subscribe(&self) -> broadcast::Receiver<ApiEvent>;      // seq 付き
-    pub async fn snapshot(&self, project: ProjectId) -> Result<Snapshot>; // seq を含む
-    pub async fn shutdown(self);                                     // 全エージェントを止めてプロセスを回収
+    pub fn subscribe(&self) -> broadcast::Receiver<ApiEvent>;       // 全プロジェクトの durable + live
+    pub async fn snapshot(&self, project: &str) -> Result<Snapshot, ApiError>;
+    pub async fn shutdown(&self);                                     // 開いている全プロジェクトを止める
 }
 
 pub struct CoreConfig {
-    pub data_dir: PathBuf,                   // SQLite, worktrees, ログ
-    pub harnesses: HashMap<String, HarnessConfig>,
-    pub roles: RoleHarnessMap,               // orchestrator / implementer / reviewer → harness 名
+    pub data_dir: PathBuf,                   // yhtye.sqlite3 と worktrees/
+    pub orchestrator: HarnessConfig, pub implementer: HarnessConfig, pub reviewer: HarnessConfig,
     pub mcp_bind: SocketAddr,                // 既定 127.0.0.1:0
+    pub domain: DomainConfig,
 }
+// CoreConfig::claude_code(data_dir, "haiku") が全役割 Claude Code の既定値。
 ```
 
-- `ApiCommand` (例): `OpenProject{path}` / `SendUserMessage{project, text}` /
-  `CancelOrchestratorTurn{project}` / `CancelTask{task}` / `RetryGroupMerge{group}` /
-  `GetSnapshot{project}` / `ListEvents{project, after_seq, limit}`。
+- **Stage 4 の決定**:
+  - 役割 → ハーネスは `HashMap<String, HarnessConfig>` + `RoleHarnessMap` ではなく役割ごとの 3 フィールド
+    (`OrchestrationConfig` と同じ。ハーネスの選択 UI ができたら見直す)。
+  - `Core` は 1 つの DB を共有し、開いたプロジェクトごとに `Orchestration` (git は `GitCli`) を持つ。
+    `OpenProject{path}` はパスを正規化し、**git リポジトリの最上位ディレクトリ**であることを検査
+    (`git rev-parse --show-toplevel`) してから、`projects` テーブルでパスを引いて ID を再利用する。
+    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。起動時に自動では開かない。
+  - `ListEvents` は開いていないプロジェクトでも DB から読める (履歴の閲覧)。
+  - ユーザーによる中止 `CancelTask` / `CancelGroup` は、オーケストレータの `cancel_task` /
+    `cancel_group` と同じ規則で状態機械に通し (セッションキー `user` の `tool_called` として記録)、
+    成功したらオーケストレータに `user_message` で「ユーザーが UI から中止した」と知らせる
+    (`cancel_group` は `group_settled` を送らないため、知らせないとオーケストレータが気づかない)。
+  - `Snapshot` に `sessions: Vec<SessionRecord>` (agent_sessions) を足した。UI がオーケストレータの
+    ターン中かどうか・各セッションの状態を snapshot 時点から畳み込めるように。
+  - `RetryGroupMerge` は Stage 5 以降 (まだ無い)。
+- `ApiCommand` (serde `type` タグ): `list_projects` / `open_project{path}` / `get_snapshot{project}` /
+  `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
+  `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
+  `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}`。
+  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted`。
+  `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
@@ -81,14 +102,18 @@ pub struct CoreConfig {
     (同じセッションの別種の出力・ツール呼び出し・ターン終了・終了・シャットダウン) で
     `agent_text` として 1 回だけ保存・配信される。UI はストリーミング表示をこの
     `agent_text` で置き換える。トークン単位の行を DB に積まないための選択。
-  - `Snapshot = { seq, state: State }` (`Orchestration::snapshot`。`seq` は最後の durable イベント)。
-  - ts-rs による TS 型生成は Stage 4 (フロントが使い始めるとき) に回す。`AgentEvent` は
-    ACP スキーマの型を含むので、その部分は `unknown` 相当で出す必要がある。
+  - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord> }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4)。
+  - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen.rs` のテスト)。`src/api/generated/` に型ごとの
+    ファイル + `index.ts` を出す。テスト `generated_typescript_is_up_to_date` が生成物とコミット済み
+    ファイルの一致を検査し (`cargo test` に含まれる)、`pnpm gen:types` で更新する。`u64` は `number`
+    (seq とミリ秒時刻は 2^53 より十分小さい)。`AgentEvent` 内の ACP スキーマ型は `unknown` で出し、
+    UI は `src/api/acp.ts` で必要なフィールドだけ実行時に検査して読む (ACP の型を手で写さない)。
 - **クライアント同期の規則**: 接続時に `snapshot` (その時点の `seq` を含む) を取り、
-  以降 `seq > snapshot.seq` の durable イベントだけ適用する。durable イベント間の取りこぼし
-  (seq の飛び) を検知したら snapshot を取り直す。live イベントは表示用で、状態には畳み込まない。
+  以降 `seq > snapshot.seq` の durable イベントだけ状態に適用する。durable イベント間の取りこぼし
+  (seq の飛び) を検知したら `ListEvents` で欠けた分を取る (Stage 4 の実装。snapshot の取り直しでもよい)。live イベントは表示用で、状態には畳み込まない。
   履歴 (過去の会話・エージェント出力) はイベントログから読む (`Orchestration::events` /
   `Store::session_events`、Stage 4 で `ListEvents` に)。
+- WS ブリッジのメッセージ型 `WsRequest` / `WsReply` / `WsServerMessage` も `api::wire` に定義済み (§10、ブリッジ本体は Stage 5)。
 - Rust の API 型から ts-rs で `src/api/generated/*.ts` を生成し、手書きの重複定義をしない。
 
 ## 3. `acp` モジュール
@@ -489,12 +514,34 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 ```ts
 export interface Transport {
-  command(cmd: ApiCommand): Promise<ApiResponse>;
+  readonly kind: "tauri" | "websocket" | "memory"; readonly target: string;
+  invoke(cmd: ApiCommand): Promise<ApiResponse>;              // CommandError (code = ApiErrorCode | "transport") で reject
   subscribe(onEvent: (ev: ApiEvent) => void): () => void;
+  onStatus(h: (s: ConnectionStatus) => void): () => void;    // connecting / open / closed{reason, retryInMs}
+  close(): void;
 }
 // createTransport(): Tauri 内 (window.__TAURI_INTERNALS__ がある) なら TauriTransport,
-// それ以外は WsTransport (VITE_YHTYE_BRIDGE_URL, VITE_YHTYE_BRIDGE_TOKEN)。
+// それ以外は WsTransport (VITE_YHTYE_BRIDGE_URL 既定 ws://127.0.0.1:1421/ws, VITE_YHTYE_BRIDGE_TOKEN)。
 ```
+
+Stage 4 の構成 (`src/`):
+- `api/` — `transport.ts` / `tauri.ts` (`yhtye_command` と `yhtye://event`) / `ws.ts` (要求 id の対応付け、
+  切断で保留中の要求を失敗させる、バックオフで再接続、180 秒の応答タイムアウト) / `create.ts` /
+  `acp.ts` / `generated/`。テスト専用の `MemoryTransport` と `FakeCore` は `src/test/`。
+- `store/` — `domain.ts` (`State::apply` の移植)、`sessions.ts` (agent_sessions の導出の移植)、
+  `transcript.ts` (セッションごとの会話・出力、ストリーミング)、`project.ts` (純粋な畳み込み)、
+  `app.ts` (唯一のストア `AppStore`。同期: 読み込み中のイベントはバッファ → snapshot →
+  `ListEvents` を先頭からページング (履歴) → バッファを流す / `seq <= cursor` は重複として捨てる /
+  飛びは `ListEvents` で補う / `cursor` より新しい live イベントも飛びとみなす / `cursor` より古い
+  live チャンクは捨てる (二重表示防止) / 再接続では `OpenProject` (冪等) してから `cursor` 以降を補い、
+  途中のストリーミングは捨てる)。`useSyncExternalStore` で React に渡す。
+- `ui/` — 素の画面 (トークンの CSS 変数のみ): プロジェクト一覧と開く欄、オーケストレータの会話
+  (ストリーミング・思考は折りたたみ・ツール呼び出し・待機中のユーザーメッセージ)、コンポーザ
+  (Enter 送信 / Shift+Enter 改行 / IME 変換中は送らない / ターン中も送れて受信箱で待機 / ターン中止)、
+  グループ・タスク・Step と help / interrupted / merge_blocked、タスクのエージェント出力、
+  接続状態とエラーのバナー。
+- TS の reducer が Rust と一致することは、偽エージェントで本物のコアを動かして記録したイベント列
+  (`src/test/fixtures/*.json`、`pnpm record:fixtures`) を畳み込んで最終 snapshot と比べて検査する。
 
 - 状態ストアは `snapshot` + イベントの畳み込み (reducer) のみで作る。
   **実データの経路にモック / フィクスチャは使わない。** 未実装の領域は空状態を出す。

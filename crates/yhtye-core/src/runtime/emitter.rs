@@ -69,6 +69,10 @@ impl Publisher {
         self.emitter.clone()
     }
 
+    pub(super) fn store(&self) -> &Store {
+        &self.store
+    }
+
     /// `seq` of the last durable event.
     pub(super) fn seq(&self) -> u64 {
         self.seq
