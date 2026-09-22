@@ -42,10 +42,13 @@ impl Tx {
     pub(super) fn begin_task(&mut self, id: &str, note: Option<String>) {
         let Some(t) = self.state.task(id) else { return };
         if t.workdir.is_none() {
+            let (group_branch, base_branch) = self.branches_of(&t.group);
             let op = GitOp::PrepareWorkspace {
                 group: t.group.clone(),
                 task: t.id.clone(),
                 kind: t.kind,
+                group_branch,
+                base_branch,
             };
             self.set_status(id, TaskStatus::Running);
             return self.effect(Effect::Git(op));
@@ -122,6 +125,7 @@ impl Tx {
     pub(super) fn start_finish(&mut self, id: &str) {
         self.set_status(id, TaskStatus::Merging);
         let Some(t) = self.state.task(id) else { return };
+        let (group_branch, base_branch) = self.branches_of(&t.group);
         let op = GitOp::FinishTask {
             group: t.group.clone(),
             task: t.id.clone(),
@@ -132,8 +136,18 @@ impl Tx {
                 t.title,
                 t.final_result().unwrap_or("(no result)")
             ),
+            group_branch,
+            base_branch,
         };
         self.effect(Effect::Git(op));
+    }
+
+    /// `(group_branch, base_branch)` of `group`.
+    fn branches_of(&self, group: &str) -> (String, String) {
+        self.state.group(group).map_or_else(
+            || (super::state::group_branch(group), String::new()),
+            |g| (g.group_branch.clone(), g.base_branch.clone()),
+        )
     }
 
     /// The task finished successfully: stop its agents, start dependents, settle.
@@ -309,6 +323,13 @@ pub(super) fn render_step_prompt(t: &Task, index: usize) -> String {
         .or(t.instruction.as_deref())
         .unwrap_or_default();
     let context = (step.kind == StepKind::Review).then(|| earlier_results(t, index));
+    let branches = t
+        .branch()
+        .map(|b| (b, super::state::group_branch(&t.group)));
+    let review_range = branches
+        .as_ref()
+        .filter(|_| step.kind == StepKind::Review)
+        .map(|(task, group)| (task.as_str(), group.as_str()));
     step_prompt(&StepPrompt {
         task_id: &t.id,
         task_title: &t.title,
@@ -319,6 +340,7 @@ pub(super) fn render_step_prompt(t: &Task, index: usize) -> String {
         instruction,
         context: context.as_deref().filter(|c| !c.is_empty()),
         note: step.note.as_deref(),
+        review_range,
     })
 }
 

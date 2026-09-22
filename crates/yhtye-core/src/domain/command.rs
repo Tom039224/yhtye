@@ -44,10 +44,13 @@ pub enum GitOp {
         base_branch: String,
     },
     /// Worktree of a task: its own for `code`, the group's for `investigate`.
+    /// Recreates the group branch / integration worktree if they are missing.
     PrepareWorkspace {
         group: String,
         task: String,
         kind: TaskKind,
+        group_branch: String,
+        base_branch: String,
     },
     /// `code`: commit leftovers, merge into the group branch, remove the worktree.
     /// `investigate`: check that the tree is still clean.
@@ -56,11 +59,11 @@ pub enum GitOp {
         task: String,
         kind: TaskKind,
         message: String,
+        group_branch: String,
+        base_branch: String,
     },
-    RemoveWorkspace {
-        group: String,
-        task: String,
-    },
+    /// A cancelled `code` task: commit leftovers to its branch, remove the worktree.
+    RemoveWorkspace { group: String, task: String },
     MergeGroup {
         group: String,
         group_branch: String,

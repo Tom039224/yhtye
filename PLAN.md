@@ -18,7 +18,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 2 | MCP サーバー + マルチセッション | **完了** |
 | 3a | ドメインコア: 状態機械 (メモリ上) と UI 向けイベント列 | **完了** |
 | 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | **完了** |
-| 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | 未着手 |
+| 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | **完了** (Stage 3 完了) |
 | 4 | フロントエンド (素の UI) | 未着手 |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | 未着手 |
 | 6 | Claude Design 適用・残機能 | 未着手 |
@@ -387,13 +387,82 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - Yhtye 自体が SIGKILL された場合 (シャットダウンなし) は、`agent_sessions` が `live` のまま残り
     起動時に `interrupted` になる (偽エージェントでは未検証。子プロセスは stdin が閉じて終了する想定)。
 
+**3c 結果メモ (2026-09-23)**
+
+- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §7.1、規則は
+  [`orchestration-model.md`](docs/architecture/orchestration-model.md) §6「Stage 3c で決めた細部」):
+  - `git/` — `GitCli` (git CLI を `tokio::process` で実行。git2/gix は不採用: worktree・merge・
+    フック・ユーザー設定の挙動を git 本体と一致させるため) = `run` (環境の掃除・プロンプト無効・
+    120 秒タイムアウト) / `repo` (照会・commit・merge・stash) / `worktree` (作成・再利用・削除) /
+    `cli` (`GitOp` ごとの手順)。`git::worktree_root(data_dir, project)`。`NoopGit` はテスト用に残す。
+  - `GitService::workspace_changes` を追加 → 再起動のフォールバックプロンプトに `git status` +
+    分岐点からの `git diff` (16 KiB まで) を添える (driver の `ResumeStep`)。
+  - `GitOp::PrepareWorkspace` / `FinishTask` に `group_branch` / `base_branch` (消えた group
+    ブランチ・統合 worktree の再作成用)。ブランチ名は `domain::group_branch` / `task_branch`。
+  - review Step のプロンプトにタスクブランチ・group ブランチと `git diff $(git merge-base ...)`。
+    implementer / reviewer / orchestrator のプロンプトを git の流れに合わせて更新。
+  - 偽エージェントに `run` アクション (コマンド実行、`run:<code>` を報告)。
+  - テスト用 `tests/common/repo.rs::TempRepo` (一時ディレクトリの `repo/` と `data/`。DB と
+    worktree は data 側 = git テストの DB はプロジェクトの外)。
+- **設計からの変更 (要確認)**: タスクブランチ名を `yhtye/<groupId>/<taskId>` → **`yhtye/<groupId>-<taskId>`**。
+  git は `refs/heads/yhtye/G-1` と `refs/heads/yhtye/G-1/T-1` を同時に持てない (ref はファイル。
+  git 2.55 で確認)。group ブランチ名は合意どおり。orchestration-model §3・§6 を更新済み。
+- 決めたこと (orchestration-model §6): エージェントはコミット不要で Yhtye が完了時に `add -A` +
+  コミット (マージ途中ならマージコミットで完了、マーカーが残れば `merge_conflict`) / 内部の
+  コミット・マージはフック・署名なし、base へのマージはリポジトリの設定どおり / base の clean =
+  追跡ファイルの変更なし・操作途中でない (未追跡は妨げない)、base とのコンフリクトは abort して
+  `merge_blocked` / investigate の汚れは stash に退避 / 中止タスクは WIP コミットしてから worktree 削除 /
+  中断された rebase 等があれば進めず `git_failed` / 冪等 (既存 worktree 再利用、消えた worktree・
+  group ブランチは作り直し、マージ済みは成功扱い、統合 worktree の中断マージは abort) /
+  `create_group` で base と違うコミットを指す既存 group ブランチは採用しない / `git worktree prune`
+  (全体) は使わず自分の worktree だけ `remove --force` / DB・worktree はデータディレクトリ
+  (プロジェクトには何も書かない)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 151 件成功 (yhtye-core 単体 90 + ACP 偽 19 + **git_cli 18** + MCP 6 +
+    オーケストレーション偽 13 + **偽 + 実 git 4** + 偽エージェント 1)、実エージェント 9 件は ignored。2 回連続成功。
+    - `git_cli.rs` (一時リポジトリ): worktree の作成・再利用・再作成 / 未知の既存 group ブランチを拒否 /
+      残りのコミット → マージ → worktree 削除 → 再実行はマージ済み / 別ファイルの並行タスク /
+      コンフリクト → abort → 未解消は Conflict → 解消後に Yhtye がマージコミット / 統合 worktree の
+      中断マージを abort して再試行 / 変更なしタスク / investigate の汚れ → stash / 中止の WIP コミット /
+      base へのマージと後片付け・再実行 / dirty base・別ブランチ・base とのコンフリクト → Blocked で
+      ユーザーのツリーは不変 / 中断 rebase を進めない / `workspace_changes`。
+    - `orchestration_fake_git.rs`: 並行 2 タスク (片方 review) → group → main にマージ、worktree 全削除、
+      main clean / 同じ行の編集 → `merge_conflict` help → orchestrator が modify_steps + resume →
+      実装者が `git merge` して解消 → マージ / dirty base → `merge_blocked`、ユーザーの編集は保持 /
+      再起動で session/load 非対応 → 新セッションのプロンプトに `?? partial.txt` の差分 → 完走。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 9/9 成功 (Stage 1 の 4、2/3a の 3、
+    3b の 1、新規 `orchestration_claude_git` 1)。新規テストは計 3 回実行して 3 回とも成功 (88〜130 秒):
+    一時リポジトリで実 Haiku のオーケストレータが group + code タスク 2 つ (T-1 implement→review、
+    T-2 implement) を作成 → 各実装者が自分の worktree でファイル作成 (コミットせず) → Yhtye が
+    コミットして group ブランチへマージ → `finish_group` → main に
+    `Merge yhtye/G-1 (G-1) into main`、`add.py`/`sub.py` が main にあり、main clean、追加 worktree なし。
+    **観察**: 3 回ともレビュアー (review-1) が「型注釈が無い」で `needs_changes` → 自動再挿入の
+    implement → review-3 が `approve`。理由として「project's Python coding style」を引用しており、
+    **ユーザーの `~/.claude` の全体ルールがサブエージェントに効いている** (下の未決事項の実例)。
+  - 実テスト後 `pgrep` で claude-agent-acp / yhtye-fake-agent の残存なし、各プロセスグループも空。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` / `cargo check --workspace` /
+    `pnpm build` 成功。
+  - コードレビュー (rust-reviewer) で直したもの: 中断 rebase/cherry-pick/revert を黙って越えて
+    マージしていた (HIGH) → `git_failed`。残した MEDIUM: base へのマージで署名に pinentry が要る
+    設定だと 120 秒のタイムアウトまで止まる (一般的な `Blocked` として返る)。
+- Stage 4 / 5 への申し送り:
+  - アプリ側の組み立て (`GitCli::new(project_dir, worktree_root(data_dir, project))`、DB は
+    `store::db_path(data_dir)`) は Stage 5 の `Core` / src-tauri で行う (今は `OrchestrationConfig` の
+    doc にのみ記載。src-tauri はまだ Orchestration を使っていない)。
+  - `RetryGroupMerge` (merge_blocked の再試行) は未実装 (Stage 5)。`MergeGroup` は冪等なので
+    そのまま再実行してよい。
+  - `cancel_group` では統合 worktree `_group` を消さない (ブランチと一緒に残る)。後片付け API は未設計。
+  - git はループ内で await (大きなリポジトリで遅い場合はタスク化を検討)。
+  - UI の git グラフ (Stage 6) はブランチ名 `yhtye/G-n` / `yhtye/G-n-T-m` を前提にできる。
+
 **未決事項 (ユーザー判断待ち)**
 
 - Yhtye が起動するエージェントに**ユーザー自身の `~/.claude`** (CLAUDE.md・フック・プラグイン・
   スキル) を効かせるか。現状は MCP サーバーだけ隔離し、それ以外は読み込んだまま
   (orchestration-model §11)。ユーザーの全体ルール (例: 「planner エージェントを使え」) が
   サブエージェントの動きを変えうる。`settingSources` を `["project", "local"]` に絞る案あり。
-  **3a では挙動を変えていない。**
+  **3a では挙動を変えていない。** 3c の実 Haiku で、レビュアーがユーザーの Python コーディング
+  ルール (型注釈必須) を根拠に毎回 `needs_changes` を出すことを確認した (実害は 1 往復の増加)。
 
 ## Stage 4 — フロントエンド (素の UI)
 

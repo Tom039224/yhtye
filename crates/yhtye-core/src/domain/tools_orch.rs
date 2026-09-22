@@ -66,7 +66,7 @@ impl Tx {
             )
         })?;
         let id = format!("G-{}", self.state.counters.groups + 1);
-        let group_branch = format!("yhtye/{id}");
+        let group_branch = super::state::group_branch(&id);
         self.emit(DomainEvent::GroupCreated {
             group: Group {
                 id: id.clone(),

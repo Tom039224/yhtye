@@ -31,6 +31,9 @@ pub struct StepPrompt<'a> {
     pub context: Option<&'a str>,
     /// Note from the orchestrator (checkpoint `note`, help reply on restart).
     pub note: Option<&'a str>,
+    /// For a review of a `code` task: `(task branch, group branch)` — the diff
+    /// to review is the task branch (with uncommitted changes) since it forked.
+    pub review_range: Option<(&'a str, &'a str)>,
 }
 
 fn task_kind_str(kind: TaskKind) -> &'static str {
@@ -62,6 +65,9 @@ pub fn step_prompt(p: &StepPrompt<'_>) -> String {
         p.task_title,
         p.instruction.trim(),
     );
+    if let Some((task_branch, group_branch)) = p.review_range {
+        text.push_str(&review_range_text(task_branch, group_branch));
+    }
     if let Some(context) = p.context {
         text.push_str(&format!(
             "\nResults of earlier steps:\n{}\n",
@@ -75,6 +81,26 @@ pub fn step_prompt(p: &StepPrompt<'_>) -> String {
         "\nWhen finished, call report_step_done; if stuck, call help. Then end your turn.",
     );
     text
+}
+
+/// Where a reviewer finds the changes it reviews.
+fn review_range_text(task_branch: &str, group_branch: &str) -> String {
+    format!(
+        "\nChanges to review: your working directory is the task branch `{task_branch}`, forked \
+         from the group branch `{group_branch}`. Run `git status --short` and \
+         `git diff $(git merge-base {group_branch} HEAD)` there: the diff includes commits and \
+         uncommitted changes; read new (untracked) files listed by git status directly.\n"
+    )
+}
+
+/// Appended to a restart fallback prompt: what is already in the working directory.
+#[must_use]
+pub fn workspace_changes_note(changes: &str) -> String {
+    format!(
+        "\n\nChanges already in the working directory (git status and git diff since the task \
+         branch forked):\n```\n{}\n```",
+        changes.trim_end()
+    )
 }
 
 /// Sent once when a sub-agent's turn ends without `report_step_done` or `help`.
@@ -136,11 +162,30 @@ mod tests {
             instruction: "  Append 'hello' to README.md\n",
             context: Some("step 0 (implement): added"),
             note: Some("keep it short"),
+            review_range: None,
         });
         assert!(text.starts_with("[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\n"));
         assert!(text.contains("Instruction:\nAppend 'hello' to README.md\n"));
         assert!(text.contains("Results of earlier steps:\nstep 0 (implement): added\n"));
         assert!(text.contains("Note from the orchestrator:\nkeep it short\n"));
+    }
+
+    #[test]
+    fn review_prompt_names_the_diff_range() {
+        let text = step_prompt(&StepPrompt {
+            task_id: "T-2",
+            task_title: "Review",
+            task_kind: TaskKind::Code,
+            step_index: 1,
+            step_count: 3,
+            step_kind: StepKind::Review,
+            instruction: "check it",
+            context: None,
+            note: None,
+            review_range: Some(("yhtye/G-1-T-2", "yhtye/G-1")),
+        });
+        assert!(text.contains("task branch `yhtye/G-1-T-2`"));
+        assert!(text.contains("git diff $(git merge-base yhtye/G-1 HEAD)"));
     }
 
     #[test]

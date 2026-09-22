@@ -12,8 +12,11 @@ use yhtye_core::git::NoopGit;
 use yhtye_core::runtime::{Orchestration, OrchestrationConfig};
 
 use super::assert_group_gone;
+use super::repo::{PROJECT, TempRepo};
 
-/// Where tests keep the database of a project directory (`dir/.yhtye/`).
+/// Where tests without git keep the database of a project directory
+/// (`dir/.yhtye/`; `dir` is not a repository). Tests on a git repository use
+/// [`git_config`], which keeps it outside the repository.
 pub fn test_db(dir: &Path) -> std::path::PathBuf {
     yhtye_core::store::db_path(&dir.join(".yhtye"))
 }
@@ -35,6 +38,27 @@ pub fn config(
         domain: DomainConfig::default(),
         git: Arc::new(NoopGit::new(dir, Some("main".into()))),
         db_path: test_db(dir),
+    }
+}
+
+/// Config on a temporary git repository with the real [`GitCli`]; the database
+/// and worktrees are in the repository's separate data directory.
+pub fn git_config(
+    repo: &TempRepo,
+    orchestrator: HarnessConfig,
+    implementer: HarnessConfig,
+    reviewer: HarnessConfig,
+) -> OrchestrationConfig {
+    OrchestrationConfig {
+        project: PROJECT.into(),
+        project_dir: repo.repo.clone(),
+        orchestrator,
+        implementer,
+        reviewer,
+        mcp_bind: "127.0.0.1:0".parse().expect("addr"),
+        domain: DomainConfig::default(),
+        git: Arc::new(repo.git_cli()),
+        db_path: repo.db(),
     }
 }
 
@@ -66,6 +90,15 @@ pub fn message<'a>(ev: &'a ApiEvent, session: &str) -> Option<&'a str> {
         } if s == session => o.chunk_text(),
         _ => None,
     }
+}
+
+/// Every message chunk of `session`, in order.
+pub fn messages(events: &[ApiEvent], session: &str) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| message(e, session))
+        .map(str::to_string)
+        .collect()
 }
 
 pub fn is_message(ev: &ApiEvent, session: &str, needle: &str) -> bool {

@@ -7,6 +7,7 @@
 //! answered only after its whole chain (e.g. `finish_group` → merge) is done.
 
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -26,6 +27,7 @@ use crate::domain::{
 };
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
+use crate::prompts::workspace_changes_note;
 
 pub(super) enum Cmd {
     UserMessage(String),
@@ -253,6 +255,9 @@ impl Driver {
                 fallback,
                 workdir,
             } => {
+                let fallback = self
+                    .with_changes(fallback, workdir.as_deref(), &group)
+                    .await;
                 let cwd = workdir.unwrap_or_else(|| self.cfg.project_dir.clone());
                 let binding = self.binding(&agent, Some(group));
                 self.sessions.resume_step(binding, cwd, prompt, fallback);
@@ -275,6 +280,24 @@ impl Driver {
             Effect::WakeOrchestrator => {} // the inbox is flushed after every loop turn
         }
         None
+    }
+
+    /// A restart fallback prompt plus what is already in the working directory
+    /// (`orchestration-model.md` §10), so a new session does not redo the work.
+    async fn with_changes(&self, fallback: String, workdir: Option<&Path>, group: &str) -> String {
+        let (Some(dir), Some(g)) = (workdir, self.state.group(group)) else {
+            return fallback;
+        };
+        match self.git.workspace_changes(dir, &g.group_branch).await {
+            Ok(changes) if !changes.trim().is_empty() => {
+                fallback + &workspace_changes_note(&changes)
+            }
+            Ok(_) => fallback,
+            Err(e) => {
+                tracing::warn!("could not read the changes in {}: {e}", dir.display());
+                fallback
+            }
+        }
     }
 
     fn binding(&self, agent: &crate::domain::AgentRef, group: Option<String>) -> SessionBinding {

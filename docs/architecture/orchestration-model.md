@@ -103,8 +103,8 @@ Project (git リポジトリ 1 つ)
 
 | kind | 作業場所 | 書き込み | 完了時 |
 |---|---|---|---|
-| `code` | タスク専用の git worktree + ブランチ `yhtye/<groupId>/<taskId>` (group ブランチから分岐) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへマージ |
-| `investigate` | group の統合 worktree (group ブランチ。共有、§6) | 不可 (プロンプトで禁止し、終了時に `git status` が汚れていたら `help`) | マージなし。結果テキストのみ |
+| `code` | タスク専用の git worktree + ブランチ `yhtye/<groupId>-<taskId>` (group ブランチから分岐。Stage 3c で `/` 区切りから変更、§6) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへマージ |
+| `investigate` | group の統合 worktree (group ブランチ。共有、§6) | 不可 (プロンプトで禁止し、終了時に `git status` が汚れていたら変更を stash に退避して `help`) | マージなし。結果テキストのみ |
 
 kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。追加は実運用後。
 
@@ -161,8 +161,11 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 - **group ブランチ** `yhtye/<groupId>`: `create_group` 時に `base_branch` の HEAD から作る。
   Yhtye 管理の**統合 worktree** (`<data_dir>/worktrees/<projectId>/<groupId>/_group`) に
   チェックアウトする。タスクブランチのマージはここで行う。
-- **タスクブランチ** `yhtye/<groupId>/<taskId>`: `code` タスクの開始時に group ブランチの
-  現在の HEAD から作り、専用 worktree (`.../<groupId>/<taskId>`) にチェックアウトする。
+- **タスクブランチ** `yhtye/<groupId>-<taskId>` (例 `yhtye/G-1-T-2`): `code` タスクの開始時に
+  group ブランチの現在の HEAD から作り、専用 worktree (`.../<groupId>/<taskId>`) にチェックアウトする。
+  **Stage 3c で変更**: 当初の `yhtye/<groupId>/<taskId>` は git では作れない
+  (`refs/heads/yhtye/G-1` があると `refs/heads/yhtye/G-1/T-1` を作れない — ref はファイルなので
+  同名のディレクトリを持てない。git 2.55 で確認)。group ブランチ名 `yhtye/<groupId>` は合意どおり。
 - worktree はリポジトリの外 (Yhtye のデータディレクトリ) に置き、ユーザーの作業ツリーを汚さない。
 - **タスク完了時**: 未コミット変更があれば Yhtye がコミット (メッセージはタスク ID + 最終報告の要約)
   → 統合 worktree で `git merge --no-ff <taskBranch>` → 成功で worktree を削除 (ブランチは残す)。
@@ -175,6 +178,45 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
   解消せよ」という `implement` を足し、`answer_help(resume)` する。工程が終わると再び `done` →
   マージが再試行される。
 - git 操作は `git` CLI をサブプロセスで呼ぶ (worktree / merge の挙動を git 本体と一致させるため)。
+
+Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
+
+- **コミットの方針**: サブエージェントはコミットしなくてよい (プロンプトでそう伝える)。
+  タスク完了時に Yhtye が `git add -A` + コミット (未追跡ファイルも含む。`.gitignore` 対象は除く)。
+  エージェントが自分でコミットしていても構わない。コンフリクト解消の途中 (MERGE_HEAD あり) なら
+  このコミットがマージコミットになる。コンフリクトマーカーが残るファイルがあればコミットせず
+  `merge_conflict` の help にする (マーカーが消えていれば `git add` されていなくても解消済みとみなす)。
+- **Yhtye 内部のコミット・マージ** (タスクブランチへのコミット、group ブランチへのマージ) は
+  フックと署名を飛ばす (`--no-verify`、`commit.gpgSign=false`)。ユーザーのフックや pinentry で
+  止まらないため。**base ブランチへのマージ**はユーザーのブランチなのでフック・署名はリポジトリの
+  設定どおり。コミットの作者はリポジトリの `user.name` / `user.email`、無ければ `Yhtye <yhtye@localhost>`。
+- **base ブランチの「clean」**: 追跡ファイルに未コミットの変更 (ステージ済み含む) が無く、
+  マージ / リベース等の途中でないこと。**未追跡ファイルは妨げない** (git 自身がマージで上書きする
+  場合は拒否し、それは `merge_blocked` になる)。base とのコンフリクトも `git merge --abort` で
+  戻して `merge_blocked` (ツリーは元どおり。事前に clean を確認しているので abort で失われる変更は無い)。
+  ユーザーの作業ツリーを Yhtye が変えるのは成功したマージだけ。
+- **investigate が統合 worktree を汚した場合**: 変更を `git stash push --include-untracked` で
+  退避して (消さない) `dirty_readonly_tree` の help。resume で完了できる (stash は残る)。
+- **中断された rebase / cherry-pick / revert**: タスク worktree・統合 worktree でこれらが途中なら
+  コミットもマージもせず `git_failed` の help (その作業を黙って捨てないため。マージ途中だけは上記の
+  とおりコミットで完了させる)。
+- **中止したタスク**: worktree を削除する前に未コミットの変更をタスクブランチに WIP コミットして残す。
+- **後片付け**: タスクのマージ成功で task worktree、base へのマージ成功で統合 worktree を削除する。
+  ブランチはすべて残す。
+- **冪等性** (再起動で git 操作がやり直されるため): 既存の worktree が正しいブランチなら再利用、
+  消えた worktree ディレクトリは作り直す、group ブランチが無ければ base から作り直す、
+  既にマージ済み (祖先) のタスク / group ブランチは「マージ済み」として成功、統合 worktree に
+  中断されたマージが残っていれば abort してからやり直す。`create_group` で**既存の** group
+  ブランチが base と別のコミットを指している場合は採用せず失敗 (前回の DB の残骸などを黙って使わない)。
+  メイン作業ツリーに中断されたマージが残っている場合は自動で abort せず `merge_blocked`。
+- **DB と worktree の場所**: どちらも Yhtye のデータディレクトリ (DB は `yhtye.sqlite3`、
+  worktree は `worktrees/<projectId>/...`)。プロジェクトのリポジトリには何も書かないので
+  `.git/info/exclude` 等の設定は不要。
+- **レビュアーへの差分の渡し方**: review Step のプロンプトにタスクブランチと group ブランチの名前、
+  `git status --short` と `git diff $(git merge-base <groupBranch> HEAD)` (コミット済み + 未コミット)
+  を明記する。レビュアーはタスクの worktree で動く。
+- **再起動のフォールバック**: 新しいセッションで Step をやり直すとき、プロンプトに worktree の
+  `git status --short` と分岐点からの `git diff` (最大 16 KiB) を添える (§10)。
 
 ## 7. エージェントのターンとプロトコル違反
 

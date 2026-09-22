@@ -372,6 +372,10 @@ async fn run_action(
         Action::WriteFile { path, text: body } => {
             std::fs::write(&path, body).map_err(Error::into_internal_error)?;
         }
+        Action::Run(argv) => {
+            let report = run_command(&argv);
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
         Action::McpCall { tool, args } => {
             let report = mcp_call(fake, &tool, &args).await;
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
@@ -450,4 +454,19 @@ async fn request_permission(
         RequestPermissionOutcome::Selected(s) => format!("permission:selected:{}", s.option_id.0),
         _ => "permission:cancelled".into(),
     })
+}
+
+/// Runs `argv` in the agent's working directory; reports `run:<exit code>`.
+fn run_command(argv: &[String]) -> String {
+    let Some((program, args)) = argv.split_first() else {
+        return "run:error:empty command".into();
+    };
+    match std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+    {
+        Ok(out) => format!("run:{}", out.status.code().unwrap_or(-1)),
+        Err(e) => format!("run:error:{e}"),
+    }
 }

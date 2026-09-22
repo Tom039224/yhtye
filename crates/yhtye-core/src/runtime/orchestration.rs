@@ -37,7 +37,9 @@ pub struct OrchestrationConfig {
     /// Where the MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
     pub domain: DomainConfig,
-    /// Branches, worktrees and merges ([`crate::git::NoopGit`] until Stage 3c).
+    /// Branches, worktrees and merges. The app uses [`crate::git::GitCli`] with
+    /// its worktrees under the data directory ([`crate::git::worktree_root`]);
+    /// [`crate::git::NoopGit`] is for tests without a repository.
     pub git: Arc<dyn GitService>,
     /// SQLite database (created if missing). The app uses
     /// [`crate::store::db_path`] of its data directory.

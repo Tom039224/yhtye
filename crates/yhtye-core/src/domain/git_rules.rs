@@ -69,6 +69,10 @@ impl Tx {
             return;
         }
         let index = t.current;
+        let branches = t
+            .branch()
+            .map(|b| format!(" (`{b}` into `{}`)", super::state::group_branch(&t.group)))
+            .unwrap_or_default();
         let failure = match result {
             GitResult::Done => Ok("finished".to_string()),
             GitResult::Merged { detail } => Ok(detail),
@@ -90,17 +94,19 @@ impl Tx {
             GitResult::Conflict { files } => (
                 HelpKind::MergeConflict,
                 format!(
-                    "Merging the task branch into the group branch conflicted in: {}. The merge was \
-                     aborted. Add an implement step (modify_steps) that merges the group branch into \
-                     the task branch and resolves the conflict, then resume; the merge is retried \
-                     at `done`.",
+                    "Merging the task branch into the group branch{branches} conflicted in: {}. The \
+                     merge was aborted. Add an implement step (modify_steps) that merges the group \
+                     branch into the task branch and resolves the conflict, then resume; the merge \
+                     is retried at `done`.",
                     files.join(", ")
                 ),
             ),
             GitResult::Dirty { files } => (
                 HelpKind::DirtyReadonlyTree,
                 format!(
-                    "The read-only investigate task left changes in: {}. Resume to accept, or cancel.",
+                    "The read-only investigate task left changes in: {}. Yhtye moved them to a git \
+                     stash (see `git stash list`) so the shared group worktree stays clean. Resume \
+                     to finish the task (the changes stay in the stash), or cancel it.",
                     files.join(", ")
                 ),
             ),

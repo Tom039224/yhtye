@@ -379,7 +379,7 @@ Stage 3b で実装。
 ## 7. `git` モジュール
 
 状態機械からは `GitOp` (§5) として要求され、runtime が `GitService` トレイト経由で実行する
-(Stage 3a で定義。3a の実装は何もしない `NoopGit` — 作業場所はプロジェクトディレクトリ、
+(Stage 3a で定義。本番の実装は 3c の `GitCli` (§7.1)。テスト用の `NoopGit` は何もしない — 作業場所はプロジェクトディレクトリ、
 マージは常に成功)。
 
 ```rust
@@ -393,10 +393,32 @@ pub trait GitService: Send + Sync + 'static {
 }
 ```
 
-3c では `git` CLI をサブプロセスで実行する実装を足す。内部の操作は `current_branch`, `is_clean`,
-`create_branch`, `worktree_add`, `worktree_remove`, `commit_all`, `merge_no_ff`
-(コンフリクト時は `merge --abort` して `Conflict{files}` を返す), `diff_stat`。
-テストは `tempfile` 上の実リポジトリで行う。
+### 7.1 `GitCli` (Stage 3c)
+
+本番用の実装は `git::GitCli` (`git` CLI を `tokio::process` で実行)。git2 / gix は使わない:
+worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザー設定の挙動を git 本体と完全に
+一致させたいこと (orchestration-model §6 の決定)、libgit2 の worktree / merge 支援が限定的なこと、
+依存を増やさないこと、が理由。操作はすべて短い (ネットワークなし) のでループ内で await する (§8)。
+
+- 構成: `git/run.rs` (実行: `LC_ALL=C`・`GIT_TERMINAL_PROMPT=0`・`GIT_EDITOR=true`、
+  `GIT_DIR` 等の継承を除去、stdin は null、1 コマンド 120 秒のタイムアウトで kill) /
+  `git/repo.rs` (照会と commit / merge / stash) / `git/worktree.rs` (worktree の作成・再利用・削除) /
+  `git/cli.rs` (`GitCli`: `GitOp` ごとの手順)。
+- 生成: `GitCli::new(project_dir, git::worktree_root(data_dir, project_id))`
+  (`<data_dir>/worktrees/<projectId>`)。`NoopGit` は git を使わないテスト用に残す。
+- `GitOp::PrepareWorkspace` / `FinishTask` は `group_branch` / `base_branch` を持つ (3c で追加):
+  消えた group ブランチ・統合 worktree を作り直すため。ブランチ名は `domain::group_branch` /
+  `domain::task_branch` (`yhtye/<groupId>-<taskId>`) の 1 か所で決める。
+- トレイトに `workspace_changes(workdir, group_branch)` を追加 (既定実装は空)。再起動のフォールバック
+  プロンプトに `git status --short` + 分岐点からの `git diff` (16 KiB まで) を添えるのに使う
+  (runtime の `Effect::ResumeStep` 処理)。
+- 各 `GitOp` の手順と冪等性・安全性の規則は orchestration-model §6「Stage 3c で決めた細部」。
+  予期された結果 (`Conflict` / `Dirty` / `Blocked`) 以外の失敗は `Failed{message}` → ドメインが
+  `git_failed` の help (タスク) か `internal` (create_group) にする。
+- テスト: `tests/git_cli.rs` (一時リポジトリで 17 件)、`tests/orchestration_fake_git.rs`
+  (偽エージェント + 実 git で 4 シナリオ)、`tests/orchestration_claude_git.rs` (実 Haiku、`#[ignore]`)。
+  一時リポジトリは `tests/common/repo.rs::TempRepo` (リポジトリと data ディレクトリを同じ一時
+  ディレクトリの別の子に置く。DB も data 側)。
 
 ## 8. `runtime` モジュール
 

@@ -94,6 +94,20 @@ pub enum StepStatus {
     Done,
 }
 
+/// Branch of group `group`: `yhtye/<groupId>` (`orchestration-model.md` §6).
+#[must_use]
+pub fn group_branch(group: &str) -> String {
+    format!("yhtye/{group}")
+}
+
+/// Branch of `code` task `task` in group `group`: `yhtye/<groupId>-<taskId>`.
+/// Not `yhtye/<groupId>/<taskId>`: git cannot have both `refs/heads/yhtye/G-1`
+/// and `refs/heads/yhtye/G-1/T-1` (a ref cannot also be a directory).
+#[must_use]
+pub fn task_branch(group: &str, task: &str) -> String {
+    format!("yhtye/{group}-{task}")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     pub id: String,
@@ -192,7 +206,7 @@ impl Task {
     /// Git branch of a `code` task (`orchestration-model.md` §6).
     #[must_use]
     pub fn branch(&self) -> Option<String> {
-        (self.kind == TaskKind::Code).then(|| format!("yhtye/{}/{}", self.group, self.id))
+        (self.kind == TaskKind::Code).then(|| task_branch(&self.group, &self.id))
     }
 }
 

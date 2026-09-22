@@ -3,6 +3,7 @@
 
 pub mod orch;
 pub mod real;
+pub mod repo;
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;

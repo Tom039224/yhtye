@@ -422,7 +422,7 @@ fn status_queries_describe_the_group_and_task() {
         json!(["implement:running", "review:pending", "done:pending"])
     );
     let (task, _) = sim.orch_ok(ToolName::GetTask, json!({"task_id": "T-1"}));
-    assert_eq!(task["branch"], json!("yhtye/G-1/T-1"));
+    assert_eq!(task["branch"], json!("yhtye/G-1-T-1"));
     assert_eq!(task["worktree"], json!("/wt/T-1"));
     assert_eq!(task["steps"][0]["status"], json!("running"));
 }

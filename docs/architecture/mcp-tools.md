@@ -150,7 +150,7 @@ type Verdict = "approve" | "needs_changes";
 | | |
 |---|---|
 | 引数 | `task_id` |
-| 戻り値 | タスクの全 Step (kind / status / instruction / result / verdict)、ブランチ名、worktree パス、未回答 help |
+| 戻り値 | タスクの全 Step (kind / status / instruction / result / verdict)、ブランチ名 (`code` のみ。`yhtye/<groupId>-<taskId>`)、worktree パス、未回答 help |
 | 遷移 | なし |
 
 ## 4. サブエージェント用ツール (implementer / reviewer 共通)
@@ -178,6 +178,8 @@ type Verdict = "approve" | "needs_changes";
 Yhtye 起因の help の kind: `merge_conflict` / `review_rounds_exhausted` /
 `protocol_violation` / `agent_stopped` / `agent_crashed` / `dirty_readonly_tree` /
 `git_failed` (Stage 3a で追加: コンフリクト以外の理由で git 操作が失敗した。worktree の作成失敗など)。
+`merge_conflict` の message には衝突したファイルとブランチ名が入る。`dirty_readonly_tree` の変更は
+Yhtye が stash に退避済み (resume でそのまま完了できる。Stage 3c)。
 `agent_crashed` はサブエージェントの起動失敗でも上がる。
 
 ## 5. 受信箱メッセージ (Yhtye → オーケストレータ)

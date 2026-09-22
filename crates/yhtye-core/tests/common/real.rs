@@ -42,3 +42,13 @@ pub fn real_config(dir: &Path) -> OrchestrationConfig {
         HarnessConfig::claude_code(MODEL),
     )
 }
+
+/// Real Haiku agents on a temporary git repository with the real `GitCli`.
+pub fn real_git_config(repo: &super::repo::TempRepo) -> OrchestrationConfig {
+    super::orch::git_config(
+        repo,
+        HarnessConfig::claude_code_orchestrator(MODEL),
+        HarnessConfig::claude_code(MODEL),
+        HarnessConfig::claude_code(MODEL),
+    )
+}

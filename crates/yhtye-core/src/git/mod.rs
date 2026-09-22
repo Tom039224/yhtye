@@ -1,10 +1,16 @@
-//! Git operations behind a trait (`core-design.md` §7). Stage 3a ships only
-//! [`NoopGit`] (everything happens in the project directory, merges always
-//! succeed); the `git` CLI implementation arrives in Stage 3c.
+//! Git operations behind a trait (`core-design.md` §7): [`GitCli`] runs the
+//! `git` CLI (Stage 3c); [`NoopGit`] does nothing (tests without git).
+
+mod cli;
+mod repo;
+mod run;
+mod worktree;
 
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
+
+pub use cli::{GitCli, worktree_root};
 
 use crate::domain::{GitOp, GitResult};
 
@@ -20,6 +26,17 @@ pub trait GitService: Send + Sync + 'static {
     /// `Workspace`; `FinishTask` → `Merged` / `Conflict` / `Dirty`;
     /// `MergeGroup` → `Merged` / `Blocked`; anything else going wrong → `Failed`.
     async fn run(&self, op: &GitOp) -> GitResult;
+
+    /// `git status` and the diff of `workdir` since its branch forked from
+    /// `group_branch` (given to an agent restarted in a new session).
+    async fn workspace_changes(
+        &self,
+        workdir: &Path,
+        group_branch: &str,
+    ) -> Result<String, String> {
+        let _ = (workdir, group_branch);
+        Ok(String::new())
+    }
 }
 
 /// No git at all: every task works in the project directory and every merge
@@ -73,6 +90,8 @@ mod tests {
                 group: "G-1".into(),
                 task: "T-1".into(),
                 kind: TaskKind::Code,
+                group_branch: "yhtye/G-1".into(),
+                base_branch: "main".into(),
             })
             .await;
         assert_eq!(

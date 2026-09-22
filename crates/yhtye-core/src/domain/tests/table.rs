@@ -254,6 +254,8 @@ fn merge_result_after_cancel_is_ignored() {
             task: "T-2".into(),
             kind: TaskKind::Code,
             message: "m".into(),
+            group_branch: "yhtye/G-1".into(),
+            base_branch: "main".into(),
         },
         result: GitResult::Merged {
             detail: "late".into(),

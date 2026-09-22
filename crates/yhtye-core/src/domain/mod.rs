@@ -28,7 +28,7 @@ pub use inbox::{InboxItem, InboxKind, render_batch};
 pub use machine::{Machine, decide};
 pub use state::{
     Counters, DEFAULT_MAX_REVIEW_ROUNDS, DomainConfig, Group, GroupStatus, Help, HelpSource,
-    HelpState, InboxEntry, State, Step, StepStatus, Task, TaskStatus,
+    HelpState, InboxEntry, State, Step, StepStatus, Task, TaskStatus, group_branch, task_branch,
 };
 pub use steps::{normalize_steps, normalize_tail};
 pub use types::{

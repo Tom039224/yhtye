@@ -86,10 +86,14 @@ pub enum Action {
     ReportState,
     /// Reports `meta:<json>` (the `_meta` received in `session/new` / `session/load`).
     ReportMeta,
+    /// Writes `text` to `path` (relative to the working directory).
     WriteFile {
         path: String,
         text: String,
     },
+    /// Runs a command (`["git", "merge", "x"]`) in the working directory;
+    /// reports `run:<exit code>` as a message.
+    Run(Vec<String>),
     /// Calls a tool on the session's HTTP MCP server; `${name}` placeholders in
     /// `args` are substituted (see `mcp.rs`). Reports `mcp:<tool>:ok:<json>`,
     /// `mcp:<tool>:error:<json>` or `mcp:<tool>:failed:<reason>` as a message.
