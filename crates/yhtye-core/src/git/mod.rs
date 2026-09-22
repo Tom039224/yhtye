@@ -2,6 +2,7 @@
 //! `git` CLI (Stage 3c); [`NoopGit`] does nothing (tests without git).
 
 mod cli;
+mod graph;
 mod repo;
 mod run;
 mod worktree;
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 pub use cli::{GitCli, worktree_root};
+pub use graph::{GitBranch, GitCommit, GitOverview, MAX_GRAPH_COMMITS, overview};
 
 use crate::domain::{GitOp, GitResult};
 

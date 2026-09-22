@@ -9,19 +9,47 @@
 // - reconnect: re-open the project (idempotent; the core may have restarted)
 //   and catch up from `cursor`. Streamed text of the dead connection is dropped.
 
-import type { ApiCommand, ApiEvent, ApiResponse, ProjectInfo } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiResponse, GitOverview, ProjectInfo } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
+import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
   applyLive,
   applySnapshot,
   clearStreaming,
   newProjectView,
+  prependHistory,
   type ProjectView,
 } from "./project";
 
 export const EVENT_PAGE = 500;
+/** Events read for the transcripts when a project loads (older ones on demand). */
+export const HISTORY_WINDOW = 400;
+/** Events per "load older history" page. */
+export const HISTORY_PAGE = 400;
+/** Commits of the git panel. */
+export const GIT_COMMITS = 120;
+/** Delay before re-reading git after a domain change (changes come in bursts). */
+export const GIT_REFRESH_MS = 400;
+/** Preference key: path of the project opened last (reopened after a reload). */
+export const LAST_PROJECT_KEY = "yhtye.lastProject";
 const MAX_ERRORS = 5;
+
+/** The git panel's data for the open project. */
+export interface GitView {
+  project: string;
+  overview: GitOverview | null;
+  /** Why the last read failed (shown in the panel). */
+  error: string | null;
+  loading: boolean;
+}
+
+export interface AppStoreOptions {
+  /** Where the last project is remembered (default: in memory only). */
+  prefs?: Prefs;
+  historyWindow?: number;
+  historyPage?: number;
+}
 
 export interface AppError {
   id: number;
@@ -35,6 +63,9 @@ export interface AppState {
   project: ProjectView | null;
   errors: AppError[];
   busy: { opening: boolean; sending: boolean };
+  git: GitView | null;
+  /** When the last event of any project arrived (ms since the epoch). */
+  lastEventAt: number | null;
 }
 
 type Expect<T extends ApiResponse["type"]> = Extract<ApiResponse, { type: T }>;
@@ -48,8 +79,19 @@ export class AppStore {
   private everOpen = false;
   private loadToken = 0;
   private nextErrorId = 1;
+  private gitTimer: ReturnType<typeof setTimeout> | null = null;
+  private gitToken = 0;
+  private readonly prefs: Prefs;
+  private readonly historyWindow: number;
+  private readonly historyPage: number;
 
-  constructor(private readonly transport: Transport) {
+  constructor(
+    private readonly transport: Transport,
+    options: AppStoreOptions = {},
+  ) {
+    this.prefs = options.prefs ?? memoryPrefs();
+    this.historyWindow = options.historyWindow ?? HISTORY_WINDOW;
+    this.historyPage = options.historyPage ?? HISTORY_PAGE;
     this.state = {
       connection: { state: "connecting" },
       transport: { kind: transport.kind, target: transport.target },
@@ -57,6 +99,8 @@ export class AppStore {
       project: null,
       errors: [],
       busy: { opening: false, sending: false },
+      git: null,
+      lastEventAt: null,
     };
   }
 
@@ -67,6 +111,8 @@ export class AppStore {
 
   stop(): void {
     for (const un of this.unsubscribe.splice(0)) un();
+    if (this.gitTimer) clearTimeout(this.gitTimer);
+    this.gitTimer = null;
   }
 
   getState = (): AppState => this.state;
@@ -130,6 +176,56 @@ export class AppStore {
     if (project) await this.run({ type: "retry_group_merge", project, group }, "accepted");
   }
 
+  /** Loads the page of history before what is shown (lazy history, newest first). */
+  async loadOlderHistory(): Promise<void> {
+    const view = this.state.project;
+    if (!view || view.phase !== "ready" || view.loadingOlder || view.historyStart <= 1) return;
+    const token = this.loadToken;
+    const from = Math.max(1, view.historyStart - this.historyPage);
+    this.updateProject((v) => ({ ...v, loadingOlder: true }));
+    try {
+      const events: ApiEvent[] = [];
+      let after = from - 1;
+      while (after < view.historyStart - 1) {
+        const cmd: ApiCommand = {
+          type: "list_events",
+          project: view.info.id,
+          after_seq: after,
+          limit: view.historyStart - 1 - after,
+        };
+        const page = await this.invoke(cmd, "events");
+        if (token !== this.loadToken) return;
+        if (page.events.length === 0) break;
+        events.push(...page.events);
+        after = page.events[page.events.length - 1].seq;
+      }
+      this.updateProject((v) => ({ ...prependHistory(v, events, from), loadingOlder: false }));
+    } catch (e) {
+      if (token !== this.loadToken) return;
+      this.updateProject((v) => ({ ...v, loadingOlder: false }));
+      this.pushError(`loading older history failed: ${toCommandError(e).message}`);
+    }
+  }
+
+  /** Re-reads the open project's branches and commit graph. */
+  async refreshGit(): Promise<void> {
+    const view = this.state.project;
+    if (!view) return;
+    const project = view.info.id;
+    const token = ++this.gitToken;
+    const prev = this.state.git?.project === project ? this.state.git : null;
+    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true } });
+    try {
+      const r = await this.invoke({ type: "get_git_overview", project, limit: GIT_COMMITS }, "git_overview");
+      if (token !== this.gitToken) return;
+      this.set({ git: { project, overview: r.git, error: null, loading: false } });
+    } catch (e) {
+      if (token !== this.gitToken) return;
+      const error = toCommandError(e).message;
+      this.set({ git: { project, overview: prev?.overview ?? null, error, loading: false } });
+    }
+  }
+
   dismissError(id: number): void {
     this.set({ errors: this.state.errors.filter((e) => e.id !== id) });
   }
@@ -140,11 +236,14 @@ export class AppStore {
     const token = ++this.loadToken;
     this.buffer = [];
     this.syncing = true;
-    this.set({ project: newProjectView(info) });
+    const keepGit = this.state.git?.project === info.id ? this.state.git : null;
+    this.set({ project: newProjectView(info), git: keepGit });
+    this.prefs.set(LAST_PROJECT_KEY, info.path);
+    void this.refreshGit();
     try {
       const snap = await this.invoke({ type: "get_snapshot", project: info.id }, "snapshot");
       if (token !== this.loadToken) return;
-      this.updateProject((v) => applySnapshot(v, snap.snapshot));
+      this.updateProject((v) => applySnapshot(v, snap.snapshot, this.historyWindow));
       await this.catchUp(token);
       if (token !== this.loadToken) return;
       this.updateProject((v) => ({ ...v, phase: "ready" }));
@@ -194,8 +293,13 @@ export class AppStore {
   }
 
   private onEvent(ev: ApiEvent): void {
+    this.state = { ...this.state, lastEventAt: Date.now() };
     const view = this.state.project;
-    if (!view || ev.project !== view.info.id || view.phase === "error") return;
+    if (!view || ev.project !== view.info.id || view.phase === "error") {
+      this.notify();
+      return;
+    }
+    if (!ev.live && changesGit(ev)) this.scheduleGitRefresh();
     if (this.syncing) {
       this.buffer.push(ev);
       return;
@@ -226,9 +330,30 @@ export class AppStore {
     }
     const reconnect = this.everOpen;
     this.everOpen = true;
-    void this.refreshProjects();
     const view = this.state.project;
-    if (reconnect && view) void this.resync(view.info);
+    if (reconnect && view) {
+      void this.refreshProjects();
+      void this.resync(view.info);
+      void this.refreshGit();
+    } else {
+      void this.reopenLast();
+    }
+  }
+
+  /** After a (re)load of the page: open the project that was open last. */
+  private async reopenLast(): Promise<void> {
+    await this.refreshProjects();
+    const last = this.prefs.get(LAST_PROJECT_KEY);
+    if (!last || this.state.project || this.state.busy.opening) return;
+    if (this.state.projects.some((p) => p.path === last)) await this.openProject(last);
+  }
+
+  private scheduleGitRefresh(): void {
+    if (this.gitTimer) return;
+    this.gitTimer = setTimeout(() => {
+      this.gitTimer = null;
+      void this.refreshGit();
+    }, GIT_REFRESH_MS);
   }
 
   /** After a reconnect: make sure the project is open, then catch up. */
@@ -277,7 +402,28 @@ export class AppStore {
 
   private set(patch: Partial<AppState>): void {
     this.state = { ...this.state, ...patch };
+    this.notify();
+  }
+
+  private notify(): void {
     for (const l of [...this.listeners]) l();
+  }
+}
+
+/** Durable domain events after which branches or commits may have changed. */
+function changesGit(ev: ApiEvent): boolean {
+  if (ev.body.type !== "domain") return false;
+  switch (ev.body.event.type) {
+    case "group_created":
+    case "group_merge_finished":
+    case "group_cancelled":
+    case "workspace_ready":
+    case "task_status_changed":
+    case "task_cancelled":
+    case "step_completed":
+      return true;
+    default:
+      return false;
   }
 }
 

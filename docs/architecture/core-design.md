@@ -91,15 +91,34 @@ pub struct CoreConfig {
     `conflict`、`merge_blocked` 以外は `invalid_state`。応答は `accepted` (マージは応答前に終わっている)。
   - `cancel_group` は各タスクの後片付けの後に `GitOp::RemoveGroupWorkspace` で統合 worktree も消す
     (Stage 4 で残っていた問題)。
-  - 履歴の読み込みは先頭からのページングのまま (変更なし、Stage 6 以降の課題として PLAN に記録)。
+  - 履歴の読み込みは先頭からのページングのまま (Stage 6a で直近からの遅延読み込みに変更 → 下の「Stage 6a の決定」)。
     新しい順のページングは UI の同期規則 (cursor から先を順に畳み込む) と噛み合わないため、
     別の「過去の会話だけを遅延で読む」経路として設計が要る。
+- **Stage 6a の決定**:
+  - `GetGitOverview{project, limit?}` → `ApiResponse::GitOverview{git}` (git パネル・ブランチ一覧・タイトルバー用)。
+    `git::overview` (`git/graph.rs`) が `symbolic-ref` / `for-each-ref refs/heads` / `git log --topo-order
+    --branches HEAD` を読み、`GitOverview{head, head_sha, branches[{name, sha}], commits[{sha, parents,
+    branches, subject, ts_ms}], truncated}` を返す (既定 120 件・最大 500)。読み取りだけ、開いていない
+    プロジェクトでも可 (パスは DB から)。空のリポジトリはコミット 0 件。レーンの割り当ては UI。
+    UI は読み込み時・再接続時と、git に関わるドメインイベント (group_created / workspace_ready /
+    task_status_changed / step_completed / group_merge_finished / group_cancelled / task_cancelled) の
+    400 ms 後にまとめて読み直す (イベントに git の内容は載せない。git の真実は git にある)。
+  - **履歴の遅延読み込み** (Stage 5 の課題): 新しいコマンドは足さない。seq は 1 から欠番なしなので、
+    snapshot の seq を S として `ListEvents{after_seq: S-400}` から読み (会話・出力は直近 400 件分だけ)、
+    それより前は UI の「さらに前の履歴を読み込む」で `after_seq` をずらして 400 件ずつ前に足す。
+    状態は snapshot から作るので過去のイベントは不要。前に足したページは単独で畳み込んでから連結する
+    (ページをまたぐツール呼び出しは開始位置に 1 つにまとめる)。同期規則 (cursor から先を順に畳み込む) は不変。
+  - **`SessionStopped` の順序** (flaky テストの原因の 1 つ): Yhtye が止めたセッションの停止タスクは
+    `Exited` を送った後に終わるが、エージェントのイベントは別タスク (forwarder) と別チャネルを通るため、
+    ループが停止完了を先に見て `session_stopped` を `turn_ended` / `exited` より前に出すことがあった
+    (負荷時)。`driver::StopOrder` で「停止タスクの完了」と「そのセッションの `Exited` の処理」の
+    両方が揃ってから出すようにした。
 - `ApiCommand` (serde `type` タグ): `list_projects` / `open_project{path}` / `get_snapshot{project}` /
   `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
   `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
-  `retry_group_merge{project, group}` (Stage 5)。
-  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted`。
+  `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a)。
+  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview`。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
@@ -578,6 +597,10 @@ Stage 4 の構成 (`src/`):
   (Enter 送信 / Shift+Enter 改行 / IME 変換中は送らない / ターン中も送れて受信箱で待機 / ターン中止)、
   グループ・タスク・Step と help / interrupted / merge_blocked、タスクのエージェント出力、
   接続状態とエラーのバナー。
+- Stage 6a: `ui/` を Claude Design のレイアウトに置き換えた (対応表は
+  [`docs/design/orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。ストアに `git` (GitOverview と
+  エラー)・`lastEventAt`・履歴の遅延読み込み (`historyStart` / `loadOlderHistory`)・前回のプロジェクトの記憶
+  (`Prefs`、アプリでは `localStorage`。読めなければ覚えないだけ。接続後にコアが知っているパスなら自動で開く) を追加。
 - TS の reducer が Rust と一致することは、偽エージェントで本物のコアを動かして記録したイベント列
   (`src/test/fixtures/*.json`、`pnpm record:fixtures`) を畳み込んで最終 snapshot と比べて検査する。
 

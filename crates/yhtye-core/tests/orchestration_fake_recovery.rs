@@ -51,10 +51,13 @@ fn finished(e: &ApiEvent) -> bool {
     is_message(e, ORCHESTRATOR_SESSION, "mcp:finish_group:ok")
 }
 
+/// Runs until the group is finished. The returned directory holds the database
+/// and must outlive the orchestration (dropping it deletes the files while the
+/// connection pool may still open new connections to them).
 async fn run_until_finished(
     orch_script: Value,
     impl_script: Value,
-) -> (Orchestration, Vec<ApiEvent>) {
+) -> (Orchestration, Vec<ApiEvent>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg = config(
         dir.path(),
@@ -66,7 +69,7 @@ async fn run_until_finished(
     let mut events = Vec::new();
     orch.send_user_message("please").expect("send");
     until(&mut rx, &mut events, TIMEOUT, finished).await;
-    (orch, events)
+    (orch, events, dir)
 }
 
 #[tokio::test]
@@ -78,7 +81,7 @@ async fn silent_turns_get_a_reminder_then_protocol_violation_help() {
         {"match": "[yhtye:reminder]", "actions": [{"message": "still thinking"}]},
         {"match": "[yhtye:step]", "actions": [{"message": "thinking"}]}
     ]});
-    let (orch, events) = run_until_finished(orch_script, impl_script).await;
+    let (orch, events, _dir) = run_until_finished(orch_script, impl_script).await;
 
     let impl_prompts = prompts_to(&events, "T-1/implementer");
     assert_eq!(impl_prompts.len(), 3, "{impl_prompts:#?}");
@@ -105,7 +108,7 @@ async fn crashed_agent_raises_help_and_resume_starts_a_new_session() {
         {"match": "retry please", "actions": [report("ok after crash")]},
         {"match": "[yhtye:step]", "actions": [{"crash": 3}]}
     ]});
-    let (orch, events) = run_until_finished(orch_script, impl_script).await;
+    let (orch, events, _dir) = run_until_finished(orch_script, impl_script).await;
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
@@ -178,7 +181,7 @@ async fn dependency_with_empty_instruction_asks_orchestrator_when_resolved() {
         {"match": "task=T-2", "actions": [report("second done")]},
         {"match": "task=T-1", "actions": [report("first done")]}
     ]});
-    let (orch, events) = run_until_finished(orch_script, impl_script).await;
+    let (orch, events, _dir) = run_until_finished(orch_script, impl_script).await;
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
@@ -243,6 +246,14 @@ async fn cancel_task_stops_the_agent_mid_turn() {
             ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(Ok(StopReason::Cancelled)) }
                 if session == "T-1/implementer")),
         "the running turn is cancelled before the session stops"
+    );
+    // The stop is published after the session's last event (Stage 6a fix: it
+    // used to overtake the forwarded `TurnEnded` / `Exited` under load).
+    assert!(
+        events.iter().any(|e| matches!(&e.body,
+            ApiEventBody::Agent { session, event: AgentEvent::Exited { .. } }
+                if session == "T-1/implementer")),
+        "the process exit is published before the session stops"
     );
     until(&mut rx, &mut events, TIMEOUT, |e| {
         is_message(e, ORCHESTRATOR_SESSION, "mcp:cancel_group:ok")

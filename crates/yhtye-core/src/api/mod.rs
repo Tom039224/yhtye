@@ -17,8 +17,8 @@ use crate::mcp::ToolCallRecord;
 use crate::store::SessionRecord;
 
 pub use command::{
-    ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE, LoggedEvent,
-    MAX_EVENT_PAGE, ProjectInfo,
+    ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE, DEFAULT_GRAPH_COMMITS,
+    LoggedEvent, MAX_EVENT_PAGE, ProjectInfo,
 };
 pub use wire::{WsReply, WsRequest, WsServerMessage};
 

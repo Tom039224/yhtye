@@ -219,12 +219,23 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
         .map(|e| (e.body["kind"].to_string(), e.body["text"].to_string()))
         .collect();
     assert_eq!(texts[0], ("\"message\"".into(), "\"working on it\"".into()));
-    let sessions = orch.store().sessions("P-1").await.expect("sessions");
-    assert!(
-        sessions
-            .iter()
-            .any(|s| s.session_key == IMPLEMENTER && s.status == SessionStatus::Stopped)
-    );
+    // The implementer is stopped in the background once its task is done, which
+    // may be after the orchestrator's `finish_group`: wait for it to be recorded.
+    let stopped = async {
+        loop {
+            let sessions = orch.store().sessions("P-1").await.expect("sessions");
+            if sessions
+                .iter()
+                .any(|s| s.session_key == IMPLEMENTER && s.status == SessionStatus::Stopped)
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    };
+    tokio::time::timeout(TIMEOUT, stopped)
+        .await
+        .expect("the implementer session is recorded as stopped");
     shutdown_and_check(orch, &events).await;
 }
 

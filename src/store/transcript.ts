@@ -21,6 +21,7 @@ export type TranscriptItem =
   | (Base & { kind: "text"; textKind: TextKind; text: string })
   | (Base & { kind: "tool"; id: string; title: string; status: string | null; toolKind: string | null })
   | (Base & { kind: "yhtye_tool"; tool: string; by: string; ok: boolean; detail: string })
+  | (Base & { kind: "group"; groupId: string; title: string })
   | (Base & { kind: "turn"; outcome: string; error: boolean })
   | (Base & { kind: "lifecycle"; text: string; error: boolean });
 
@@ -68,6 +69,11 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent): Transcripts 
   const body = ev.body;
   switch (body.type) {
     case "domain": {
+      if (body.event.type === "group_created") {
+        // Shown in the conversation as the design's "GROUP TASK" card (§3.4).
+        const g = body.event.group;
+        return push(t, ORCHESTRATOR, { ...base, kind: "group", groupId: g.id, title: g.title });
+      }
       if (body.event.type !== "inbox_queued") return t;
       const { id, item } = body.event.entry;
       return item.kind === "user_message"
@@ -200,4 +206,29 @@ export function settleStreaming(s: Streaming, ev: ApiEvent): Streaming {
     thought: clear === "message" ? cur.thought : "",
   };
   return next.message === cur.message && next.thought === cur.thought ? s : { ...s, [session]: next };
+}
+
+/**
+ * Puts an older page of history (folded on its own) in front of what is
+ * loaded. A tool call started in the older page and updated in the newer one
+ * appears once, at its start, with the newer status.
+ */
+export function prependTranscripts(older: Transcripts, newer: Transcripts): Transcripts {
+  const out: Transcripts = { ...newer };
+  for (const [session, before] of Object.entries(older)) {
+    const after = newer[session] ?? [];
+    const updates = new Map<string, Extract<TranscriptItem, { kind: "tool" }>>();
+    for (const item of after) if (item.kind === "tool") updates.set(item.id, item);
+    const merged = before.map((item) => {
+      if (item.kind !== "tool") return item;
+      const update = updates.get(item.id);
+      if (!update) return item;
+      // An update-only item is titled with its id; keep the real title then.
+      const title = update.title !== update.id ? update.title : item.title;
+      return { ...item, title, status: update.status ?? item.status, toolKind: update.toolKind ?? item.toolKind };
+    });
+    const moved = new Set(before.flatMap((i) => (i.kind === "tool" && updates.has(i.id) ? [i.id] : [])));
+    out[session] = [...merged, ...after.filter((i) => !(i.kind === "tool" && moved.has(i.id)))];
+  }
+  return out;
 }

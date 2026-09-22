@@ -80,3 +80,46 @@ async fn real_group_with_two_code_tasks_lands_on_the_base_branch() {
     eprintln!("branches:\n{}", r.git(&["branch", "--list"]));
     shutdown_and_check(orch, &events).await;
 }
+
+const LONG_COMMAND_REQUEST: &str = "Create one group with exactly one code task with an implement step only. \
+The task's instruction must be exactly: first run the shell command `sleep 45`, and only after it has \
+finished create the file done.txt containing the word ok. \
+When the group settles, call finish_group.";
+
+/// Stage 5 observation: asked to run a long command, the Haiku implementer
+/// sometimes ended its turn while the command ran in the background (Claude
+/// Code's background tasks), which Yhtye treats as a turn without a report.
+/// Stage 6a disables background tasks for the Claude Code harness and tells the
+/// sub-agents to wait in the foreground.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku)"]
+async fn real_implementer_waits_for_a_long_command_before_reporting() {
+    let r = TempRepo::new();
+    let (orch, mut rx) = Orchestration::start(real_git_config(&r))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    let mut events = Vec::new();
+    orch.send_user_message(LONG_COMMAND_REQUEST).expect("send");
+    until(&mut rx, &mut events, REAL_TIMEOUT, finish_called).await;
+    until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    log_run(&events);
+    assert_haiku(&events);
+
+    let snap = orch.snapshot().await.expect("snapshot");
+    let tasks: Vec<_> = snap.state.tasks_of("G-1").collect();
+    eprintln!("tasks: {tasks:#?}\nhelps: {:#?}", snap.state.helps);
+    assert!(
+        snap.state.helps.is_empty(),
+        "no help (protocol_violation) was raised: {:#?}",
+        snap.state.helps
+    );
+    let t1 = tasks.first().expect("a task");
+    assert_eq!(t1.status, TaskStatus::Done);
+    assert!(
+        t1.steps.iter().all(|s| s.nudges == 0),
+        "the implementer reported without a reminder: {:#?}",
+        t1.steps
+    );
+    assert_eq!(r.show("main", "done.txt").trim(), "ok");
+    shutdown_and_check(orch, &events).await;
+}

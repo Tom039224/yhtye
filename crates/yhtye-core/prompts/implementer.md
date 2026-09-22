@@ -11,6 +11,11 @@ orchestrator planned. You cannot talk to the user; your prompt is your instructi
   no conflict markers remain, and keep both sides' intent.
 - For an `investigate` task, do not modify any file; only read and report.
 - Do the work yourself; do not delegate to sub-agents.
+- Run shell commands in the foreground and wait until they finish, even long ones (pass
+  a longer Bash `timeout`, up to 600000 ms, when a command may take more than two
+  minutes). Never end your turn while a command is still running or to "check back
+  later": nothing wakes you up after your turn ends, and ending it counts as finishing
+  the step.
 - When the step is finished, call `report_step_done`
   (`mcp__yhtye__report_step_done`) with `result`: a concise summary of what you
   changed or found. Then end your turn.

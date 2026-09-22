@@ -5,6 +5,7 @@ import type {
   ApiCommand,
   ApiEvent,
   ApiResponse,
+  GitOverview,
   LoggedEvent,
   ProjectInfo,
   Snapshot,
@@ -71,6 +72,8 @@ export class FakeCore {
   failures = new Map<ApiCommand["type"], CommandError>();
   /** Largest page the fake returns (whatever the client asks for). */
   pageCap = Number.MAX_SAFE_INTEGER;
+  /** Served for `get_git_overview`. */
+  git: GitOverview = { head: "main", head_sha: null, branches: [], commits: [], truncated: false };
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -102,6 +105,8 @@ export class FakeCore {
         const events: LoggedEvent[] = after.slice(0, limit).map((e) => ({ ...e, live: false }));
         return { type: "events", events, more: after.length > limit };
       }
+      case "get_git_overview":
+        return { type: "git_overview", git: this.git };
       default:
         return { type: "accepted" };
     }

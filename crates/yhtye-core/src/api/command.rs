@@ -10,6 +10,7 @@ use ts_rs::TS;
 
 use super::{ApiEventBody, Snapshot};
 use crate::domain::{ErrorCode, ToolError};
+use crate::git::GitOverview;
 use crate::store::{StoreError, StoredEvent};
 
 /// Default page size of [`ApiCommand::ListEvents`].
@@ -73,7 +74,19 @@ pub enum ApiCommand {
         project: String,
         group: String,
     },
+    /// The project repository's checked-out branch, local branches and recent
+    /// commit graph (the git panel, Stage 6a). Works for projects that are not open.
+    GetGitOverview {
+        project: String,
+        /// Most commits to return (default [`DEFAULT_GRAPH_COMMITS`], at most 500).
+        #[serde(default)]
+        #[ts(optional)]
+        limit: Option<u32>,
+    },
 }
+
+/// Default number of commits of [`ApiCommand::GetGitOverview`].
+pub const DEFAULT_GRAPH_COMMITS: u32 = 120;
 
 /// A project known to Yhtye.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -131,6 +144,9 @@ pub enum ApiResponse {
     },
     /// The command was accepted (sending, cancelling).
     Accepted,
+    GitOverview {
+        git: GitOverview,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -109,7 +109,8 @@
 | `ysheen` | `1.9s ease-in-out infinite` | 進捗バーを走る光。幅 34% のグラデーションを重ねる |
 | `ypulse` | `1.4s ease-in-out infinite` | 稼働中ステータスバッジのドット。**完了・対処中には当てない** |
 
-`prefers-reduced-motion: reduce` の指定はデザインに無い。実装時に足すこと。
+`prefers-reduced-motion: reduce` の指定はデザインに無い。Stage 6a で `App.css` に足した:
+reduce のときはすべてのアニメーション (spin / sheen / pulse) とトランジションを止める。状態は色と形で読める。
 
 ## スクロールバー
 
@@ -122,3 +123,26 @@
 ## 角丸
 
 チップ・バッジ 3–4px / ボタン・一覧行 5px / カード・入力欄 6–7px / ドット `50%`。
+
+## その他の値 (Stage 6a で `tokens.css` に追加)
+
+原本のインラインスタイルにあるが上の表に無かった値。名前は実装で付けた。
+
+| トークン | 値 | 用途 |
+|---|---|---|
+| `--border-pill` | `#33302b` | タイトルバーのブランチピル |
+| `--scrollbar-thumb` | `#3a3733` | スクロールバー |
+| `--ring-running-track` / `--ring-running-head` | `oklch(0.72 0.13 150 / .28)` / `oklch(0.75 0.15 150)` | 実行中プロジェクトのリング |
+| `--ring-stopped` | `#4a453f` | 停止プロジェクトのリング |
+| `--branch-dot` | `#403c37` | 非選択ブランチのドット |
+| `--status-{implementing,reviewing}-sheen` | `oklch(0.9 0.06 H / .55)` | 進捗バーの光 |
+| `--status-handling-card-{title,meta,meta-strong,icon}` | `#f0e7df` / `#8e7f74` / `#bfa48f` / `#c7ab97` | 対処中カードの文字 |
+| `--git-lane-base` / `--git-node-base(-head)` | `#3a3733` / `#4a453f` (`#6f6a61`) | git の base 線と円 |
+| `--git-{lane,node,badge-bg,badge-fg}-implementing` | `oklch(0.55 0.09 250)` / `oklch(0.62 0.11 250)` / `oklch(0.32 0.05 250)` / `oklch(0.85 0.06 250)` | git の実装中の枝 |
+| `--git-{lane,node,badge-bg,badge-fg}-handling` | `oklch(0.5 0.1 30)` / `oklch(0.58 0.14 30)` / `oklch(0.38 0.11 30)` / `oklch(0.92 0.05 40)` | git の対処中の枝 |
+| `--git-badge-reviewing-{bg,fg}` | `oklch(0.34 0.05 300)` / `oklch(0.86 0.06 300)` | git の review バッジ |
+| `--usage-5h` / `--usage-week` | `oklch(0.7 0.14 55)` / `oklch(0.72 0.11 150)` | 使用量メーター (Stage 6b で使う) |
+
+**発明した値** (原本に無い。ステータス色の流儀 = 色相固定で明度/彩度を振る、に従った):
+`--git-lane-reviewing` `oklch(0.55 0.09 300)` / `--git-node-reviewing` `oklch(0.62 0.11 300)` /
+`--git-{lane,node,badge-bg,badge-fg}-done` (色相 150、実装中の明度・彩度と同じ)。

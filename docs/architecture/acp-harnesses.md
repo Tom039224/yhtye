@@ -137,7 +137,7 @@ Yhtye での Claude Code 用 `HarnessConfig` (初期値):
 [harness.claude-code]
 command = "npx"
 args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81"]
-env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false" }  # §5.2
+env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1" }  # §5.2
 mode_after_new = "bypassPermissions"
 model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する
 system_prompt = "meta_append"          # _meta.systemPrompt.append
@@ -173,6 +173,7 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
 | `strictMcpConfig: true` | `_meta.claudeCode.options` (SDK の `--strict-mcp-config`) | session/new で渡した MCP サーバー (= `yhtye`) だけを使う |
 | `ENABLE_CLAUDEAI_MCP_SERVERS=false` | プロセス env | claude.ai のコネクタを付けない (デバッグログで "Disabled via env var" を確認) |
 | `ENABLE_TOOL_SEARCH=false` | プロセス env | MCP ツールを遅延ロードせず最初から見せる |
+| `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | プロセス env | (Stage 6a) Bash の `run_in_background`・長いコマンドの自動背景化などの背景タスクを無効にする。ACP ではターンが終わるとエージェントを起こす手段が無く、背景のコマンドを待つつもりでターンを終えると報告なしのターン (`protocol_violation`) になる (Stage 5 で観察、実 Haiku の `real_implementer_waits_for_a_long_command_before_reporting` で再現・修正を確認) |
 
 オーケストレータはさらに `tools: ["Read","Glob","Grep"]`
 ([`orchestration-model.md`](orchestration-model.md) §8.1)。

@@ -13,6 +13,7 @@ import { applySessionEvent } from "./sessions";
 import {
   applyChunk,
   applyTranscriptEvent,
+  prependTranscripts,
   settleStreaming,
   type Streaming,
   type Transcripts,
@@ -26,6 +27,13 @@ export interface ProjectView {
   stateSeq: number;
   /** `seq` of the last durable event applied. */
   cursor: number;
+  /**
+   * Lowest `seq` whose event is in the transcripts: history is loaded from the
+   * most recent events backwards on demand (1 = the whole log is loaded).
+   */
+  historyStart: number;
+  /** An older page of history is being loaded. */
+  loadingOlder: boolean;
   state: State | null;
   sessions: SessionRecord[];
   transcripts: Transcripts;
@@ -39,6 +47,8 @@ export function newProjectView(info: ProjectInfo): ProjectView {
     loadError: null,
     stateSeq: 0,
     cursor: 0,
+    historyStart: 1,
+    loadingOlder: false,
     state: null,
     sessions: [],
     transcripts: {},
@@ -46,8 +56,28 @@ export function newProjectView(info: ProjectInfo): ProjectView {
   };
 }
 
-export function applySnapshot(view: ProjectView, snap: Snapshot): ProjectView {
-  return { ...view, state: snap.state, sessions: snap.sessions, stateSeq: snap.seq };
+/**
+ * Starts from a snapshot. Only the last `window` events up to the snapshot are
+ * read for the transcripts (the state needs none of them); older history is
+ * prepended with `prependHistory` when the user asks for it.
+ */
+export function applySnapshot(view: ProjectView, snap: Snapshot, window = Number.MAX_SAFE_INTEGER): ProjectView {
+  const historyStart = Math.max(1, snap.seq - window + 1);
+  return {
+    ...view,
+    state: snap.state,
+    sessions: snap.sessions,
+    stateSeq: snap.seq,
+    cursor: historyStart - 1,
+    historyStart,
+  };
+}
+
+/** Prepends stored events `[from, historyStart)` (oldest first) to the transcripts. */
+export function prependHistory(view: ProjectView, events: ApiEvent[], from: number): ProjectView {
+  const page = events.filter((e) => e.seq >= from && e.seq < view.historyStart);
+  const older = page.reduce<Transcripts>((t, e) => applyTranscriptEvent(t, e), {});
+  return { ...view, transcripts: prependTranscripts(older, view.transcripts), historyStart: from };
 }
 
 /** Applies the next durable event (the caller guarantees `seq === cursor + 1`). */

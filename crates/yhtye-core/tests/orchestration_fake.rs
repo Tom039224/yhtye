@@ -12,7 +12,7 @@ use common::orch::{
     started_sessions, summary, tool_calls, until,
 };
 use serde_json::{Value, json};
-use yhtye_core::api::ApiEventBody;
+use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, Role, TaskStatus};
 use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
 
@@ -107,8 +107,15 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
         orch_prompts[1],
         "[yhtye:group_settled] group=G-1\nT-1 done: added hello"
     );
-    assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")));
+    // The implementer is stopped in the background when its task is done; the
+    // stop may be published after the orchestrator's next turn.
+    let stopped = |e: &ApiEvent| {
+        matches!(&e.body,
+            ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")
+    };
+    if !events.iter().any(stopped) {
+        until(&mut rx, &mut events, TIMEOUT, stopped).await;
+    }
     let domain = domain_events(&events);
     assert!(domain.iter().any(|e| matches!(e,
         DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1")));
@@ -219,8 +226,13 @@ async fn needs_changes_loops_through_fresh_reviewer_sessions() {
     assert!(impl_prompts[1].contains("Address these findings:\nplease add a test"));
     let review_prompts = prompts_to(&events, "T-1/review-3");
     assert!(review_prompts[0].contains("step 2 (implement): added the test"));
-    assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionStopped { session, .. } if session == "T-1/review-1")));
+    let review_stopped = |e: &ApiEvent| {
+        matches!(&e.body,
+            ApiEventBody::SessionStopped { session, .. } if session == "T-1/review-1")
+    };
+    if !events.iter().any(review_stopped) {
+        until(&mut rx, &mut events, TIMEOUT, review_stopped).await;
+    }
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],

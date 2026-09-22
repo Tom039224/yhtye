@@ -1,3 +1,6 @@
+import type { ReactNode } from "react";
+
+import type { State } from "../api/generated";
 import type { TranscriptItem } from "../store/transcript";
 import { formatTime } from "./labels";
 
@@ -8,14 +11,20 @@ interface Props {
   agentLabel: string;
   /** Undelivered inbox entry ids (user messages still queued). */
   queued?: ReadonlySet<number>;
+  /** For the group cards of the conversation (their tasks are read live). */
+  state?: State | null;
+  /** Shown first (e.g. the button that loads older history). */
+  before?: ReactNode;
 }
 
-export function TranscriptView({ items, streaming, agentLabel, queued }: Props) {
+export function TranscriptView({ items, streaming, agentLabel, queued, state, before }: Props) {
   return (
     <div className="transcript">
-      {items.map((item, i) => (
-        // Transcripts only grow (tool calls update in place), so the index is stable.
-        <Item key={i} item={item} agentLabel={agentLabel} queued={queued} />
+      {before}
+      {items.map((item) => (
+        // Items are appended, or prepended when older history loads; a durable
+        // event yields at most one item per session, so seq identifies it.
+        <Item key={`${item.seq}-${item.kind}`} item={item} agentLabel={agentLabel} queued={queued} state={state ?? null} />
       ))}
       {streaming?.thought ? <Thought text={streaming.thought} streaming /> : null}
       {streaming?.message ? (
@@ -37,8 +46,40 @@ function Thought({ text, streaming }: { text: string; streaming?: boolean }) {
   );
 }
 
-function Item({ item, agentLabel, queued }: { item: TranscriptItem; agentLabel: string; queued?: ReadonlySet<number> }) {
+function GroupCard({ id, title, state }: { id: string; title: string; state: State | null }) {
+  const tasks = state?.tasks.filter((t) => t.group === id) ?? [];
+  return (
+    <div className="group-card" aria-label={`group card ${id}`}>
+      <div className="group-card-header">
+        GROUP TASK · {title} <span className="dim">({id})</span>
+      </div>
+      <div className="group-card-body">
+        {tasks.length === 0 ? <div className="dim">タスクはまだありません</div> : null}
+        {tasks.map((t, i) => (
+          <div key={t.id} className="group-card-row">
+            <span className="n">{i + 1}</span>
+            {t.id} {t.title}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Item({
+  item,
+  agentLabel,
+  queued,
+  state,
+}: {
+  item: TranscriptItem;
+  agentLabel: string;
+  queued?: ReadonlySet<number>;
+  state: State | null;
+}) {
   switch (item.kind) {
+    case "group":
+      return <GroupCard id={item.groupId} title={item.title} state={state} />;
     case "user": {
       const waiting = queued?.has(item.inboxId) ?? false;
       return (

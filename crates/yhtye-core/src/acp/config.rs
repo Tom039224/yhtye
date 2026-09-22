@@ -76,6 +76,10 @@ impl HarnessConfig {
                 // behind ToolSearch, and do not attach the user's claude.ai connectors.
                 ("ENABLE_TOOL_SEARCH".into(), "false".into()),
                 ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
+                // No background shell commands / tasks: a turn that ends while a
+                // command runs in the background can never report (nothing wakes
+                // the session up again), which Yhtye counts as a silent turn.
+                ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), "1".into()),
             ]),
             mode_after_new: Some("bypassPermissions".into()),
             model: Some(ModelSelect {

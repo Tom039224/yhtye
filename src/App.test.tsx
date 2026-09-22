@@ -69,7 +69,8 @@ describe("App", () => {
     const tasks = screen.getByRole("region", { name: "tasks" });
     const task = within(tasks).getByRole("article", { name: "task T-1" });
     expect(within(task).getByText("完了")).toBeInTheDocument();
-    expect(within(task).queryByText("■ 中止")).not.toBeInTheDocument();
+    expect(within(task).queryByRole("button", { name: "T-1 を中止" })).not.toBeInTheDocument();
+    expect(within(task).getByLabelText("steps")).toHaveTextContent("implement ✓ → review ✓ (approve) → done ✓");
     expect(within(tasks).getByRole("region", { name: "group G-1" })).toHaveTextContent("1/1 完了");
   });
 
@@ -156,7 +157,7 @@ describe("App", () => {
     expect(within(tasks).getByText(/再起動で中断されました/)).toBeInTheDocument();
     expect(within(tasks).getAllByText("対処中")).toHaveLength(2);
 
-    await user.click(within(screen.getByRole("article", { name: "task T-2" })).getByRole("button", { name: "■ 中止" }));
+    await user.click(within(screen.getByRole("article", { name: "task T-2" })).getByRole("button", { name: "T-2 を中止" }));
     await user.click(within(tasks).getByRole("button", { name: "グループを中止" }));
     await user.click(within(tasks).getByRole("button", { name: "マージを再試行" }));
     expect(transport.callsOf("cancel_task")[0].task).toBe("T-2");
@@ -169,7 +170,10 @@ describe("App", () => {
     await openProject(store);
     expect(screen.getByText(/まだ会話はありません/)).toBeInTheDocument();
     expect(screen.getByText(/グループはまだありません/)).toBeInTheDocument();
-    expect(screen.getByText(/タスク名をクリックすると/)).toBeInTheDocument();
+    expect(screen.getByText("コミットはまだありません。")).toBeInTheDocument();
     expect(screen.getByText("not started")).toBeInTheDocument();
+    // Usage is not read yet (Stage 6b): honest placeholders, no numbers.
+    expect(screen.getByTestId("usage-5h")).toHaveTextContent("5h—");
+    expect(screen.queryByTestId("wait-banner")).not.toBeInTheDocument();
   });
 });

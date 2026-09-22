@@ -1,31 +1,31 @@
 import { useState } from "react";
 
 import type { ProjectView } from "../store/project";
-import { AgentOutput } from "./AgentOutput";
+import { BottomPanel } from "./BottomPanel";
 import { Conversation } from "./Conversation";
-import { TaskPanel } from "./TaskPanel";
+import { addMention, type Mention, removeMention } from "./mentions";
+import { TaskColumn } from "./TaskColumn";
 
-/** The open project: conversation on the left, tasks and agent output on the right. */
+/** The open project: conversation | tasks over git / agent output (design §2). */
 export function Workspace({ view }: { view: ProjectView }) {
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
+  const [mentions, setMentions] = useState<Mention[]>([]);
   return (
     <div className="workspace">
-      <Conversation view={view} />
+      <Conversation
+        view={view}
+        mentions={mentions}
+        onRemoveMention={(task) => setMentions((m) => removeMention(m, task))}
+        onClearMentions={() => setMentions([])}
+      />
       <div className="right">
-        <section className="panel tasks" aria-label="tasks">
-          <header className="panel-header">
-            <span>tasks</span>
-            <span className="mono dim">{view.info.path}</span>
-          </header>
-          <div className="scroll">
-            {view.phase === "loading" ? <p className="empty">読み込み中…</p> : null}
-            {view.phase === "error" ? <p className="empty error-text">{view.loadError}</p> : null}
-            {view.state ? (
-              <TaskPanel state={view.state} selectedTask={selectedTask} onSelectTask={setSelectedTask} />
-            ) : null}
-          </div>
-        </section>
-        <AgentOutput view={view} task={selectedTask} />
+        <TaskColumn
+          view={view}
+          selectedTask={selectedTask}
+          onSelectTask={setSelectedTask}
+          onMention={(m) => setMentions((list) => addMention(list, m))}
+        />
+        <BottomPanel view={view} selectedTask={selectedTask} onCloseTask={() => setSelectedTask(null)} />
       </div>
     </div>
   );

@@ -21,6 +21,7 @@ use yhtye_core::api::{
     Snapshot,
 };
 use yhtye_core::domain::{DomainEvent, GroupStatus, TaskStatus};
+use yhtye_core::git::GitOverview;
 use yhtye_core::runtime::{Core, CoreConfig, ORCHESTRATOR_SESSION, USER_SESSION};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -475,4 +476,80 @@ fn claude_code_config_uses_the_given_model_for_every_role() {
     assert_eq!(model(&cfg.orchestrator).as_deref(), Some("haiku"));
     assert_eq!(model(&cfg.implementer).as_deref(), Some("haiku"));
     assert_eq!(model(&cfg.reviewer).as_deref(), Some("haiku"));
+}
+
+async fn git_overview(core: &Core, project: &str, limit: Option<u32>) -> GitOverview {
+    let cmd = ApiCommand::GetGitOverview {
+        project: project.into(),
+        limit,
+    };
+    match run(core, cmd).await {
+        ApiResponse::GitOverview { git } => git,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_git_overview_shows_branches_and_the_commit_graph() {
+    let r = TempRepo::new();
+    r.git(&["checkout", "-q", "-b", "yhtye/G-1"]);
+    r.write("a.txt", "a\n");
+    r.commit("feat: a");
+    r.git(&["checkout", "-q", "main"]);
+    r.write("b.txt", "b\n");
+    r.commit("chore: b");
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge G-1", "yhtye/G-1"]);
+    let idle = json!({"turns": []});
+    let core = Core::start(core_config(&r, idle.clone(), idle.clone(), idle))
+        .await
+        .expect("core");
+    let p = open(&core, &r.repo).await;
+
+    let git = git_overview(&core, &p.id, None).await;
+    assert_eq!(git.head.as_deref(), Some("main"));
+    let names: Vec<&str> = git.branches.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(names, ["main", "yhtye/G-1"]);
+    let subjects: Vec<&str> = git.commits.iter().map(|c| c.subject.as_str()).collect();
+    assert_eq!(subjects[0], "merge G-1");
+    assert_eq!(subjects.len(), 4, "{subjects:?}");
+    assert!(!git.truncated);
+    let merge = &git.commits[0];
+    assert_eq!(Some(&merge.sha), git.head_sha.as_ref());
+    assert_eq!(merge.parents.len(), 2, "a merge has two parents");
+    assert_eq!(merge.branches, ["main"]);
+    let side = git
+        .commits
+        .iter()
+        .find(|c| c.subject == "feat: a")
+        .expect("side commit");
+    assert_eq!(side.branches, ["yhtye/G-1"]);
+    assert_eq!(
+        merge.parents[1], side.sha,
+        "second parent is the merged branch"
+    );
+    // Children come before their parents.
+    let at = |sha: &str| git.commits.iter().position(|c| c.sha == sha);
+    for (i, c) in git.commits.iter().enumerate() {
+        for parent in &c.parents {
+            assert!(at(parent).is_none_or(|p| p > i), "topological order");
+        }
+    }
+
+    let short = git_overview(&core, &p.id, Some(2)).await;
+    assert_eq!(short.commits.len(), 2);
+    assert!(short.truncated);
+
+    // Readable while the project is closed; unknown projects are not found.
+    core.shutdown().await;
+    let idle = json!({"turns": []});
+    let core = Core::start(core_config(&r, idle.clone(), idle.clone(), idle))
+        .await
+        .expect("core");
+    assert_eq!(git_overview(&core, &p.id, None).await.commits.len(), 4);
+    let unknown = ApiCommand::GetGitOverview {
+        project: "other".into(),
+        limit: None,
+    };
+    assert_eq!(error_code(&core, unknown).await, ApiErrorCode::NotFound);
+    core.shutdown().await;
 }

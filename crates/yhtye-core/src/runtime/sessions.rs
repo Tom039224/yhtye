@@ -365,6 +365,11 @@ impl Sessions {
     }
 
     /// Whether prompts are waiting for `key`'s current turn to end.
+    /// Whether `key` has a running process that Yhtye has not stopped.
+    pub(super) fn is_live(&self, key: &str) -> bool {
+        self.live.contains_key(key)
+    }
+
     pub(super) fn has_queued(&self, key: &str) -> bool {
         self.live.get(key).is_some_and(|l| !l.queued.is_empty())
     }

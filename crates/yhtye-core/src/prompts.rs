@@ -110,7 +110,8 @@ pub fn reminder_prompt(task_id: &str, step_index: usize) -> String {
         "[yhtye:reminder] task={task_id} step={}\nYour turn ended without calling \
          report_step_done or help. If the step is finished, call report_step_done with your \
          result now. Otherwise finish the work and then call it, or call help if you are stuck. \
-         Then end your turn.",
+         If you were waiting for a command, run it again in the foreground and wait for it to \
+         finish in this turn. Then end your turn.",
         step_index + 1
     )
 }

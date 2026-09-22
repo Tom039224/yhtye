@@ -6,7 +6,7 @@
 //! their results fed back as commands in the same chain, so a tool call is
 //! answered only after its whole chain (e.g. `finish_group` → merge) is done.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -65,6 +65,45 @@ pub(super) struct Driver {
     publisher: Publisher,
     emit: Emitter,
     transcript: Transcript,
+    /// Sessions Yhtye stopped, reported as `SessionStopped` in order (§8, Stage 6a).
+    stops: StopOrder,
+}
+
+/// Orders `SessionStopped` of a session Yhtye stopped after its last event.
+///
+/// The stop task finishes once the agent has emitted `Exited`, but its events
+/// reach the loop through a separate forwarder and channel, so the loop can see
+/// the stop finish before the session's final `TurnEnded` / `Exited`. The stop
+/// is published only once both are known: the stop task finished and the
+/// session's `Exited` was processed.
+#[derive(Default)]
+struct StopOrder {
+    /// Stop finished, `Exited` not yet processed.
+    awaiting_exit: HashSet<(String, u64)>,
+    /// `Exited` processed for a session that is no longer live, stop not finished.
+    exited: HashSet<(String, u64)>,
+}
+
+impl StopOrder {
+    /// The stop task of `(key, launch)` finished; `true` if it can be published now.
+    fn stop_finished(&mut self, key: &str, launch: u64) -> bool {
+        let id = (key.to_string(), launch);
+        if self.exited.remove(&id) {
+            return true;
+        }
+        self.awaiting_exit.insert(id);
+        false
+    }
+
+    /// `Exited` of a stopped session was processed; `true` if its stop is due.
+    fn exited(&mut self, key: &str, launch: u64) -> bool {
+        let id = (key.to_string(), launch);
+        if self.awaiting_exit.remove(&id) {
+            return true;
+        }
+        self.exited.insert(id);
+        false
+    }
 }
 
 type Reply = Result<Value, ToolError>;
@@ -86,6 +125,7 @@ impl Driver {
             publisher,
             emit,
             transcript: Transcript::default(),
+            stops: StopOrder::default(),
         }
     }
 
@@ -115,7 +155,9 @@ impl Driver {
                 Some(res) = self.sessions.stopping.join_next() => match res {
                     // A newer session under the same key must not be marked stopped.
                     Ok((key, launch)) if !self.sessions.is_stale(&key, launch) => {
-                        self.emit.send(ApiEventBody::SessionStopped { session: key, suspended: false });
+                        if self.stops.stop_finished(&key, launch) {
+                            self.emit.send(ApiEventBody::SessionStopped { session: key, suspended: false });
+                        }
                     }
                     Ok(_) => {}
                     Err(e) => tracing::error!("an agent stop task failed: {e}"),
@@ -124,7 +166,12 @@ impl Driver {
                     if self.sessions.is_stale(&key, launch) {
                         tracing::debug!(session = %key, "dropping an event of a replaced process: {event:?}");
                     } else {
-                        self.on_agent_event(key, event).await;
+                        let exited = matches!(event, AgentEvent::Exited { .. });
+                        let stopped = exited && !self.sessions.is_live(&key);
+                        self.on_agent_event(key.clone(), event).await;
+                        if stopped && self.stops.exited(&key, launch) {
+                            self.emit.send(ApiEventBody::SessionStopped { session: key, suspended: false });
+                        }
                     }
                 }
             }

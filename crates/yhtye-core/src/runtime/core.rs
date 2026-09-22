@@ -14,11 +14,11 @@ use tokio::sync::broadcast;
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
 use crate::api::{
-    ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE, LoggedEvent, MAX_EVENT_PAGE,
-    ProjectInfo, Snapshot,
+    ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE, DEFAULT_GRAPH_COMMITS,
+    LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
 use crate::domain::DomainConfig;
-use crate::git::{GitCli, worktree_root};
+use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::store::{ProjectRecord, Store, db_path};
 
 /// How many events a slow subscriber may fall behind before it misses some
@@ -152,6 +152,9 @@ impl Core {
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
+            ApiCommand::GetGitOverview { project, limit } => Ok(ApiResponse::GitOverview {
+                git: self.git_overview(&project, limit).await?,
+            }),
         }
     }
 
@@ -265,6 +268,22 @@ impl Core {
             .map(|e| LoggedEvent::from_stored(project, e))
             .collect();
         Ok(ApiResponse::Events { events, more })
+    }
+
+    async fn git_overview(
+        &self,
+        project: &str,
+        limit: Option<u32>,
+    ) -> Result<GitOverview, ApiError> {
+        let known = self.inner.store.projects().await?;
+        let record = known
+            .iter()
+            .find(|r| r.id == project)
+            .ok_or_else(|| ApiError::not_found(format!("unknown project {project}")))?;
+        let limit = limit.unwrap_or(DEFAULT_GRAPH_COMMITS) as usize;
+        git::overview(&record.path, limit.min(MAX_GRAPH_COMMITS))
+            .await
+            .map_err(|e| ApiError::unavailable(format!("could not read the repository: {e}")))
     }
 
     fn orchestration(&self, project: &str) -> Result<Arc<Orchestration>, ApiError> {

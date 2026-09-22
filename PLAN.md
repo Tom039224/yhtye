@@ -21,7 +21,8 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | **完了** (Stage 3 完了) |
 | 4 | フロントエンド (素の UI) | **完了** |
 | 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | **完了** (アプリ内 UI の手動確認は残り) |
-| 6 | Claude Design 適用・残機能 | 未着手 |
+| 6a | Claude Design の適用・UX / 堅牢性の修正 | **完了** |
+| 6b | 残機能 (使用量 / quota、runs 履歴ビューほか) | 未着手 |
 
 ## 再開の仕方
 
@@ -590,10 +591,10 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - 観察: 「`sleep 45` してからファイル作成」の依頼では Haiku の実装者が 2 回報告なしでターンを終え
     `protocol_violation` → オーケストレータがタスクを中止した (Claude Code が長いコマンドを背景実行した
     とみられる)。Yhtye の規則どおりの挙動。ページ再読み込み後はプロジェクトを自動では選ばない (クリックが要る)。
-  - スクリーンショット (一時ディレクトリ。セッション後に消える): `/tmp/claude-1000/-home-tom039224-Projects-QOL-Yhtye/e98f6003-2add-4355-8acc-1e317e142acb/scratchpad/e2e/screens/`
-    `screenshot-1790113751614-0.jpg` (依頼直後) / `-1764633-1` (タスク並行実行) /
-    `-1774856-2` (再読み込み後・完了) / `-1793900-3` (長文ストリーミング) / `-1800917-4` (中止後) /
-    `-4019206-5` (再起動後に完走) / `-4073530-6` (マージ再試行後)。
+  - スクリーンショット: [`docs/e2e/stage5/`](docs/e2e/stage5/) (Stage 6a で一時ディレクトリから移した)
+    `0-request-sent.jpg` (依頼直後) / `1-tasks-running.jpg` (タスク並行実行) /
+    `2-after-reload-done.jpg` (再読み込み後・完了) / `3-long-streaming.jpg` (長文ストリーミング) /
+    `4-after-cancel.jpg` (中止後) / `5-restart-completed.jpg` (再起動後に完走) / `6-merge-retried.jpg` (マージ再試行後)。
 - 開発での起動コマンド:
   - アプリ: `pnpm tauri dev` (データ: `~/.local/share/com.tom039224.yhtye`、`YHTYE_DATA_DIR` / `YHTYE_MODEL` で変更)。
   - ブラウザ: `pnpm dev:browser [--data-dir DIR]` → Chrome で `http://localhost:1420`。
@@ -612,12 +613,95 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 ## Stage 6 — Claude Design の適用と残機能
 
+オーケストレータの判断で 2 つに分けた: **6a** = デザインの適用 + Stage 5 で出た UX / 堅牢性の課題、
+**6b** = データ源の追加が要る残機能。
+
+### Stage 6a — Claude Design の適用・UX / 堅牢性 (完了)
+
+**範囲**
+- [`docs/design/orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) のレイアウト・トークン・
+  アニメーション (`prefers-reduced-motion` 対応を含む) を**実データだけで**適用。データの無い要素は空 / プレースホルダ。
+- git パネル・ブランチ一覧用のコアコマンド、前回のプロジェクトの自動選択、履歴の遅延読み込み、
+  タスクカードの `@` メンション。
+- flaky テストの根本原因の修正、長いコマンドで実装者が報告せずターンを終える件の対策。
+- Stage 5 のスクリーンショットをリポジトリへ移す。
+
+**完了条件**
+- Vitest・`pnpm build`・`cargo test --workspace` (繰り返し)・clippy・fmt が通る。
+- Chrome + WS ブリッジ + 実 Haiku で小さな依頼を通し、画面をデザイン仕様と比べる。スクリーンショットを
+  `docs/e2e/stage6a/` に保存。
+
+**結果メモ (2026-09-23)**
+
+- デザインの適用 (`src/ui/`、対応表と「実データ / 空表示」の区別は
+  [`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8、追加トークンは [`tokens.md`](docs/design/tokens.md)):
+  タイトルバー (現在ブランチ)、アイコンレール (work / runs)、サイドバー (PROJECTS のリング = 開いている /
+  ターン中、BRANCHES = 実ブランチ、フッタ = ローカルコアへの接続と最後のイベント)、会話 (発話ラベル・
+  GROUP TASK カード・グループ待機バナー・メンションチップ付きコンポーザ)、タスク列 (注目グループ、
+  `subagents N`、カード = ステータスバッジ / 進捗 = Step の完了割合 / 対処中 = open help / ログ 2 行 = 最新
+  セッションの活動 / Step 列 / 担当セッションと経過時間 / `@` / ■ = タスク中止、過去のグループは折りたたみ、
+  グループ中止・merge_blocked の再試行)、git パネル (実コミットグラフ、レーン = `src/ui/gitGraph.ts`、
+  タスクブランチのバッジはタスクのステータス色)、エージェント出力 (git パネルの位置にタブ)、ステータスバー
+  (左 = 接続、右 = 使用量メーターは「—」)。接続断・エラーはタイトルバー下の帯。
+  **空表示 (6b へ)**: 使用量 / quota・プラン名・runs ビュー (デザインどおり「現状は何もありません」)・
+  リモートホスト・「対処の内容を見る / 差分を見る」・コミットのクリック / 差分・本文の強調 (Markdown)。
+- コア: `ApiCommand::GetGitOverview` (`git/graph.rs`、`core-design.md` §2「Stage 6a の決定」)。
+  TS 型を再生成。
+- UX: 前回開いたプロジェクトを `localStorage` に覚え、再読み込み後に自動で開く (コアが知っているパスのみ)。
+  履歴は snapshot の直近 400 イベントから読み、「さらに前の履歴を読み込む」で 400 件ずつ前へ
+  (コマンドの追加なし、`core-design.md` §2)。タスクカードの `@` → コンポーザのチップ → 送信時に
+  `@T-n タイトル` 行を本文の前に付ける。
+- **flaky テストの原因** (20 のテストバイナリを 4 並列 × 10 周で 15 件失敗を再現、名前を採取):
+  1. `orchestration_fake_recovery` の `run_until_finished` が `TempDir` を関数内で drop しており、
+     DB ファイルが実行中に消えていた。SQLite のプールが新しい接続を開くと `unable to open database file`
+     (13 件)。→ `TempDir` を呼び出し側へ返す。
+  2. コアの順序の不具合: Yhtye が止めたセッションの `session_stopped` が、forwarder 経由の
+     `turn_ended` / `exited` を追い越すことがあった (`cancel_task_stops_the_agent_mid_turn`)。
+     → `driver::StopOrder` で `Exited` の処理後に出す。回帰検査を同テストに追加。
+  3. 修正 2 で、背景で止まるセッションの停止を「オーケストレータの finish_group の時点で既に出ている」と
+     仮定していた 2 テスト (`create_task_spawns_…`、`restart_mid_step_…`) が表面化 → その事象を待つように。
+  修正後: 4 並列 × 30 周 (計 2400 バイナリ実行) で失敗 0。`cargo test --workspace` 単独 10 周も全成功。
+- **実装者が報告せずにターンを終える件**: 実 Haiku の新テスト
+  `orchestration_claude_git::real_implementer_waits_for_a_long_command_before_reporting` (`sleep 45` してから
+  ファイル作成) で修正前に再現 (reminder の後も報告なし → `protocol_violation` → タスク中止)。原因は Claude Code の
+  背景タスク (長いコマンドの背景実行) — ACP ではターン終了後にエージェントを起こす手段が無い。
+  → `HarnessConfig::claude_code` に `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`、implementer / reviewer の
+  プロンプトに「コマンドは前面で最後まで待つ、長ければ timeout を延ばす」、reminder に「待っていたコマンドは
+  前面でやり直す」。修正後 2 回とも reminder なしで報告・done・main にマージ (約 75 秒)。
+  `acp-harnesses.md` §5.2 に記録。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 172 件成功 (新規: core_facade `the_git_overview_shows_branches_and_the_commit_graph`、
+    git/graph の単体 3)。10 周連続成功 + 上記の並列ストレス。
+  - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
+  - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 10/10 成功 (実 Haiku、新テスト含む)。終了後 `claude-agent-acp` 0 個。
+  - `pnpm test` → 8 ファイル 54 件成功 (新規: `src/ui/Layout.test.tsx` 10 件 = git パネル・ブランチ・タイトルバー /
+    カードの進捗・Step・フッタ・待機バナー / `@` メンションの送信 / runs ビュー / エージェント出力タブ /
+    遅延読み込みが全読み込みと一致 / 前回プロジェクトの再オープン 3 件 / git の再読み込み、`gitGraph.test.ts` 3 件)。
+  - `pnpm build` 成功。
+- **Chrome E2E (WS ブリッジ + Vite + 実 Haiku、一時リポジトリ `scratchpad/e2e6a/demo`、マージ済みの枝あり)**:
+  開く → 依頼「2 タスクのグループ (README に 1 行 = implement→review、calc.py に sub = implement)」→
+  GROUP TASK カード・待機バナー・カードの進捗 / ログ / Step が進み、git パネルにタスクブランチがステータス色の
+  バッジ付きで現れる → G-1 done、main にマージ (UI のグラフと `git log --graph` が一致) → T-1 の `@` →
+  チップ → 質問を送信 → オーケストレータが `@T-1 …` を受けて回答 → ページ再読み込みで demo が自動で開く →
+  T-2 のタイトルで出力タブ (セッションの `process exited` の後に `session stopped` の順)。コンソールエラーなし。
+  終了後ブリッジ・Vite・エージェント残存 0。
+  スクリーンショット: [`docs/e2e/stage6a/`](docs/e2e/stage6a/) `1-group-running.jpg` / `2-done-merged-mention-chip.jpg` /
+  `3-mention-sent-answered.jpg` / `4-reloaded-auto-reopened.jpg` / `5-task-agent-output.jpg`。
+  (runs ビューのスクリーンショットは Chrome のウィンドウが非表示になり撮れなかった。ページは動作していた —
+  read_page で「現状は何もありません」を確認、rAF 77fps。表示は Vitest で検査。)
+- デザインとの差分 (要確認): デザインに無い要素を足した — リポジトリを開く欄、グループ行 (中止・再試行)、
+  Step 列、エージェント出力タブ、接続断の帯。フッタの「remote host」はローカルコアへの接続に読み替えた。
+  git のレビュー中 / 完了の枝の色は原本に無く流儀に従って発明 (`tokens.md`)。
+- 6b への申し送り: 使用量 / quota (`usage_update`・`_meta.quota`) とプラン名、runs (履歴) ビュー、
+  「対処の内容を見る / 差分を見る」と git の差分表示、オーケストレータ本文の Markdown 描画、他ハーネスの追加、
+  配布ビルドの課題 (DMABUF)。**`pnpm tauri dev` のウィンドウ内での確認は引き続きユーザーの手動確認待ち**。
+  未決事項 (`~/.claude` の扱い) は変わらず。
+
+### Stage 6b — 残機能 (未着手)
+
 **範囲** (実運用を見て優先度を決める)
-- [`docs/design/orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) のレイアウト・
-  トークン・アニメーションを適用。
-- git グラフ、ブランチ一覧、使用量 / quota 表示 (`usage_update`、`_meta.quota`)、
-  runs (履歴) ビュー、他ハーネスの追加 (設定のみで足せることの確認)、配布ビルドの課題
-  (Wayland + NVIDIA 回避策の扱いなど)。
+- 使用量 / quota 表示 (`usage_update`、`_meta.quota`)、runs (履歴) ビュー、差分表示、
+  他ハーネスの追加 (設定のみで足せることの確認)、配布ビルドの課題 (Wayland + NVIDIA 回避策の扱いなど)。
 
 **完了条件**
 - 各機能について実データで表示されることを Chrome E2E で確認。デザイン仕様との差分を

@@ -1,39 +1,36 @@
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 
 import type { ProjectView } from "../store/project";
+import { OlderHistory } from "./Conversation";
+import { taskSessions } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
 import { useAutoScroll } from "./useAutoScroll";
 
-/** Session keys of a task (`T-1/implementer`, `T-1/review-2`, ...) in start order. */
-export function taskSessions(view: ProjectView, task: string): string[] {
-  const prefix = `${task}/`;
-  const keys = new Set<string>();
-  for (const key of Object.keys(view.transcripts)) if (key.startsWith(prefix)) keys.add(key);
-  for (const s of view.sessions) if (s.session_key.startsWith(prefix)) keys.add(s.session_key);
-  const firstSeq = (k: string) => view.transcripts[k]?.[0]?.seq ?? Number.MAX_SAFE_INTEGER;
-  return [...keys].sort((a, b) => firstSeq(a) - firstSeq(b));
-}
+export { taskSessions };
 
-export function AgentOutput({ view, task }: { view: ProjectView; task: string | null }) {
+/** The selected task's agent sessions (implementer, reviewers) and step results. */
+export function AgentOutput({ view, task, tabs }: { view: ProjectView; task: string; tabs: ReactNode }) {
   const [chosen, setChosen] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const sessions = task ? taskSessions(view, task) : [];
+  const sessions = taskSessions(view, task);
   const session = chosen && sessions.includes(chosen) ? chosen : (sessions[sessions.length - 1] ?? null);
   const items = session ? view.transcripts[session] : undefined;
   const streaming = session ? view.streaming[session] : undefined;
-  useAutoScroll(scroller, [items, streaming]);
+  useAutoScroll(scroller, [items, streaming], items?.[0]?.seq);
+  const results = view.state?.tasks.find((t) => t.id === task)?.steps.filter((s) => s.result) ?? [];
 
   return (
-    <section className="panel agent-output" aria-label="agent output">
-      <header className="panel-header">
-        <span>agent output</span>
+    <div className="agent-output" style={{ display: "contents" }}>
+      <header className="bottom-header">
+        {tabs}
+        <span className="spacer" />
         {sessions.map((key) => {
           const record = view.sessions.find((s) => s.session_key === key);
           return (
             <button
               type="button"
               key={key}
-              className={`tab mono ${key === session ? "tab-active" : ""}`}
+              className={`session-tab ${key === session ? "active" : ""}`}
               onClick={() => setChosen(key)}
             >
               {key}
@@ -43,14 +40,26 @@ export function AgentOutput({ view, task }: { view: ProjectView; task: string | 
         })}
       </header>
       <div className="scroll" ref={scroller}>
-        {!task ? (
-          <p className="empty">タスク名をクリックすると、そのエージェントの出力を表示します。</p>
-        ) : !session ? (
+        {results.length > 0 ? (
+          <div className="transcript" aria-label="step results">
+            {results.map((s, i) => (
+              <div key={i} className="tool">
+                <span className="tool-kind">{s.kind} result{s.verdict ? ` (${s.verdict})` : ""}:</span> {s.result}
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {!session ? (
           <p className="empty">{task} のエージェントはまだ起動していません。</p>
         ) : (
-          <TranscriptView items={items ?? []} streaming={streaming} agentLabel={session.split("/")[1] ?? session} />
+          <TranscriptView
+            items={items ?? []}
+            streaming={streaming}
+            agentLabel={session.split("/")[1] ?? session}
+            before={<OlderHistory view={view} />}
+          />
         )}
       </div>
-    </section>
+    </div>
   );
 }
