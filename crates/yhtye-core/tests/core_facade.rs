@@ -2,8 +2,9 @@
 //! project registration and validation, commands and their errors, history
 //! paging with `ListEvents`, and user cancellation of turns, tasks and groups.
 //!
-//! `YHTYE_RECORD_FIXTURE=1` also writes the event streams of the run-to-merge
-//! and the cancellation tests to `src/test/fixtures/fake-{run,cancel}.json`
+//! `YHTYE_RECORD_FIXTURE=1` also writes the event streams of the run-to-merge,
+//! the cancellation and the unfinished-group tests to
+//! `src/test/fixtures/fake-{run,cancel,unfinished}.json`
 //! (input of the frontend's Vitest suite; `pnpm record:fixtures`).
 
 mod common;
@@ -279,6 +280,83 @@ async fn a_request_runs_to_the_merge_through_the_facade() {
 
     record_fixture("fake-run.json", &start, &seen, &snap);
     core.shutdown().await;
+}
+
+/// The orchestrator reports to the user after `group_settled` but never calls
+/// `finish_group` (seen with real Haiku, Stage 7a). With `finish_on_reminder`
+/// it calls it when reminded; otherwise Yhtye finishes the group itself.
+fn forgetful_scripts(finish_on_reminder: bool) -> (Value, Value, Value) {
+    let (orch, implementer, reviewer) = full_run_scripts();
+    let mut turns = vec![orch["turns"][0].clone()];
+    if finish_on_reminder {
+        turns.push(json!({"match": "reminder=1", "actions": [
+            {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "hello.txt added"}}},
+            {"message": "Merged."}
+        ]}));
+    }
+    turns.push(json!({"match": "[yhtye:group_settled]", "actions": [
+        {"message": "The test finished: hello.txt was written."}
+    ]}));
+    turns.push(json!({"match": "[yhtye:merge_result]", "actions": [
+        {"message": "Yhtye merged the group into main."}
+    ]}));
+    (json!({"turns": turns}), implementer, reviewer)
+}
+
+async fn run_forgetful(finish_on_reminder: bool) -> (TempRepo, Snapshot, Vec<ApiEvent>, Snapshot) {
+    let r = TempRepo::new();
+    let (orch, implementer, reviewer) = forgetful_scripts(finish_on_reminder);
+    let core = Core::start(core_config(&r, orch, implementer, reviewer))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r.repo).await.id;
+    let start = snapshot(&core, &project).await;
+    let send = ApiCommand::SendUserMessage {
+        project: project.clone(),
+        text: "Add hello.txt please".into(),
+    };
+    assert!(matches!(run(&core, send).await, ApiResponse::Accepted));
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, group_done).await;
+    until(&mut rx, &mut seen, orchestrator_turn_ended).await;
+    let end = snapshot(&core, &project).await;
+    core.shutdown().await;
+    (r, start, seen, end)
+}
+
+fn reminded(ev: &ApiEvent) -> bool {
+    is_domain(ev, |e| matches!(e, DomainEvent::GroupFinishReminded { .. }))
+}
+
+#[tokio::test]
+async fn a_group_the_orchestrator_leaves_open_is_finished_by_yhtye() {
+    let (r, start, seen, end) = run_forgetful(false).await;
+    assert_eq!(r.read("hello.txt"), "hello\n", "merged into main");
+    let g = &end.state.groups[0];
+    assert_eq!(g.status, GroupStatus::Done);
+    assert_eq!(g.finish_nudges, 1);
+    assert_eq!(
+        g.finish_summary.as_deref(),
+        Some(yhtye_core::prompts::AUTO_FINISH_SUMMARY)
+    );
+    assert_eq!(seen.iter().filter(|e| reminded(e)).count(), 1);
+    assert!(end.state.inbox.is_empty(), "merge_result was delivered");
+    record_fixture("fake-unfinished.json", &start, &seen, &end);
+}
+
+#[tokio::test]
+async fn a_reminded_orchestrator_finishes_the_group_itself() {
+    let (r, _, seen, end) = run_forgetful(true).await;
+    assert_eq!(r.read("hello.txt"), "hello\n");
+    let g = &end.state.groups[0];
+    assert_eq!(g.status, GroupStatus::Done);
+    assert_eq!(g.finish_summary.as_deref(), Some("hello.txt added"));
+    assert_eq!(seen.iter().filter(|e| reminded(e)).count(), 1);
+    let finished_by_tool = seen.iter().any(
+        |e| matches!(&e.body, ApiEventBody::ToolCalled { record } if record.tool == "finish_group"),
+    );
+    assert!(finished_by_tool);
 }
 
 /// With `YHTYE_RECORD_FIXTURE` set, writes the stream for the frontend tests

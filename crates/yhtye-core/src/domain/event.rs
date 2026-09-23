@@ -27,6 +27,11 @@ pub enum DomainEvent {
         group: String,
         summary: String,
     },
+    /// The orchestrator ended its turn leaving a settled group open; it was
+    /// reminded to finish it (Stage 7a).
+    GroupFinishReminded {
+        group: String,
+    },
     /// The group branch was merged into the base branch (`ok`) or could not be.
     GroupMergeFinished {
         group: String,
@@ -118,6 +123,7 @@ impl State {
         match event {
             DomainEvent::GroupCreated { .. }
             | DomainEvent::GroupFinishing { .. }
+            | DomainEvent::GroupFinishReminded { .. }
             | DomainEvent::GroupMergeFinished { .. }
             | DomainEvent::GroupCancelled { .. } => self.apply_group(event),
             DomainEvent::HelpRaised { .. }
@@ -147,6 +153,11 @@ impl State {
                 if let Some(g) = self.group_mut(group) {
                     g.status = GroupStatus::Finishing;
                     g.finish_summary = Some(summary.clone());
+                }
+            }
+            DomainEvent::GroupFinishReminded { group } => {
+                if let Some(g) = self.group_mut(group) {
+                    g.finish_nudges += 1;
                 }
             }
             DomainEvent::GroupMergeFinished { group, ok, detail } => {

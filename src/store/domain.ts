@@ -62,6 +62,9 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
         status: "finishing",
         finish_summary: event.summary,
       }));
+    case "group_finish_reminded":
+      // `?? 0`: groups created before Stage 7a have no counter in their event.
+      return mapGroup(state, event.group, (g) => ({ ...g, finish_nudges: (g.finish_nudges ?? 0) + 1 }));
     case "group_merge_finished":
       return mapGroup(state, event.group, (g) => ({
         ...g,
@@ -116,6 +119,7 @@ type TaskEvent = Exclude<
     type:
       | "group_created"
       | "group_finishing"
+      | "group_finish_reminded"
       | "group_merge_finished"
       | "group_cancelled"
       | "help_raised"

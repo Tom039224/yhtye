@@ -6,7 +6,7 @@
 import type { Group, Help, State, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
 import { ORCHESTRATOR, type TranscriptItem } from "../store/transcript";
-import { isTerminal, type Tone, taskTone } from "./labels";
+import { GROUP_LABEL, isTerminal, type Tone, taskTone } from "./labels";
 
 /** Session keys of a task (`T-1/implementer`, `T-1/review-2`, ...) in start order. */
 export function taskSessions(view: ProjectView, task: string): string[] {
@@ -27,6 +27,32 @@ export function focusGroup(state: State): Group | null {
 
 export function isOpenGroup(g: Group): boolean {
   return g.status === "active" || g.status === "finishing";
+}
+
+/**
+ * Every task of the open group has settled (terminal, or can never start) but
+ * the orchestrator has not finished the group yet: the work is not merged
+ * into the base branch until it calls `finish_group` (Yhtye reminds it, then
+ * finishes the group itself — orchestration-model.md §3).
+ */
+export function awaitingFinish(state: State, group: Group): boolean {
+  if (group.status !== "active") return false;
+  const tasks = state.tasks.filter((t) => t.group === group.id);
+  return tasks.length > 0 && tasks.every((t) => isTerminal(t) || isBlocked(state, t));
+}
+
+/** A pending task one of whose dependencies was cancelled (it can never start). */
+function isBlocked(state: State, task: Task, depth = 0): boolean {
+  if (task.status !== "pending" || depth > state.tasks.length) return false;
+  return task.depends_on.some((id) => {
+    const dep = state.tasks.find((t) => t.id === id);
+    return dep !== undefined && (dep.status === "cancelled" || isBlocked(state, dep, depth + 1));
+  });
+}
+
+/** The group's status label, telling "all tasks done, not merged yet" apart. */
+export function groupLabel(state: State, group: Group): string {
+  return awaitingFinish(state, group) ? "完了待ち" : GROUP_LABEL[group.status];
 }
 
 export interface GroupProgress {
@@ -127,6 +153,8 @@ export function openHelps(state: State, task: string): Help[] {
 export function taskMeta(state: State, task: Task, agent: string | null): string | null {
   const group = state.groups.find((g) => g.id === task.group);
   if (task.status === "done" && group && isOpenGroup(group)) {
+    if (group.status === "finishing") return "グループを base ブランチへマージ中";
+    if (awaitingFinish(state, group)) return "全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち";
     return "同グループの他タスク完了を待機 — 送信保留";
   }
   if (openHelps(state, task.id).length > 0) {

@@ -443,11 +443,17 @@ impl Driver {
         match event {
             AgentEvent::TurnEnded(result) => {
                 let agent = self.sessions.binding(&key).and_then(agent_ref);
+                let outcome = turn_outcome(result);
+                let prompt_queued = self.sessions.has_queued(&key);
                 if let Some(agent) = agent {
-                    let outcome = turn_outcome(result);
-                    let prompt_queued = self.sessions.has_queued(&key);
                     self.execute(DomainCommand::TurnEnded {
                         agent,
+                        outcome,
+                        prompt_queued,
+                    })
+                    .await;
+                } else if key == ORCHESTRATOR_SESSION {
+                    self.execute(DomainCommand::OrchestratorTurnEnded {
                         outcome,
                         prompt_queued,
                     })

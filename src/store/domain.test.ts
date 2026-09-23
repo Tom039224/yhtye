@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DomainEvent, Help, State, Task } from "../api/generated";
-import { CANCEL_RUN, durable, FULL_RUN, type Recording } from "../test/fixtures";
+import { CANCEL_RUN, durable, FULL_RUN, type Recording, UNFINISHED_RUN } from "../test/fixtures";
 import { applyDomainEvent, emptyState } from "./domain";
 import { applySessionEvent } from "./sessions";
 
@@ -13,6 +13,7 @@ describe("the TypeScript reducer agrees with the core", () => {
   for (const [name, rec] of [
     ["run to merge", FULL_RUN],
     ["cancellations", CANCEL_RUN],
+    ["group left open, finished by Yhtye", UNFINISHED_RUN],
   ] as const) {
     it(`replays the whole log of "${name}" to the core's final state`, () => {
       const empty = emptyState(rec.end.state.project, rec.end.state.config);
@@ -117,12 +118,23 @@ describe("constructed domain events", () => {
   it("marks a failed group merge as merge_blocked", () => {
     const group = {
       id: "G-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
-      status: "active" as const, finish_summary: null, detail: null,
+      status: "active" as const, finish_summary: null, detail: null, finish_nudges: 0,
     };
     let s = applyDomainEvent(base, { type: "group_created", group });
     s = applyDomainEvent(s, { type: "group_finishing", group: "G-1", summary: "sum" });
     s = applyDomainEvent(s, { type: "group_merge_finished", group: "G-1", ok: false, detail: "dirty" });
     expect(s.groups[0]).toMatchObject({ status: "merge_blocked", detail: "dirty", finish_summary: "sum" });
+  });
+
+  it("counts finish reminders, also for groups recorded before the counter existed", () => {
+    const { finish_nudges: _, ...old } = {
+      id: "G-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
+      status: "active" as const, finish_summary: null, detail: null, finish_nudges: 0,
+    };
+    let s = applyDomainEvent(base, { type: "group_created", group: old as typeof old & { finish_nudges: number } });
+    s = applyDomainEvent(s, { type: "group_finish_reminded", group: "G-1" });
+    s = applyDomainEvent(s, { type: "group_finish_reminded", group: "G-1" });
+    expect(s.groups[0].finish_nudges).toBe(2);
   });
 
   it("ignores events for unknown ids", () => {

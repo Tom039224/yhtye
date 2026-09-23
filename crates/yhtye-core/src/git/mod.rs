@@ -117,7 +117,7 @@ mod tests {
                 group: "G-1".into(),
                 group_branch: "yhtye/G-1".into(),
                 base_branch: "main".into(),
-                notify: false,
+                trigger: crate::domain::MergeTrigger::FinishGroup,
             })
             .await;
         assert!(matches!(merged, GitResult::Merged { .. }));

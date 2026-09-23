@@ -116,6 +116,23 @@ pub fn reminder_prompt(task_id: &str, step_index: usize) -> String {
     )
 }
 
+/// Body of the `group_settled` reminder sent when the orchestrator ends its turn
+/// while every task of an open group has settled (Stage 7a).
+#[must_use]
+pub fn group_finish_reminder(group: &str) -> String {
+    format!(
+        "Reminder: every task of group {group} has finished, but the group is still open, so \
+         its work is not merged into the user's branch yet. Call finish_group for {group} now \
+         with a short summary for the user (or create_task to add more work, cancel_task tasks \
+         that cannot start, or cancel_group to drop the group), then tell the user the result. \
+         If you end your turn without doing so, Yhtye will finish the group itself."
+    )
+}
+
+/// `finish_summary` of a group Yhtye finished after the reminder (Stage 7a).
+pub const AUTO_FINISH_SUMMARY: &str =
+    "Finished by Yhtye: the orchestrator ended its turn without finish_group after a reminder.";
+
 /// Sent to a sub-agent session restored with `session/load` after a restart.
 #[must_use]
 pub fn resume_prompt(task_id: &str, step_index: usize) -> String {

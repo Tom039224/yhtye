@@ -9,4 +9,9 @@ finish_summary: string | null,
 /**
  * Result of the merge into the base branch, or why the group was cancelled.
  */
-detail: string | null, };
+detail: string | null, 
+/**
+ * Reminders sent because the orchestrator ended its turn while every task
+ * had settled and the group was still open (Stage 7a; 0 in older logs).
+ */
+finish_nudges: number, };

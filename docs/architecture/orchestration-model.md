@@ -53,6 +53,20 @@ Project (git リポジトリ 1 つ)
   止めないため。Stage 3a で明確化)。
 - 全タスクが終端 (`done` / `cancelled`) になると Yhtye はオーケストレータを起こす。
   オーケストレータはタスクを追加するか、`finish_group` を呼ぶ。
+- **(Stage 7a) オーケストレータが `finish_group` を忘れた場合。** 実 Haiku が `group_settled` を受けて
+  ユーザーに結果を報告しただけでターンを終え、グループが `active` のまま残った (UI では「進行中」、
+  完了タスクに「送信保留」が出続けた。ユーザー報告のバグ)。サブエージェントの催促 (§7) と同じ考え方で、
+  オーケストレータのターンが `end_turn` で終わった時点で受信箱が空・次のプロンプトも無く、
+  **全タスクが落ち着いた (終端 or 開始不能) active グループ**があれば:
+  1. 1 回目: `group_settled` を `reminder=1` 付きで再送 (本文 =「`finish_group` を呼ぶか、タスク追加 /
+     `cancel_task` / `cancel_group`。呼ばなければ Yhtye が完了させる」)。回数はグループの `finish_nudges`
+     (イベント `group_finish_reminded`)。
+  2. それでも終わらなければ (`finish_nudges` ≥ 1) Yhtye が `finish_group` を代行する
+     (`finish_summary` = 「Yhtye が完了させた」旨、結果は `merge_result` で知らせる)。
+     開始不能タスクが残るグループは `finish_group` が拒否するため代行せず、`active` のまま
+     (UI は「完了待ち」と表示)。
+  これは「オーケストレータがタスク追加か `finish_group` を選ぶ」という決定を変えるものではなく、
+  選ばずにターンを終えたときの安全網である (報告: Stage 7a 結果メモ)。
 - `finish_group` で Yhtye は `group_branch` を `base_branch` に自動マージする (§6)。
 
 ### 2.2 Task
@@ -338,9 +352,8 @@ Stage 3b で実装した細部 (合意事項は変えていない。詳細は [`
   ずれる。必要ならオーケストレータ自身が担当する Task (担当役割 = orchestrator) を後で足す。
 - ~~オーケストレータのセッションもバイパス権限で動くと、メイン作業ツリーを直接書き換えられて
   しまう。~~ → Stage 2 で決定 (§8.1: 組み込みツールを Read / Glob / Grep に限定)。
-- Yhtye が起動する Claude Code に**ユーザー自身の設定** (`~/.claude` の CLAUDE.md・フック・
-  プラグイン・スキル) をどこまで効かせるか。Stage 2 では MCP サーバーだけ隔離し
-  (`strictMcpConfig`、[`acp-harnesses.md`](acp-harnesses.md) §5.2)、それ以外は読み込んだまま。
-  ユーザーの全体ルール (例: 「planner エージェントを使え」) がサブエージェントの動きを変えうる。
-  `settingSources` を `["project", "local"]` に絞るかはユーザーと決める。
-  **(未決。Stage 3a 時点でも現状の挙動 = 読み込んだまま を維持。PLAN.md の未決事項に記載)**
+- ~~Yhtye が起動する Claude Code に**ユーザー自身の設定** (`~/.claude` の CLAUDE.md・フック・
+  プラグイン・スキル) をどこまで効かせるか。~~ → **Stage 7a でユーザーが決定: 常に有効。**
+  全エージェントがユーザーの `~/.claude` の CLAUDE.md・フック・スキルを読み込む (`settingSources` は既定のまま)。
+  MCP サーバーだけは従来どおり隔離する (`strictMcpConfig`、[`acp-harnesses.md`](acp-harnesses.md) §5.2)。
+  ユーザーの全体ルールがサブエージェントの動きを変えうる (3c ではレビューが 1 往復増えた) ことは承知の上。

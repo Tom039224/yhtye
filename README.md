@@ -88,6 +88,8 @@ pnpm dev:browser --data-dir /tmp/yhtye-dev    # 以降の引数はブリッジ�
   トークンを作ってブリッジ (`YHTYE_BRIDGE_TOKEN`) と Vite (`VITE_YHTYE_BRIDGE_TOKEN`) の両方に渡す。
 - ブリッジのデータは既定で `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリとは別)。
 - 別々に起動する場合: `pnpm bridge -- --token T` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
+- **dev ブリッジは単一ユーザーのマシン専用。** トークンは Vite のバンドルに埋め込まれるため、同じマシンの
+  他のユーザーは `localhost:1420` から読めてしまう (配布物には含まれない。Stage 7a でこの前提で決定)。
 
 #### Wayland + NVIDIA で起動直後に落ちる場合
 
@@ -96,14 +98,15 @@ WebKitGTK の DMA-BUF レンダラが NVIDIA プロプライエタリドライ�
 即クラッシュすることがある。
 
 `src-tauri/.cargo/config.toml` で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定済みなので
-`pnpm tauri dev` では対処されている。ビルド済みバイナリを直接叩くときは自分で渡す。
+`pnpm tauri dev` では対処されている。古いビルドなどで必要なら自分で渡す。
 
 ```sh
 WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/debug/yhtye
 ```
 
-この回避策は dev 時のみ効く。配布バイナリでどう扱うかは未決
-([`docs/design/orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §7)。
+アプリ本体も起動時に Wayland + NVIDIA を検出したとき (かつ未設定のとき) だけ自分で設定するので
+(`src-tauri/src/webkit_env.rs`、[`core-design.md`](docs/architecture/core-design.md) §9)、
+ビルド済みバイナリでも通常は不要。変数が既に設定されていれば (値にかかわらず) アプリは触らない。
 
 ### ビルド・検証
 

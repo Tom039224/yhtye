@@ -2,6 +2,8 @@
 //! production configuration, forwards `yhtye_command` to it, emits every core
 //! event as `yhtye://event`, and shuts every agent down when the app exits.
 
+mod webkit_env;
+
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
@@ -92,6 +94,7 @@ fn exit_on_signal(app: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    webkit_env::apply();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

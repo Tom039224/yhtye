@@ -44,7 +44,7 @@ fn merge_group() -> GitOp {
         group: "G-1".into(),
         group_branch: "yhtye/G-1".into(),
         base_branch: "main".into(),
-        notify: false,
+        trigger: yhtye_core::domain::MergeTrigger::FinishGroup,
     }
 }
 

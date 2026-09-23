@@ -382,7 +382,9 @@ pub enum DomainCommand {
     InboxDelivered { up_to: u64 },
     Restart { orchestrator: OrchestratorResume },       // 3b: 再起動時。§8.1
     ResumeTask { task },                                 // 3b: interrupted のタスクを再開
-}
+    RetryGroupMerge { group },                           // 5: UI からのマージ再試行
+    OrchestratorTurnEnded { outcome, prompt_queued },    // 7a: 落ち着いた active グループの催促 → 代行
+}                                                        //     (orchestration-model §2.1)
 
 pub enum Effect {
     RunStep { agent: AgentRef, group, prompt, workdir },  // 無ければセッションを起動してから送る
@@ -392,6 +394,7 @@ pub enum Effect {
     StopAgent { agent: AgentRef },                        // レビュー済みのレビュアー
     StopTaskAgents { task },                              // タスク終端
     Git(GitOp),     // CreateGroupBranch / PrepareWorkspace / FinishTask / RemoveWorkspace / MergeGroup
+                    // MergeGroup.trigger (7a): FinishGroup = ツールの戻り値 / UserRetry・Yhtye = merge_result
     WakeOrchestrator,
 }
 // AgentRef { task, role, step } — ステップを担当するセッションの論理名
@@ -567,8 +570,12 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   本番バンドルに同じ CSP (IPC の代わりに `ws://127.0.0.1:1422`) を HTTP ヘッダで付けて Chrome で動かし、違反なしを確認した。
   opener の権限は `opener:default` から `allow-open-url` + `allow-default-urls` (http/https/mailto/tel) に絞った
   (`reveal-item-in-dir` は使わない)。
-- `WEBKIT_DISABLE_DMABUF_RENDERER=1` は従来どおり `src-tauri/.cargo/config.toml` の `[env]`
-  (`pnpm tauri dev` = src-tauri での `cargo run` に効く)。配布バイナリでの扱いは未決のまま。
+- `WEBKIT_DISABLE_DMABUF_RENDERER=1` (Stage 7a で決定): アプリの `run()` の最初に
+  `src-tauri/src/webkit_env.rs` が **Wayland (`WAYLAND_DISPLAY` が空でない、または `XDG_SESSION_TYPE=wayland`。
+  `GDK_BACKEND=x11` なら対象外) かつ NVIDIA ドライバが読み込まれている (`/proc/driver/nvidia` または
+  `/sys/module/nvidia` がある)** ときだけ設定する。ユーザーが既に設定していれば (値にかかわらず) 触らない。
+  プロセスを起こさない安価な判定で、スレッド起動前に呼ぶ。判定は注入した入力で単体テスト。
+  dev の `src-tauri/.cargo/config.toml` の `[env]` はそのまま (設定済みなので検出は何もしない)。
 
 ## 10. 開発用 WS ブリッジ (`yhtye-dev-bridge`)
 

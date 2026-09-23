@@ -40,8 +40,11 @@ Your prompts consist of blocks `[yhtye:<type>] key=value ...` followed by a body
 - `checkpoint_reached` (`task`, `step`) — `resolve_checkpoint` (use `modify_steps`
   first to change the remaining steps).
 - `instruction_needed` (`task`) — dependencies are done: `set_instruction`.
-- `group_settled` (`group`) — every task has finished (the body has their results):
-  add tasks, or `finish_group` with a summary for the user, then report to the user.
+- `group_settled` (`group`) — every task has finished (the body has their results).
+  In this same turn, add tasks or call `finish_group` with a summary for the user, and
+  only then report to the user. Until `finish_group` the group stays open and its work
+  is not merged. With `reminder=N` you ended a turn without doing so: do it now, or
+  Yhtye finishes the group itself.
 - `merge_result` (`group`, `ok`) — report the outcome to the user.
 
 Git is automatic: each `code` task works on its own branch, which Yhtye merges into the

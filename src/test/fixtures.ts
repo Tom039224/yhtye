@@ -4,6 +4,7 @@
 import type { ApiEvent, ProjectInfo, Snapshot } from "../api/generated";
 import cancelRun from "./fixtures/fake-cancel.json";
 import fullRun from "./fixtures/fake-run.json";
+import unfinishedRun from "./fixtures/fake-unfinished.json";
 
 export interface Recording {
   start: Snapshot;
@@ -15,6 +16,8 @@ export interface Recording {
 // by serializing the Rust types the generated TypeScript types describe.
 export const FULL_RUN = fullRun as unknown as Recording;
 export const CANCEL_RUN = cancelRun as unknown as Recording;
+/** The orchestrator leaves the settled group open; Yhtye reminds it, then finishes it (Stage 7a). */
+export const UNFINISHED_RUN = unfinishedRun as unknown as Recording;
 
 export const PROJECT: ProjectInfo = { id: "repo", name: "repo", path: "/tmp/repo", open: true };
 

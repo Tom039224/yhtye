@@ -225,7 +225,10 @@ fn retrying_a_blocked_merge_merges_and_tells_the_orchestrator() {
     assert_eq!(g.finish_summary.as_deref(), Some("did it"), "summary kept");
     assert!(has_effect(&chain, |e| matches!(
         e,
-        Effect::Git(GitOp::MergeGroup { notify: true, .. })
+        Effect::Git(GitOp::MergeGroup {
+            trigger: MergeTrigger::UserRetry,
+            ..
+        })
     )));
     let item = &sim.state.inbox.last().expect("merge_result").item;
     assert_eq!(item.kind, InboxKind::MergeResult);

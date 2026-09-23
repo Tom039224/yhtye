@@ -197,12 +197,14 @@ Yhtye が stash に退避済み (resume でそのまま完了できる。Stage 3
 | `checkpoint_reached` | `task`, `step` | それまでの Step の結果 | `resolve_checkpoint` (必要なら先に `modify_steps`) |
 | `help_raised` | `help_id`, `task`, `kind` | help の message | `answer_help` / `cancel_task` |
 | `instruction_needed` | `task` | 依存先タスクの最終結果 | `set_instruction` |
-| `group_settled` | `group` | 全タスクの結果要約・開始不能タスク | タスク追加 or `finish_group` / `cancel_group` |
+| `group_settled` | `group` (催促では `reminder=N` も) | 全タスクの結果要約・開始不能タスク (催促では催促文) | タスク追加 or `finish_group` / `cancel_group` (同じターンで) |
 | `merge_result` | `group`, `ok` | base へのマージ結果 | ユーザーへの報告 |
 | `restarted` | — | Yhtye の再起動で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
 
 `finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で
-マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 で実装) にだけ使う (Stage 3a で決定)。
+マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 で実装。Stage 7a から、催促後も
+`finish_group` を呼ばなかったグループを Yhtye が完了させたときも) にだけ使う (Stage 3a で決定)。
+`group_settled` の催促 (`reminder=N`) は Stage 7a で追加した ([`orchestration-model.md`](orchestration-model.md) §2.1)。
 再起動時にグループのマージ中 (`finishing`) だった場合も `ok=false` の `merge_result` を送る
 (グループは `merge_blocked`。Stage 3b)。`restarted` は Stage 3b で追加した
 ([`core-design.md`](core-design.md) §8.1)。

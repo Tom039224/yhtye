@@ -177,8 +177,9 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
 
 オーケストレータはさらに `tools: ["Read","Glob","Grep"]`
 ([`orchestration-model.md`](orchestration-model.md) §8.1)。
-`settingSources` (ユーザーの CLAUDE.md・フック・プラグイン) は既定のまま — 未決
-([`orchestration-model.md`](orchestration-model.md) §11)。
+`settingSources` (ユーザーの CLAUDE.md・フック・プラグイン・スキル) は既定のまま = **常に有効**
+(Stage 7a でユーザーが決定、[`orchestration-model.md`](orchestration-model.md) §11)。MCP サーバーだけは上の
+`strictMcpConfig` で隔離する。
 
 実機での観察 (Stage 2、2026-09-23、adapter 0.81.0 / Claude Code 2.1.280 + Haiku):
 

@@ -70,12 +70,25 @@ pub enum GitOp {
         group: String,
         group_branch: String,
         base_branch: String,
-        /// Retried by the user (`RetryGroupMerge`): the result goes to the
-        /// orchestrator's inbox as `merge_result` (`finish_group` gets it as its
-        /// reply instead).
+        /// Who started the merge; decides whether the result also goes to the
+        /// orchestrator's inbox as `merge_result`.
         #[serde(default)]
-        notify: bool,
+        trigger: MergeTrigger,
     },
+}
+
+/// Who started a group's merge into its base branch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeTrigger {
+    /// `finish_group`: the result is the tool's reply.
+    #[default]
+    FinishGroup,
+    /// The user retried a blocked merge (`RetryGroupMerge`): reported as `merge_result`.
+    UserRetry,
+    /// Yhtye finished a settled group the orchestrator left open after a
+    /// reminder (Stage 7a): reported as `merge_result`.
+    Yhtye,
 }
 
 /// Result of a [`GitOp`].
@@ -121,6 +134,13 @@ pub enum DomainCommand {
     },
     UserMessage {
         text: String,
+    },
+    /// The orchestrator's turn ended (Stage 7a: a settled group it left open
+    /// gets a reminder, then Yhtye finishes it).
+    OrchestratorTurnEnded {
+        outcome: TurnOutcome,
+        /// A prompt is already queued for the orchestrator.
+        prompt_queued: bool,
     },
     TurnEnded {
         agent: AgentRef,

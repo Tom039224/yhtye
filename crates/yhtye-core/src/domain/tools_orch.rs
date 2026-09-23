@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-use super::command::{Effect, GitOp};
+use super::command::{Effect, GitOp, MergeTrigger};
 use super::event::DomainEvent;
 use super::flow::help_agent;
 use super::machine::{Tx, non_empty};
@@ -76,6 +76,7 @@ impl Tx {
                 group_branch: group_branch.clone(),
                 status: GroupStatus::Active,
                 finish_summary: None,
+                finish_nudges: 0,
                 detail: None,
             },
         });
@@ -319,7 +320,7 @@ impl Tx {
             group: g.id.clone(),
             group_branch: g.group_branch.clone(),
             base_branch: g.base_branch.clone(),
-            notify: false,
+            trigger: MergeTrigger::FinishGroup,
         };
         self.emit(DomainEvent::GroupFinishing {
             group: a.group_id.clone(),

@@ -1,10 +1,9 @@
 import type { Group, State } from "../api/generated";
 import type { ProjectView } from "../store/project";
 import { useStore } from "../store/useStore";
-import { GROUP_LABEL } from "./labels";
 import type { Mention } from "./mentions";
 import { TaskCard } from "./TaskCard";
-import { focusGroup, groupProgress, liveSubagents } from "./taskInfo";
+import { focusGroup, groupLabel, groupProgress, liveSubagents } from "./taskInfo";
 import { useNow } from "./useNow";
 
 interface Props {
@@ -84,7 +83,9 @@ function GroupBar({ group, state }: { group: Group; state: State }) {
   return (
     <section aria-label={`group ${group.id}`} className="group-bar-wrap">
       <div className="group-bar">
-        <span className={`badge group-status-${group.status}`}>{GROUP_LABEL[group.status]}</span>
+        <span className={`badge group-status-${group.status}`} data-testid={`group-status-${group.id}`}>
+          {groupLabel(state, group)}
+        </span>
         <span>{group.id}</span>
         <span className="dim" title="グループブランチ ← base">
           {group.group_branch} ← {group.base_branch}

@@ -10,7 +10,7 @@ use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until};
 use common::real::{REAL_TIMEOUT, assert_haiku, is_orchestrator_turn_end, real_git_config};
 use common::repo::TempRepo;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::domain::{GroupStatus, TaskStatus};
+use yhtye_core::domain::{DomainEvent, GroupStatus, TaskStatus};
 use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
 
 const REQUEST: &str = "Create one group with exactly two code tasks. \
@@ -121,5 +121,47 @@ async fn real_implementer_waits_for_a_long_command_before_reporting() {
         t1.steps
     );
     assert_eq!(r.show("main", "done.txt").trim(), "ok");
+    shutdown_and_check(orch, &events).await;
+}
+
+/// The user's request from the Stage 7a bug report: no hint about
+/// `finish_group`. Real Haiku reported to the user after `group_settled`
+/// without finishing the group, which stayed "in progress". Now the group must
+/// end `done` — by the orchestrator, after the reminder, or by Yhtye.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku)"]
+async fn real_group_without_a_finish_hint_still_ends_done() {
+    let r = TempRepo::new();
+    let (orch, mut rx) = Orchestration::start(real_git_config(&r))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    let mut events = Vec::new();
+    orch.send_user_message(
+        "サブエージェントを使うテストをしてください。README を読んで要約する調査タスクを 1 つだけ作ってください。\
+         ファイルには変更を加えないでください",
+    )
+    .expect("send");
+    let merged = |e: &ApiEvent| {
+        matches!(
+            &e.body,
+            ApiEventBody::Domain {
+                event: DomainEvent::GroupMergeFinished { .. }
+            }
+        )
+    };
+    until(&mut rx, &mut events, REAL_TIMEOUT, merged).await;
+    until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    log_run(&events);
+    assert_haiku(&events);
+
+    let snap = orch.snapshot().await.expect("snapshot");
+    let group = snap.state.group("G-1").expect("group G-1");
+    eprintln!(
+        "group: {group:#?}\nfinished by the orchestrator: {}, reminders: {}",
+        events.iter().any(finish_called),
+        group.finish_nudges
+    );
+    assert_eq!(group.status, GroupStatus::Done, "{:?}", group.detail);
+    assert_eq!(r.status(), "", "main worktree clean");
     shutdown_and_check(orch, &events).await;
 }

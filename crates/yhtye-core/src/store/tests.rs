@@ -50,6 +50,7 @@ fn rich_state() -> State {
         group_branch: "yhtye/G-1".into(),
         status: GroupStatus::Active,
         finish_summary: None,
+        finish_nudges: 2,
         detail: Some("d".into()),
     });
     let t1 = Task {
@@ -137,7 +138,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 1);
+    assert_eq!(applied, 2);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -167,7 +168,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 1);
+    assert_eq!(applied, 2);
 }
 
 #[tokio::test]

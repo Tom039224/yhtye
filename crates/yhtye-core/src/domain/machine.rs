@@ -76,6 +76,10 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
         }
         DomainCommand::Tool { binding, call } => tx.tool(&binding, call)?,
         DomainCommand::UserMessage { text } => tx.queue_inbox(InboxItem::user_message(text)),
+        DomainCommand::OrchestratorTurnEnded {
+            outcome,
+            prompt_queued,
+        } => tx.orchestrator_turn_ended(&outcome, prompt_queued),
         DomainCommand::TurnEnded {
             agent,
             outcome,

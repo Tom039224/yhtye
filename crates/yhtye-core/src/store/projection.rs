@@ -66,7 +66,8 @@ pub(super) async fn write(tx: &mut Tx, before: &State, after: &State) -> Result<
 async fn upsert_group(tx: &mut Tx, project: &str, ord: usize, g: &Group) -> Result<(), StoreError> {
     sqlx::query(
         "INSERT OR REPLACE INTO task_groups (project_id, id, ord, title, summary, base_branch, \
-         group_branch, status, finish_summary, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         group_branch, status, finish_summary, detail, finish_nudges) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(project)
     .bind(&g.id)
@@ -78,6 +79,7 @@ async fn upsert_group(tx: &mut Tx, project: &str, ord: usize, g: &Group) -> Resu
     .bind(name(&g.status)?)
     .bind(&g.finish_summary)
     .bind(&g.detail)
+    .bind(i64::from(g.finish_nudges))
     .execute(&mut **tx)
     .await?;
     Ok(())
@@ -221,6 +223,7 @@ struct GroupRow {
     status: String,
     finish_summary: Option<String>,
     detail: Option<String>,
+    finish_nudges: i64,
 }
 
 #[derive(FromRow)]
@@ -294,8 +297,8 @@ pub(super) async fn load(
 
 async fn load_groups(conn: &mut SqliteConnection, project: &str) -> Result<Vec<Group>, StoreError> {
     let rows = sqlx::query_as::<_, GroupRow>(
-        "SELECT id, title, summary, base_branch, group_branch, status, finish_summary, detail \
-         FROM task_groups WHERE project_id = ? ORDER BY ord",
+        "SELECT id, title, summary, base_branch, group_branch, status, finish_summary, detail, \
+         finish_nudges FROM task_groups WHERE project_id = ? ORDER BY ord",
     )
     .bind(project)
     .fetch_all(&mut *conn)
@@ -311,6 +314,7 @@ async fn load_groups(conn: &mut SqliteConnection, project: &str) -> Result<Vec<G
                 status: parse(&r.status)?,
                 finish_summary: r.finish_summary,
                 detail: r.detail,
+                finish_nudges: uint(r.finish_nudges)?,
             })
         })
         .collect()

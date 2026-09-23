@@ -6,7 +6,7 @@ import { ORCHESTRATOR } from "../store/transcript";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
 import { withMentions, type Mention } from "./mentions";
-import { focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
+import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
 import { useAutoScroll } from "./useAutoScroll";
 
@@ -105,7 +105,9 @@ function WaitBanner({ state }: { state: State }) {
   const text =
     group.status === "finishing"
       ? `グループ「${group.title}」を base ブランチへマージ中`
-      : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
+      : awaitingFinish(state, group)
+        ? `グループ「${group.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
+        : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
   return (
     <div className="wait-banner" role="status" data-testid="wait-banner">
       <span className="dot dot-accent" />

@@ -6,6 +6,7 @@ mod agents;
 mod errors;
 mod flows;
 mod git;
+mod orch;
 mod restart;
 mod table;
 

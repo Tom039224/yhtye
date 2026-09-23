@@ -121,6 +121,10 @@ pub struct Group {
     pub finish_summary: Option<String>,
     /// Result of the merge into the base branch, or why the group was cancelled.
     pub detail: Option<String>,
+    /// Reminders sent because the orchestrator ended its turn while every task
+    /// had settled and the group was still open (Stage 7a; 0 in older logs).
+    #[serde(default)]
+    pub finish_nudges: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

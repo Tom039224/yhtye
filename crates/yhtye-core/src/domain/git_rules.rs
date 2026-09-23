@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::command::{Effect, GitOp, GitResult};
+use super::command::{Effect, GitOp, GitResult, MergeTrigger};
 use super::event::DomainEvent;
 use super::inbox::{InboxItem, InboxKind};
 use super::machine::Tx;
@@ -27,7 +27,7 @@ impl Tx {
                     );
                 }
             }
-            GitOp::MergeGroup { group, notify, .. } => self.group_merged(&group, result, notify),
+            GitOp::MergeGroup { group, trigger, .. } => self.group_merged(&group, result, trigger),
         }
     }
 
@@ -156,7 +156,7 @@ impl Tx {
             group: g.id.clone(),
             group_branch: g.group_branch.clone(),
             base_branch: g.base_branch.clone(),
-            notify: true,
+            trigger: MergeTrigger::UserRetry,
         };
         let summary = g.finish_summary.clone().unwrap_or_default();
         self.emit(DomainEvent::GroupFinishing {
@@ -167,7 +167,7 @@ impl Tx {
         Ok(())
     }
 
-    fn group_merged(&mut self, group: &str, result: GitResult, notify: bool) {
+    fn group_merged(&mut self, group: &str, result: GitResult, trigger: MergeTrigger) {
         let (ok, detail) = match result {
             GitResult::Merged { detail } => (true, detail),
             GitResult::Done => (true, "merged".to_string()),
@@ -178,12 +178,20 @@ impl Tx {
             ok,
             detail: detail.clone(),
         });
-        if notify {
+        let origin = match trigger {
+            MergeTrigger::FinishGroup => None,
+            MergeTrigger::UserRetry => Some("The user retried the merge from the Yhtye UI"),
+            MergeTrigger::Yhtye => Some(
+                "Yhtye finished the group because you ended your turn without finish_group \
+                 after a reminder",
+            ),
+        };
+        if let Some(origin) = origin {
             let ok_text = if ok { "true" } else { "false" };
             self.queue_inbox(InboxItem::new(
                 InboxKind::MergeResult,
                 &[("group", group), ("ok", ok_text)],
-                format!("The user retried the merge from the Yhtye UI: {detail}"),
+                format!("{origin}: {detail}"),
             ));
         }
         let status = self.state.group(group).map(|g| g.status);

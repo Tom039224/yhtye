@@ -23,7 +23,7 @@
         "session_key": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-652962",
+        "acp_session_id": "fake-2293277",
         "status": "live",
         "turn_running": false
       }
@@ -32,7 +32,7 @@
   "events": [
     {
       "seq": 1,
-      "ts_ms": 1790112609818,
+      "ts_ms": 1790136656355,
       "project": "repo",
       "live": false,
       "body": {
@@ -40,14 +40,14 @@
         "session": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "pid": 652962,
-        "acp_session_id": "fake-652962",
+        "pid": 2293277,
+        "acp_session_id": "fake-2293277",
         "resumed": false
       }
     },
     {
       "seq": 2,
-      "ts_ms": 1790112609820,
+      "ts_ms": 1790136656356,
       "project": "repo",
       "live": false,
       "body": {
@@ -56,7 +56,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-652962",
+            "acp_session_id": "fake-2293277",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -110,7 +110,7 @@
     },
     {
       "seq": 3,
-      "ts_ms": 1790112609820,
+      "ts_ms": 1790136656356,
       "project": "repo",
       "live": false,
       "body": {
@@ -130,7 +130,7 @@
     },
     {
       "seq": 4,
-      "ts_ms": 1790112609821,
+      "ts_ms": 1790136656357,
       "project": "repo",
       "live": false,
       "body": {
@@ -141,7 +141,7 @@
     },
     {
       "seq": 5,
-      "ts_ms": 1790112609821,
+      "ts_ms": 1790136656358,
       "project": "repo",
       "live": false,
       "body": {
@@ -154,7 +154,7 @@
     },
     {
       "seq": 5,
-      "ts_ms": 1790112609822,
+      "ts_ms": 1790136656359,
       "project": "repo",
       "live": true,
       "body": {
@@ -176,7 +176,7 @@
     },
     {
       "seq": 6,
-      "ts_ms": 1790112609822,
+      "ts_ms": 1790136656360,
       "project": "repo",
       "live": false,
       "body": {
@@ -188,7 +188,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790112609822,
+      "ts_ms": 1790136656360,
       "project": "repo",
       "live": false,
       "body": {
@@ -204,7 +204,7 @@
     },
     {
       "seq": 8,
-      "ts_ms": 1790112609823,
+      "ts_ms": 1790136656361,
       "project": "repo",
       "live": false,
       "body": {
@@ -224,7 +224,7 @@
     },
     {
       "seq": 9,
-      "ts_ms": 1790112609823,
+      "ts_ms": 1790136656361,
       "project": "repo",
       "live": false,
       "body": {
@@ -235,7 +235,7 @@
     },
     {
       "seq": 10,
-      "ts_ms": 1790112609824,
+      "ts_ms": 1790136656362,
       "project": "repo",
       "live": false,
       "body": {
@@ -248,7 +248,7 @@
     },
     {
       "seq": 11,
-      "ts_ms": 1790112609828,
+      "ts_ms": 1790136656368,
       "project": "repo",
       "live": false,
       "body": {
@@ -263,14 +263,15 @@
             "group_branch": "yhtye/G-1",
             "status": "active",
             "finish_summary": null,
-            "detail": null
+            "detail": null,
+            "finish_nudges": 0
           }
         }
       }
     },
     {
       "seq": 12,
-      "ts_ms": 1790112609848,
+      "ts_ms": 1790136656380,
       "project": "repo",
       "live": false,
       "body": {
@@ -297,7 +298,7 @@
     },
     {
       "seq": 12,
-      "ts_ms": 1790112609849,
+      "ts_ms": 1790136656382,
       "project": "repo",
       "live": true,
       "body": {
@@ -319,7 +320,7 @@
     },
     {
       "seq": 13,
-      "ts_ms": 1790112609852,
+      "ts_ms": 1790136656384,
       "project": "repo",
       "live": false,
       "body": {
@@ -364,7 +365,7 @@
     },
     {
       "seq": 14,
-      "ts_ms": 1790112609852,
+      "ts_ms": 1790136656384,
       "project": "repo",
       "live": false,
       "body": {
@@ -378,7 +379,7 @@
     },
     {
       "seq": 15,
-      "ts_ms": 1790112609863,
+      "ts_ms": 1790136656396,
       "project": "repo",
       "live": false,
       "body": {
@@ -386,13 +387,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
       "seq": 16,
-      "ts_ms": 1790112609863,
+      "ts_ms": 1790136656396,
       "project": "repo",
       "live": false,
       "body": {
@@ -407,7 +408,7 @@
     },
     {
       "seq": 17,
-      "ts_ms": 1790112609864,
+      "ts_ms": 1790136656398,
       "project": "repo",
       "live": false,
       "body": {
@@ -449,7 +450,7 @@
     },
     {
       "seq": 17,
-      "ts_ms": 1790112609866,
+      "ts_ms": 1790136656400,
       "project": "repo",
       "live": true,
       "body": {
@@ -471,7 +472,7 @@
     },
     {
       "seq": 18,
-      "ts_ms": 1790112609869,
+      "ts_ms": 1790136656403,
       "project": "repo",
       "live": false,
       "body": {
@@ -516,7 +517,7 @@
     },
     {
       "seq": 19,
-      "ts_ms": 1790112609869,
+      "ts_ms": 1790136656403,
       "project": "repo",
       "live": false,
       "body": {
@@ -530,7 +531,7 @@
     },
     {
       "seq": 20,
-      "ts_ms": 1790112609881,
+      "ts_ms": 1790136656421,
       "project": "repo",
       "live": false,
       "body": {
@@ -538,13 +539,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-2",
-          "path": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-2"
+          "path": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-2"
         }
       }
     },
     {
       "seq": 21,
-      "ts_ms": 1790112609881,
+      "ts_ms": 1790136656421,
       "project": "repo",
       "live": false,
       "body": {
@@ -559,7 +560,7 @@
     },
     {
       "seq": 22,
-      "ts_ms": 1790112609882,
+      "ts_ms": 1790136656422,
       "project": "repo",
       "live": false,
       "body": {
@@ -567,14 +568,14 @@
         "session": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "pid": 653095,
-        "acp_session_id": "fake-653095",
+        "pid": 2293591,
+        "acp_session_id": "fake-2293591",
         "resumed": false
       }
     },
     {
       "seq": 23,
-      "ts_ms": 1790112609882,
+      "ts_ms": 1790136656422,
       "project": "repo",
       "live": false,
       "body": {
@@ -585,7 +586,7 @@
     },
     {
       "seq": 24,
-      "ts_ms": 1790112609884,
+      "ts_ms": 1790136656424,
       "project": "repo",
       "live": false,
       "body": {
@@ -612,7 +613,7 @@
     },
     {
       "seq": 25,
-      "ts_ms": 1790112609884,
+      "ts_ms": 1790136656426,
       "project": "repo",
       "live": false,
       "body": {
@@ -626,7 +627,7 @@
     },
     {
       "seq": 26,
-      "ts_ms": 1790112609897,
+      "ts_ms": 1790136656442,
       "project": "repo",
       "live": false,
       "body": {
@@ -653,7 +654,7 @@
     },
     {
       "seq": 27,
-      "ts_ms": 1790112609898,
+      "ts_ms": 1790136656443,
       "project": "repo",
       "live": false,
       "body": {
@@ -673,7 +674,7 @@
     },
     {
       "seq": 28,
-      "ts_ms": 1790112609898,
+      "ts_ms": 1790136656443,
       "project": "repo",
       "live": false,
       "body": {
@@ -684,7 +685,7 @@
     },
     {
       "seq": 29,
-      "ts_ms": 1790112609899,
+      "ts_ms": 1790136656444,
       "project": "repo",
       "live": false,
       "body": {
@@ -697,7 +698,7 @@
     },
     {
       "seq": 30,
-      "ts_ms": 1790112609900,
+      "ts_ms": 1790136656445,
       "project": "repo",
       "live": false,
       "body": {
@@ -739,7 +740,7 @@
     },
     {
       "seq": 31,
-      "ts_ms": 1790112609900,
+      "ts_ms": 1790136656446,
       "project": "repo",
       "live": false,
       "body": {
@@ -753,7 +754,7 @@
     },
     {
       "seq": 32,
-      "ts_ms": 1790112609900,
+      "ts_ms": 1790136656446,
       "project": "repo",
       "live": false,
       "body": {
@@ -767,7 +768,7 @@
     },
     {
       "seq": 33,
-      "ts_ms": 1790112609911,
+      "ts_ms": 1790136656478,
       "project": "repo",
       "live": false,
       "body": {
@@ -794,7 +795,7 @@
     },
     {
       "seq": 34,
-      "ts_ms": 1790112609912,
+      "ts_ms": 1790136656479,
       "project": "repo",
       "live": false,
       "body": {
@@ -814,7 +815,7 @@
     },
     {
       "seq": 35,
-      "ts_ms": 1790112609912,
+      "ts_ms": 1790136656479,
       "project": "repo",
       "live": false,
       "body": {
@@ -825,7 +826,7 @@
     },
     {
       "seq": 36,
-      "ts_ms": 1790112609912,
+      "ts_ms": 1790136656480,
       "project": "repo",
       "live": false,
       "body": {
@@ -838,45 +839,7 @@
     },
     {
       "seq": 37,
-      "ts_ms": 1790112609913,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "session_stopped",
-        "session": "T-1/implementer",
-        "suspended": false
-      }
-    },
-    {
-      "seq": 38,
-      "ts_ms": 1790112609914,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "tool_called",
-        "record": {
-          "binding": {
-            "session": "user",
-            "role": "orchestrator",
-            "project": "repo"
-          },
-          "tool": "cancel_group",
-          "args": {
-            "group_id": "G-1",
-            "reason": "changed my mind"
-          },
-          "result": {
-            "Err": {
-              "code": "invalid_state",
-              "message": "group G-1 is cancelled; only active or merge_blocked groups can be cancelled"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 39,
-      "ts_ms": 1790112609914,
+      "ts_ms": 1790136656481,
       "project": "repo",
       "live": false,
       "body": {
@@ -885,7 +848,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-653095",
+            "acp_session_id": "fake-2293591",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -938,19 +901,35 @@
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790112609915,
+      "seq": 38,
+      "ts_ms": 1790136656484,
       "project": "repo",
       "live": false,
       "body": {
-        "type": "session_stopped",
-        "session": "T-2/implementer",
-        "suspended": false
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_group",
+          "args": {
+            "group_id": "G-1",
+            "reason": "changed my mind"
+          },
+          "result": {
+            "Err": {
+              "code": "invalid_state",
+              "message": "group G-1 is cancelled; only active or merge_blocked groups can be cancelled"
+            }
+          }
+        }
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790112609915,
+      "seq": 38,
+      "ts_ms": 1790136656485,
       "project": "repo",
       "live": true,
       "body": {
@@ -971,8 +950,8 @@
       }
     },
     {
-      "seq": 41,
-      "ts_ms": 1790112609915,
+      "seq": 39,
+      "ts_ms": 1790136656485,
       "project": "repo",
       "live": false,
       "body": {
@@ -983,8 +962,8 @@
       }
     },
     {
-      "seq": 42,
-      "ts_ms": 1790112609915,
+      "seq": 40,
+      "ts_ms": 1790136656485,
       "project": "repo",
       "live": false,
       "body": {
@@ -1000,7 +979,7 @@
     }
   ],
   "end": {
-    "seq": 43,
+    "seq": 40,
     "state": {
       "project": "repo",
       "config": {
@@ -1015,7 +994,8 @@
           "group_branch": "yhtye/G-1",
           "status": "cancelled",
           "finish_summary": null,
-          "detail": "changed my mind"
+          "detail": "changed my mind",
+          "finish_nudges": 0
         }
       ],
       "tasks": [
@@ -1049,7 +1029,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-1",
           "cancel_reason": "cancelled by the user"
         },
         {
@@ -1082,7 +1062,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpSs6EDt/data/worktrees/repo/G-1/T-2",
+          "workdir": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-2",
           "cancel_reason": "group cancelled: changed my mind"
         }
       ],
@@ -1100,15 +1080,15 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-653095",
-        "status": "stopped",
-        "turn_running": false
+        "acp_session_id": "fake-2293591",
+        "status": "live",
+        "turn_running": true
       },
       {
         "session_key": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-652962",
+        "acp_session_id": "fake-2293277",
         "status": "live",
         "turn_running": false
       }

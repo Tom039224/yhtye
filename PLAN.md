@@ -20,9 +20,12 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 3b | ドメインコア: SQLite 永続化 (イベントログ + 現在状態) と再起動・再開 | **完了** |
 | 3c | ドメインコア: git (worktree / ブランチ / マージ) と実 Haiku でのグループ完走 | **完了** (Stage 3 完了) |
 | 4 | フロントエンド (素の UI) | **完了** |
-| 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | **完了** (アプリ内 UI の手動確認は残り) |
+| 5 | 統合 (Tauri + WS ブリッジ + Chrome E2E) | **完了** (アプリ内 UI はユーザーが確認済み、7a) |
 | 6a | Claude Design の適用・UX / 堅牢性の修正 | **完了** |
 | 6b | Markdown 描画・使用量 / quota・ブランチ全体のレビュー | **完了** (設計判断が要る残機能は下の未決事項へ) |
+| 7a | 「完了したグループが進行中のまま」の修正・決定事項の反映 (DMABUF など) | **完了** |
+| 7b | ハーネス / モデルの選択 (役割ごと、⚙ ボタン) | 未着手 |
+| 7c | OpenCode ハーネス | 未着手 |
 
 ## 再開の仕方
 
@@ -458,31 +461,22 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **未決事項 (ユーザー判断待ち)** — 全 Stage 分をここにまとめる (朝の要約: [`docs/rebuild-summary.md`](docs/rebuild-summary.md))
 
-1. **ユーザー自身の `~/.claude` (CLAUDE.md・フック・プラグイン・スキル) を Yhtye のエージェントに効かせるか。**
-   現状は MCP サーバーだけ隔離し、それ以外は読み込んだまま (orchestration-model §11)。3c の実 Haiku で、
-   レビュアーがユーザーの Python ルール (型注釈必須) を根拠に毎回 `needs_changes` を出すことを確認 (1 往復増)。
-   案: (a) 現状維持 (b) `settingSources: ["project", "local"]` に絞る (c) 設定で切替。**推奨: (c)、既定は (b)** —
-   Yhtye の役割プロンプトと衝突するルールで挙動が読めなくなるのを避け、必要な人だけ有効にする。
-2. **runs (履歴) ビューの中身** (デザインは「現状は何もありません」だけ)。案: (a) 過去のグループ一覧
-   (状態・所要時間・マージ先・タスク数) → クリックで会話のその位置へ (b) (a) + セッションごとのターン・コスト
-   (c) 全イベントの時系列ログ。**推奨: (a)** — データは既に `State.groups` / イベントログにあり、追加コマンド不要。
-3. **「対処の内容を見る」「差分を見る」の遷移先。** 案: (a) 対処の内容 = help の本文と返答の詳細パネル、
-   差分 = タスクブランチの `git diff merge-base..branch` をエージェント出力の位置にタブで (b) 外部の diff ツールを開く
-   (c) ボタンを出さない。**推奨: (a)** — 差分は `GetGitOverview` と同じ読み取り専用コマンド `GetDiff{project, branch}` を足すだけ。
-4. **他ハーネス (Codex / Gemini CLI 等) の追加。** 案: (a) 役割ごとにハーネスを選べる設定 (`HarnessConfig` は既に
-   設定だけで足せる形) (b) 当面 Claude Code のみ。**推奨: (b) を続け、要望が来たら (a)** — 実機検証 (モード名・MCP・
-   `session/load`・履歴再生の順序) がハーネスごとに要る。Stage 6b でプロセスをホームで起動するようにしたため、
-   ACP の `cwd` を守らないハーネスは使えない点も確認項目。
-5. **配布バイナリでの `WEBKIT_DISABLE_DMABUF_RENDERER` (Wayland + NVIDIA)。** 案: (a) 起動時に Rust で
-   NVIDIA + Wayland を検出したときだけ設定 (b) 常に設定 (c) `.desktop` に書く。**推奨: (a)** — 他環境の GPU 描画を保つ。
-6. **使用量の取得頻度** (Stage 6b)。現状: 接続時 + 5 分ごと + クリックで `/usage` 用の短命エージェントを起動
-   (約 5〜7 秒、モデル呼び出しなし)。案: (a) 現状 (b) 手動のみ (c) オーケストレータのターン終了時。**推奨: (a)**。
-7. **dev ブリッジのトークンを Vite のバンドルに埋めている件** (レビュー LOW、開発専用)。同じマシンの他ユーザーが
-   `localhost:1420` から読める。案: (a) 単一ユーザー機専用と明記して現状維持 (b) URL の `#token=` で渡す。**推奨: (a)**
-   (配布物には含まれない)。
-8. 以前からの要確認: タスクブランチ名 `yhtye/<G>-<T>` (3c)、UI からの中止経路 (4)、ブリッジのポート 1422 と
-   Origin の無い接続をトークンだけで通す点 (5、6b のレビューで「ブラウザは WS に必ず Origin を付けるので安全」と確認)、
-   デザインに無い要素の追加 (6a)。**`pnpm tauri dev` のウィンドウ内での手動確認も未実施。**
+Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果メモ、決定の記録は各設計ドキュメント):
+
+1. ~~`~/.claude` を効かせるか~~ → **常に有効** (現状維持: CLAUDE.md・フック・スキルを読み込む、MCP サーバーだけ隔離)。
+   [`orchestration-model.md`](docs/architecture/orchestration-model.md) §11 / [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.2。
+2. **runs (履歴) ビューの中身** → **保留** (「現状は何もありません」の空表示のまま)。再開するときの案は前回の推奨
+   (過去のグループ一覧 → クリックで会話のその位置へ)。
+3. ~~「対処の内容を見る」「差分を見る」の遷移先~~ → **ボタンを出さない** ([`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §3.4 / §8)。
+4. ~~他ハーネスの追加~~ → **Stage 7b / 7c として実施予定** (下の Stage 7 の節)。
+5. ~~配布バイナリでの DMABUF~~ → **起動時に Wayland + NVIDIA を検出したときだけ設定** (7a で実装、[`core-design.md`](docs/architecture/core-design.md) §9)。
+6. ~~使用量の取得頻度~~ → **現状のまま** (接続時 + 5 分ごと + クリック)。
+7. ~~dev ブリッジのトークン~~ → **現状のまま**、単一ユーザー機専用と README に明記。
+8. ~~以前からの要確認~~ → すべて確認済み: タスクブランチ名 `yhtye/<G>-<T>`、UI からの中止経路、ブリッジのポート 1422 と
+   Origin の無い接続をトークンだけで通す点、6a で足したデザインに無い要素、**`pnpm tauri dev` のウィンドウ内の動作**
+   (ユーザーが Tauri ウィンドウでオーケストレータとの会話・サブエージェントの起動を確認)。
+
+残っている未決 / 保留: runs ビュー (保留)。7b / 7c の細部は各 Stage の中で決める。
 
 ## Stage 4 — フロントエンド (素の UI)
 
@@ -767,3 +761,80 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
     コードブロック・表」の返答を依頼 → 正しく描画、ステータスバーに `claude max`・5h 4% (4h 52m)・week 100% (1d 18h)、
     コンソールに CSP 違反なし。スクリーンショット [`docs/e2e/stage6b/1-markdown-and-usage.jpg`](docs/e2e/stage6b/1-markdown-and-usage.jpg)。
     ブリッジ・プレビューは停止済み。
+
+## Stage 7 — 不具合修正とハーネス / モデルの選択
+
+ユーザーの決定 (上の未決事項) を受けた作業。**7a** = ユーザー報告の不具合と小さな決定事項、**7b** = ハーネス / モデルの選択、
+**7c** = OpenCode ハーネス。
+
+### Stage 7a — 完了したグループが「進行中」のまま + 決定事項の反映 (完了)
+
+**範囲**: ユーザー報告の不具合「グループが終わったのに UI が『進行中』のまま、タスクカードに『同グループの他タスク完了を待機 —
+送信保留』が出続ける」の根本原因の修正。決定事項 (未決 1〜8) の反映、DMABUF の自動設定。
+
+**結果メモ (2026-09-23)**
+
+- **根本原因** (ユーザーのアプリの DB `~/.local/share/com.tom039224.yhtye/yhtye.sqlite3` の複製から特定): UI は正しかった —
+  コアの状態自体が `G-1 active` / `T-1 done` のまま。実 Haiku のオーケストレータが `[yhtye:group_settled]` を受けて
+  「テスト完了しました！…」とユーザーに報告しただけで**`finish_group` を呼ばずにターンを終えた** (seq 140〜146)。
+  設計上グループは `finish_group` まで `active` なので、UI の「進行中」と「送信保留」は状態の忠実な表示だった。
+  TS のリデューサ・スナップショット / 追いつきの経路に食い違いは無い (記録済みの 3 本の実イベント列で Rust と一致を検査)。
+- **修正 (コア)**: サブエージェントの催促 (§7) と同じ安全網をオーケストレータにも
+  ([`orchestration-model.md`](docs/architecture/orchestration-model.md) §2.1):
+  オーケストレータのターンが `end_turn` で終わり、受信箱が空で次のプロンプトも無いのに、全タスクが落ち着いた active グループが
+  あれば 1 回目は `group_settled` を `reminder=1` 付きで再送、それでも終わらなければ Yhtye が `finish_group` を代行して
+  `merge_result` で知らせる (開始不能タスクが残る場合は代行しない)。新しいドメインコマンド `OrchestratorTurnEnded`、
+  イベント `group_finish_reminded`、`Group.finish_nudges` (マイグレーション `0002`、古いログは `serde(default)` で 0)、
+  `GitOp::MergeGroup.notify: bool` → `trigger: MergeTrigger` (FinishGroup / UserRetry / Yhtye)。
+  オーケストレータのプロンプトにも「同じターンで `finish_group`、それまで作業はマージされない」を追記。
+  **合意済みの決定 (「オーケストレータがタスク追加か finish_group を選ぶ」) は変えていない** — 選ばずに終えたときの安全網。
+  ユーザーの DB に残っている `G-1` は、次にオーケストレータのターンが終わった時点で催促され、完了する。
+- **修正 (UI)**: 全タスクが落ち着いた active グループを「進行中 / 送信保留」と区別して表示: グループのバッジ「完了待ち」、
+  完了タスクの補足行「全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち」、待機バナー
+  「全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています」。finishing は「base ブランチへマージ中」。
+  done / cancelled / merge_blocked では補足行もバナーも出ない ([`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8)。
+- **テスト (先に失敗を確認)**:
+  - Rust ドメイン `domain/tests/orch.rs` 7 件 (催促 → 代行 / 催促後に自分で finish / 動いているタスク・未配達の受信箱・
+    キャンセルされたターン・キューあり・空グループでは何もしない / 開始不能タスクは催促のみ / 代行マージが dirty で
+    `merge_blocked` + `merge_result ok=false` / 古いイベントの読み込み)。store の往復で `finish_nudges` を検査、マイグレーション数 2。
+  - core_facade (偽エージェント) 2 件: `a_group_the_orchestrator_leaves_open_is_finished_by_yhtye` (Haiku の振る舞いを再現 →
+    催促 1 回 → Yhtye が main にマージ) と `a_reminded_orchestrator_finishes_the_group_itself`。前者の実イベント列を
+    `src/test/fixtures/fake-unfinished.json` に記録 (`pnpm record:fixtures`、既存 2 本も再記録)。
+  - Vitest `src/ui/GroupFinish.test.tsx` 7 件 (記録した列で: 催促前の表示 / ライブで done になる / 再読み込み (終了時の snapshot) /
+    ログ全体の追いつき / cancelled / merge_blocked → 再試行 → finishing → done)。UI 修正を戻すと 2 件失敗することを確認。
+    `domain.test.ts` に新しい記録のリデューサ一致と古いグループの催促カウント。
+- **決定事項の反映**: `~/.claude` = 常に有効 (orchestration-model §11・acp-harnesses §5.2)。「対処の内容を見る / 差分を見る」は
+  コードに無かった (6a で未実装のまま) ので設計ドキュメントに「出さない」と記録。runs ビューは保留。使用量の頻度・ブリッジの
+  トークンは現状維持 (README に単一ユーザー機専用と明記)。以前からの要確認と `pnpm tauri dev` の動作はユーザー確認済み。
+- **DMABUF**: `src-tauri/src/webkit_env.rs` — `run()` の最初に、Wayland (`WAYLAND_DISPLAY` / `XDG_SESSION_TYPE=wayland`、
+  `GDK_BACKEND=x11` なら除外) かつ NVIDIA (`/proc/driver/nvidia` / `/sys/module/nvidia`) で、ユーザーが未設定のときだけ
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1`。単体テスト 3 件 (入力を注入)。dev の `.cargo/config.toml` はそのまま (設定済みなので何もしない)。
+  この機械 (Hyprland + NVIDIA) では検出が真になることを確認。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 193 件成功 × 2 回 (ignored 11)。`cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
+  - `pnpm test` → 11 ファイル 73 件成功。`pnpm build` 成功。
+  - 実 Haiku (変更した経路に絞った): 新規 `orchestration_claude_git::real_group_without_a_finish_hint_still_ends_done`
+    (バグ報告と同じ依頼文、`finish_group` の指示なし) 2 回と `real_group_with_two_code_tasks_lands_on_the_base_branch` 1 回、すべて成功。
+    **観察**: 3 回ともオーケストレータ自身が `finish_group` を呼んだ (催促 0 回、プロンプトの追記が効いた可能性)。催促・代行の経路は
+    偽エージェントで検証。終了後 `claude-agent-acp` 残存 0。
+  - Chrome での目視確認はしていない (記録した実イベント列による UI テストで代替)。
+- 残課題: 開始不能タスクが残るグループは催促後も `active` のまま (UI は「完了待ち」)。オーケストレータが `cancel_task` するか、
+  ユーザーがグループを中止する。
+
+### Stage 7b — ハーネス / モデルの選択 (未着手、ユーザー決定済みの仕様)
+
+- コンポーザの下の行に ⚙ ボタン。**役割ごと** (orchestrator / implementer (code) / investigator / reviewer) に、
+  **候補集合 (ハーネス × モデル) と既定値**を設定する。
+- 設定は**全体の既定値の上にプロジェクトごとの既定値を重ねる**。SQLite に保存。
+- モデル一覧は各ハーネスから ACP の `configOptions` で取得する (**ハードコードしない**)。
+- 変更は**新しく起動するセッション**から効く (動いているセッションは変えない)。
+- オーケストレータは `create_task` の任意引数でタスクごとに上書きできるが、**その役割の候補集合の中だけ**。
+  候補外ならツールがエラーで拒否する。
+- 設計ドキュメント (mcp-tools の `create_task`、core-design の設定・API、orchestration-model の役割) を先に更新してから実装する。
+
+### Stage 7c — OpenCode ハーネス (未着手、ユーザー決定済みの仕様)
+
+- OpenCode を**全役割で選べる**ハーネスとして追加 (7b の選択に載せる)。
+- 検証の順: まず implementer、次に reviewer / orchestrator。確認項目は acp-harnesses の他ハーネスと同じ (モード名・MCP・
+  `session/load`・履歴再生の順序・ACP の `cwd` を守るか)。
+- 実エージェントテストのモデルは `opencode/muse-spark-1.3-contributor-free`。
