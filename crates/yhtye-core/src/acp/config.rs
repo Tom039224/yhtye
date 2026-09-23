@@ -43,6 +43,10 @@ pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.81.0
 /// Claude Code built-in tools left to the orchestrator (read-only).
 pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
 
+/// OpenCode's built-in primary agent ("mode") with every tool allowed except
+/// asking for paths outside the session directory (answered by Yhtye).
+pub const OPENCODE_BUILD_MODE: &str = "build";
+
 /// Selects the model via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelect {
@@ -142,6 +146,30 @@ impl HarnessConfig {
         h
     }
 
+    /// OpenCode's built-in ACP server (`opencode acp`, verified with 2.0.12) with the
+    /// given model as `<provider>/<model>` (e.g. `opencode/muse-spark-1.3-contributor-free`),
+    /// see `docs/architecture/acp-harnesses.md` §7. The model is chosen with
+    /// `set_config_option` (OpenCode's own default model is used until then), the
+    /// mode is the built-in `build` agent, and the role prompt is prepended to the
+    /// first prompt (OpenCode has no `_meta` system-prompt hook). The user's
+    /// OpenCode configuration stays in effect, like `~/.claude` for Claude Code.
+    #[must_use]
+    pub fn opencode(model: &str) -> Self {
+        Self {
+            command: "opencode".into(),
+            args: vec!["acp".into()],
+            env: BTreeMap::from([("OPENCODE_DISABLE_AUTOUPDATE".into(), "1".into())]),
+            mode_after_new: Some(OPENCODE_BUILD_MODE.into()),
+            model: Some(ModelSelect {
+                config_id: "model".into(),
+                value: model.into(),
+            }),
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+        }
+    }
+
     /// A bare harness running `command args...` with no mode/model configuration.
     #[must_use]
     pub fn plain(command: impl Into<String>, args: Vec<String>) -> Self {
@@ -219,6 +247,23 @@ mod tests {
             Some(&serde_json::json!(true))
         );
         assert_eq!(h.mode_after_new.as_deref(), Some("bypassPermissions"));
+    }
+
+    #[test]
+    fn opencode_defaults_use_build_mode_model_option_and_first_prompt() {
+        let h = HarnessConfig::opencode("opencode/muse-spark-1.3-contributor-free");
+        assert_eq!(
+            (h.command.as_str(), h.args.as_slice()),
+            ("opencode", &["acp".to_string()][..])
+        );
+        assert_eq!(h.mode_after_new.as_deref(), Some("build"));
+        let model = h.model.expect("model select");
+        assert_eq!(
+            (model.config_id.as_str(), model.value.as_str()),
+            ("model", "opencode/muse-spark-1.3-contributor-free")
+        );
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert!(h.session_meta.is_none());
     }
 
     #[test]
