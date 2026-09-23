@@ -27,7 +27,8 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | ハーネス | 状態 |
 |---|---|
 | Claude Code | **採用** (`@agentclientprotocol/claude-agent-acp` 経由、§4) |
-| Codex / Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build / OpenCode | 未着手 |
+| OpenCode | **検証済み (Stage 7c-1)** — 組み込みの `opencode acp` (2.0.12)、§7。ランタイムへの組み込みは 7c-2 |
+| Codex / Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
 ## 4. Rust クライアント: `agent-client-protocol` 2.2
@@ -249,3 +250,114 @@ ACP が使えない場合、この JSONL をファイル監視 (tail) して Yht
 このフォールバックは「Claude Code が ACP から抜けた場合」専用であり、平時は使わない。
 ACP 経由で問題なく動いている間は 6.1/6.2 のどちらも実装しない —
 両方とも Claude Code 個別対応であり、他のハーネスには適用しない。
+
+## 7. OpenCode: 組み込みの `opencode acp` (Stage 7c-1)
+
+調査日 2026-09-23、OpenCode **2.0.12** (`/usr/bin/opencode`、Bun でコンパイルされた単一バイナリ)。
+アダプタは不要で、OpenCode 自身が ACP サーバーを持つ。バイナリに埋め込まれた JS
+(`strings` で読める) の ACP 実装を読み、実機 (モデルは常に `opencode/muse-spark-1.3-contributor-free`、
+ユーザー決定) で確認した。
+
+### 7.1 結論
+
+| 項目 | 結論 |
+|---|---|
+| 起動 | **`opencode acp`** (フラグ不要)。stdout は ACP 専用。`opencode acp` は自分の子として **`opencode serve --stdio --port 0`** (専用サーバー、`--standalone` 相当) を起動し、HTTP API 経由で操作する。ユーザーのバックグラウンドサービス (`opencode serve --service`) には繋がない |
+| 認証 | `~/.local/share/opencode/auth.json` (ユーザーのログイン) をそのまま使う。`initialize` の `authMethods` は `opencode-login` (端末で `opencode auth login`) のみ |
+| initialize | `loadSession: true`、`mcpCapabilities {http: true, sse: false}`、`promptCapabilities {image, embeddedContext}`、`sessionCapabilities {close, delete, fork, list, resume}`、`agentInfo {name: "OpenCode", version: "2.0.12"}` |
+| **cwd** | **ACP の `cwd` を守る。** Yhtye はプロセスを `$HOME` で起動するが、ファイル作成・シェル (`pwd`)・相対パスはすべて session/new の `cwd` で行われた (`real_opencode_works_in_the_acp_cwd`)。プロジェクトディレクトリには OpenCode のファイルは何も残らない (MCP を足しても) |
+| **モード** | session/new の応答に **`modes` が無い**。モードは config option **`mode`** (category `mode`) としてだけ出る: `build` (既定、全ツール許可) / `plan` (edit 禁止 + 「実装するな」のリマインダ)。`session/set_mode {modeId}` も `set_config_option {configId:"mode"}` も使える。Yhtye は `build` を set_mode する。`AgentInfo::current_mode()` は `modes` が無いとき `mode` config option を返すようにした (追加のみ) |
+| **自動承認** | `bypassPermissions` 相当のモードは無いが、**`build` はもともと「全部 allow、ただし `external_directory` (セッション外のパス) と `*.env` の read は ask」**。ask は `session/request_permission` で来て、選択肢は固定の `once` (allow_once) / `always` (allow_always) / `reject` (reject_once)。Yhtye の自動応答 (kind で `allow_always` 優先) がそのまま効く (`real_opencode_external_directory_permission_is_auto_approved`: 外部ファイル read で 1 回来て `always`)。ファイル作成・シェルでは来なかった。`question` ツールのフォームは ACP 側で自動キャンセルされる |
+| **モデル** | config option **`model`** (値は `<provider>/<model>`、選択肢は認証済みプロバイダ全部で 475 件)。`effort` (バリアント) もある。**既定は OpenCode の「最後に使ったモデル」** (この環境では `opencode/gpt-6-sol`) なので、**最初のプロンプトより前の `set_config_option {configId:"model"}` が必須**。応答の `currentValue` で検証でき、Yhtye の `set_config_option` 検証 (要求値 = 現在値) がそのまま通る。`session/set_model` は無い |
+| **システムプロンプト** | `_meta` は見ない (session/new のハンドラは `cwd` と `mcpServers` だけ使う)。**`SystemPromptStyle::FirstPrompt`** (最初のプロンプトの前にテキストブロックとして付ける) を使う。会話の一部なので後のターンにも効き、`session/load` 後も履歴に残る (`real_opencode_system_prompt_reaches_the_agent`)。設定のエージェント定義 (`agent.<名前>.prompt`) で本物のシステムプロンプトにする案は下の 7.3 の理由で使えない |
+| **session/load** | 使える。セッション ID は `ses_…`。**cwd がセッション作成時のディレクトリと違うと拒否**される (`en` エラー)。履歴は **応答より前に** `session/update` で順に再生される: `available_commands_update` → `user_message_chunk` → (`agent_thought_chunk`) → `agent_message_chunk` → ツールは `tool_call` + 状態に応じた `tool_call_update`。つまり Yhtye では `Ready` より前に届き、Claude Code と同じく捨てられる。前の会話内容を覚えていた |
+| 更新の種類 | `agent_message_chunk` / `agent_thought_chunk` / `tool_call` / `tool_call_update` / `usage_update` (ターン末に 1 回、`used`・`size`・`cost`) / `available_commands_update` (`init`, `review`)。`current_mode_update` / `config_option_update` は来なかった |
+| **stop reason** | `end_turn` / `cancelled` / `max_tokens` (finish=length) / `refusal` (content-filter)。プロバイダ認証エラーは `-32000 Authentication required` の **JSON-RPC エラー**で返る (stop reason ではない) |
+| **キャンセル** | `session/cancel` で `session.interrupt`。長文生成中の cancel は **約 18〜20 ms** (3 回) で `stop_reason: cancelled` |
+| **MCP (HTTP)** | 使える。session/new の `mcpServers` の `Http{name,url,headers}` を `mcp.add({server: name, location: {directory: cwd}, config: {type:"remote", url, headers, oauth:false}})` で**そのセッションのサーバーに実行時に足す** (設定ファイルには書かない)。SSE は不可 (`sse:false`)。`ttlMs` / `cacheScope` は不要だが、付いていても問題ない (Yhtye の `tools/list` のまま動いた) |
+| **MCP ツールの呼び方** | OpenCode 2 は MCP ツールを**コードモード**で出す: エージェントは `execute` ツールで `await tools.yhtye.report_step_done({ result: "…" })` のような JS を実行する。ACP には `tool_call {title: "execute", kind: other, rawInput: {code}}` として見える (`mcp__yhtye__…` のような名前は出ない)。Yhtye の MCP サーバー側の `ToolCalled` 記録は Claude Code と同じ |
+| **後始末** | `opencode serve --stdio` は **別セッション (setsid、自分のプロセスグループ)** で動くので、Yhtye のプロセスグループ kill は届かない。ただし stdin が `opencode acp` からのパイプなので、`opencode acp` が終わる (stdin EOF で 0.02 秒で exit 0、SIGKILL でも) とサーバーも終わる。実テストでは毎回、グループと新しい `serve --stdio` の両方が残っていないことを確認している (`tests/common/opencode.rs::assert_no_new_servers`)。失敗したテスト (panic) の後も残存 0 |
+
+Yhtye での OpenCode 用 `HarnessConfig` (`HarnessConfig::opencode(model)`):
+
+```toml
+[harness.opencode]
+command = "opencode"
+args = ["acp"]
+env = { OPENCODE_DISABLE_AUTOUPDATE = "1" }
+mode_after_new = "build"
+model = { config_id = "model", value = "opencode/muse-spark-1.3-contributor-free" }  # <provider>/<model>
+system_prompt = "first_prompt"
+startup_timeout = 120
+```
+
+全役割で同じ設定を使う (7.3)。
+
+### 7.2 ユーザーの OpenCode 設定の扱い
+
+Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離」(Stage 7a の決定) にした。OpenCode も
+**ユーザー設定はそのまま有効** (隔離しない) にした。理由と実測:
+
+- OpenCode 2 の設定は グローバル (`~/.config/opencode/opencode.json(c)`、または **`OPENCODE_CONFIG_DIR` がその場所を置き換える**) →
+  `OPENCODE_CONFIG` のファイル → プロジェクト (`cwd` から祖先へ辿った `opencode.json(c)` と `.opencode/`) → `OPENCODE_CONFIG_CONTENT` の順に重なる。
+- この環境のユーザー設定 (`~/.config/opencode`: ollama プロバイダ、npm プラグイン `oh-my-openagent`、`plugins/gk-hooks.js`) は
+  2.0.12 では**実質効いていない**: ローカルプラグインは V2 のプラグイン API に合わず `failed to load plugin`、
+  `oh-my-openagent` のエージェント (sisyphus ほか、ClinePass のモデル指定付き) は ACP のモード一覧に出ない。
+  ユーザー設定に `mcp` は無い。したがって現時点で隔離して得るものが無く、隔離のコスト (Yhtye 専用の設定ディレクトリを
+  持つ・ユーザーの AGENTS.md などが効かなくなる) だけが残る。
+- **MCP の隔離手段は無い** (Claude の `strictMcpConfig` 相当が無い)。ユーザーやプロジェクトの `mcp.servers` は Yhtye のエージェントにも付く。
+  名前を知らずに無効化する設定も無い。将来ユーザーが OpenCode に MCP を足した場合の対策は 7c-2 以降の検討事項
+  (Yhtye 専用の `OPENCODE_CONFIG_DIR` を持つ案が最有力。`OPENCODE_CONFIG_DIR` はグローバル設定ディレクトリを**置き換える**ことを確認済み)。
+- **注意 (開発環境)**: Orca の端末は `OPENCODE_CONFIG_DIR=~/.config/orca/opencode-hooks/shared` を設定しており、Yhtye (やテスト) を
+  そこから起動するとそれが継承される (Orca の AGENTS.md・プラグインが読まれる。プラグインは V2 非対応で読み込み失敗)。
+  デスクトップから起動した Yhtye では継承されない。
+
+### 7.3 役割ごとの状況
+
+実テスト (`opencode/muse-spark-1.3-contributor-free`、`--test-threads=1`):
+
+| 役割 | 状況 |
+|---|---|
+| implementer | **動く。** 実行時に足した HTTP MCP 経由で `report_step_done` を呼び、README を編集した (`acp_opencode_real::real_opencode_implementer_reports_through_mcp`、オーケストレーション経由でも) |
+| reviewer | **動く。** implement → review のタスクで別セッションのレビュアーが `verdict: approve` 付きで `report_step_done` を呼んだ (`orchestration_opencode_real::real_opencode_implement_then_review`) |
+| orchestrator | **動くが読み取り専用にできない。** `create_group` → `create_task` → (サブエージェント完了) → `group_settled` で自分で `finish_group`。約 30 秒。催促 (`group_finish_reminded`) は 0 回。ただしモードは `build` (全ツール可) — 下記 |
+
+オーケストレータを読み取り専用にする手段 (Claude の `tools: [Read, Glob, Grep]` 相当) は 2.0.12 の ACP では見つからなかった:
+
+- **`plan` モード**: edit は拒否されるが shell は可。さらに OpenCode が「Plan モード中は変更しない・サブエージェントにも頼まない。
+  実装を頼まれたらエージェントを切り替えるよう伝えよ」というリマインダを入れるため、実測でオーケストレータが
+  `create_group` / `create_task` を**拒否**した (「Plan モードではグループ/タスクを作れない。build に切り替えて」と返答してターン終了)。使えない。
+- **設定で独自のプライマリエージェントを定義** (`agent.yhtye-orchestrator: {mode: primary, permission: {edit: deny, bash: deny, task: deny}}`) して
+  `set_mode` する案: `OPENCODE_CONFIG_CONTENT`・`OPENCODE_CONFIG_DIR` のファイル・`agents/*.md`・プロジェクトの `opencode.json` の
+  **どれで定義しても ACP のモード一覧に出ず**、`set_mode` は `mode not found` (-32602)。同じプロジェクト設定はバックグラウンドサービス経由の
+  `opencode debug agents` には出るので、ACP が使う専用サーバーのエージェント一覧に設定のエージェントが載らない (原因は未確定。ACP 実装は
+  ディレクトリごとのカタログを最初の session/new で作ってキャッシュする)。
+- 補足の観察: プロジェクトの `opencode.json` に `permission: {edit: deny, bash: deny}` を置くと、プロンプトが `-32000 Authentication required` で失敗した
+  (`{}` や `edit: deny` だけなら通る)。設定の `permission` は ACP 経由でも一部効いているが挙動が読めないので使わない。
+
+したがって OpenCode のオーケストレータは `build` モードで、読み取り専用はシステムプロンプト (「作業はタスクに委ねる」) だけが頼り。
+`orchestration-model.md` §11 の緩和策が OpenCode では効かないことを 7c-2 でユーザーに示す必要がある。
+
+### 7.4 実機での観察と実行結果 (2026-09-23)
+
+- 起動から `Ready` まで約 1 秒 (initialize 0.6 秒、session/new 0.4 秒)。1 ターンの応答は数秒 (無料モデル)。
+- `tests/acp_opencode_real.rs` 7 件 (プロンプト / ACP の cwd でファイル・シェル / 外部ディレクトリの権限の自動承認 / ターン中キャンセル /
+  FirstPrompt のシステムプロンプト / session/load と履歴の再生順 / MCP 経由の `report_step_done`) と
+  `tests/orchestration_opencode_real.rs` 2 件 (全役割 OpenCode で依頼 → タスク → 報告 → `finish_group` / implement → review) を
+  それぞれ 2 回実行して全件成功 (ACP の 1 回目はシステムプロンプトのテストが「毎回タグを付けよ」の指示を無料モデルが無視して失敗したので、
+  指示の伝達 (合言葉を後のターンで答える) を検査する形に直した)。テスト後に `opencode acp` / `opencode serve --stdio` の残存 0。
+- 1 回だけ観察: プロジェクトに `opencode.json` があると上記の認証エラーになる場合がある (7.3 の補足)。Yhtye のテストのプロジェクトには置いていない。
+
+### 7.5 7c-2 (7b の設定への組み込み) への申し送り
+
+- ハーネスは `HarnessConfig::opencode(model)` を全役割で使う。モデル一覧は session/new 応答の `model` config option
+  (値 `<provider>/<model>`) から取れる — 7b の「configOptions から取得」にそのまま載る。選択肢が 475 件と多いので UI で絞り込みが要る。
+- 既定モデルが OpenCode の最後に使ったモデル (有料のことがある) なので、**モデル未指定で OpenCode を起動しない** (`model` を必須にする)。
+- オーケストレータを OpenCode にした場合は読み取り専用にならない (7.3)。UI / ドキュメントで明示するか、OpenCode をオーケストレータ候補から外すかを決める。
+- ACP の `tool_call` は MCP 呼び出しが `execute` (コードモード) に見える。UI でツール名を出す箇所は `rawInput.code` を見せるか、
+  MCP サーバー側の `ToolCalled` を使う。
+- MCP の隔離が無い (7.2)。必要になったら Yhtye 専用の `OPENCODE_CONFIG_DIR` (アプリのデータディレクトリ配下、他ユーザーが書けない場所) を渡す。
+- 再起動復元: session/load は `cwd` が作成時と同じでないと拒否される。Yhtye は同じ作業ディレクトリ (プロジェクト / worktree) で load するので問題ないはずだが、
+  パスが変わった場合 (worktree の作り直しなど) は load が失敗する。オーケストレータは失敗時に新しいセッションへフォールバックするが、
+  サブエージェントの経路でも同様に扱えるかを 7c-2 で確認する。FirstPrompt のシステムプロンプトは新しいセッションの最初のプロンプトにだけ付き、
+  load で復元したセッションには付けない (履歴に残っている)。

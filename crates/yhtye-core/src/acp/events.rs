@@ -60,10 +60,14 @@ impl AgentInfo {
         config_value(&self.config_options, config_id)
     }
 
-    /// Current session mode id.
+    /// Current session mode id: the `modes` state, or else the `mode` config
+    /// option (OpenCode reports its modes only as a config option).
     #[must_use]
     pub fn current_mode(&self) -> Option<&str> {
-        self.modes.as_ref().map(|m| &*m.current_mode_id.0)
+        self.modes
+            .as_ref()
+            .map(|m| &*m.current_mode_id.0)
+            .or_else(|| self.config_value("mode"))
     }
 }
 
