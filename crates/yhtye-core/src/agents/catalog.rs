@@ -17,6 +17,11 @@ use crate::acp::{AgentError, HarnessConfig, ModelSelect};
 /// The config id used for the model when a harness config names none.
 pub const MODEL_CONFIG_ID: &str = "model";
 
+/// Id of the OpenCode preset.
+pub const OPENCODE: &str = "opencode";
+/// Id of the Claude Code preset.
+pub const CLAUDE_CODE: &str = "claude-code";
+
 /// How to launch one harness for every role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessPreset {
@@ -34,6 +39,12 @@ pub struct HarnessPreset {
     /// Environment variable that also carries the model (the adapter's initial
     /// model, e.g. `ANTHROPIC_MODEL`), set with the `set_config_option` value.
     pub model_env: Option<String>,
+    /// A choice of this harness must name a model (OpenCode: its own default is
+    /// the last model the user used, possibly a paid one).
+    pub requires_model: bool,
+    /// The orchestrator config cannot write files (Claude Code: read-only
+    /// built-in tools). `false`: only the prompt forbids it (OpenCode).
+    pub orchestrator_read_only: bool,
 }
 
 /// A registered harness, for the UI.
@@ -41,6 +52,10 @@ pub struct HarnessPreset {
 pub struct HarnessInfo {
     pub id: String,
     pub label: String,
+    /// Every choice names a model (no "harness default" entry).
+    pub requires_model: bool,
+    /// As orchestrator it cannot write files; `false` is shown as a warning.
+    pub orchestrator_read_only: bool,
 }
 
 impl HarnessPreset {
@@ -49,7 +64,7 @@ impl HarnessPreset {
     #[must_use]
     pub fn claude_code(model: &str) -> Self {
         Self {
-            id: "claude-code".into(),
+            id: CLAUDE_CODE.into(),
             label: "Claude Code".into(),
             orchestrator: HarnessConfig::claude_code_orchestrator(model),
             implementer: HarnessConfig::claude_code(model),
@@ -57,6 +72,36 @@ impl HarnessPreset {
             reviewer: HarnessConfig::claude_code(model),
             probe: Some(HarnessConfig::claude_code_usage_probe()),
             model_env: Some("ANTHROPIC_MODEL".into()),
+            requires_model: false,
+            orchestrator_read_only: true,
+        }
+    }
+
+    /// OpenCode (`opencode acp`, `HarnessConfig::opencode`) for every role
+    /// (`acp-harnesses.md` §7). A choice must name a model; `fallback_model` is
+    /// only used if one without a model slips through (e.g. an old setting), so
+    /// OpenCode never starts on its own last-used model. The orchestrator runs in
+    /// `build` mode: OpenCode cannot restrict it to read-only tools (§7.3).
+    /// `env_remove` is dropped from the inherited environment
+    /// ([`super::inherited_opencode_env_remove`]).
+    #[must_use]
+    pub fn opencode(fallback_model: &str, env_remove: Vec<String>) -> Self {
+        let mut h = HarnessConfig::opencode(fallback_model);
+        h.env_remove = env_remove;
+        let mut probe = h.clone();
+        probe.mode_after_new = None;
+        probe.model = None;
+        Self {
+            id: OPENCODE.into(),
+            label: "OpenCode".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h,
+            probe: Some(probe),
+            model_env: None,
+            requires_model: true,
+            orchestrator_read_only: false,
         }
     }
 
@@ -78,6 +123,8 @@ impl HarnessPreset {
             reviewer,
             probe: None,
             model_env: None,
+            requires_model: false,
+            orchestrator_read_only: true,
         }
     }
 
@@ -86,6 +133,8 @@ impl HarnessPreset {
         HarnessInfo {
             id: self.id.clone(),
             label: self.label.clone(),
+            requires_model: self.requires_model,
+            orchestrator_read_only: self.orchestrator_read_only,
         }
     }
 
@@ -138,6 +187,17 @@ impl HarnessPreset {
             h
         })
     }
+}
+
+/// The outcome of [`AgentCatalog::resolve`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Resolved {
+    /// What the session runs.
+    pub choice: AgentChoice,
+    pub harness: HarnessConfig,
+    /// The choice asked for, when its harness is not registered and `choice`
+    /// runs instead (shown to the user, `core-design.md` §15.4).
+    pub replaced: Option<AgentChoice>,
 }
 
 #[derive(Debug, Default)]
@@ -232,35 +292,69 @@ impl AgentCatalog {
         }
     }
 
+    /// Checks `settings` against the registered harnesses
+    /// ([`RoleSettings::validate`]) and that every choice of a harness that
+    /// [requires a model](HarnessPreset::requires_model) names one.
+    pub fn validate(&self, settings: &RoleSettings) -> Result<RoleSettings, String> {
+        let valid = settings.validate(&self.harness_ids())?;
+        if let Some(c) = valid.candidates.iter().find(|c| {
+            c.model.is_none() && self.preset(&c.harness).is_some_and(|p| p.requires_model)
+        }) {
+            return Err(format!("{}: a model is required", c.harness));
+        }
+        Ok(valid)
+    }
+
     /// What a new session of `role` in `project` runs: `over` (an allowed
     /// override of the task) if its harness is registered, else the role's
-    /// default in effect now. Returns the choice and its launch config.
+    /// default in effect now, else the built-in default. A choice that was
+    /// skipped because its harness is not registered (any more) is reported
+    /// in [`Resolved::replaced`].
     pub fn resolve(
         &self,
         project: &str,
         role: AgentRole,
         over: Option<&AgentChoice>,
-    ) -> Result<(AgentChoice, HarnessConfig), AgentError> {
+    ) -> Result<Resolved, AgentError> {
+        let mut replaced = None;
         if let Some(choice) = over {
             match self.launch_config(role, choice) {
-                Some(h) => return Ok((choice.clone(), h)),
-                None => tracing::warn!(
-                    "harness {} of the task's override is not registered; using the default",
-                    choice.harness
-                ),
+                Some(harness) => {
+                    return Ok(Resolved {
+                        choice: choice.clone(),
+                        harness,
+                        replaced,
+                    });
+                }
+                None => {
+                    tracing::warn!(
+                        "harness {} of the task's override is not registered; using the default",
+                        choice.harness
+                    );
+                    replaced = Some(choice.clone());
+                }
             }
         }
         let default = self.effective(Some(project)).get(role).default.clone();
-        if let Some(h) = self.launch_config(role, &default) {
-            return Ok((default, h));
+        if let Some(harness) = self.launch_config(role, &default) {
+            return Ok(Resolved {
+                choice: default,
+                harness,
+                replaced,
+            });
         }
         tracing::warn!(
             "default harness {} of {} is not registered; using the built-in default",
             default.harness,
             role.as_str()
         );
+        let replaced = replaced.or(Some(default));
         self.launch_config(role, &self.builtin)
-            .map(|h| (self.builtin.clone(), h))
+            .map(|harness| Resolved {
+                choice: self.builtin.clone(),
+                harness,
+                replaced,
+            })
             .ok_or_else(|| AgentError::Unsupported {
                 requested: format!("harness {}", self.builtin.harness),
                 available: self.harness_ids().join(", "),
@@ -339,9 +433,10 @@ mod tests {
     #[test]
     fn resolve_uses_the_override_else_the_current_default() {
         let c = catalog();
-        let (choice, h) = c.resolve("P", AgentRole::Reviewer, None).expect("builtin");
-        assert_eq!(choice, AgentChoice::new("claude-code", Some("haiku")));
-        assert_eq!(h.command, "npx");
+        let r = c.resolve("P", AgentRole::Reviewer, None).expect("builtin");
+        assert_eq!(r.choice, AgentChoice::new("claude-code", Some("haiku")));
+        assert_eq!(r.harness.command, "npx");
+        assert_eq!(r.replaced, None);
 
         let other = AgentChoice::new("other", None);
         c.set(
@@ -349,26 +444,27 @@ mod tests {
             AgentRole::Reviewer,
             Some(RoleSettings::only(other.clone())),
         );
-        let (choice, h) = c.resolve("P", AgentRole::Reviewer, None).expect("project");
-        assert_eq!((choice, h.command.as_str()), (other.clone(), "r"));
-        let (choice, _) = c
+        let r = c.resolve("P", AgentRole::Reviewer, None).expect("project");
+        assert_eq!((r.choice, r.harness.command.as_str()), (other.clone(), "r"));
+        let r = c
             .resolve("Q", AgentRole::Reviewer, None)
             .expect("other project");
-        assert_eq!(choice.harness, "claude-code", "layers are per project");
+        assert_eq!(r.choice.harness, "claude-code", "layers are per project");
 
         let over = AgentChoice::new("claude-code", Some("sonnet"));
-        let (choice, _) = c
+        let r = c
             .resolve("P", AgentRole::Reviewer, Some(&over))
             .expect("override");
-        assert_eq!(choice, over);
+        assert_eq!((r.choice, r.replaced), (over, None));
         let gone = AgentChoice::new("gone", None);
-        let (choice, _) = c
+        let r = c
             .resolve("P", AgentRole::Reviewer, Some(&gone))
             .expect("fallback");
         assert_eq!(
-            choice, other,
+            r.choice, other,
             "an unregistered override falls back to the default"
         );
+        assert_eq!(r.replaced, Some(gone), "and says what it replaced");
     }
 
     #[test]
@@ -379,10 +475,11 @@ mod tests {
             AgentRole::Implementer,
             Some(RoleSettings::only(AgentChoice::new("gone", None))),
         );
-        let (choice, _) = c
+        let r = c
             .resolve("P", AgentRole::Implementer, None)
             .expect("builtin");
-        assert_eq!(choice, AgentChoice::new("claude-code", Some("haiku")));
+        assert_eq!(r.choice, AgentChoice::new("claude-code", Some("haiku")));
+        assert_eq!(r.replaced, Some(AgentChoice::new("gone", None)));
         let broken = AgentCatalog::new(vec![], AgentChoice::new("none", None));
         assert!(broken.resolve("P", AgentRole::Implementer, None).is_err());
     }

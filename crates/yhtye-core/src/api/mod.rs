@@ -72,6 +72,11 @@ pub enum ApiEventBody {
         resumed: bool,
         /// The harness × model it runs (Stage 7b; absent in older logs).
         agent: Option<AgentChoice>,
+        /// What it was meant to run when that harness is not registered (any
+        /// more) and `agent` runs instead (Stage 7c-2; shown to the user).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        replaced: Option<AgentChoice>,
     },
     SessionFailed {
         session: String,

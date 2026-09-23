@@ -16,6 +16,7 @@ use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserAc
 use crate::acp::HarnessConfig;
 use crate::agents::{
     AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelService, RoleSettings,
+    installed_presets,
 };
 use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
@@ -68,6 +69,17 @@ impl CoreConfig {
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
         }
+    }
+
+    /// The app's configuration (Tauri and the dev bridge, Stage 7c-2): like
+    /// [`CoreConfig::claude_code`], plus every other installed harness
+    /// ([`installed_presets`]: OpenCode when `opencode` is on `PATH`). Every
+    /// role still defaults to Claude Code with `model`.
+    #[must_use]
+    pub fn installed(data_dir: impl Into<PathBuf>, model: &str) -> Self {
+        let mut cfg = Self::claude_code(data_dir, model);
+        cfg.harnesses = installed_presets(model, |k| std::env::var_os(k));
+        cfg
     }
 }
 
@@ -258,7 +270,7 @@ impl Core {
         }
         let agents = &self.inner.agents;
         let settings = settings
-            .map(|s| s.validate(&agents.harness_ids()))
+            .map(|s| agents.validate(&s))
             .transpose()
             .map_err(|e| ApiError::invalid_argument(format!("{}: {e}", role.as_str())))?;
         self.inner

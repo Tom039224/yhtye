@@ -27,7 +27,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | ハーネス | 状態 |
 |---|---|
 | Claude Code | **採用** (`@agentclientprotocol/claude-agent-acp` 経由、§4) |
-| OpenCode | **検証済み (Stage 7c-1)** — 組み込みの `opencode acp` (2.0.12)、§7。ランタイムへの組み込みは 7c-2 |
+| OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` がインストールされていれば全役割で選べる (7c-2、§7.6) |
 | Codex / Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -320,6 +320,11 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
 - **注意 (開発環境)**: Orca の端末は `OPENCODE_CONFIG_DIR=~/.config/orca/opencode-hooks/shared` を設定しており、Yhtye (やテスト) を
   そこから起動するとそれが継承される (Orca の AGENTS.md・プラグインが読まれる。プラグインは V2 非対応で読み込み失敗)。
   デスクトップから起動した Yhtye では継承されない。
+- **継承した `OPENCODE_CONFIG_DIR` の扱い (7c-2 で決定)**: 「ユーザーの OpenCode 設定を有効にする」を守るため、
+  **`OPENCODE_CONFIG_DIR` が `ORCA_OPENCODE_CONFIG_DIR` と同じ値 (= Orca の端末が注入したもの) のときだけ**エージェントの環境から外す
+  (`HarnessConfig::env_remove`、`agents::inherited_opencode_env_remove`)。ユーザーが自分で設定した値 (`ORCA_…` と違う・無い) はそのまま渡す。
+  こうすると Orca から起動してもデスクトップから起動しても同じ `~/.config/opencode` が効く。Yhtye 専用の `OPENCODE_CONFIG_DIR` は
+  (MCP の隔離が要るまで) 持たない。
 
 ### 7.3 役割ごとの状況
 
@@ -357,7 +362,7 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
   指示の伝達 (合言葉を後のターンで答える) を検査する形に直した)。テスト後に `opencode acp` / `opencode serve --stdio` の残存 0。
 - 1 回だけ観察: プロジェクトに `opencode.json` があると上記の認証エラーになる場合がある (7.3 の補足)。Yhtye のテストのプロジェクトには置いていない。
 
-### 7.5 7c-2 (7b の設定への組み込み) への申し送り
+### 7.5 7c-2 (7b の設定への組み込み) への申し送り (→ 7.6 で対応済み)
 
 - ハーネスは `HarnessConfig::opencode(model)` を全役割で使う。モデル一覧は session/new 応答の `model` config option
   (値 `<provider>/<model>`) から取れる — 7b の「configOptions から取得」にそのまま載る。選択肢が 475 件と多いので UI で絞り込みが要る。
@@ -370,3 +375,33 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
   パスが変わった場合 (worktree の作り直しなど) は load が失敗する。オーケストレータは失敗時に新しいセッションへフォールバックするが、
   サブエージェントの経路でも同様に扱えるかを 7c-2 で確認する。FirstPrompt のシステムプロンプトは新しいセッションの最初のプロンプトにだけ付き、
   load で復元したセッションには付けない (履歴に残っている)。
+
+### 7.6 ランタイムへの組み込み (Stage 7c-2、2026-09-23)
+
+- **登録**: `HarnessPreset::opencode(fallback_model, env_remove)` (id `opencode`、全役割 `HarnessConfig::opencode`、probe は mode / model の
+  切り替えなし)。アプリ (`src-tauri`) と開発ブリッジは `CoreConfig::installed(data_dir, model)` を使い、`agents::installed_presets` が
+  **`PATH` に実行可能な `opencode` があるときだけ**登録する (無ければ UI に出ない)。Claude Code は従来どおり常に登録し、全役割の組み込みの既定。
+- **モデルは必須**: preset の `requires_model = true`。設定の検査 (`AgentCatalog::validate`) が OpenCode の `model: null` を
+  `invalid_argument` で拒否し、UI も「既定のモデル」の候補を出さない。それでも model 無しで起動される場合 (古い設定など) は
+  preset の設定に入っている `OPENCODE_FALLBACK_MODEL` (= 無料の `opencode/muse-spark-1.3-contributor-free`) を set_config_option する —
+  **OpenCode の「最後に使ったモデル」では起動しない**。
+- **モデル一覧**: 実機で 475 件、約 1.5 秒 (`real_opencode_model_list_comes_from_the_preset_probe`)。値はすべて `<provider>/<model>`。
+  プローブも OpenCode のセッションを 1 つ作る (`data_dir/model-probe` の cwd、OpenCode の履歴に残る。プロンプトは送らない)。
+- **オーケストレータ**: 選べる (ユーザー決定)。読み取り専用にできない (7.3) ので preset の `orchestrator_read_only = false` を UI に渡し、
+  設定パネルが「⚠ 書き込み制限なし」を出す (オーケストレータの役割で OpenCode の候補を**出す・選ぶ**どちらでも)。
+  プロンプトでの禁止 (`orchestrator.md`) はそのまま。
+- **MCP 呼び出しの表示**: サーバー側の `tool_called` 記録 (ハーネス非依存) を従来どおり会話・エージェント出力に `yhtye <tool>` として出す。
+  加えて ACP の `execute` ツールは `rawInput.code` の `tools.<server>.<tool>(` を読み、「tool execute → yhtye.report_step_done」と表示する
+  (`src/api/acp.ts::codeToolCalls`)。実機では `search({query})` (コードモードのツール検索) も `execute` で来る。
+- **session/load のフォールバック**: 別ディレクトリでの load は約 0.65 秒で `Invalid params: session … does not belong to cwd` の
+  エラーになる (`real_opencode_session_load_in_another_directory_fails_fast`)。起動エラーなので、サブエージェントもオーケストレータも
+  既存のフォールバック (新しいセッションに Step の全プロンプト + 注記、`retry_fresh`) に乗る。フォールバック自体は偽エージェントの
+  `orchestration_fake_restart::restart_starts_new_sessions_when_session_load_fails` で検証済み (ハーネス非依存)。
+- **実行結果 (実機、`--test-threads=1`)**: `tests/orchestration_mixed_real.rs`
+  - `real_mixed_claude_orchestrator_opencode_implementer_claude_reviewer` (Claude Haiku のオーケストレータ + OpenCode 無料モデルの implementer +
+    Claude Haiku のレビュアー、一時 git リポジトリで implement → review → `finish_group` → main にマージ): **2 回成功** (約 60 秒)。
+    各セッションの `Ready` のモデルが設定どおり (haiku / muse-spark / haiku)、implementer の `execute` の `rawInput.code` に
+    `await tools.yhtye.report_step_done(...)`。
+  - `real_opencode_orchestrator_with_a_claude_implementer` (OpenCode のオーケストレータ + Claude Haiku の implementer): 成功。
+    `create_group` → `create_task` → `finish_group`、マージ済み。
+  - 終了後 `opencode acp` / `opencode serve --stdio` / `claude-agent-acp` の残存 0 (ユーザーの `opencode serve --service` は元から動いているもの)。

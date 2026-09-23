@@ -20,6 +20,10 @@ pub struct HarnessConfig {
     /// Extra environment for the agent process (inherits the parent env otherwise).
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Inherited environment variables removed for the agent process (Stage 7c-2:
+    /// an `OPENCODE_CONFIG_DIR` injected by the terminal Yhtye was started from).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_remove: Vec<String>,
     /// `session/set_mode` sent right after `session/new` / `session/load`.
     #[serde(default)]
     pub mode_after_new: Option<String>,
@@ -90,6 +94,7 @@ impl HarnessConfig {
                 // the session up again), which Yhtye counts as a silent turn.
                 ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), "1".into()),
             ]),
+            env_remove: Vec::new(),
             mode_after_new: Some("bypassPermissions".into()),
             model: Some(ModelSelect {
                 config_id: "model".into(),
@@ -159,6 +164,7 @@ impl HarnessConfig {
             command: "opencode".into(),
             args: vec!["acp".into()],
             env: BTreeMap::from([("OPENCODE_DISABLE_AUTOUPDATE".into(), "1".into())]),
+            env_remove: Vec::new(),
             mode_after_new: Some(OPENCODE_BUILD_MODE.into()),
             model: Some(ModelSelect {
                 config_id: "model".into(),
@@ -177,6 +183,7 @@ impl HarnessConfig {
             command: command.into(),
             args,
             env: BTreeMap::new(),
+            env_remove: Vec::new(),
             mode_after_new: None,
             model: None,
             system_prompt: SystemPromptStyle::MetaAppend,

@@ -21,9 +21,11 @@ export interface ToolCallInfo {
   title: string | null;
   status: string | null;
   kind: string | null;
+  /** MCP tools called from code (`server.tool`), empty if none / unknown. */
+  calls: string[];
 }
 
-/** `ToolCall` / `ToolCallUpdate` (`toolCallId`, `title`, `status`, `kind`). */
+/** `ToolCall` / `ToolCallUpdate` (`toolCallId`, `title`, `status`, `kind`, `rawInput`). */
 export function toolCallInfo(update: unknown): ToolCallInfo | null {
   const id = str(field(update, "toolCallId"));
   if (id === null) return null;
@@ -32,5 +34,24 @@ export function toolCallInfo(update: unknown): ToolCallInfo | null {
     title: str(field(update, "title")),
     status: str(field(update, "status")),
     kind: str(field(update, "kind")),
+    calls: codeToolCalls(str(field(field(update, "rawInput"), "code"))),
   };
+}
+
+const CODE_CALL = /\btools\.([A-Za-z_$][\w$-]*)\.([A-Za-z_$][\w$]*)\s*\(/g;
+
+/**
+ * The MCP tools a code-mode tool call invokes. OpenCode 2 exposes MCP tools
+ * only through its `execute` tool (`rawInput.code` like
+ * `await tools.yhtye.report_step_done({...})`), so ACP just shows "execute"
+ * (acp-harnesses.md §7.1). Distinct `server.tool` names in order.
+ */
+export function codeToolCalls(code: string | null): string[] {
+  if (!code) return [];
+  const out: string[] = [];
+  for (const m of code.matchAll(CODE_CALL)) {
+    const name = `${m[1]}.${m[2]}`;
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
 }

@@ -319,6 +319,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             acp_session_id: acp.into(),
             resumed: false,
             agent: Some(AgentChoice::new("claude-code", Some(acp))),
+            replaced: None,
         },
     )
 }

@@ -10,10 +10,9 @@ use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
-use super::launch::{FirstPrompts, replace_first};
+use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
 use crate::acp::{AgentError, AgentEvent, AgentHandle, spawn_agent};
-use crate::agents::AgentChoice;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
@@ -74,7 +73,7 @@ pub(super) struct Starting {
     /// What the session was started with (a failed restore starts it again).
     pub(super) pick: AgentPick,
     /// The harness × model it runs.
-    pub(super) agent: AgentChoice,
+    pub(super) agent: Picked,
 }
 
 /// Result of a background `spawn_agent`.
@@ -312,7 +311,8 @@ impl Sessions {
             pid: handle.pid(),
             acp_session_id: handle.info().acp_session_id.0.to_string(),
             resumed: handle.info().resumed,
-            agent: Some(starting.agent.clone()),
+            agent: Some(starting.agent.agent.clone()),
+            replaced: starting.agent.replaced.clone(),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {

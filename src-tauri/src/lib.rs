@@ -38,7 +38,7 @@ fn start_core(app: &AppHandle) -> Result<Core, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&dir)?;
     let model = std::env::var("YHTYE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     tracing::info!("data dir {}, model {model}", dir.display());
-    let core = tauri::async_runtime::block_on(Core::start(CoreConfig::claude_code(&dir, &model)))?;
+    let core = tauri::async_runtime::block_on(Core::start(CoreConfig::installed(&dir, &model)))?;
     Ok(core)
 }
 

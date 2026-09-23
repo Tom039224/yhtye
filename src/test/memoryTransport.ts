@@ -146,7 +146,7 @@ function emptyLayer(): AgentSettingsLayer {
 
 /** The core's settings layers in miniature (no validation). */
 export class FakeAgentSettings {
-  harnesses: HarnessInfo[] = [{ id: "claude-code", label: "Claude Code" }];
+  harnesses: HarnessInfo[] = [{ id: "claude-code", label: "Claude Code", requires_model: false, orchestrator_read_only: true }];
   builtin: AgentChoice = { harness: "claude-code", model: "haiku" };
   global: AgentSettingsLayer = emptyLayer();
   projects = new Map<string, AgentSettingsLayer>();

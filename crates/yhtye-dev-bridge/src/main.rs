@@ -111,7 +111,7 @@ async fn run(args: Args) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("cannot listen on {addr}: {e}"))?;
-    let core = Core::start(CoreConfig::claude_code(&args.data_dir, &args.model))
+    let core = Core::start(CoreConfig::installed(&args.data_dir, &args.model))
         .await
         .map_err(|e| format!("cannot start the core: {e}"))?;
     tracing::info!(

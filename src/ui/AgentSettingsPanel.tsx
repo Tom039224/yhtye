@@ -9,10 +9,16 @@ import {
   choiceKey,
   choiceLabel,
   choiceOptions,
+  isMissing,
   sameChoice,
   toggleCandidate,
+  visibleOptions,
   withDefault,
+  writesAsOrchestrator,
 } from "./agentSettings";
+
+/** Marks an orchestrator option whose harness cannot be made read-only. */
+const NO_WRITE_LIMIT = "⚠ 書き込み制限なし";
 
 type Scope = "global" | "project";
 
@@ -127,7 +133,11 @@ export function AgentSettingsPanel({ project, onClose }: Props) {
         if (m?.loading) return <p key={h.id} className="agent-panel-status">{h.label}: モデル一覧を取得中…</p>;
         if (m?.error) return <p key={h.id} className="agent-panel-status error-text">{h.label}: モデル一覧を取得できません — {m.error}</p>;
         if (m?.models && m.models.models.length === 0) {
-          return <p key={h.id} className="agent-panel-status">{h.label}: モデルを選べないハーネスです (既定のモデルを使います)</p>;
+          return h.requires_model ? (
+            <p key={h.id} className="agent-panel-status error-text">{h.label}: モデル一覧が空のため選べません</p>
+          ) : (
+            <p key={h.id} className="agent-panel-status">{h.label}: モデルを選べないハーネスです (既定のモデルを使います)</p>
+          );
         }
         return null;
       })}
@@ -174,18 +184,28 @@ function RoleEditor({
   saving: boolean;
   onSave: (settings: RoleSettings | null) => void;
 }) {
+  const [query, setQuery] = useState("");
   const layer = scope === "project" ? view.project_layer : view.global;
   const own = layer?.[role] ?? null;
   const shown = view.effective[role];
   const inherits = own === null;
   const locked = saving || (scope === "project" && inherits);
   const options = choiceOptions(view.harnesses, models, shown.candidates);
+  const visible = visibleOptions(options, view.harnesses, models, shown.candidates, query);
   const toggle = (choice: AgentChoice, on: boolean) => {
     const next = toggleCandidate(shown, choice, on);
     if (next) onSave(next);
   };
   const inheritLabel = scope === "project" ? "全体の設定を使う" : "組み込みの既定を使う";
   const builtin = choiceLabel(view.builtin, view.harnesses, models[view.builtin.harness]?.models);
+  const isOrchestrator = role === "orchestrator";
+  const unlimited = (c: AgentChoice) => isOrchestrator && writesAsOrchestrator(c, view.harnesses);
+  const optionText = (c: AgentChoice) => {
+    const text = choiceLabel(c, view.harnesses, models[c.harness]?.models);
+    return unlimited(c) ? `${text} ${NO_WRITE_LIMIT}` : text;
+  };
+  const writers = [...new Set(shown.candidates.filter(unlimited).map((c) => view.harnesses.find((h) => h.id === c.harness)?.label ?? c.harness))];
+  const missing = [...new Set(shown.candidates.filter((c) => isMissing(c, view.harnesses)).map((c) => c.harness))];
 
   return (
     <fieldset className="agent-role" aria-label={label}>
@@ -202,26 +222,62 @@ function RoleEditor({
         />
         {inheritLabel}
       </label>
+      {writers.length > 0 ? (
+        <p className="agent-warning" role="note">
+          ⚠ {writers.join(" / ")} のオーケストレータは書き込みを制限できません。ファイル編集やコマンド実行ができ、
+          「自分で書かない」はプロンプトで指示しているだけです。
+        </p>
+      ) : null}
+      {missing.length > 0 ? (
+        <p className="agent-warning" role="alert">
+          ⚠ {missing.join(" / ")} が見つかりません (インストールされていない)。該当する候補は使えず、
+          代わりに既定 ({builtin}) で起動します。
+        </p>
+      ) : null}
+      <input
+        type="search"
+        className="agent-search"
+        aria-label={`${label} のモデルを検索`}
+        placeholder="モデルを検索 (例: free, gpt)"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
       <ul className="agent-candidates" aria-label={`${label} の候補`}>
-        {options.map((o) => {
-          const checked = shown.candidates.some((c) => sameChoice(c, o.choice));
-          const last = checked && shown.candidates.length === 1;
-          return (
-            <li key={choiceKey(o.choice)}>
-              <label title={last ? "候補は 1 つ以上必要です" : undefined}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={locked || last}
-                  onChange={(e) => toggle(o.choice, e.target.checked)}
-                />
-                {o.label}
-                {o.unlisted ? <span className="agent-unlisted"> (一覧に無い)</span> : null}
-              </label>
-            </li>
-          );
-        })}
+        {visible.groups.map((g) => (
+          <li key={g.key} className="agent-group">
+            {visible.groups.length > 1 ? <span className="agent-group-label">{g.label}</span> : null}
+            <ul className="agent-candidates">
+              {g.options.map((o) => {
+                const checked = shown.candidates.some((c) => sameChoice(c, o.choice));
+                const last = checked && shown.candidates.length === 1;
+                const gone = isMissing(o.choice, view.harnesses);
+                return (
+                  <li key={choiceKey(o.choice)}>
+                    <label title={last ? "候補は 1 つ以上必要です" : undefined}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={locked || last}
+                        onChange={(e) => toggle(o.choice, e.target.checked)}
+                      />
+                      {o.label}
+                      {unlimited(o.choice) ? <span className="agent-warn-tag"> {NO_WRITE_LIMIT}</span> : null}
+                      {gone ? <span className="agent-warn-tag"> (見つからない)</span> : null}
+                      {o.unlisted ? <span className="agent-unlisted"> (一覧に無い)</span> : null}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </li>
+        ))}
       </ul>
+      {visible.more > 0 ? <p className="agent-panel-status">他に {visible.more} 件 — 検索語を絞ってください</p> : null}
+      {visible.searchable.map((h) => (
+        <p key={h.label} className="agent-panel-status">
+          {h.label}: {h.count} モデル — 検索して候補に追加
+        </p>
+      ))}
       <label className="agent-default">
         既定
         <select
@@ -235,7 +291,7 @@ function RoleEditor({
         >
           {shown.candidates.map((c) => (
             <option key={choiceKey(c)} value={choiceKey(c)}>
-              {choiceLabel(c, view.harnesses, models[c.harness]?.models)}
+              {optionText(c)}
             </option>
           ))}
         </select>

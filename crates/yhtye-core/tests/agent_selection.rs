@@ -601,3 +601,136 @@ async fn models_are_read_from_the_harness() {
     );
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_harness_that_requires_a_model_rejects_a_choice_without_one() {
+    let r = TempRepo::new();
+    let idle = json!({"turns": []});
+    let mut cfg = config(&r, idle.clone(), idle);
+    cfg.harnesses[1].requires_model = true; // like OpenCode
+    let core = Core::start(cfg).await.expect("core");
+    let ApiResponse::AgentSettings { settings: view } =
+        run(&core, ApiCommand::GetAgentSettings { project: None }).await
+    else {
+        panic!("settings");
+    };
+    let flags: Vec<(&str, bool)> = view
+        .harnesses
+        .iter()
+        .map(|h| (h.id.as_str(), h.requires_model))
+        .collect();
+    assert_eq!(flags, [("fake", false), ("fake-b", true)]);
+    let cmd = ApiCommand::SetAgentSettings {
+        project: None,
+        role: AgentRole::Implementer,
+        settings: Some(settings(
+            &[c("fake", Some("haiku")), c("fake-b", None)],
+            &c("fake", Some("haiku")),
+        )),
+    };
+    let err = core.command(cmd).await.expect_err("no model");
+    assert_eq!(err.code, ApiErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("fake-b: a model is required"),
+        "{}",
+        err.message
+    );
+    let ok = RoleSettings::only(c("fake-b", Some("sonnet")));
+    let view = set(&core, None, AgentRole::Implementer, Some(ok.clone())).await;
+    assert_eq!(view.effective.implementer, ok);
+    core.shutdown().await;
+}
+
+/// A harness that is no longer registered (e.g. OpenCode uninstalled) is
+/// replaced by the built-in default when a session starts, and the session
+/// says what it replaced (shown in the UI instead of only a log warning).
+#[tokio::test]
+async fn a_vanished_harness_is_replaced_and_reported() {
+    let r = TempRepo::new();
+    let orch = json!({"turns": [
+        {"match": "[yhtye:user_message]", "actions": [
+            {"mcp_call": {"tool": "create_group", "args": {"title": "gone"}}},
+            {"mcp_call": {"tool": "create_task", "args": {
+                "group_id": "${group_id}", "title": "t", "kind": "code",
+                "steps": [{"kind": "implement"}], "instruction": "go"}}}
+        ]},
+        {"match": "[yhtye:group_settled]", "actions": [
+            {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "ok"}}}
+        ]}
+    ]});
+    let implementer = json!({"turns": [{"match": "[yhtye:step]", "actions": [
+        "report_state",
+        {"mcp_call": {"tool": "report_step_done", "args": {"result": "done"}}}
+    ]}]});
+    let cfg = config(&r, orch, implementer);
+    let core = Core::start(cfg.clone()).await.expect("core");
+    let b = c("fake-b", Some("sonnet"));
+    set(
+        &core,
+        None,
+        AgentRole::Implementer,
+        Some(RoleSettings::only(b.clone())),
+    )
+    .await;
+    core.shutdown().await;
+
+    // fake-b is not installed any more.
+    let mut gone = cfg;
+    gone.harnesses.truncate(1);
+    let core = Core::start(gone).await.expect("core without fake-b");
+    let ApiResponse::AgentSettings { settings: view } =
+        run(&core, ApiCommand::GetAgentSettings { project: None }).await
+    else {
+        panic!("settings");
+    };
+    assert_eq!(view.harnesses.len(), 1);
+    assert_eq!(
+        view.effective.implementer.default, b,
+        "the stored setting is kept (the UI marks it as unavailable)"
+    );
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    run(
+        &core,
+        ApiCommand::SendUserMessage {
+            project,
+            text: "go".into(),
+        },
+    )
+    .await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |e| {
+        domain(e, |d| {
+            matches!(d, DomainEvent::GroupMergeFinished { ok: true, .. })
+        })
+    })
+    .await;
+    let replaced: Vec<_> = seen
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionStarted {
+                session,
+                agent,
+                replaced,
+                ..
+            } => Some((session.clone(), agent.clone(), replaced.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        replaced.contains(&(
+            "T-1/implementer".into(),
+            Some(c("fake", Some("haiku"))),
+            Some(b.clone())
+        )),
+        "{replaced:?}"
+    );
+    assert!(
+        replaced
+            .iter()
+            .filter(|(s, ..)| s == ORCHESTRATOR_SESSION)
+            .all(|(_, _, r)| r.is_none()),
+        "{replaced:?}"
+    );
+    core.shutdown().await;
+}

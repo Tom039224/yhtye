@@ -266,7 +266,7 @@ pub struct HarnessConfig {
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
 Stage 7b: ハーネスは `HarnessPreset` (§15) として登録し、役割ごとの `HarnessConfig` とモデルの差し込み方をまとめる。
-`HarnessConfig` の形は変えていない。
+`HarnessConfig` の形は変えていない (Stage 7c-2 で省略可能な `env_remove` だけ追加)。
 
 **Stage 6b (セキュリティレビュー)**: エージェントの**プロセス**はプロジェクトではなくユーザーのホーム
 (無ければ `/`) で起動する。作業ディレクトリは ACP の `session/new` / `session/load` の `cwd` でだけ渡す。
@@ -740,6 +740,12 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 `HarnessPreset::claude_code(model)` は Stage 6b までの 3 役割の設定そのもの (probe = `claude_code_usage_probe`)。
 7c で OpenCode を足すときは preset を 1 つ登録するだけ (`CoreConfig::harnesses`)。
 
+**Stage 7c-2**: preset に `requires_model` (選択は必ずモデルを持つ。`AgentCatalog::validate` が検査) と
+`orchestrator_read_only` (オーケストレータの設定がファイルを書けない。`false` は UI で警告) を追加し、`HarnessInfo` にも載せる。
+`HarnessPreset::opencode(fallback_model, env_remove)` ([`acp-harnesses.md`](acp-harnesses.md) §7.6)。
+アプリと開発ブリッジは `CoreConfig::installed(data_dir, model)` = `agents::installed_presets`: Claude Code は常に、OpenCode は
+`PATH` に実行可能な `opencode` があるときだけ登録する。
+
 `AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
 `OrchestrationConfig::agents: Arc<AgentCatalog>` (以前の `orchestrator / implementer / reviewer` の 3 フィールドを置き換え。
 テスト用に `AgentCatalog::fixed(orch, impl, reviewer)` = 1 つだけのハーネス `default`)。
@@ -761,6 +767,10 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 2. それ以外は `AgentCatalog::resolve(project, role, over)`: `over` があればそれ (create_task の時点で候補内と検査済み。
    後で候補から外されても、そのタスクはそのまま使う)、無ければ**起動時点の**実効値の既定。`over` のハーネスが
    登録簿から消えていたら既定に戻す (警告ログ)。
+   **Stage 7c-2**: `resolve` は `Resolved { choice, harness, replaced }` を返し、登録簿に無くて飛ばした選択 (タスクの上書き・役割の既定・
+   復元するセッションの記録) を `session_started.replaced` に載せる。UI は会話 / エージェント出力に
+   「`<harness/model>` is not available (not installed?); started … instead」をエラー行で出し、設定パネルはその役割に
+   「⚠ … が見つかりません … 既定 (…) で起動します」を出す (設定は消さずに残す)。
 3. `HarnessPreset::config(role, model)` で起動し、`session_started.agent` に記録する。
 - したがって**設定の変更は新しく起動するセッションから効く**: 動いているセッション (タスク中の implementer) は
   そのまま。レビューの Step は毎回新しいセッションなので、次のレビューから新しい既定になる。

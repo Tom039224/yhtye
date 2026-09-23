@@ -121,7 +121,11 @@ pub(crate) fn spawn_process(
 ) -> Result<AgentProcess, AgentError> {
     let launch = launch_dir();
     let mut cmd = Command::new(&harness.command);
-    for name in PRIVATE_ENV {
+    for name in PRIVATE_ENV
+        .iter()
+        .copied()
+        .chain(harness.env_remove.iter().map(String::as_str))
+    {
         cmd.env_remove(name);
     }
     cmd.args(&harness.args)

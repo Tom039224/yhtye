@@ -17,8 +17,16 @@ pub(super) type Launch = (
     HarnessConfig,
     SpawnOptions,
     mpsc::UnboundedSender<AgentEvent>,
-    AgentChoice,
+    Picked,
 );
+
+/// What a session runs, and what it was meant to run if that harness is not
+/// registered (any more).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Picked {
+    pub(crate) agent: AgentChoice,
+    pub(crate) replaced: Option<AgentChoice>,
+}
 
 /// Which settings a session is started with: its selection role and the
 /// task's allowed override (`core-design.md` §15.4).
@@ -64,13 +72,30 @@ impl Sessions {
         launch: u64,
     ) -> Result<Launch, AgentError> {
         let agents = &self.cfg.agents;
-        let kept = resume
-            .as_ref()
-            .and_then(|r| r.agent.as_ref())
-            .and_then(|a| agents.launch_config(pick.role, a).map(|h| (a.clone(), h)));
-        let (agent, harness) = match kept {
-            Some(k) => k,
-            None => agents.resolve(&self.cfg.project, pick.role, pick.over.as_ref())?,
+        let recorded = resume.as_ref().and_then(|r| r.agent.as_ref());
+        let kept =
+            recorded.and_then(|a| agents.launch_config(pick.role, a).map(|h| (a.clone(), h)));
+        let (harness, picked) = match kept {
+            Some((agent, harness)) => (
+                harness,
+                Picked {
+                    agent,
+                    replaced: None,
+                },
+            ),
+            None => {
+                let r = agents.resolve(&self.cfg.project, pick.role, pick.over.as_ref())?;
+                // A restored session whose recorded harness is gone runs the
+                // current choice; say so rather than only logging it.
+                let replaced = r.replaced.or_else(|| recorded.cloned());
+                (
+                    r.harness,
+                    Picked {
+                        agent: r.choice,
+                        replaced,
+                    },
+                )
+            }
         };
         let replaying = resume.is_some();
         let mut prompt = system_prompt(binding.role).to_string();
@@ -85,7 +110,7 @@ impl Sessions {
             system_prompt: Some(prompt),
         };
         let events = self.forwarder(binding.session.clone(), launch, replaying);
-        Ok((harness, options, events, agent))
+        Ok((harness, options, events, picked))
     }
 
     /// A per-session event sender whose events arrive tagged with `key`.

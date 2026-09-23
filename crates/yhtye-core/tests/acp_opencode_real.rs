@@ -424,3 +424,64 @@ async fn real_opencode_implementer_reports_through_mcp() {
     stop(oc).await;
     host.shutdown().await;
 }
+
+/// Stage 7c-2: the model list the settings panel shows comes from the preset's
+/// probe session (no prompt, no model call); it offers the free test model.
+#[tokio::test]
+#[ignore = "real OpenCode (muse-spark free)"]
+async fn real_opencode_model_list_comes_from_the_preset_probe() {
+    let servers_before = opencode_servers();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let preset = yhtye_core::agents::HarnessPreset::opencode(MODEL, Vec::new());
+    let started = Instant::now();
+    let models = yhtye_core::agents::probe_models(
+        &preset,
+        dir.path(),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("models");
+    eprintln!(
+        "{} models in {:?}, current {:?}, e.g. {:?}",
+        models.models.len(),
+        started.elapsed(),
+        models.current,
+        models.models.iter().take(3).collect::<Vec<_>>()
+    );
+    assert!(models.models.len() > 12, "a long list (searched in the UI)");
+    assert!(
+        models.models.iter().all(|m| m.value.contains('/')),
+        "<provider>/<model>"
+    );
+    assert!(models.models.iter().any(|m| m.value == MODEL));
+    assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
+}
+
+/// Stage 7c-2: `session/load` in another directory than the session's is
+/// rejected (e.g. a re-created worktree); the start fails quickly instead of
+/// hanging, so the runtime's fallback (a new session with the whole step,
+/// `orchestration_fake_restart::restart_starts_new_sessions_when_session_load_fails`)
+/// takes over.
+#[tokio::test]
+#[ignore = "real OpenCode (muse-spark free)"]
+async fn real_opencode_session_load_in_another_directory_fails_fast() {
+    let a = tempfile::tempdir().expect("a");
+    let b = tempfile::tempdir().expect("b");
+    let oc = start_build(a.path(), SpawnOptions::default()).await;
+    let session = oc.s.handle.info().acp_session_id.clone();
+    stop(oc).await;
+
+    let servers_before = opencode_servers();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let opts = SpawnOptions {
+        resume: Some(session),
+        ..SpawnOptions::default()
+    };
+    let started = Instant::now();
+    let result = spawn_agent(&HarnessConfig::opencode(MODEL), b.path(), opts, tx).await;
+    let elapsed = started.elapsed();
+    let err = result.err().expect("load in another directory is rejected");
+    eprintln!("rejected after {elapsed:?}: {err}");
+    assert!(elapsed < Duration::from_secs(30), "{elapsed:?}");
+    assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
+}

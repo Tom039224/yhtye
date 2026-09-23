@@ -91,7 +91,7 @@ function firstLine(text: string, max = 90): string {
 function logLine(item: TranscriptItem): string | null {
   switch (item.kind) {
     case "tool":
-      return `${item.title}${item.status ? ` · ${item.status}` : ""}`;
+      return `${item.title}${item.calls.length > 0 ? ` → ${item.calls.join(", ")}` : ""}${item.status ? ` · ${item.status}` : ""}`;
     case "yhtye_tool":
       return `${item.tool} · ${item.ok ? "ok" : "error"}`;
     case "text":

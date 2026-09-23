@@ -25,7 +25,8 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 6b | Markdown 描画・使用量 / quota・ブランチ全体のレビュー | **完了** (設計判断が要る残機能は下の未決事項へ) |
 | 7a | 「完了したグループが進行中のまま」の修正・決定事項の反映 (DMABUF など) | **完了** |
 | 7b | ハーネス / モデルの選択 (役割ごと、⚙ ボタン) | **完了** |
-| 7c | OpenCode ハーネス | 未着手 |
+| 7c-1 | OpenCode ハーネスの ACP 検証 (`HarnessConfig::opencode`) | **完了** |
+| 7c-2 | OpenCode を選べるハーネスとして組み込む (設定・検出・UI) | **完了** |
 
 ## 再開の仕方
 
@@ -871,9 +872,51 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   `HarnessPreset::fixed` のように役割ごとの設定を持てるので、オーケストレータの書き込み制限 (§8.1 相当) は preset の `orchestrator` で。
   残課題: 設定から外したハーネスの記録は既定に戻して起動する (警告ログのみ、UI 表示なし)。
 
-### Stage 7c — OpenCode ハーネス (未着手、ユーザー決定済みの仕様)
+### Stage 7c — OpenCode ハーネス (完了、ユーザー決定済みの仕様)
 
 - OpenCode を**全役割で選べる**ハーネスとして追加 (7b の選択に載せる)。
 - 検証の順: まず implementer、次に reviewer / orchestrator。確認項目は acp-harnesses の他ハーネスと同じ (モード名・MCP・
   `session/load`・履歴再生の順序・ACP の `cwd` を守るか)。
 - 実エージェントテストのモデルは `opencode/muse-spark-1.3-contributor-free`。
+- 7c-2 のユーザー決定: オーケストレータにも選べる (読み取り専用にできないので設定パネルで警告、プロンプトでの禁止は維持)。
+  実テストは OpenCode = `opencode/muse-spark-1.3-contributor-free`、Claude Code = Haiku のみ。`~/.claude` とユーザーの OpenCode 設定は有効のまま。
+
+**7c-1 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §7.1〜7.5。
+`opencode acp` (2.0.12) は ACP の cwd を守り、`build` モードで自動承認、モデルは `set_config_option` (`<provider>/<model>`、475 件、
+既定は最後に使ったモデル)、システムプロンプトは FirstPrompt、MCP は HTTP のみでコードモードの `execute` 経由、session/load は
+作成時の cwd でのみ可、オーケストレータを読み取り専用にする手段は無い。`HarnessConfig::opencode`、実テスト
+`acp_opencode_real` 7 件・`orchestration_opencode_real` 2 件 (各 2 回成功)。
+
+**7c-2 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §7.2・§7.6、
+[`core-design.md`](docs/architecture/core-design.md) §3.4・§15.2・§15.4、[`orchestration-model.md`](docs/architecture/orchestration-model.md) §8.1。
+
+- コア: `HarnessPreset::opencode` (全役割 `HarnessConfig::opencode`、probe は mode / model なし)、preset と `HarnessInfo` に
+  `requires_model` / `orchestrator_read_only`。`AgentCatalog::validate` が OpenCode の `model: null` を拒否 (念のため preset 側にも
+  無料モデルのフォールバック)。`agents/installed.rs`: `PATH` の実行可能な `opencode` を検出したときだけ登録
+  (`CoreConfig::installed`、アプリと開発ブリッジ)。`HarnessConfig.env_remove` (追加のみ) で、Orca の端末が注入した
+  `OPENCODE_CONFIG_DIR` (= `ORCA_OPENCODE_CONFIG_DIR`) だけをエージェントの環境から外す (ユーザー自身の値は残す)。
+- 7b の残課題 (消えたハーネス): `AgentCatalog::resolve` → `Resolved { replaced }`、`session_started.replaced` (省略可能、古いログは無し)。
+  UI は会話 / エージェント出力にエラー行、設定パネルの役割に「⚠ … が見つかりません … 既定 (…) で起動します」と候補の「(見つからない)」。
+- UI: 役割ごとのモデル検索 (空白区切りの AND、候補は常に表示、12 件超のハーネスは検索したときだけ出す、最大 40 件 + 「他に N 件」)、
+  長い一覧はプロバイダ (`<provider>/`) 別の見出し。オーケストレータの役割で書き込み制限の無いハーネスの候補・既定に「⚠ 書き込み制限なし」、
+  選んでいれば役割の上に説明の帯。requires_model のハーネスには「既定のモデル」を出さない。
+  `execute` ツールの `rawInput.code` から `tools.<server>.<tool>(` を読み「tool execute → yhtye.report_step_done」(会話・タスクカードのログ)。
+  サーバー側の `tool_called` 記録の表示 (ハーネス非依存) は従来どおり。
+- session/load のフォールバック: OpenCode は別ディレクトリの load を約 0.65 秒でエラーにする (実機) → 既存の `retry_fresh`
+  (新しいセッション + Step の全プロンプト + 注記) に乗る。フォールバックは偽エージェントで検証済み (`orchestration_fake_restart`)。
+- テスト: Rust 単体 (installed 3 件・catalog の replaced)、偽エージェント `agent_selection` +2 (requires_model の検査、消えたハーネスの置き換えと
+  `replaced`)、`acp_launch` に `env_remove`。Vitest: `AgentSettings.test.tsx` +4 (検索とプロバイダ見出し・追加 / オーケストレータの警告 /
+  見つからないハーネス / 検索の上限)、新規 `src/store/transcript.test.tsx` 3 件 (コードモードの呼び出し・表示・置き換えの行)。
+  実機: `acp_opencode_real` +2 (preset のプローブで 475 件・約 1.5 秒 / 別ディレクトリの load が速く失敗)、
+  新規 `orchestration_mixed_real` 2 件 — **Claude Haiku オーケストレータ + OpenCode implementer + Claude Haiku レビュアーで
+  implement → review → finish_group → main にマージを 2 回成功 (約 60 秒)**、OpenCode オーケストレータ + Claude Haiku implementer 1 回成功。
+  各セッションの Ready のモデルが設定どおり、終了後 `opencode acp` / `serve --stdio` / `claude-agent-acp` の残存 0。
+- 実行したコマンド: `cargo test --workspace` → 226 件成功 × 2 回 (ignored 27)、`cargo clippy --workspace --all-targets` 警告なし、
+  `cargo fmt --check` 成功、`pnpm test` → 13 ファイル 87 件成功、`pnpm build` 成功、`pnpm gen:types` で TS 型を再生成 (フィクスチャは変更なし)。
+- Chrome (`pnpm dev:browser` + 実 OpenCode / Claude Code、一時リポジトリ): ⚙ パネルに Claude Code の 5 モデルと「OpenCode: 475 モデル — 検索して候補に追加」、
+  オーケストレータで「muse free」を検索 → `OpenCode · opencode` 見出しに 2 件 (⚠ 書き込み制限なし)、1.3 を選ぶと警告の帯。
+  [`docs/e2e/stage7c/`](docs/e2e/stage7c/) `1-settings-opencode-models.jpg` / `2-opencode-orchestrator-warning.jpg`。
+  ブラウザでの実混成実行は行っていない (上の実テストで代替)。ブリッジ・Vite は停止済み。
+- 残課題: OpenCode の MCP 隔離が無い (ユーザーが OpenCode に MCP を足すと付く。必要になれば Yhtye 専用 `OPENCODE_CONFIG_DIR`)。
+  モデル一覧のプローブが OpenCode の履歴にセッションを 1 つ残す。消えたハーネスの記録を持つセッションの load は別ハーネスで試みて失敗 → 新しいセッション
+  (その場合 `replaced` は付かない)。OpenCode オーケストレータの書き込みはプロンプト頼み。

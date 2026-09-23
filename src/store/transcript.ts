@@ -19,7 +19,15 @@ export type TranscriptItem =
   | (Base & { kind: "notice"; inboxId: number; inboxKind: InboxKind; attrs: [string, string][]; body: string })
   | (Base & { kind: "prompt"; text: string })
   | (Base & { kind: "text"; textKind: TextKind; text: string })
-  | (Base & { kind: "tool"; id: string; title: string; status: string | null; toolKind: string | null })
+  | (Base & {
+      kind: "tool";
+      id: string;
+      title: string;
+      status: string | null;
+      toolKind: string | null;
+      /** MCP tools the call ran as code (OpenCode's `execute`), e.g. `yhtye.create_task`. */
+      calls: string[];
+    })
   | (Base & { kind: "yhtye_tool"; tool: string; by: string; ok: boolean; detail: string })
   | (Base & { kind: "group"; groupId: string; title: string })
   | (Base & { kind: "turn"; outcome: string; error: boolean })
@@ -44,6 +52,7 @@ function upsertTool(t: Transcripts, session: string, base: Base, update: unknown
       title: info.title ?? info.id,
       status: info.status,
       toolKind: info.kind,
+      calls: info.calls,
     };
     return push(t, session, item);
   }
@@ -54,8 +63,13 @@ function upsertTool(t: Transcripts, session: string, base: Base, update: unknown
     title: info.title ?? old.title,
     status: info.status ?? old.status,
     toolKind: info.kind ?? old.toolKind,
+    calls: info.calls.length > 0 ? info.calls : old.calls,
   };
   return { ...t, [session]: items.map((i, n) => (n === at ? merged : i)) };
+}
+
+function choiceText(c: { harness: string; model: string | null }): string {
+  return c.model ? `${c.harness}/${c.model}` : c.harness;
 }
 
 function short(value: unknown): string {
@@ -101,13 +115,23 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent): Transcripts 
       const detail = "Ok" in r.result ? short(r.result.Ok) : `${r.result.Err.code}: ${r.result.Err.message}`;
       return push(t, session, { ...base, kind: "yhtye_tool", tool: r.tool, by: r.binding.session, ok, detail });
     }
-    case "session_started":
-      return push(t, body.session, {
+    case "session_started": {
+      const started = push(t, body.session, {
         ...base,
         kind: "lifecycle",
         text: body.resumed ? "session restored (session/load)" : "session started",
         error: false,
       });
+      const replaced = body.replaced ?? null;
+      if (!replaced) return started;
+      const ran = body.agent ? choiceText(body.agent) : "the default";
+      return push(started, body.session, {
+        ...base,
+        kind: "lifecycle",
+        text: `${choiceText(replaced)} is not available (not installed?); started ${ran} instead`,
+        error: true,
+      });
+    }
     case "session_failed":
       return push(t, body.session, { ...base, kind: "lifecycle", text: `failed to start: ${body.error}`, error: true });
     case "session_stopped":
@@ -225,7 +249,13 @@ export function prependTranscripts(older: Transcripts, newer: Transcripts): Tran
       if (!update) return item;
       // An update-only item is titled with its id; keep the real title then.
       const title = update.title !== update.id ? update.title : item.title;
-      return { ...item, title, status: update.status ?? item.status, toolKind: update.toolKind ?? item.toolKind };
+      return {
+        ...item,
+        title,
+        status: update.status ?? item.status,
+        toolKind: update.toolKind ?? item.toolKind,
+        calls: update.calls.length > 0 ? update.calls : item.calls,
+      };
     });
     const moved = new Set(before.flatMap((i) => (i.kind === "tool" && updates.has(i.id) ? [i.id] : [])));
     out[session] = [...merged, ...after.filter((i) => !(i.kind === "tool" && moved.has(i.id)))];

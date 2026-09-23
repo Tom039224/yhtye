@@ -127,6 +127,7 @@ function Item({
       return (
         <div className="tool mono">
           <span className="tool-kind">tool</span> {item.title}
+          {item.calls.length > 0 ? <span className="tool-calls"> → {item.calls.join(", ")}</span> : null}
           <span className={`tool-status tool-status-${item.status ?? "pending"}`}> · {item.status ?? "pending"}</span>
         </div>
       );
