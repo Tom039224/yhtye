@@ -43,6 +43,19 @@ pub struct CreateTaskArgs {
     /// with set_instruction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
+    /// Usually omit. Harness of the task's agent, one of the allowed choices of
+    /// the implementer (code) / investigator (investigate) role (see get_status `agents`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    /// Usually omit. Model of the task's agent, one of the allowed choices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Usually omit. Harness of the task's review steps (an allowed reviewer choice).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_harness: Option<String>,
+    /// Usually omit. Model of the task's review steps (an allowed reviewer choice).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

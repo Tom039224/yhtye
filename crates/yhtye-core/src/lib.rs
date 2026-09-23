@@ -1,6 +1,7 @@
 //! Yhtye core library (Tauri-independent). See `docs/architecture/core-design.md`.
 //!
 //! - [`acp`]: ACP client (agent processes and sessions)
+//! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
@@ -11,6 +12,7 @@
 //! - [`usage`]: subscription usage / quota read from the harness
 
 pub mod acp;
+pub mod agents;
 pub mod api;
 pub mod domain;
 pub mod git;

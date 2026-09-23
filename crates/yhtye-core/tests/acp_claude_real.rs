@@ -198,3 +198,38 @@ async fn real_usage_command_reports_the_subscription() {
     // Nothing was written to the probe's directory.
     assert_eq!(std::fs::read_dir(dir.path()).expect("dir").count(), 0);
 }
+
+/// Stage 7b: the model list is read from the adapter's `session/new`
+/// `configOptions` (no prompt, so no model call) and the process group is gone.
+#[tokio::test]
+#[ignore = "real Claude Code"]
+async fn real_model_list_comes_from_the_adapter() {
+    use yhtye_core::agents::{HarnessPreset, probe_models};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let started = Instant::now();
+    let preset = HarnessPreset::claude_code(MODEL);
+    let listed = probe_models(
+        &preset,
+        dir.path(),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("models");
+    eprintln!(
+        "models in {:?}: current={:?} {:?}",
+        started.elapsed(),
+        listed.current,
+        listed
+            .models
+            .iter()
+            .map(|m| format!("{} ({})", m.value, m.name))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(listed.harness, "claude-code");
+    assert!(listed.models.iter().any(|m| m.value == MODEL), "{listed:?}");
+    assert_eq!(
+        listed.current.as_deref(),
+        Some(MODEL),
+        "ANTHROPIC_MODEL of the probe"
+    );
+}

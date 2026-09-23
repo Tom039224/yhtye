@@ -88,8 +88,8 @@ async fn upsert_group(tx: &mut Tx, project: &str, ord: usize, g: &Group) -> Resu
 async fn upsert_task(tx: &mut Tx, project: &str, ord: usize, t: &Task) -> Result<(), StoreError> {
     sqlx::query(
         "INSERT OR REPLACE INTO tasks (project_id, id, ord, group_id, title, kind, instruction, \
-         current_step, status, review_rounds, workdir, cancel_reason) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         current_step, status, review_rounds, workdir, cancel_reason, agent, review_agent) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(project)
     .bind(&t.id)
@@ -103,6 +103,8 @@ async fn upsert_task(tx: &mut Tx, project: &str, ord: usize, t: &Task) -> Result
     .bind(i64::from(t.review_rounds))
     .bind(t.workdir.as_ref().map(|p| p.to_string_lossy().into_owned()))
     .bind(&t.cancel_reason)
+    .bind(t.agent.as_ref().map(json).transpose()?)
+    .bind(t.review_agent.as_ref().map(json).transpose()?)
     .execute(&mut **tx)
     .await?;
     for sql in [
@@ -238,6 +240,8 @@ struct TaskRow {
     review_rounds: i64,
     workdir: Option<String>,
     cancel_reason: Option<String>,
+    agent: Option<String>,
+    review_agent: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -325,7 +329,7 @@ async fn load_tasks(conn: &mut SqliteConnection, project: &str) -> Result<Vec<Ta
     let mut deps = load_deps(conn, project).await?;
     let rows = sqlx::query_as::<_, TaskRow>(
         "SELECT id, group_id, title, kind, instruction, current_step, status, review_rounds, \
-         workdir, cancel_reason FROM tasks WHERE project_id = ? ORDER BY ord",
+         workdir, cancel_reason, agent, review_agent FROM tasks WHERE project_id = ? ORDER BY ord",
     )
     .bind(project)
     .fetch_all(&mut *conn)
@@ -345,6 +349,8 @@ async fn load_tasks(conn: &mut SqliteConnection, project: &str) -> Result<Vec<Ta
                 review_rounds: uint(r.review_rounds)?,
                 workdir: r.workdir.map(PathBuf::from),
                 cancel_reason: r.cancel_reason,
+                agent: r.agent.as_deref().map(from_json).transpose()?,
+                review_agent: r.review_agent.as_deref().map(from_json).transpose()?,
             })
         })
         .collect()

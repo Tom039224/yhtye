@@ -15,6 +15,7 @@ mod codec;
 mod events;
 mod projection;
 mod sessions;
+mod settings;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -23,11 +24,13 @@ use std::time::Duration;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
+use crate::agents::{AgentRole, RoleSettings};
 use crate::api::ApiEvent;
 use crate::domain::{DomainConfig, State};
 
 pub use events::StoredEvent;
 pub use sessions::{SessionRecord, SessionStatus};
+pub use settings::StoredAgentSettings;
 
 /// File name of the database inside the app data directory.
 pub const DB_FILE_NAME: &str = "yhtye.sqlite3";
@@ -191,6 +194,23 @@ impl Store {
     /// Every agent session recorded for `project`.
     pub async fn sessions(&self, project: &str) -> Result<Vec<SessionRecord>, StoreError> {
         sessions::list(&self.pool, project).await
+    }
+
+    /// Every stored agent settings row (global and per project).
+    pub async fn agent_settings(&self) -> Result<Vec<StoredAgentSettings>, StoreError> {
+        settings::list(&self.pool).await
+    }
+
+    /// Stores (or with `None` removes) the settings of `role` in the global
+    /// layer (`project: None`) or a project's layer.
+    pub async fn set_agent_settings(
+        &self,
+        project: Option<&str>,
+        role: AgentRole,
+        settings: Option<&RoleSettings>,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        settings::set(&self.pool, project, role, settings, now_ms).await
     }
 }
 

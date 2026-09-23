@@ -9,6 +9,10 @@ use serde_json::Value;
 use ts_rs::TS;
 
 use super::{ApiEventBody, Snapshot};
+use crate::agents::{
+    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessInfo, HarnessModels,
+    RoleSettings,
+};
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
 use crate::store::{StoreError, StoredEvent};
@@ -93,6 +97,47 @@ pub enum ApiCommand {
         #[ts(optional)]
         refresh: Option<bool>,
     },
+    /// The harness × model settings of every role (Stage 7b): registered
+    /// harnesses, the global layer and, with `project`, its layer and the
+    /// settings in effect there (the project must be registered, not open).
+    GetAgentSettings {
+        #[serde(default)]
+        #[ts(optional)]
+        project: Option<String>,
+    },
+    /// Replaces one role of the global layer (no `project`) or a project's
+    /// layer; `settings: null` removes it (inherit). Applies to sessions
+    /// started afterwards. Returns the settings like `get_agent_settings`.
+    SetAgentSettings {
+        #[serde(default)]
+        #[ts(optional)]
+        project: Option<String>,
+        role: AgentRole,
+        settings: Option<RoleSettings>,
+    },
+    /// The models a harness offers, read from it over ACP (a short session
+    /// without a prompt). Cached for 10 minutes; `refresh` asks again unless
+    /// the cached list is only seconds old.
+    ListHarnessModels {
+        harness: String,
+        #[serde(default)]
+        #[ts(optional)]
+        refresh: Option<bool>,
+    },
+}
+
+/// Everything the settings panel shows (`core-design.md` §15.7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct AgentSettingsView {
+    pub harnesses: Vec<HarnessInfo>,
+    /// Used for a role no layer sets.
+    pub builtin: AgentChoice,
+    pub global: AgentSettingsLayer,
+    /// The project asked for, with its layer.
+    pub project: Option<String>,
+    pub project_layer: Option<AgentSettingsLayer>,
+    /// In effect for `project` (or globally).
+    pub effective: AgentSettings,
 }
 
 /// Default number of commits of [`ApiCommand::GetGitOverview`].
@@ -159,6 +204,12 @@ pub enum ApiResponse {
     },
     Usage {
         usage: UsageReport,
+    },
+    AgentSettings {
+        settings: Box<AgentSettingsView>,
+    },
+    HarnessModels {
+        models: HarnessModels,
     },
 }
 

@@ -56,11 +56,12 @@ impl Core {
 
 pub struct CoreConfig {
     pub data_dir: PathBuf,                   // yhtye.sqlite3 と worktrees/
-    pub orchestrator: HarnessConfig, pub implementer: HarnessConfig, pub reviewer: HarnessConfig,
+    pub harnesses: Vec<HarnessPreset>,       // Stage 7b: ハーネスの登録簿 (§15)。以前は役割ごとの HarnessConfig 3 つ
+    pub default_agent: AgentChoice,          // Stage 7b: 設定が無い役割の既定 (ハーネス × モデル)
     pub mcp_bind: SocketAddr,                // 既定 127.0.0.1:0
     pub domain: DomainConfig,
 }
-// CoreConfig::claude_code(data_dir, "haiku") が全役割 Claude Code の既定値。
+// CoreConfig::claude_code(data_dir, "haiku") が Claude Code だけを登録し、全役割の既定を claude-code × haiku にする。
 ```
 
 - **Stage 4 の決定**:
@@ -122,8 +123,10 @@ pub struct CoreConfig {
   `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
   `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
-  `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b)。
-  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage`。
+  `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b) /
+  `get_agent_settings{project?}` / `set_agent_settings{project?, role, settings}` / `list_harness_models{harness, refresh?}` (Stage 7b、§15)。
+  `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage` /
+  `agent_settings` / `harness_models`。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
@@ -262,6 +265,8 @@ pub struct HarnessConfig {
 ```
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
+Stage 7b: ハーネスは `HarnessPreset` (§15) として登録し、役割ごとの `HarnessConfig` とモデルの差し込み方をまとめる。
+`HarnessConfig` の形は変えていない。
 
 **Stage 6b (セキュリティレビュー)**: エージェントの**プロセス**はプロジェクトではなくユーザーのホーム
 (無ければ `/`) で起動する。作業ディレクトリは ACP の `session/new` / `session/load` の `cwd` でだけ渡す。
@@ -699,3 +704,91 @@ Stage 4 の構成 (`src/`):
   書式はアダプタのバージョン (固定) に依存する。実機テスト `acp_claude_real::real_usage_command_reports_the_subscription` で検知。
 - `UsageService`: 単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
 - UI: 接続時と 5 分ごとに `get_usage`、メーターのクリックで `refresh: true`。
+
+## 15. エージェント (ハーネス × モデル) の選択 (Stage 7b)
+
+ユーザーの決定 (PLAN.md Stage 7b): 役割ごとに**候補集合**と**既定値**を持ち、全体の既定値の上にプロジェクトの
+既定値を重ねる。モデル一覧はハーネスから ACP で取る (ハードコードしない)。変更は新しく起動するセッションから効く。
+
+### 15.1 型 (`crates/yhtye-core/src/agents/`)
+
+```rust
+pub enum AgentRole { Orchestrator, Implementer, Investigator, Reviewer }   // 設定の役割
+pub struct AgentChoice { harness: String, model: Option<String> }          // model None = ハーネスの既定
+pub struct RoleSettings { candidates: Vec<AgentChoice>, default: AgentChoice }   // default ∈ candidates
+pub struct AgentSettings { orchestrator, implementer, investigator, reviewer: RoleSettings }       // 実効値
+pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewer: Option<RoleSettings> } // 1 層
+```
+
+- **役割の対応**: オーケストレータのセッション = `orchestrator`、`code` タスクの implementer セッション = `implementer`、
+  `investigate` タスクの implementer セッション = `investigator`、レビューのセッション = `reviewer`
+  (ドメインの `Role` は 3 つのまま。`investigator` は設定だけの役割)。
+- **重ね方** (`agents::effective`、純粋関数): 役割ごとに「プロジェクトの層 → 全体の層 → 組み込みの既定
+  (`CoreConfig::default_agent` だけを候補にした RoleSettings)」の最初にあるもの。層は役割単位で丸ごと置き換える
+  (候補と既定は一緒に上書き・継承する)。
+- **検査** (`RoleSettings::validate`): 候補が 1 つ以上・既定が候補に含まれる・ハーネスが登録簿にある・空文字なし。
+  重複は取り除く。モデル名は検査しない (一覧は遅れて取るため。UI は一覧にあるものだけを選ばせる)。
+- **上書きの選び方** (`RoleSettings::pick(harness?, model?)`): どちらも無ければ既定。あれば両方に一致する候補
+  (指定の無い方は任意) のうち、既定が一致すれば既定、無ければ最初のもの。一致が無ければエラーで候補一覧を返す。
+
+### 15.2 ハーネスの登録簿
+
+`HarnessPreset { id, label, orchestrator, implementer, investigator, reviewer: HarnessConfig, probe: Option<HarnessConfig>, model_env: Option<String> }`。
+`HarnessPreset::config(role, model)` は役割の `HarnessConfig` を複製し、モデルが指定されていれば `model`
+(`set_config_option`、config id は既存の `ModelSelect` のもの、無ければ `"model"`) と `model_env` の環境変数
+(Claude Code は `ANTHROPIC_MODEL`) を差し替える。`None` なら何も変えない (ハーネスの既定)。
+`HarnessPreset::claude_code(model)` は Stage 6b までの 3 役割の設定そのもの (probe = `claude_code_usage_probe`)。
+7c で OpenCode を足すときは preset を 1 つ登録するだけ (`CoreConfig::harnesses`)。
+
+`AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
+`OrchestrationConfig::agents: Arc<AgentCatalog>` (以前の `orchestrator / implementer / reviewer` の 3 フィールドを置き換え。
+テスト用に `AgentCatalog::fixed(orch, impl, reviewer)` = 1 つだけのハーネス `default`)。
+
+### 15.3 保存 (マイグレーション `0003_agent_settings.sql`)
+
+- `agent_settings (scope, role, settings JSON, updated_ms)`、主キー `(scope, role)`。`scope = ''` が全体、それ以外はプロジェクト ID。
+  行が無い = その層では継承。`Core::start` で全行を `AgentCatalog` に読み込み、`set_agent_settings` は DB に書いてから写しを更新する。
+- `tasks.agent` / `tasks.review_agent` (JSON の `AgentChoice`、NULL = 上書きなし) — オーケストレータの `create_task` の上書き。
+  ドメインの `Task.agent` / `Task.review_agent` (イベント `task_created` に含まれる。古いイベントは `serde(default)` で無し)。
+- `agent_sessions.harness` / `agent_sessions.model` — そのセッションが実際に使ったもの (`session_started.agent`)。
+
+### 15.4 セッション起動時の解決 (runtime)
+
+ドライバがセッションごとに `AgentPick { role: AgentRole, over: Option<AgentChoice> }` を作る (タスクの kind と
+`Task.agent` / `Task.review_agent`)。`Sessions::launch_parts` が:
+1. `session/load` で復元するとき、`agent_sessions` に記録されたハーネス × モデルが登録簿にあればそれを使う
+   (動いていた・中断したセッションは設定の変更に影響されない。記録の無い古い行は下の解決)。
+2. それ以外は `AgentCatalog::resolve(project, role, over)`: `over` があればそれ (create_task の時点で候補内と検査済み。
+   後で候補から外されても、そのタスクはそのまま使う)、無ければ**起動時点の**実効値の既定。`over` のハーネスが
+   登録簿から消えていたら既定に戻す (警告ログ)。
+3. `HarnessPreset::config(role, model)` で起動し、`session_started.agent` に記録する。
+- したがって**設定の変更は新しく起動するセッションから効く**: 動いているセッション (タスク中の implementer) は
+  そのまま。レビューの Step は毎回新しいセッションなので、次のレビューから新しい既定になる。
+- **レビューのハーネス × モデル**: `Task.review_agent` (create_task の `review_harness` / `review_model`) があればそれ、
+  無ければ reviewer の役割の既定。
+
+### 15.5 `create_task` の上書きとオーケストレータへの提示
+
+- `create_task` の任意引数 `harness` / `model` (implementer か investigator の候補から) と `review_harness` / `review_model`
+  (reviewer の候補から) ([`mcp-tools.md`](mcp-tools.md) §3)。ドライバが状態機械に渡す前に `RoleSettings::pick` で検査し、
+  候補外なら `invalid_argument` (message に許される `harness/model` の一覧)。通れば引数を解決済みの組に書き換えて渡す
+  (状態機械は純粋なまま、`Task.agent` に記録するだけ)。
+- `get_status` の戻り値に `agents: { implementer, investigator, reviewer: { default, allowed: [..] } }` をドライバが足す
+  (呼んだ時点の実効値)。オーケストレータのシステムプロンプトには起動時点の同じ一覧を付け、「普段は省略する」「最新は get_status」と書く。
+
+### 15.6 モデル一覧 (`agents/models.rs`)
+
+- `list_harness_models{harness, refresh?}`: preset の `probe` (無ければ implementer の設定から mode / model の切り替えを外したもの) を
+  `data_dir/model-probe` で**プロンプトを送らずに**起動し (`session/new` だけ。モデルは呼ばない)、`Ready` の `config_options` から
+  モデルの選択肢を読んで止める。モデルの選択肢 = `category: model` の select、無ければ id が preset のモデル config id (`"model"`) の select。
+  グループ付きの選択肢は平らにする。見つからなければ `models: []` (そのハーネスはモデルを選べない = 既定だけ)。
+- 応答 `HarnessModels { harness, models: [{value, name, description?}], current (ハーネスの既定値), fetched_at_ms }`。
+- キャッシュ: 成功 10 分・失敗 10 秒、`refresh` でも 10 秒以内の結果は再利用。1 度に 1 プローブ。終了時に実行中のプローブを止める (使用量と同じ)。
+
+### 15.7 API
+
+- `get_agent_settings{project?}` → `agent_settings{settings: AgentSettingsView{harnesses: [{id, label}], builtin, global, project, project_layer, effective}}`
+  (`project` があればその実効値。プロジェクトは登録済みであること、開いていなくてよい)。
+- `set_agent_settings{project?, role, settings: RoleSettings | null}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
+  (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
+- `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。

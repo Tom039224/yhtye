@@ -1,6 +1,7 @@
 //! Role system prompts (`crates/yhtye-core/prompts/*.md`) and the prompts Yhtye
 //! sends to sub-agents (`orchestration-model.md` §7–§8).
 
+use crate::agents::{AgentChoice, AgentRole, AgentSettings};
 use crate::domain::{Role, StepKind, TaskKind};
 
 const ORCHESTRATOR: &str = include_str!("../prompts/orchestrator.md");
@@ -14,6 +15,49 @@ pub fn system_prompt(role: Role) -> &'static str {
         Role::Orchestrator => ORCHESTRATOR,
         Role::Implementer => IMPLEMENTER,
         Role::Reviewer => REVIEWER,
+    }
+}
+
+/// Appended to the orchestrator's system prompt: the harness × model choices
+/// `create_task` accepts, as of the session start (`core-design.md` §15.5).
+#[must_use]
+pub fn agent_choices_prompt(settings: &AgentSettings) -> String {
+    let mut text = String::from(
+        "\n\n## Agents (harness × model)\n\nAllowed choices when this session started \
+         (`get_status` has the current ones under `agents`). Normally omit `harness` / `model` \
+         in `create_task` and the default is used; pass them only when the user asks for a \
+         specific agent or model. Anything not listed is rejected.\n",
+    );
+    for (role, what, args) in [
+        (AgentRole::Implementer, "code tasks", "harness / model"),
+        (
+            AgentRole::Investigator,
+            "investigate tasks",
+            "harness / model",
+        ),
+        (
+            AgentRole::Reviewer,
+            "review steps",
+            "review_harness / review_model",
+        ),
+    ] {
+        let s = settings.get(role);
+        let allowed: Vec<String> = s.candidates.iter().map(choice_text).collect();
+        text.push_str(&format!(
+            "- {} ({what}, `{args}`): default {}; allowed {}\n",
+            role.as_str(),
+            choice_text(&s.default),
+            allowed.join(", "),
+        ));
+    }
+    text
+}
+
+/// `harness=claude-code model=haiku` (no model: the harness default).
+fn choice_text(c: &AgentChoice) -> String {
+    match &c.model {
+        Some(m) => format!("harness={} model={m}", c.harness),
+        None => format!("harness={} (its default model)", c.harness),
     }
 }
 
@@ -218,5 +262,33 @@ mod tests {
         let text = reminder_prompt("T-2", 0);
         assert!(text.starts_with("[yhtye:reminder] task=T-2 step=1\n"));
         assert!(text.contains("report_step_done") && text.contains("help"));
+    }
+
+    #[test]
+    fn agent_choices_list_each_task_role() {
+        use crate::agents::{AgentSettingsLayer, RoleSettings, effective};
+        let builtin = AgentChoice::new("claude-code", Some("haiku"));
+        let mut layer = AgentSettingsLayer::default();
+        layer.set(
+            AgentRole::Reviewer,
+            Some(RoleSettings {
+                candidates: vec![builtin.clone(), AgentChoice::new("opencode", None)],
+                default: AgentChoice::new("opencode", None),
+            }),
+        );
+        let text = agent_choices_prompt(&effective(&builtin, &layer, None));
+        assert!(text.contains(
+            "- implementer (code tasks, `harness / model`): default harness=claude-code model=haiku; \
+             allowed harness=claude-code model=haiku\n"
+        ));
+        assert!(text.contains("- investigator (investigate tasks"));
+        assert!(text.contains(
+            "- reviewer (review steps, `review_harness / review_model`): default harness=opencode \
+             (its default model); allowed harness=claude-code model=haiku, harness=opencode (its default model)\n"
+        ));
+        assert!(
+            !text.contains("orchestrator ("),
+            "the orchestrator's own role is not offered"
+        );
     }
 }

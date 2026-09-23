@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use yhtye_core::acp::{HarnessConfig, ModelSelect};
+use yhtye_core::agents::{AgentChoice, HarnessPreset};
 use yhtye_core::runtime::{Core, CoreConfig};
 use yhtye_dev_bridge::{BridgeConfig, serve};
 
@@ -143,9 +144,13 @@ async fn the_api_round_trips_over_the_websocket() {
         {"match": "hello", "actions": [{"message": "Hi "}, {"message": "there."}]}
     ]});
     let mut cfg = CoreConfig::claude_code(&data, "haiku");
-    cfg.orchestrator = fake_harness(&bin, orch);
-    cfg.implementer = fake_harness(&bin, json!({"turns": []}));
-    cfg.reviewer = fake_harness(&bin, json!({"turns": []}));
+    cfg.harnesses = vec![HarnessPreset::fixed(
+        "fake",
+        fake_harness(&bin, orch),
+        fake_harness(&bin, json!({"turns": []})),
+        fake_harness(&bin, json!({"turns": []})),
+    )];
+    cfg.default_agent = AgentChoice::new("fake", None);
     cfg.usage = None;
     let core = Core::start(cfg).await.expect("core");
 

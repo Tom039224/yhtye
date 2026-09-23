@@ -9,7 +9,18 @@
 // - reconnect: re-open the project (idempotent; the core may have restarted)
 //   and catch up from `cursor`. Streamed text of the dead connection is dropped.
 
-import type { ApiCommand, ApiEvent, ApiResponse, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type {
+  AgentRole,
+  AgentSettingsView,
+  ApiCommand,
+  ApiEvent,
+  ApiResponse,
+  GitOverview,
+  HarnessModels,
+  ProjectInfo,
+  RoleSettings,
+  UsageReport,
+} from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
@@ -409,6 +420,29 @@ export class AppStore {
     if (!r || this.state.project?.info.id !== info.id) return;
     this.updateProject((v) => ({ ...v, info: r.project }));
     this.requestCatchUp();
+  }
+
+  // ---- agent settings (Stage 7b) --------------------------------------------
+  // Read and written by the settings panel, which shows failures itself
+  // (these reject with a CommandError instead of pushing an app error).
+
+  /** The harness × model settings, globally (`null`) or for a project. */
+  async getAgentSettings(project: string | null): Promise<AgentSettingsView> {
+    const r = await this.invoke({ type: "get_agent_settings", project: project ?? undefined }, "agent_settings");
+    return r.settings;
+  }
+
+  /** Replaces (or with `null` removes) one role of the global / a project's layer. */
+  async setAgentSettings(project: string | null, role: AgentRole, settings: RoleSettings | null): Promise<AgentSettingsView> {
+    const cmd: ApiCommand = { type: "set_agent_settings", project: project ?? undefined, role, settings };
+    const r = await this.invoke(cmd, "agent_settings");
+    return r.settings;
+  }
+
+  /** The models a harness offers (read from it by the core; cached there). */
+  async listHarnessModels(harness: string, refresh = false): Promise<HarnessModels> {
+    const r = await this.invoke({ type: "list_harness_models", harness, refresh }, "harness_models");
+    return r.models;
   }
 
   // ---- helpers --------------------------------------------------------------

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use super::*;
 use crate::acp::AgentEvent;
 use crate::acp::schema::StopReason;
+use crate::agents::AgentChoice;
 use crate::api::{ApiEventBody, TextKind};
 use crate::domain::{
     DomainEvent, Group, GroupStatus, Help, HelpKind, HelpSource, HelpState, InboxEntry, InboxItem,
@@ -71,6 +72,8 @@ fn rich_state() -> State {
         review_rounds: 1,
         workdir: Some("/wt/T-1".into()),
         cancel_reason: None,
+        agent: Some(AgentChoice::new("claude-code", Some("sonnet"))),
+        review_agent: None,
     };
     let t2 = Task {
         id: "T-2".into(),
@@ -85,6 +88,8 @@ fn rich_state() -> State {
         review_rounds: 0,
         workdir: None,
         cancel_reason: Some("r".into()),
+        agent: None,
+        review_agent: Some(AgentChoice::new("other", None)),
     };
     s.tasks = vec![t1, t2];
     s.helps.push(Help {
@@ -138,7 +143,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 2);
+    assert_eq!(applied, 3);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -149,6 +154,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         tables,
         [
             "agent_sessions",
+            "agent_settings",
             "events",
             "helps",
             "inbox",
@@ -168,7 +174,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 2);
+    assert_eq!(applied, 3);
 }
 
 #[tokio::test]
@@ -312,6 +318,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             pid: Some(1),
             acp_session_id: acp.into(),
             resumed: false,
+            agent: Some(AgentChoice::new("claude-code", Some(acp))),
         },
     )
 }
@@ -402,4 +409,67 @@ async fn session_events_keep_the_agent_sessions_table() {
     let sessions = store.sessions("P-1").await.expect("sessions");
     assert_eq!(sessions[0].acp_session_id, "acp-3");
     assert_eq!(sessions[0].status, SessionStatus::Live);
+}
+
+#[tokio::test]
+async fn sessions_record_the_agent_they_ran() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = stored_rich(dir.path()).await;
+    store
+        .append(&[session_started(2, "T-1/implementer", "acp-1")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(
+        sessions[0].agent,
+        Some(AgentChoice::new("claude-code", Some("acp-1")))
+    );
+}
+
+#[tokio::test]
+async fn agent_settings_are_stored_per_scope_and_role() {
+    use crate::agents::{AgentRole, RoleSettings};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let a = RoleSettings::only(AgentChoice::new("claude-code", Some("haiku")));
+    let b = RoleSettings {
+        candidates: vec![
+            AgentChoice::new("claude-code", Some("haiku")),
+            AgentChoice::new("other", None),
+        ],
+        default: AgentChoice::new("other", None),
+    };
+    store
+        .set_agent_settings(None, AgentRole::Reviewer, Some(&a), 1)
+        .await
+        .expect("global");
+    store
+        .set_agent_settings(Some("P-1"), AgentRole::Reviewer, Some(&b), 2)
+        .await
+        .expect("project");
+    store
+        .set_agent_settings(Some("P-1"), AgentRole::Implementer, Some(&a), 3)
+        .await
+        .expect("project");
+    store
+        .set_agent_settings(Some("P-1"), AgentRole::Reviewer, Some(&a), 4)
+        .await
+        .expect("replace");
+    store
+        .set_agent_settings(Some("P-1"), AgentRole::Implementer, None, 5)
+        .await
+        .expect("remove");
+    let rows = store.agent_settings().await.expect("list");
+    let summary: Vec<(Option<&str>, AgentRole, &RoleSettings)> = rows
+        .iter()
+        .map(|r| (r.project.as_deref(), r.role, &r.settings))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (None, AgentRole::Reviewer, &a),
+            (Some("P-1"), AgentRole::Reviewer, &a),
+        ]
+    );
+    let _ = b;
 }

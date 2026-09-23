@@ -17,6 +17,7 @@ use common::repo::TempRepo;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use yhtye_core::acp::HarnessConfig;
+use yhtye_core::agents::{AgentChoice, HarnessPreset};
 use yhtye_core::api::{
     ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse, LoggedEvent, ProjectInfo,
     Snapshot,
@@ -29,9 +30,13 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 fn core_config(r: &TempRepo, orch: Value, implementer: Value, reviewer: Value) -> CoreConfig {
     let mut cfg = CoreConfig::claude_code(&r.data, "haiku");
-    cfg.orchestrator = fake_harness(orch);
-    cfg.implementer = fake_harness(implementer);
-    cfg.reviewer = fake_harness(reviewer);
+    cfg.harnesses = vec![HarnessPreset::fixed(
+        "fake",
+        fake_harness(orch),
+        fake_harness(implementer),
+        fake_harness(reviewer),
+    )];
+    cfg.default_agent = AgentChoice::new("fake", Some("haiku"));
     cfg.usage = None;
     cfg
 }
@@ -551,10 +556,20 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
 #[test]
 fn claude_code_config_uses_the_given_model_for_every_role() {
     let cfg = CoreConfig::claude_code("/tmp/x", "haiku");
+    assert_eq!(
+        cfg.default_agent,
+        AgentChoice::new("claude-code", Some("haiku"))
+    );
+    let preset = &cfg.harnesses[0];
     let model = |h: &HarnessConfig| h.model.as_ref().map(|m| m.value.clone());
-    assert_eq!(model(&cfg.orchestrator).as_deref(), Some("haiku"));
-    assert_eq!(model(&cfg.implementer).as_deref(), Some("haiku"));
-    assert_eq!(model(&cfg.reviewer).as_deref(), Some("haiku"));
+    for h in [
+        &preset.orchestrator,
+        &preset.implementer,
+        &preset.investigator,
+        &preset.reviewer,
+    ] {
+        assert_eq!(model(h).as_deref(), Some("haiku"));
+    }
 }
 
 async fn git_overview(core: &Core, project: &str, limit: Option<u32>) -> GitOverview {

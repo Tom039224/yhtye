@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useState } from "react";
 
+import { AgentSettingsPanel } from "./AgentSettingsPanel";
 import type { Mention } from "./mentions";
 
 interface Props {
@@ -13,16 +14,29 @@ interface Props {
   /** Sends `text` (mentions are added by the caller); resolves to whether it was accepted. */
   onSend: (text: string) => Promise<boolean>;
   onCancel: () => void;
+  /** The open project (for the agent settings panel). */
+  project: { id: string; name: string } | null;
 }
 
 /**
  * The design's composer (§3.4): text, then a row of mention chips, the mode
- * pill and "⏎ 送信". Enter sends, Shift+Enter inserts a newline (IME
+ * pill, ⚙ (agent settings, Stage 7b) and "⏎ 送信". Enter sends, Shift+Enter inserts a newline (IME
  * composition is left alone). During an orchestrator turn messages are still
  * accepted: they wait in its inbox and are delivered when the turn ends.
  */
-export function Composer({ disabled, disabledReason, sending, turnRunning, mentions, onRemoveMention, onSend, onCancel }: Props) {
+export function Composer({
+  disabled,
+  disabledReason,
+  sending,
+  turnRunning,
+  mentions,
+  onRemoveMention,
+  onSend,
+  onCancel,
+  project,
+}: Props) {
   const [text, setText] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const canSend = !disabled && !sending && text.trim().length > 0;
 
   const send = async () => {
@@ -42,6 +56,7 @@ export function Composer({ disabled, disabledReason, sending, turnRunning, menti
 
   return (
     <div className="composer-wrap">
+      {settingsOpen ? <AgentSettingsPanel project={project} onClose={() => setSettingsOpen(false)} /> : null}
       <div className="composer">
         <textarea
           aria-label="オーケストレータへのメッセージ"
@@ -72,6 +87,16 @@ export function Composer({ disabled, disabledReason, sending, turnRunning, menti
           <span className="mode-pill" title="依頼はオーケストレータが受けて配る (他のモードは未定義)">
             orchestrate
           </span>
+          <button
+            type="button"
+            className={`gear ${settingsOpen ? "gear-open" : ""}`}
+            aria-label="エージェントの設定"
+            aria-expanded={settingsOpen}
+            title="役割ごとのハーネス × モデル"
+            onClick={() => setSettingsOpen((o) => !o)}
+          >
+            ⚙
+          </button>
           <span className="spacer" />
           {turnRunning ? (
             <button type="button" className="btn btn-small btn-danger" onClick={onCancel} disabled={disabled}>

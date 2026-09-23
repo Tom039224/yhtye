@@ -2,6 +2,7 @@
 //! ([`crate::domain::Machine`]), every agent session and the MCP server, and
 //! publishes an [`crate::api::ApiEvent`] stream (`core-design.md` §8).
 
+mod agent_args;
 mod core;
 mod driver;
 mod emitter;

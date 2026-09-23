@@ -147,6 +147,15 @@ startup_timeout = 120                  # 秒。各起動段ごと
 
 (`HarnessConfig::claude_code("haiku")` がこの値を返す。)
 
+(Stage 7b: 役割ごとの設定は `HarnessPreset::claude_code(model)` (id `claude-code`、`model_env = ANTHROPIC_MODEL`) として
+登録し、選んだモデルを `model` と `ANTHROPIC_MODEL` に差し込む。[`core-design.md`](core-design.md) §15。)
+
+**モデル一覧 (Stage 7b、実機 2026-09-23)**: `session/new` の `configOptions` の `id: "model"` の select
+(カテゴリ付き) に、`default` (Default (recommended)) / `opus[1m]` (Opus 5.5) / `claude-fable-5-1[1m]` (Fable 5.1) /
+`sonnet` (Sonnet 5) / `haiku` (Haiku 4.5) が並ぶ。プロンプトを送らない短命のセッション
+(`claude_code_usage_probe` の設定) で約 2 秒、現在値は `ANTHROPIC_MODEL` の値 (`haiku`)。
+`tests/acp_claude_real.rs::real_model_list_comes_from_the_adapter`。
+
 ### 5.1 実機での観察 (Stage 1、2026-09-23、adapter 0.81.0 + Haiku)
 
 - 起動 (npx キャッシュ済み) から `Ready` まで数秒。`Ready` 前に `available_commands_update` と

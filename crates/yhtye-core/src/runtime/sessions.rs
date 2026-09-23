@@ -9,9 +9,11 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
+pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, replace_first};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
 use crate::acp::{AgentError, AgentEvent, AgentHandle, spawn_agent};
+use crate::agents::AgentChoice;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
@@ -69,6 +71,10 @@ pub(super) struct Starting {
     /// Started with `session/load` of a stored ACP session.
     pub(super) resuming: bool,
     pub(super) cwd: PathBuf,
+    /// What the session was started with (a failed restore starts it again).
+    pub(super) pick: AgentPick,
+    /// The harness × model it runs.
+    pub(super) agent: AgentChoice,
 }
 
 /// Result of a background `spawn_agent`.
@@ -95,8 +101,8 @@ pub(super) struct Sessions {
     pub(super) launches: u64,
     live: HashMap<String, Live>,
     pub(super) starting: HashMap<String, Starting>,
-    /// Stored ACP session ids to restore (`session/load`), by session key.
-    pub(super) resume: HashMap<String, String>,
+    /// Stored sessions to restore (`session/load`), by session key.
+    pub(super) resume: HashMap<String, StoredSession>,
     pub(super) spawning: JoinSet<Spawned>,
     /// Shutdowns in progress; each yields its session key and launch number.
     pub(super) stopping: JoinSet<(String, u64)>,
@@ -108,7 +114,7 @@ impl Sessions {
         host: McpHost,
         emit: Emitter,
         agent_tx: mpsc::UnboundedSender<AgentMsg>,
-        resume: HashMap<String, String>,
+        resume: HashMap<String, StoredSession>,
     ) -> Self {
         Self {
             cfg,
@@ -168,13 +174,14 @@ impl Sessions {
     /// Returns whether the session was restored.
     async fn spawn_orchestrator(
         &mut self,
-        resume: Option<crate::acp::schema::SessionId>,
+        resume: Option<StoredSession>,
     ) -> Result<bool, AgentError> {
         let binding = SessionBinding::orchestrator(ORCHESTRATOR_SESSION, self.cfg.project.clone());
         let token = self.host()?.registry().issue(binding.clone());
         let launch = self.next_launch();
-        let (harness, options, events) = self
-            .launch_parts(&binding, &token, resume, launch)
+        let pick = AgentPick::orchestrator();
+        let (harness, options, events, agent) = self
+            .launch_parts(&binding, &token, resume, &pick, launch)
             .inspect_err(|_| self.revoke(&token))?;
         let result = spawn_agent(&harness, &self.cfg.project_dir, options, events).await;
         let restored = match &result {
@@ -193,6 +200,8 @@ impl Sessions {
                 fallback: None,
                 resuming: false,
                 cwd: self.cfg.project_dir.clone(),
+                pick,
+                agent,
             },
         );
         self.on_spawned(Spawned {
@@ -206,7 +215,13 @@ impl Sessions {
 
     /// Sends `text` to the session of `binding` (bound to the given step),
     /// starting the session in `cwd` if there is none.
-    pub(super) fn prompt(&mut self, binding: SessionBinding, cwd: PathBuf, text: String) {
+    pub(super) fn prompt(
+        &mut self,
+        binding: SessionBinding,
+        cwd: PathBuf,
+        text: String,
+        pick: AgentPick,
+    ) {
         let key = binding.session.clone();
         if let Some(live) = self.live.get_mut(&key) {
             if live.binding != binding {
@@ -228,7 +243,7 @@ impl Sessions {
             queued: VecDeque::from([text]),
             fallback: None,
         };
-        self.start(binding, cwd, first);
+        self.start(binding, cwd, first, pick);
     }
 
     /// Continues an interrupted step: restores the step's stored session and sends
@@ -239,16 +254,17 @@ impl Sessions {
         cwd: PathBuf,
         prompt: String,
         fallback: String,
+        pick: AgentPick,
     ) {
         if self.live.contains_key(&binding.session) || self.starting.contains_key(&binding.session)
         {
-            return self.prompt(binding, cwd, prompt);
+            return self.prompt(binding, cwd, prompt, pick);
         }
         let first = FirstPrompts {
             queued: VecDeque::from([prompt]),
             fallback: Some(fallback),
         };
-        self.start(binding, cwd, first);
+        self.start(binding, cwd, first, pick);
     }
 
     pub(super) fn failed(&self, key: &str, e: &AgentError) {
@@ -296,6 +312,7 @@ impl Sessions {
             pid: handle.pid(),
             acp_session_id: handle.info().acp_session_id.0.to_string(),
             resumed: handle.info().resumed,
+            agent: Some(starting.agent.clone()),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {

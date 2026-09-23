@@ -9,6 +9,7 @@ use super::machine::{Tx, non_empty};
 use super::state::{Group, GroupStatus, HelpSource, Step, Task, TaskStatus};
 use super::steps::{normalize_steps, normalize_tail};
 use super::types::{StepKind, ToolError};
+use crate::agents::AgentChoice;
 use crate::mcp::SessionBinding;
 use crate::mcp::tools::{
     AnswerHelpArgs, CancelGroupArgs, CancelTaskArgs, CheckpointDecision, CreateGroupArgs,
@@ -121,6 +122,16 @@ impl Tx {
                 review_rounds: 0,
                 workdir: None,
                 cancel_reason: None,
+                // Checked against the role's candidates by the runtime, which
+                // passes the resolved choice (`core-design.md` §15.5).
+                agent: a.harness.map(|harness| AgentChoice {
+                    harness,
+                    model: a.model,
+                }),
+                review_agent: a.review_harness.map(|harness| AgentChoice {
+                    harness,
+                    model: a.review_model,
+                }),
             },
         });
         self.try_start(&id);

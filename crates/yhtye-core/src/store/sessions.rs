@@ -9,6 +9,7 @@ use ts_rs::TS;
 use super::StoreError;
 use super::codec::{int, name, parse};
 use crate::acp::AgentEvent;
+use crate::agents::AgentChoice;
 use crate::api::{ApiEvent, ApiEventBody};
 use crate::domain::Role;
 
@@ -42,6 +43,8 @@ pub struct SessionRecord {
     pub status: SessionStatus,
     /// A prompt was sent and its turn had not ended.
     pub turn_running: bool,
+    /// The harness × model it ran (Stage 7b; `None` for older sessions).
+    pub agent: Option<AgentChoice>,
 }
 
 #[derive(FromRow)]
@@ -52,6 +55,8 @@ struct Row {
     acp_session_id: String,
     status: String,
     turn_running: i64,
+    harness: Option<String>,
+    model: Option<String>,
 }
 
 pub(super) async fn list(
@@ -59,7 +64,7 @@ pub(super) async fn list(
     project: &str,
 ) -> Result<Vec<SessionRecord>, StoreError> {
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT session_key, role, task_id, acp_session_id, status, turn_running \
+        "SELECT session_key, role, task_id, acp_session_id, status, turn_running, harness, model \
          FROM agent_sessions WHERE project_id = ? ORDER BY session_key",
     )
     .bind(project)
@@ -74,6 +79,10 @@ pub(super) async fn list(
                 acp_session_id: r.acp_session_id,
                 status: parse(&r.status)?,
                 turn_running: r.turn_running != 0,
+                agent: r.harness.map(|harness| AgentChoice {
+                    harness,
+                    model: r.model,
+                }),
             })
         })
         .collect()
@@ -91,15 +100,18 @@ pub(super) async fn apply(
             role,
             task,
             acp_session_id,
+            agent,
             ..
         } => {
             sqlx::query(
                 "INSERT INTO agent_sessions \
-                 (project_id, session_key, role, task_id, acp_session_id, status, turn_running, updated_ms) \
-                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?) \
+                 (project_id, session_key, role, task_id, acp_session_id, status, turn_running, updated_ms, \
+                 harness, model) \
+                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?, ?, ?) \
                  ON CONFLICT (project_id, session_key) DO UPDATE SET role = excluded.role, \
                  task_id = excluded.task_id, acp_session_id = excluded.acp_session_id, \
-                 status = 'live', turn_running = 0, updated_ms = excluded.updated_ms",
+                 status = 'live', turn_running = 0, updated_ms = excluded.updated_ms, \
+                 harness = excluded.harness, model = excluded.model",
             )
             .bind(project)
             .bind(session)
@@ -107,6 +119,8 @@ pub(super) async fn apply(
             .bind(task)
             .bind(acp_session_id)
             .bind(ts)
+            .bind(agent.as_ref().map(|a| a.harness.as_str()))
+            .bind(agent.as_ref().and_then(|a| a.model.as_deref()))
             .execute(&mut **tx)
             .await?;
         }

@@ -23,16 +23,20 @@
         "session_key": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-2293277",
+        "acp_session_id": "fake-2423867",
         "status": "live",
-        "turn_running": false
+        "turn_running": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku"
+        }
       }
     ]
   },
   "events": [
     {
       "seq": 1,
-      "ts_ms": 1790136656355,
+      "ts_ms": 1790138505139,
       "project": "repo",
       "live": false,
       "body": {
@@ -40,14 +44,18 @@
         "session": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "pid": 2293277,
-        "acp_session_id": "fake-2293277",
-        "resumed": false
+        "pid": 2423867,
+        "acp_session_id": "fake-2423867",
+        "resumed": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku"
+        }
       }
     },
     {
       "seq": 2,
-      "ts_ms": 1790136656356,
+      "ts_ms": 1790138505141,
       "project": "repo",
       "live": false,
       "body": {
@@ -56,7 +64,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2293277",
+            "acp_session_id": "fake-2423867",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -110,7 +118,7 @@
     },
     {
       "seq": 3,
-      "ts_ms": 1790136656356,
+      "ts_ms": 1790138505141,
       "project": "repo",
       "live": false,
       "body": {
@@ -130,7 +138,7 @@
     },
     {
       "seq": 4,
-      "ts_ms": 1790136656357,
+      "ts_ms": 1790138505142,
       "project": "repo",
       "live": false,
       "body": {
@@ -141,7 +149,7 @@
     },
     {
       "seq": 5,
-      "ts_ms": 1790136656358,
+      "ts_ms": 1790138505143,
       "project": "repo",
       "live": false,
       "body": {
@@ -154,7 +162,7 @@
     },
     {
       "seq": 5,
-      "ts_ms": 1790136656359,
+      "ts_ms": 1790138505144,
       "project": "repo",
       "live": true,
       "body": {
@@ -176,7 +184,7 @@
     },
     {
       "seq": 6,
-      "ts_ms": 1790136656360,
+      "ts_ms": 1790138505144,
       "project": "repo",
       "live": false,
       "body": {
@@ -188,7 +196,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790136656360,
+      "ts_ms": 1790138505144,
       "project": "repo",
       "live": false,
       "body": {
@@ -204,7 +212,7 @@
     },
     {
       "seq": 8,
-      "ts_ms": 1790136656361,
+      "ts_ms": 1790138505145,
       "project": "repo",
       "live": false,
       "body": {
@@ -224,7 +232,7 @@
     },
     {
       "seq": 9,
-      "ts_ms": 1790136656361,
+      "ts_ms": 1790138505146,
       "project": "repo",
       "live": false,
       "body": {
@@ -235,7 +243,7 @@
     },
     {
       "seq": 10,
-      "ts_ms": 1790136656362,
+      "ts_ms": 1790138505148,
       "project": "repo",
       "live": false,
       "body": {
@@ -248,7 +256,7 @@
     },
     {
       "seq": 11,
-      "ts_ms": 1790136656368,
+      "ts_ms": 1790138505153,
       "project": "repo",
       "live": false,
       "body": {
@@ -271,7 +279,7 @@
     },
     {
       "seq": 12,
-      "ts_ms": 1790136656380,
+      "ts_ms": 1790138505166,
       "project": "repo",
       "live": false,
       "body": {
@@ -298,7 +306,7 @@
     },
     {
       "seq": 12,
-      "ts_ms": 1790136656382,
+      "ts_ms": 1790138505168,
       "project": "repo",
       "live": true,
       "body": {
@@ -320,7 +328,7 @@
     },
     {
       "seq": 13,
-      "ts_ms": 1790136656384,
+      "ts_ms": 1790138505170,
       "project": "repo",
       "live": false,
       "body": {
@@ -365,7 +373,7 @@
     },
     {
       "seq": 14,
-      "ts_ms": 1790136656384,
+      "ts_ms": 1790138505170,
       "project": "repo",
       "live": false,
       "body": {
@@ -379,7 +387,7 @@
     },
     {
       "seq": 15,
-      "ts_ms": 1790136656396,
+      "ts_ms": 1790138505184,
       "project": "repo",
       "live": false,
       "body": {
@@ -387,13 +395,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
       "seq": 16,
-      "ts_ms": 1790136656396,
+      "ts_ms": 1790138505184,
       "project": "repo",
       "live": false,
       "body": {
@@ -408,7 +416,7 @@
     },
     {
       "seq": 17,
-      "ts_ms": 1790136656398,
+      "ts_ms": 1790138505186,
       "project": "repo",
       "live": false,
       "body": {
@@ -450,7 +458,7 @@
     },
     {
       "seq": 17,
-      "ts_ms": 1790136656400,
+      "ts_ms": 1790138505187,
       "project": "repo",
       "live": true,
       "body": {
@@ -472,7 +480,7 @@
     },
     {
       "seq": 18,
-      "ts_ms": 1790136656403,
+      "ts_ms": 1790138505191,
       "project": "repo",
       "live": false,
       "body": {
@@ -517,7 +525,7 @@
     },
     {
       "seq": 19,
-      "ts_ms": 1790136656403,
+      "ts_ms": 1790138505191,
       "project": "repo",
       "live": false,
       "body": {
@@ -531,7 +539,7 @@
     },
     {
       "seq": 20,
-      "ts_ms": 1790136656421,
+      "ts_ms": 1790138505205,
       "project": "repo",
       "live": false,
       "body": {
@@ -539,13 +547,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-2",
-          "path": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-2"
+          "path": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-2"
         }
       }
     },
     {
       "seq": 21,
-      "ts_ms": 1790136656421,
+      "ts_ms": 1790138505205,
       "project": "repo",
       "live": false,
       "body": {
@@ -560,7 +568,7 @@
     },
     {
       "seq": 22,
-      "ts_ms": 1790136656422,
+      "ts_ms": 1790138505206,
       "project": "repo",
       "live": false,
       "body": {
@@ -568,14 +576,18 @@
         "session": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "pid": 2293591,
-        "acp_session_id": "fake-2293591",
-        "resumed": false
+        "pid": 2424163,
+        "acp_session_id": "fake-2424163",
+        "resumed": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku"
+        }
       }
     },
     {
       "seq": 23,
-      "ts_ms": 1790136656422,
+      "ts_ms": 1790138505206,
       "project": "repo",
       "live": false,
       "body": {
@@ -586,7 +598,7 @@
     },
     {
       "seq": 24,
-      "ts_ms": 1790136656424,
+      "ts_ms": 1790138505208,
       "project": "repo",
       "live": false,
       "body": {
@@ -613,7 +625,7 @@
     },
     {
       "seq": 25,
-      "ts_ms": 1790136656426,
+      "ts_ms": 1790138505209,
       "project": "repo",
       "live": false,
       "body": {
@@ -627,7 +639,7 @@
     },
     {
       "seq": 26,
-      "ts_ms": 1790136656442,
+      "ts_ms": 1790138505225,
       "project": "repo",
       "live": false,
       "body": {
@@ -654,7 +666,7 @@
     },
     {
       "seq": 27,
-      "ts_ms": 1790136656443,
+      "ts_ms": 1790138505225,
       "project": "repo",
       "live": false,
       "body": {
@@ -674,7 +686,7 @@
     },
     {
       "seq": 28,
-      "ts_ms": 1790136656443,
+      "ts_ms": 1790138505226,
       "project": "repo",
       "live": false,
       "body": {
@@ -685,7 +697,7 @@
     },
     {
       "seq": 29,
-      "ts_ms": 1790136656444,
+      "ts_ms": 1790138505226,
       "project": "repo",
       "live": false,
       "body": {
@@ -698,7 +710,7 @@
     },
     {
       "seq": 30,
-      "ts_ms": 1790136656445,
+      "ts_ms": 1790138505227,
       "project": "repo",
       "live": false,
       "body": {
@@ -740,7 +752,7 @@
     },
     {
       "seq": 31,
-      "ts_ms": 1790136656446,
+      "ts_ms": 1790138505227,
       "project": "repo",
       "live": false,
       "body": {
@@ -754,7 +766,7 @@
     },
     {
       "seq": 32,
-      "ts_ms": 1790136656446,
+      "ts_ms": 1790138505227,
       "project": "repo",
       "live": false,
       "body": {
@@ -768,7 +780,7 @@
     },
     {
       "seq": 33,
-      "ts_ms": 1790136656478,
+      "ts_ms": 1790138505262,
       "project": "repo",
       "live": false,
       "body": {
@@ -795,7 +807,7 @@
     },
     {
       "seq": 34,
-      "ts_ms": 1790136656479,
+      "ts_ms": 1790138505262,
       "project": "repo",
       "live": false,
       "body": {
@@ -815,7 +827,7 @@
     },
     {
       "seq": 35,
-      "ts_ms": 1790136656479,
+      "ts_ms": 1790138505263,
       "project": "repo",
       "live": false,
       "body": {
@@ -826,7 +838,7 @@
     },
     {
       "seq": 36,
-      "ts_ms": 1790136656480,
+      "ts_ms": 1790138505263,
       "project": "repo",
       "live": false,
       "body": {
@@ -839,7 +851,7 @@
     },
     {
       "seq": 37,
-      "ts_ms": 1790136656481,
+      "ts_ms": 1790138505264,
       "project": "repo",
       "live": false,
       "body": {
@@ -848,7 +860,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2293591",
+            "acp_session_id": "fake-2424163",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -902,7 +914,7 @@
     },
     {
       "seq": 38,
-      "ts_ms": 1790136656484,
+      "ts_ms": 1790138505267,
       "project": "repo",
       "live": false,
       "body": {
@@ -929,7 +941,7 @@
     },
     {
       "seq": 38,
-      "ts_ms": 1790136656485,
+      "ts_ms": 1790138505268,
       "project": "repo",
       "live": true,
       "body": {
@@ -951,7 +963,7 @@
     },
     {
       "seq": 39,
-      "ts_ms": 1790136656485,
+      "ts_ms": 1790138505268,
       "project": "repo",
       "live": false,
       "body": {
@@ -963,7 +975,7 @@
     },
     {
       "seq": 40,
-      "ts_ms": 1790136656485,
+      "ts_ms": 1790138505268,
       "project": "repo",
       "live": false,
       "body": {
@@ -1029,7 +1041,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-1",
           "cancel_reason": "cancelled by the user"
         },
         {
@@ -1062,7 +1074,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpvvFViD/data/worktrees/repo/G-1/T-2",
+          "workdir": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-2",
           "cancel_reason": "group cancelled: changed my mind"
         }
       ],
@@ -1080,17 +1092,25 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-2293591",
+        "acp_session_id": "fake-2424163",
         "status": "live",
-        "turn_running": true
+        "turn_running": true,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku"
+        }
       },
       {
         "session_key": "orchestrator",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-2293277",
+        "acp_session_id": "fake-2423867",
         "status": "live",
-        "turn_running": false
+        "turn_running": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku"
+        }
       }
     ]
   }

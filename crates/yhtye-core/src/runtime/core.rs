@@ -14,9 +14,12 @@ use tokio::sync::broadcast;
 
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
+use crate::agents::{
+    AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelService, RoleSettings,
+};
 use crate::api::{
-    ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE, DEFAULT_GRAPH_COMMITS,
-    LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
+    AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
+    DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
@@ -29,6 +32,8 @@ const EVENT_BUFFER: usize = 4096;
 
 /// Working directory of the usage probe agent, under the data directory.
 const USAGE_PROBE_DIR: &str = "usage-probe";
+/// Working directory of the model-listing sessions, under the data directory.
+const MODEL_PROBE_DIR: &str = "model-probe";
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -37,9 +42,10 @@ const USER_CANCEL_REASON: &str = "cancelled by the user";
 pub struct CoreConfig {
     /// Database (`yhtye.sqlite3`) and task worktrees (`worktrees/`).
     pub data_dir: PathBuf,
-    pub orchestrator: HarnessConfig,
-    pub implementer: HarnessConfig,
-    pub reviewer: HarnessConfig,
+    /// Registered harnesses (`core-design.md` §15.2).
+    pub harnesses: Vec<HarnessPreset>,
+    /// Harness × model of every role that has no settings.
+    pub default_agent: AgentChoice,
     /// Where each project's MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
     pub domain: DomainConfig,
@@ -49,14 +55,15 @@ pub struct CoreConfig {
 }
 
 impl CoreConfig {
-    /// Claude Code for every role with `model` (tests and development use Haiku).
+    /// Claude Code registered, every role defaulting to it with `model`
+    /// (tests and development use Haiku).
     #[must_use]
     pub fn claude_code(data_dir: impl Into<PathBuf>, model: &str) -> Self {
+        let preset = HarnessPreset::claude_code(model);
         Self {
             data_dir: data_dir.into(),
-            orchestrator: HarnessConfig::claude_code_orchestrator(model),
-            implementer: HarnessConfig::claude_code(model),
-            reviewer: HarnessConfig::claude_code(model),
+            default_agent: AgentChoice::new(preset.id.clone(), Some(model)),
+            harnesses: vec![preset],
             mcp_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
@@ -78,6 +85,8 @@ struct Inner {
     opening: tokio::sync::Mutex<()>,
     events: broadcast::Sender<ApiEvent>,
     usage: UsageService,
+    agents: Arc<AgentCatalog>,
+    models: ModelService,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -88,6 +97,14 @@ impl Core {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let usage = UsageService::new(cfg.usage.clone(), cfg.data_dir.join(USAGE_PROBE_DIR));
+        let agents = Arc::new(AgentCatalog::new(
+            cfg.harnesses.clone(),
+            cfg.default_agent.clone(),
+        ));
+        for row in store.agent_settings().await? {
+            agents.set(row.project.as_deref(), row.role, Some(row.settings));
+        }
+        let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR));
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -96,6 +113,8 @@ impl Core {
                 opening: tokio::sync::Mutex::new(()),
                 events,
                 usage,
+                agents,
+                models,
                 closed: AtomicBool::new(false),
             }),
         })
@@ -179,7 +198,85 @@ impl Core {
                     .map_err(|e| ApiError::unavailable(format!("usage: {e}")))?;
                 Ok(ApiResponse::Usage { usage })
             }
+            ApiCommand::GetAgentSettings { project } => Ok(ApiResponse::AgentSettings {
+                settings: Box::new(self.agent_settings(project).await?),
+            }),
+            ApiCommand::SetAgentSettings {
+                project,
+                role,
+                settings,
+            } => {
+                self.set_agent_settings(project.as_deref(), role, settings)
+                    .await?;
+                Ok(ApiResponse::AgentSettings {
+                    settings: Box::new(self.agent_settings(project).await?),
+                })
+            }
+            ApiCommand::ListHarnessModels { harness, refresh } => {
+                let preset = self
+                    .inner
+                    .agents
+                    .preset(&harness)
+                    .ok_or_else(|| ApiError::not_found(format!("unknown harness {harness}")))?;
+                let models = self
+                    .inner
+                    .models
+                    .get(preset, refresh.unwrap_or(false))
+                    .await
+                    .map_err(|e| ApiError::unavailable(format!("models of {harness}: {e}")))?;
+                Ok(ApiResponse::HarnessModels { models })
+            }
         }
+    }
+
+    /// The settings of every role, globally or for a registered `project`.
+    async fn agent_settings(&self, project: Option<String>) -> Result<AgentSettingsView, ApiError> {
+        if let Some(p) = &project {
+            self.known_project(p).await?;
+        }
+        let agents = &self.inner.agents;
+        let (global, project_layer) = agents.layers(project.as_deref());
+        Ok(AgentSettingsView {
+            harnesses: agents.harnesses(),
+            builtin: agents.builtin().clone(),
+            global,
+            effective: agents.effective(project.as_deref()),
+            project,
+            project_layer,
+        })
+    }
+
+    /// Validates, stores and applies one role of a settings layer.
+    async fn set_agent_settings(
+        &self,
+        project: Option<&str>,
+        role: AgentRole,
+        settings: Option<RoleSettings>,
+    ) -> Result<(), ApiError> {
+        if let Some(p) = project {
+            self.known_project(p).await?;
+        }
+        let agents = &self.inner.agents;
+        let settings = settings
+            .map(|s| s.validate(&agents.harness_ids()))
+            .transpose()
+            .map_err(|e| ApiError::invalid_argument(format!("{}: {e}", role.as_str())))?;
+        self.inner
+            .store
+            .set_agent_settings(project, role, settings.as_ref(), now_ms())
+            .await?;
+        agents.set(project, role, settings);
+        Ok(())
+    }
+
+    async fn known_project(&self, project: &str) -> Result<ProjectRecord, ApiError> {
+        self.inner
+            .store
+            .projects()
+            .await?
+            .into_iter()
+            .find(|r| r.id == project)
+            .ok_or_else(|| ApiError::not_found(format!("unknown project {project}")))
     }
 
     /// Opens every known project that has unfinished work — an active or
@@ -230,6 +327,7 @@ impl Core {
     pub async fn shutdown(&self) {
         self.inner.closed.store(true, Ordering::SeqCst);
         self.inner.usage.close().await;
+        self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;
         let open: Vec<Arc<Orchestration>> = self.lock_open().drain().map(|(_, o)| o).collect();
         for orch in open {
@@ -329,9 +427,7 @@ impl Core {
         OrchestrationConfig {
             project: record.id.clone(),
             project_dir: record.path.clone(),
-            orchestrator: cfg.orchestrator.clone(),
-            implementer: cfg.implementer.clone(),
-            reviewer: cfg.reviewer.clone(),
+            agents: self.inner.agents.clone(),
             mcp_bind: cfg.mcp_bind,
             domain: cfg.domain,
             git: Arc::new(GitCli::new(
@@ -348,6 +444,12 @@ impl Core {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 fn project_info(r: &ProjectRecord, open: bool) -> ProjectInfo {

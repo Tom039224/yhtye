@@ -266,6 +266,48 @@ button:disabled { cursor: default; }
 .send:hover:not(:disabled) { color: var(--accent-hover); }
 .send:disabled { opacity: 0.5; }
 .composer-hint { width: 100%; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim); }
+.gear {
+  border: 0; background: none; padding: 0 2px; font: 400 13px/1 var(--font-mono); color: var(--text-dim); flex: none;
+}
+.gear:hover, .gear-open { color: var(--accent-hover); }
+
+/* Agent settings panel (Stage 7b): opens above the composer. */
+.composer-wrap { position: relative; }
+.agent-panel {
+  position: absolute; left: 14px; right: 14px; bottom: calc(100% - 4px); z-index: 5;
+  max-height: min(70vh, 620px); overflow: auto; padding: 12px 14px;
+  border: 1px solid var(--border-card); border-radius: 7px; background: var(--surface-panel);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.agent-panel-head { display: flex; align-items: center; gap: 10px; }
+.agent-panel-title { font: 600 11px/1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-secondary); }
+.scope-toggle { display: flex; border: 1px solid var(--border-card); border-radius: 5px; overflow: hidden; }
+.scope-toggle button {
+  border: 0; background: none; padding: 3px 9px; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim);
+}
+.scope-toggle button[aria-pressed="true"] { background: var(--surface-chip); color: var(--text-body); }
+.scope-toggle button:disabled { opacity: 0.5; }
+.agent-panel-note, .agent-panel-status { font: 400 10.5px/1.6 var(--font-mono); color: var(--text-dim); }
+.agent-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+.agent-role {
+  border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface-inset);
+  padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0;
+}
+.agent-role legend { padding: 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.agent-role-name { font: 500 12px/1.4 var(--font-text); color: var(--text-primary); }
+.agent-role-hint { font: 400 10px/1.4 var(--font-mono); color: var(--text-faint); }
+.agent-inherit, .agent-candidates label, .agent-default {
+  display: flex; align-items: center; gap: 6px; font: 400 11px/1.5 var(--font-mono); color: var(--text-tertiary);
+}
+.agent-inherit { color: var(--text-muted); }
+.agent-candidates { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.agent-candidates input, .agent-inherit input { accent-color: var(--accent); }
+.agent-unlisted { color: var(--text-faint); }
+.agent-default select {
+  flex: 1; min-width: 0; padding: 3px 6px; border: 1px solid var(--border-card); border-radius: 4px;
+  background: var(--surface-chip-dim); color: var(--text-body); font: 400 11px/1.4 var(--font-mono);
+}
+.agent-default select:disabled { opacity: 0.6; }
 
 /* ---- right column --------------------------------------------------------- */
 

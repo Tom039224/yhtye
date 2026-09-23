@@ -24,7 +24,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 6a | Claude Design の適用・UX / 堅牢性の修正 | **完了** |
 | 6b | Markdown 描画・使用量 / quota・ブランチ全体のレビュー | **完了** (設計判断が要る残機能は下の未決事項へ) |
 | 7a | 「完了したグループが進行中のまま」の修正・決定事項の反映 (DMABUF など) | **完了** |
-| 7b | ハーネス / モデルの選択 (役割ごと、⚙ ボタン) | 未着手 |
+| 7b | ハーネス / モデルの選択 (役割ごと、⚙ ボタン) | **完了** |
 | 7c | OpenCode ハーネス | 未着手 |
 
 ## 再開の仕方
@@ -821,7 +821,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 残課題: 開始不能タスクが残るグループは催促後も `active` のまま (UI は「完了待ち」)。オーケストレータが `cancel_task` するか、
   ユーザーがグループを中止する。
 
-### Stage 7b — ハーネス / モデルの選択 (未着手、ユーザー決定済みの仕様)
+### Stage 7b — ハーネス / モデルの選択 (完了、ユーザー決定済みの仕様)
 
 - コンポーザの下の行に ⚙ ボタン。**役割ごと** (orchestrator / implementer (code) / investigator / reviewer) に、
   **候補集合 (ハーネス × モデル) と既定値**を設定する。
@@ -831,6 +831,45 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - オーケストレータは `create_task` の任意引数でタスクごとに上書きできるが、**その役割の候補集合の中だけ**。
   候補外ならツールがエラーで拒否する。
 - 設計ドキュメント (mcp-tools の `create_task`、core-design の設定・API、orchestration-model の役割) を先に更新してから実装する。
+
+**結果メモ (2026-09-23)**
+
+- 設計: [`core-design.md`](docs/architecture/core-design.md) §15 (新設)、[`mcp-tools.md`](docs/architecture/mcp-tools.md) の
+  `create_task` / `get_status`、[`orchestration-model.md`](docs/architecture/orchestration-model.md) §8.0、
+  [`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8 を先に更新した。
+- コア: `crates/yhtye-core/src/agents/` — `settings.rs` (役割 4 つ・`AgentChoice`・`RoleSettings`・層の重ね合わせ・
+  検査・`pick`。純粋関数)、`catalog.rs` (`HarnessPreset` = ハーネスの登録簿、`AgentCatalog` = 設定の写しと起動時の解決)、
+  `models.rs` (プロンプトを送らない短命セッションの `configOptions` からモデル一覧、キャッシュ 10 分)。
+  `CoreConfig` の役割別 `HarnessConfig` 3 つを `harnesses` + `default_agent` に、`OrchestrationConfig` の 3 つを
+  `agents: Arc<AgentCatalog>` に置き換えた (**`HarnessConfig` の形は変えていない**)。マイグレーション `0003`
+  (`agent_settings`、`tasks.agent / review_agent`、`agent_sessions.harness / model`)。`session_started.agent` と
+  `SessionRecord.agent` で実際のハーネス × モデルを記録し、`session/load` での復元は記録した組のまま。
+  `create_task` の `harness / model / review_harness / review_model` はドライバが候補集合で検査
+  (`runtime/agent_args.rs`、候補外は許される一覧付き `invalid_argument`)、`get_status` に `agents`、オーケストレータの
+  システムプロンプトに起動時点の候補一覧。API `get_agent_settings` / `set_agent_settings` / `list_harness_models`、TS 型を再生成。
+- **レビューの決定**: review Step は `review_harness / review_model` の上書きがあればそれ、無ければ**起動時点の** reviewer の既定。
+- UI: コンポーザの下段に ⚙ → `src/ui/AgentSettingsPanel.tsx` (範囲「全体 / このプロジェクト」、役割ごとに「全体の設定を使う」
+  (全体では「組み込みの既定を使う」)・候補のチェックリスト (最後の 1 つは外せない)・既定のセレクト、即保存)。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 220 件成功 × 2 回 (新規: agents 単体 14、agent_args 5、prompts 1、store 2、
+    `tests/agent_selection.rs` (偽エージェント) 5 = 候補内の上書き・片方だけの指定の補完・候補外の拒否・`get_status` の agents /
+    設定の変更後も動いているセッションはそのまま・新しいセッションは新しい既定 / 再起動で復元したセッションは記録した組のまま
+    (記録を無視する変異で失敗することを確認) / 検査・層・保存 / モデル一覧)。`cargo clippy --workspace --all-targets` 警告なし、`cargo fmt --check` 成功。
+  - `pnpm test` → 12 ファイル 80 件成功 (新規 `src/ui/AgentSettings.test.tsx` 7 件)。`pnpm build` 成功。フィクスチャを再記録 (`session_started.agent`)。
+  - 実 Haiku (変更した経路に絞った): 新規 `acp_claude_real::real_model_list_comes_from_the_adapter` (実アダプタの一覧 = default / opus[1m] /
+    claude-fable-5-1[1m] / sonnet / haiku、約 2 秒)、新規 `agent_selection_claude::real_orchestrator_override_is_checked_and_runs_the_resolved_model`
+    (implementer の候補 = haiku のみ。**Haiku のオーケストレータが `model=sonnet` を指定 → 許される一覧付きで拒否 → 一覧を読んで `haiku` で作り直し**、
+    タスクのセッションは `claude-code/haiku` で起動し Ready のモデルも haiku、README に反映・main にマージ)、
+    `orchestration_claude_real::real_orchestrator_creates_task_and_sub_agent_reports_back`、`orchestration_claude_restart` — すべて成功。
+    安いモデルが haiku だけなので 2 つのモデルでの実行は偽エージェントで検証。終了後 `claude-agent-acp` 残存 0。
+  - Chrome (WS ブリッジ + Vite + 実 Claude Code、一時リポジトリ): ⚙ → パネルに実モデル一覧、「このプロジェクト」でレビューの継承を外し
+    sonnet を候補に追加 → DB の `agent_settings` に保存を確認。[`docs/e2e/stage7b/`](docs/e2e/stage7b/) `1-settings-panel-real-models.jpg` /
+    `2-project-reviewer-override.jpg`。ブリッジ・Vite は停止済み。
+- 7c への申し送り: OpenCode は `HarnessPreset` を 1 つ作り `CoreConfig::claude_code` (または新しい既定の構成関数) の `harnesses` に足すだけで
+  UI・検査・一覧に載る。モデル一覧は `configOptions` の `category: model` か id `model` の select を読む (無ければ「既定のモデル」だけ)。
+  モデルを env でも渡す必要があれば `model_env`。一覧用のセッションが MCP / 永続化なしで起動できるなら `probe` を設定する。
+  `HarnessPreset::fixed` のように役割ごとの設定を持てるので、オーケストレータの書き込み制限 (§8.1 相当) は preset の `orchestrator` で。
+  残課題: 設定から外したハーネスの記録は既定に戻して起動する (警告ログのみ、UI 表示なし)。
 
 ### Stage 7c — OpenCode ハーネス (未着手、ユーザー決定済みの仕様)
 

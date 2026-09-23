@@ -13,17 +13,19 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+use super::agent_args::{agents_status, choose_agents};
 use super::emitter::{Emitter, Publisher};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
 use super::port::ToolRequest;
-use super::sessions::{AgentMsg, Sessions, Spawned, agent_ref, session_key};
+use super::sessions::{AgentMsg, AgentPick, Sessions, Spawned, agent_ref, session_key};
 use super::transcript::Transcript;
 use crate::acp::schema::StopReason;
 use crate::acp::{AgentError, AgentEvent};
+use crate::agents::AgentRole;
 use crate::api::{ApiEventBody, Snapshot};
 use crate::domain::{
-    DomainCommand, Effect, OrchestratorResume, State, TaskStatus, ToolError, TurnOutcome, decide,
-    render_batch,
+    AgentRef, DomainCommand, Effect, OrchestratorResume, Role, State, TaskStatus, ToolError,
+    TurnOutcome, decide, render_batch,
 };
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
@@ -295,11 +297,35 @@ impl Driver {
                 })?;
                 DomainCommand::CreateGroup { args, base_branch }
             }
+            ToolCall::CreateTask(args) => {
+                let args =
+                    choose_agents(&self.cfg.agents.effective(Some(&self.cfg.project)), args)?;
+                DomainCommand::Tool {
+                    binding,
+                    call: ToolCall::CreateTask(args),
+                }
+            }
             call => DomainCommand::Tool { binding, call },
         };
-        self.execute(cmd)
+        let status = matches!(
+            &cmd,
+            DomainCommand::Tool {
+                call: ToolCall::GetStatus(_),
+                ..
+            }
+        );
+        let reply = self
+            .execute(cmd)
             .await
-            .unwrap_or_else(|| Err(ToolError::internal("the command produced no reply")))
+            .unwrap_or_else(|| Err(ToolError::internal("the command produced no reply")));
+        match reply {
+            Ok(Value::Object(mut body)) if status => {
+                let settings = self.cfg.agents.effective(Some(&self.cfg.project));
+                body.insert("agents".into(), agents_status(&settings));
+                Ok(Value::Object(body))
+            }
+            other => other,
+        }
     }
 
     /// Applies `cmd` and everything that follows from it (git results), and
@@ -351,7 +377,8 @@ impl Driver {
             } => {
                 let cwd = workdir.unwrap_or_else(|| self.cfg.project_dir.clone());
                 let binding = self.binding(&agent, Some(group));
-                self.sessions.prompt(binding, cwd, prompt);
+                let pick = self.pick(&agent);
+                self.sessions.prompt(binding, cwd, prompt, pick);
             }
             Effect::ResumeStep {
                 agent,
@@ -365,7 +392,9 @@ impl Driver {
                     .await;
                 let cwd = workdir.unwrap_or_else(|| self.cfg.project_dir.clone());
                 let binding = self.binding(&agent, Some(group));
-                self.sessions.resume_step(binding, cwd, prompt, fallback);
+                let pick = self.pick(&agent);
+                self.sessions
+                    .resume_step(binding, cwd, prompt, fallback, pick);
             }
             Effect::PromptAgent { agent, text } => {
                 let t = self.state.task(&agent.task);
@@ -374,7 +403,8 @@ impl Driver {
                     .and_then(|t| t.workdir.clone())
                     .unwrap_or_else(|| self.cfg.project_dir.clone());
                 let binding = self.binding(&agent, group);
-                self.sessions.prompt(binding, cwd, text);
+                let pick = self.pick(&agent);
+                self.sessions.prompt(binding, cwd, text, pick);
             }
             Effect::StopAgent { agent } => self.sessions.stop(&session_key(&agent)),
             Effect::StopTaskAgents { task } => self.sessions.stop_task(&task),
@@ -405,7 +435,21 @@ impl Driver {
         }
     }
 
-    fn binding(&self, agent: &crate::domain::AgentRef, group: Option<String>) -> SessionBinding {
+    /// The selection role and the task's override for the session of `agent`
+    /// (`core-design.md` §15.4).
+    fn pick(&self, agent: &AgentRef) -> AgentPick {
+        let task = self.state.task(&agent.task);
+        let over = task.and_then(|t| match agent.role {
+            Role::Reviewer => t.review_agent.clone(),
+            Role::Implementer | Role::Orchestrator => t.agent.clone(),
+        });
+        AgentPick {
+            role: AgentRole::of_session(agent.role, task.map(|t| t.kind)),
+            over,
+        }
+    }
+
+    fn binding(&self, agent: &AgentRef, group: Option<String>) -> SessionBinding {
         SessionBinding {
             session: session_key(agent),
             role: agent.role,

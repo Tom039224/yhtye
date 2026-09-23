@@ -9,14 +9,40 @@ use tokio::sync::mpsc;
 use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
 use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions, spawn_agent};
+use crate::agents::{AgentChoice, AgentRole};
 use crate::mcp::{McpToken, SessionBinding};
-use crate::prompts::system_prompt;
+use crate::prompts::{agent_choices_prompt, system_prompt};
 
 pub(super) type Launch = (
     HarnessConfig,
     SpawnOptions,
     mpsc::UnboundedSender<AgentEvent>,
+    AgentChoice,
 );
+
+/// Which settings a session is started with: its selection role and the
+/// task's allowed override (`core-design.md` §15.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentPick {
+    pub(crate) role: AgentRole,
+    pub(crate) over: Option<AgentChoice>,
+}
+
+impl AgentPick {
+    pub(crate) fn orchestrator() -> Self {
+        Self {
+            role: AgentRole::Orchestrator,
+            over: None,
+        }
+    }
+}
+
+/// A stored session to restore: its ACP session id and what it ran.
+#[derive(Debug, Clone)]
+pub(crate) struct StoredSession {
+    pub(crate) acp_session_id: String,
+    pub(crate) agent: Option<AgentChoice>,
+}
 
 /// What to send once a session started in the background is up.
 pub(super) struct FirstPrompts {
@@ -26,22 +52,40 @@ pub(super) struct FirstPrompts {
 }
 
 impl Sessions {
+    /// Everything to start the session of `binding`: a restored session keeps
+    /// the harness × model it ran (if still registered); otherwise `pick` is
+    /// resolved against the settings in effect now.
     pub(super) fn launch_parts(
         &self,
         binding: &SessionBinding,
         token: &McpToken,
-        resume: Option<SessionId>,
+        resume: Option<StoredSession>,
+        pick: &AgentPick,
         launch: u64,
     ) -> Result<Launch, AgentError> {
+        let agents = &self.cfg.agents;
+        let kept = resume
+            .as_ref()
+            .and_then(|r| r.agent.as_ref())
+            .and_then(|a| agents.launch_config(pick.role, a).map(|h| (a.clone(), h)));
+        let (agent, harness) = match kept {
+            Some(k) => k,
+            None => agents.resolve(&self.cfg.project, pick.role, pick.over.as_ref())?,
+        };
         let replaying = resume.is_some();
+        let mut prompt = system_prompt(binding.role).to_string();
+        if pick.role == AgentRole::Orchestrator {
+            prompt.push_str(&agent_choices_prompt(
+                &agents.effective(Some(&self.cfg.project)),
+            ));
+        }
         let options = SpawnOptions {
             mcp_servers: vec![self.host()?.acp_server(token)],
-            resume,
-            system_prompt: Some(system_prompt(binding.role).to_string()),
+            resume: resume.map(|r| SessionId::new(r.acp_session_id)),
+            system_prompt: Some(prompt),
         };
-        let harness = self.cfg.harness(binding.role).clone();
         let events = self.forwarder(binding.session.clone(), launch, replaying);
-        Ok((harness, options, events))
+        Ok((harness, options, events, agent))
     }
 
     /// A per-session event sender whose events arrive tagged with `key`.
@@ -86,16 +130,22 @@ impl Sessions {
         self.launches
     }
 
-    /// The stored ACP session to restore for `key`, if any (used once).
-    pub(super) fn take_resume(&mut self, key: &str) -> Option<SessionId> {
-        self.resume.remove(key).map(SessionId::new)
+    /// The stored session to restore for `key`, if any (used once).
+    pub(super) fn take_resume(&mut self, key: &str) -> Option<StoredSession> {
+        self.resume.remove(key)
     }
 
     /// Starts the session of `binding` in the background (restoring its stored
     /// ACP session if there is one); `first` is sent once it is up.
-    pub(super) fn start(&mut self, binding: SessionBinding, cwd: PathBuf, first: FirstPrompts) {
+    pub(super) fn start(
+        &mut self,
+        binding: SessionBinding,
+        cwd: PathBuf,
+        first: FirstPrompts,
+        pick: AgentPick,
+    ) {
         let resume = self.take_resume(&binding.session);
-        self.launch(binding, cwd, first, resume);
+        self.launch(binding, cwd, first, resume, pick);
     }
 
     pub(super) fn launch(
@@ -103,7 +153,8 @@ impl Sessions {
         binding: SessionBinding,
         cwd: PathBuf,
         mut first: FirstPrompts,
-        resume: Option<SessionId>,
+        resume: Option<StoredSession>,
+        pick: AgentPick,
     ) {
         let key = binding.session.clone();
         if resume.is_none()
@@ -117,13 +168,14 @@ impl Sessions {
         };
         let resuming = resume.is_some();
         let launch = self.next_launch();
-        let (harness, options, events) = match self.launch_parts(&binding, &token, resume, launch) {
-            Ok(p) => p,
-            Err(e) => {
-                self.revoke(&token);
-                return self.failed(&key, &e);
-            }
-        };
+        let (harness, options, events, agent) =
+            match self.launch_parts(&binding, &token, resume, &pick, launch) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.revoke(&token);
+                    return self.failed(&key, &e);
+                }
+            };
         let starting = Starting {
             launch,
             token: token.clone(),
@@ -131,6 +183,8 @@ impl Sessions {
             fallback: first.fallback,
             resuming,
             cwd: cwd.clone(),
+            pick,
+            agent,
         };
         self.starting.insert(key, starting);
         self.spawning.spawn(async move {
@@ -158,7 +212,7 @@ impl Sessions {
             queued: starting.queued,
             fallback: starting.fallback,
         };
-        self.launch(binding, starting.cwd, first, None);
+        self.launch(binding, starting.cwd, first, None, starting.pick);
     }
 }
 

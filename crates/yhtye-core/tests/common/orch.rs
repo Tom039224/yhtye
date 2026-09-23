@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig};
+use yhtye_core::agents::AgentCatalog;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainConfig, DomainEvent, TaskStatus};
 use yhtye_core::git::NoopGit;
@@ -31,9 +32,7 @@ pub fn config(
     OrchestrationConfig {
         project: "P-1".into(),
         project_dir: dir.to_path_buf(),
-        orchestrator,
-        implementer,
-        reviewer,
+        agents: Arc::new(AgentCatalog::fixed(orchestrator, implementer, reviewer)),
         mcp_bind: "127.0.0.1:0".parse().expect("addr"),
         domain: DomainConfig::default(),
         git: Arc::new(NoopGit::new(dir, Some("main".into()))),
@@ -52,9 +51,7 @@ pub fn git_config(
     OrchestrationConfig {
         project: PROJECT.into(),
         project_dir: repo.repo.clone(),
-        orchestrator,
-        implementer,
-        reviewer,
+        agents: Arc::new(AgentCatalog::fixed(orchestrator, implementer, reviewer)),
         mcp_bind: "127.0.0.1:0".parse().expect("addr"),
         domain: DomainConfig::default(),
         git: Arc::new(repo.git_cli()),

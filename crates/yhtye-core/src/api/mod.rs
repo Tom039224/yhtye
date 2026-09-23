@@ -12,13 +12,14 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::acp::{AgentEvent, AgentOutput};
+use crate::agents::AgentChoice;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
 use crate::store::SessionRecord;
 
 pub use command::{
-    ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE, DEFAULT_GRAPH_COMMITS,
-    LoggedEvent, MAX_EVENT_PAGE, ProjectInfo,
+    AgentSettingsView, ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE,
+    DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo,
 };
 pub use wire::{WsReply, WsRequest, WsServerMessage};
 
@@ -69,6 +70,8 @@ pub enum ApiEventBody {
         acp_session_id: String,
         /// Restored with `session/load` (after a restart).
         resumed: bool,
+        /// The harness × model it runs (Stage 7b; absent in older logs).
+        agent: Option<AgentChoice>,
     },
     SessionFailed {
         session: String,

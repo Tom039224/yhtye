@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use super::inbox::InboxItem;
 use super::types::{HelpKind, Role, StepKind, StepSpec, TaskKind, Verdict};
+use crate::agents::AgentChoice;
 
 /// Default `max_review_rounds` (`orchestration-model.md` §2.3).
 pub const DEFAULT_MAX_REVIEW_ROUNDS: u32 = 2;
@@ -171,6 +172,15 @@ pub struct Task {
     /// Where the task's agents work (set once the git workspace is ready).
     pub workdir: Option<PathBuf>,
     pub cancel_reason: Option<String>,
+    /// The orchestrator's choice of harness × model for the task's agent
+    /// (`create_task` `harness` / `model`, Stage 7b); `None` = the role default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub agent: Option<AgentChoice>,
+    /// The same for the task's review steps (`review_harness` / `review_model`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review_agent: Option<AgentChoice>,
 }
 
 impl Task {

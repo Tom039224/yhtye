@@ -14,10 +14,11 @@ use tokio::task::JoinHandle;
 use super::driver::{Channels, Cmd, Driver, Restarted};
 use super::emitter::{Emitter, Publisher};
 use super::port::{LoopPort, ToolRequest};
-use super::sessions::Sessions;
-use crate::acp::{AgentError, HarnessConfig};
+use super::sessions::{Sessions, StoredSession};
+use crate::acp::AgentError;
+use crate::agents::AgentCatalog;
 use crate::api::{ApiEvent, ApiEventBody, Snapshot};
-use crate::domain::{DomainConfig, OrchestratorResume, Role, State, ToolError};
+use crate::domain::{DomainConfig, OrchestratorResume, State, ToolError};
 use crate::git::GitService;
 use crate::mcp::tools::{CancelGroupArgs, CancelTaskArgs};
 use crate::mcp::{McpHost, TokenRegistry, ToolCall, ToolCallRecord};
@@ -33,9 +34,9 @@ pub struct OrchestrationConfig {
     /// Main worktree of the project (the orchestrator's working directory, and
     /// the fallback working directory of sub-agents).
     pub project_dir: PathBuf,
-    pub orchestrator: HarnessConfig,
-    pub implementer: HarnessConfig,
-    pub reviewer: HarnessConfig,
+    /// Registered harnesses and the harness × model settings of each role
+    /// (`core-design.md` §15; [`AgentCatalog::fixed`] for one fixed harness).
+    pub agents: Arc<AgentCatalog>,
     /// Where the MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
     pub domain: DomainConfig,
@@ -57,17 +58,6 @@ impl fmt::Debug for OrchestrationConfig {
             .field("domain", &self.domain)
             .field("db_path", &self.db_path)
             .finish_non_exhaustive()
-    }
-}
-
-impl OrchestrationConfig {
-    #[must_use]
-    pub fn harness(&self, role: Role) -> &HarnessConfig {
-        match role {
-            Role::Orchestrator => &self.orchestrator,
-            Role::Implementer => &self.implementer,
-            Role::Reviewer => &self.reviewer,
-        }
     }
 }
 
@@ -113,7 +103,7 @@ struct Stored {
 impl Stored {
     /// Reports every session that was running (or suspended) when Yhtye stopped
     /// as interrupted; returns their ACP session ids to restore, by session key.
-    fn interrupt_sessions(&self, emit: &Emitter) -> HashMap<String, String> {
+    fn interrupt_sessions(&self, emit: &Emitter) -> HashMap<String, StoredSession> {
         for s in &self.sessions {
             emit.send(ApiEventBody::SessionInterrupted {
                 session: s.session_key.clone(),
@@ -121,7 +111,13 @@ impl Stored {
         }
         self.sessions
             .iter()
-            .map(|s| (s.session_key.clone(), s.acp_session_id.clone()))
+            .map(|s| {
+                let stored = StoredSession {
+                    acp_session_id: s.acp_session_id.clone(),
+                    agent: s.agent.clone(),
+                };
+                (s.session_key.clone(), stored)
+            })
             .collect()
     }
 }
