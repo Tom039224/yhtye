@@ -66,3 +66,37 @@ pub(super) async fn set(
     }
     Ok(())
 }
+
+/// The registered secret environment variable names (the `secret_env_names`
+/// table). Only names: the values are in the OS credential store.
+pub(super) async fn secret_names(pool: &SqlitePool) -> Result<Vec<String>, StoreError> {
+    Ok(
+        sqlx::query_scalar("SELECT name FROM secret_env_names ORDER BY name")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+pub(super) async fn add_secret_name(
+    pool: &SqlitePool,
+    name: &str,
+    now_ms: u64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO secret_env_names (name, updated_ms) VALUES (?, ?) \
+         ON CONFLICT (name) DO UPDATE SET updated_ms = excluded.updated_ms",
+    )
+    .bind(name)
+    .bind(int(now_ms)?)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn remove_secret_name(pool: &SqlitePool, name: &str) -> Result<(), StoreError> {
+    sqlx::query("DELETE FROM secret_env_names WHERE name = ?")
+        .bind(name)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

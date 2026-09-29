@@ -8,10 +8,11 @@ use tokio::sync::mpsc;
 
 use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
-use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions, spawn_agent};
+use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions};
 use crate::agents::{AgentChoice, AgentRole};
 use crate::mcp::{McpToken, SessionBinding};
 use crate::prompts::{agent_choices_prompt, system_prompt};
+use crate::secrets::spawn_agent_with_secrets;
 
 pub(super) type Launch = (
     HarnessConfig,
@@ -108,6 +109,7 @@ impl Sessions {
             mcp_servers: vec![self.host()?.acp_server(token)],
             resume: resume.map(|r| SessionId::new(r.acp_session_id)),
             system_prompt: Some(prompt),
+            secret_env: Default::default(),
         };
         let events = self.forwarder(binding.session.clone(), launch, replaying);
         Ok((harness, options, events, picked))
@@ -212,8 +214,9 @@ impl Sessions {
             agent,
         };
         self.starting.insert(key, starting);
+        let secrets = self.cfg.agents.secrets();
         self.spawning.spawn(async move {
-            let result = spawn_agent(&harness, &cwd, options, events).await;
+            let result = spawn_agent_with_secrets(&secrets, &harness, &cwd, options, events).await;
             Spawned {
                 launch,
                 token,

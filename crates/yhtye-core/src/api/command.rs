@@ -15,6 +15,7 @@ use crate::agents::{
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
+use crate::secrets::SecretValue;
 use crate::store::{StoreError, StoredEvent};
 use crate::usage::UsageReport;
 
@@ -132,6 +133,21 @@ pub enum ApiCommand {
         harness: String,
         model: String,
     },
+    /// The names of the secret environment variables (Stage 7e). Values are
+    /// never returned.
+    ListSecretEnv,
+    /// Stores `value` in the OS credential store under `name` (replacing an
+    /// earlier one) and registers the name; every agent started afterwards gets
+    /// the variable. `unavailable` when the credential store cannot be used.
+    SetSecretEnv {
+        name: String,
+        #[ts(type = "string")]
+        value: SecretValue,
+    },
+    /// Removes the value and the name.
+    DeleteSecretEnv {
+        name: String,
+    },
 }
 
 /// Everything the settings panel shows (`core-design.md` §15.7).
@@ -221,6 +237,10 @@ pub enum ApiResponse {
     },
     ModelEfforts {
         efforts: ModelEfforts,
+    },
+    /// The registered secret environment variable names, sorted.
+    SecretEnv {
+        names: Vec<String>,
     },
 }
 

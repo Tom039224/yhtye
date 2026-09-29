@@ -195,7 +195,11 @@ fn handle_request(core: &Core, text: &str, out: &mpsc::UnboundedSender<String>) 
             return;
         }
         Err(None) => {
-            tracing::warn!("ignored a bridge message without an id: {text:.200}");
+            // Only the size: the message may be a command carrying a secret value.
+            tracing::warn!(
+                "ignored a bridge message without an id ({} bytes)",
+                text.len()
+            );
             return;
         }
     };

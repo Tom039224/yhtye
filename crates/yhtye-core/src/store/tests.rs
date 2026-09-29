@@ -143,7 +143,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -159,6 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
             "helps",
             "inbox",
             "projects",
+            "secret_env_names",
             "steps",
             "task_deps",
             "task_groups",
@@ -174,7 +175,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
 }
 
 #[tokio::test]
@@ -476,4 +477,23 @@ async fn agent_settings_are_stored_per_scope_and_role() {
         ]
     );
     let _ = b;
+}
+
+#[tokio::test]
+async fn secret_names_are_stored_sorted_without_duplicates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    store.add_secret_name("B_KEY", 1).await.expect("add");
+    store.add_secret_name("A_KEY", 2).await.expect("add");
+    store.add_secret_name("A_KEY", 3).await.expect("again");
+    assert_eq!(
+        store.secret_names().await.expect("list"),
+        ["A_KEY", "B_KEY"]
+    );
+    store.remove_secret_name("A_KEY").await.expect("remove");
+    store
+        .remove_secret_name("A_KEY")
+        .await
+        .expect("remove again");
+    assert_eq!(store.secret_names().await.expect("list"), ["B_KEY"]);
 }

@@ -761,6 +761,13 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 アプリと開発ブリッジは `CoreConfig::installed(data_dir, model)` = `agents::installed_presets`: Claude Code は常に、OpenCode は
 `PATH` に実行可能な `opencode` があるときだけ登録する。
 
+**Stage 7e (Codex)**: preset に `model_config_env: Option<String>` (モデルと effort を JSON で渡す環境変数。Codex は `CODEX_CONFIG`。設定すると
+`HarnessPreset::config` が `{"model","model_reasoning_effort"}` を組み立てて入れ、effort は option として送らない)、`effort_config_id` (effort の config id。
+既定 `effort`、Codex は `reasoning_effort`。以前のグローバル定数 `EFFORT_CONFIG_ID` は既定値としてだけ残る)、`model_source: ModelSource { Acp, Codex }`
+(§15.6) を追加。`HarnessPreset::codex(codex_path)` ([`acp-harnesses.md`](acp-harnesses.md) §9): 全役割 `HarnessConfig::codex` (npx で `codex-acp@2.0.0`、
+`CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`、`orchestrator_read_only = false`。`installed_presets` は `codex` が `PATH`
+にあるときだけ登録する (`CODEX_COMMAND`)。
+
 `AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
 `OrchestrationConfig::agents: Arc<AgentCatalog>` (以前の `orchestrator / implementer / reviewer` の 3 フィールドを置き換え。
 テスト用に `AgentCatalog::fixed(orch, impl, reviewer)` = 1 つだけのハーネス `default`)。
@@ -824,6 +831,14 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
     480 個を全部読むと 480 回の `set_config_option` になるので避けた。
   - ハーネスが拒否するモデルは `efforts = None` のまま (一覧のプローブ) / `unavailable` (`list_model_efforts`)。
 
+- **モデルの出どころ (7e、`ModelSource`)**: `Acp` (上のとおり) か `Codex`。`Codex` の preset は一覧を取る時に**ユーザーの Codex 設定** (`$CODEX_HOME/config.toml`、
+  `agents/codex_config.rs`) のトップレベル `model_provider` を読み、`openrouter` なら OpenRouter の公開 API (`agents/openrouter.rs`、認証なし、`tools` 対応のモデルだけ、
+  effort は `reasoning.supported_efforts`) から `HarnessModels` を作る (`efforts` は全モデルで `Some`、`current` は `None`)。それ以外はアダプタの一覧 (プローブ)。
+  `ModelService` は環境の参照 (`with_env`) と取得先 URL (`with_openrouter_url`) を差し替えられる (テスト)。`list_model_efforts` は OpenRouter のときは一覧から返す。
+  詳細は [`acp-harnesses.md`](acp-harnesses.md) §9.4。
+- `probe_models` / `probe_efforts` / `efforts_from_options` は先頭または末尾に `&Secrets` / `config_id` を取る (プローブのエージェントにも秘密の環境変数を渡すため、
+  effort の config id が preset ごとのため)。
+
 ### 15.7 API
 
 - `get_agent_settings{project?}` → `agent_settings{settings: AgentSettingsView{harnesses: [{id, label}], builtin, global, project, project_layer, effective}}`
@@ -832,5 +847,37 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
   (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
 - `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。
 - `list_model_efforts{harness, model}` (7d) → `model_efforts{efforts: {harness, model, efforts: [{value, name, description?}]}}`。エラーは同上。
+- `list_secret_env` / `set_secret_env{name, value}` / `delete_secret_env{name}` (7e) → `secret_env{names}` (§16)。
 - **設定 UI (7d)**: アプリ全体の設定モーダル ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。API は上のとおりで、
   行の編集はすべてクライアント側で「役割の設定全体を `set_agent_settings` で置き換える」形 (同じ組の重複は UI が先に断る)。
+
+## 16. 秘密の環境変数 (Stage 7e、`crates/yhtye-core/src/secrets/`)
+
+Codex の認証キーのように、**エージェントプロセスの環境**に置きたい秘密をユーザーが登録する (アプリ全体、プロジェクトごとではない)。
+
+- **保存**: 値は **OS のキーリング** (Linux は Secret Service = gnome-keyring / KWallet、macOS は Keychain、Windows は Credential Manager)。`keyring` crate 3.6
+  (Linux は `sync-secret-service` + `crypto-rust`、`libdbus` が要る)、service `yhtye`、account = 変数名。Yhtye の DB (マイグレーション `0005_secret_env.sql`、
+  テーブル `secret_env_names`) は**名前だけ**。値をログ・エラー・API の応答・`Debug` 出力に出さない (`SecretValue` / `SecretEnv` は `Debug` で伏せる。
+  エラーメッセージは keyring のエラー文だけで値を含まない)。値は保存後にフロントエンドへ返さない (UI は「登録済み」、上書き・削除のみ)。
+- **型**: `trait SecretBackend { set, get, delete }` (`KeyringBackend` = 本番、`MemoryBackend` = 単体テスト用、失敗を注入できる)、`Secrets { backend, names }`
+  (`set` / `remove` / `names` / `env`)。ブロッキングの呼び出しは `spawn_blocking`。`CoreConfig::secret_backend` で差し替え (`CoreConfig::claude_code` は `KeyringBackend`)。
+- **検査** (`validate_secret_name` / `validate_secret_value`): 名前は `[A-Za-z_][A-Za-z0-9_]*` で 128 文字まで、Yhtye 自身の `YHTYE_BRIDGE_TOKEN` /
+  `VITE_YHTYE_BRIDGE_TOKEN` (エージェントに渡さない変数)、プログラムの読み込み・探索を変える `PATH` / `HOME` / `NODE_OPTIONS` / `PYTHONPATH` / `PYTHONSTARTUP` /
+  `LD_*` / `DYLD_*` は拒否。DB の行を手で書き換えて禁止名を入れても、`Secrets::env` が飛ばす。値は空でなく NUL を含まず 64 KiB まで。ストアを触る前に検査する。
+- **注入**: `spawn_agent_with_secrets(secrets, harness, cwd, options, events)` が全登録変数の値を読んで `SpawnOptions.secret_env` に入れ、`acp/process.rs` が
+  子プロセスの環境に足す。**適用順は 秘密 → 削除 (`PRIVATE_ENV` と `HarnessConfig.env_remove`) → ハーネスの `env`** なので、ハーネスの `env`
+  (`ANTHROPIC_MODEL`、`CODEX_PATH`、`CODEX_CONFIG` …) も削除も衝突時は秘密に勝つ (秘密が起動設定を壊せず、消した変数を復活させられない)。サブエージェント・オーケストレータ (`runtime/launch.rs`・`sessions.rs`)、モデル一覧のプローブ (`agents/models.rs`)、
+  使用量のプローブ (`usage/probe.rs`) の**すべて**が通る (`AgentCatalog::secrets()` / `ModelService` / `UsageService` が `Arc<Secrets>` を持つ)。
+  値が読めない (キーリングが使えない・ロック中) ときは、登録が 1 つでもあれば**起動を失敗させる** (`AgentError::Startup`、step `secret environment variables`、
+  メッセージにキーリングのエラー)。キーが黙って抜けたエージェントが後から分かりにくい失敗をするより明確なため。登録があるのに値が無い名前は警告ログだけで飛ばす。
+- **整合**: `set_secret_env` は名前を DB に登録してから値をキーリングに保存し、後者が失敗したら前者を取り消す (もともと登録済みの名前は残す)。
+  `delete_secret_env` は DB から消してからキーリングを消し、失敗したら名前を戻す。DB とメモリ / キーリングが食い違わない。
+- **既知の限界 (レビューで確認、今回は対応しない)**: すべての秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
+  自分の環境を stderr に出すと、その行が Yhtye のログ・エラーに載りうる (値の伏せ字化はしていない)。メモリ上の値の zeroize はしない。
+  キーリングが使えないと、登録が 1 つでもあれば**全エージェントの起動が失敗する** (フェイルクローズ、ユーザー決定の範囲内)。
+- **API**: `list_secret_env` → `secret_env{names}` (ソート済み)。`set_secret_env{name, value}` (キーリングに保存してから名前を DB に登録。上書き可) と
+  `delete_secret_env{name}` (値と名前を消す。無い名前でも成功) は更新後の `secret_env{names}` を返す。不正な名前・値は `invalid_argument`、キーリングが使えなければ
+  `unavailable` (メッセージにキーリングの理由)。`ApiCommand` の `Debug` でも値は `<redacted>`。
+- **UI**: 設定モーダルの項目「秘密の環境変数」 ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。
+- **テスト**: 単体 (名前と値の検査、`Debug` に値が出ない、キーリング不可の扱い)、`tests/acp_secret_env.rs` (実プロセスの環境に入る・ハーネスの `env` が勝つ・読めなければ起動しない)、
+  `tests/secret_env_api.rs` (Core の 3 コマンド、再起動後も名前が残る、値が応答に出ない)、`store` のテスト、実キーリングの往復 1 件 (`--ignored`)。

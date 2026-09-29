@@ -4,7 +4,7 @@
 //! built-in default and an in-memory copy of the stored settings layers.
 
 use std::collections::HashMap;
-use std::sync::{PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -12,7 +12,8 @@ use ts_rs::TS;
 use super::settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, RoleSettings, effective,
 };
-use crate::acp::{AgentError, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect};
+use crate::acp::{AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect};
+use crate::secrets::Secrets;
 
 /// The config id used for the model when a harness config names none.
 pub const MODEL_CONFIG_ID: &str = "model";
@@ -21,6 +22,19 @@ pub const MODEL_CONFIG_ID: &str = "model";
 pub const OPENCODE: &str = "opencode";
 /// Id of the Claude Code preset.
 pub const CLAUDE_CODE: &str = "claude-code";
+/// Id of the Codex preset.
+pub const CODEX: &str = "codex";
+
+/// Where the models of a harness come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelSource {
+    /// The harness's own model option, read over ACP in a short session.
+    Acp,
+    /// Codex: over ACP, except that with the OpenRouter provider in the user's
+    /// Codex config the list is OpenRouter's public model list (the adapter
+    /// only lists OpenAI's catalog), see [`super::openrouter`].
+    Codex,
+}
 
 /// How to launch one harness for every role.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +53,15 @@ pub struct HarnessPreset {
     /// Environment variable that also carries the model (the adapter's initial
     /// model, e.g. `ANTHROPIC_MODEL`), set with the `set_config_option` value.
     pub model_env: Option<String>,
+    /// Environment variable holding a JSON object with the chosen `model` and
+    /// `model_reasoning_effort` (Codex: `CODEX_CONFIG`), for harnesses that
+    /// refuse `set_config_option` for models outside their own catalog. The
+    /// model is still verified through its config option; the effort is then
+    /// not sent as an option.
+    pub model_config_env: Option<String>,
+    /// The config id of the effort option (`effort`; Codex: `reasoning_effort`).
+    pub effort_config_id: String,
+    pub model_source: ModelSource,
     /// A choice of this harness must name a model (OpenCode: its own default is
     /// the last model the user used, possibly a paid one).
     pub requires_model: bool,
@@ -72,6 +95,9 @@ impl HarnessPreset {
             reviewer: HarnessConfig::claude_code(model),
             probe: Some(HarnessConfig::claude_code_usage_probe()),
             model_env: Some("ANTHROPIC_MODEL".into()),
+            model_config_env: None,
+            effort_config_id: EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
             requires_model: false,
             orchestrator_read_only: true,
         }
@@ -100,6 +126,38 @@ impl HarnessPreset {
             reviewer: h,
             probe: Some(probe),
             model_env: None,
+            model_config_env: None,
+            effort_config_id: EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
+            requires_model: true,
+            orchestrator_read_only: false,
+        }
+    }
+
+    /// Codex (`HarnessConfig::codex`) for every role (`acp-harnesses.md` §9).
+    /// `codex_path` is the user's `codex`. A choice must name a model (the
+    /// user's own default model may not even be usable); the model and effort
+    /// reach Codex through `CODEX_CONFIG`. Every role runs in
+    /// `agent-full-access` mode, so the orchestrator cannot be made read-only
+    /// (only its prompt forbids writing).
+    #[must_use]
+    pub fn codex(codex_path: Option<&str>) -> Self {
+        let h = HarnessConfig::codex(codex_path);
+        Self {
+            id: CODEX.into(),
+            label: "Codex".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig {
+                mode_after_new: None,
+                ..h
+            }),
+            model_env: None,
+            model_config_env: Some(CODEX_CONFIG_ENV.into()),
+            effort_config_id: "reasoning_effort".into(),
+            model_source: ModelSource::Codex,
             requires_model: true,
             orchestrator_read_only: false,
         }
@@ -123,6 +181,9 @@ impl HarnessPreset {
             reviewer,
             probe: None,
             model_env: None,
+            model_config_env: None,
+            effort_config_id: EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
             requires_model: false,
             orchestrator_read_only: true,
         }
@@ -166,10 +227,14 @@ impl HarnessPreset {
         effort: Option<&str>,
     ) -> HarnessConfig {
         let mut h = self.role_config(role).clone();
-        h.effort = effort.map(|value| ModelSelect {
-            config_id: EFFORT_CONFIG_ID.to_string(),
-            value: value.to_string(),
-        });
+        // With a config env var the effort travels in it (and is not verified
+        // as an option: the adapter shows none for models it has no metadata of).
+        h.effort = effort
+            .filter(|_| self.model_config_env.is_none())
+            .map(|value| ModelSelect {
+                config_id: self.effort_config_id.clone(),
+                value: value.to_string(),
+            });
         if let Some(model) = model {
             let config_id = h.model.as_ref().map_or_else(
                 || self.model_config_id().to_string(),
@@ -182,6 +247,11 @@ impl HarnessPreset {
             if let Some(var) = &self.model_env {
                 h.env.insert(var.clone(), model.to_string());
             }
+        }
+        if let Some(var) = &self.model_config_env
+            && let Some(json) = session_config_json(model, effort)
+        {
+            h.env.insert(var.clone(), json);
         }
         h
     }
@@ -197,6 +267,19 @@ impl HarnessPreset {
             h
         })
     }
+}
+
+/// The JSON object for [`HarnessPreset::model_config_env`]: `model` and
+/// `model_reasoning_effort` (only those given); `None` when neither is.
+fn session_config_json(model: Option<&str>, effort: Option<&str>) -> Option<String> {
+    let mut map = serde_json::Map::new();
+    if let Some(m) = model {
+        map.insert("model".into(), m.into());
+    }
+    if let Some(e) = effort {
+        map.insert("model_reasoning_effort".into(), e.into());
+    }
+    (!map.is_empty()).then(|| serde_json::Value::Object(map).to_string())
 }
 
 /// The outcome of [`AgentCatalog::resolve`].
@@ -223,6 +306,8 @@ pub struct AgentCatalog {
     presets: Vec<HarnessPreset>,
     builtin: AgentChoice,
     layers: RwLock<Layers>,
+    /// The secret environment variables every agent process gets (Stage 7e).
+    secrets: Arc<Secrets>,
 }
 
 impl AgentCatalog {
@@ -233,7 +318,21 @@ impl AgentCatalog {
             presets,
             builtin,
             layers: RwLock::new(Layers::default()),
+            secrets: Arc::new(Secrets::none()),
         }
+    }
+
+    /// Uses `secrets` for the environment of every agent this catalog launches.
+    #[must_use]
+    pub fn with_secrets(mut self, secrets: Arc<Secrets>) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
+    /// The secret environment variables (names and values) for a spawn.
+    #[must_use]
+    pub fn secrets(&self) -> Arc<Secrets> {
+        self.secrets.clone()
     }
 
     /// One harness `default` with fixed configs and no model selection (tests).

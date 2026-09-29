@@ -13,6 +13,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::config::HarnessConfig;
 use super::events::{AgentError, AgentEvent};
+use crate::secrets::SecretEnv;
 
 /// Number of stderr lines kept for error messages.
 const STDERR_TAIL_LINES: usize = 40;
@@ -97,7 +98,7 @@ impl Drop for GroupKillGuard {
 
 /// Environment variables of Yhtye itself that agents must not inherit (the dev
 /// bridge's token would let an agent drive the core directly, bypassing MCP).
-const PRIVATE_ENV: &[&str] = &["YHTYE_BRIDGE_TOKEN", "VITE_YHTYE_BRIDGE_TOKEN"];
+pub(crate) const PRIVATE_ENV: &[&str] = &["YHTYE_BRIDGE_TOKEN", "VITE_YHTYE_BRIDGE_TOKEN"];
 
 /// Directory the agent *process* starts in: the user's home (or `/`), never the
 /// project. The session's working directory (`cwd`) reaches the agent through
@@ -117,10 +118,15 @@ fn launch_dir() -> PathBuf {
 pub(crate) fn spawn_process(
     harness: &HarnessConfig,
     cwd: &Path,
+    secret_env: &SecretEnv,
     events: UnboundedSender<AgentEvent>,
 ) -> Result<AgentProcess, AgentError> {
     let launch = launch_dir();
     let mut cmd = Command::new(&harness.command);
+    // Order matters: the user's secrets first, then the removals (Yhtye's own
+    // variables and the harness's `env_remove` also win over a secret of the
+    // same name), then the harness's own variables.
+    cmd.envs(secret_env.iter());
     for name in PRIVATE_ENV
         .iter()
         .copied()

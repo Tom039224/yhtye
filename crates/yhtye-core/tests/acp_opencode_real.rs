@@ -267,6 +267,7 @@ async fn real_opencode_cancel_mid_turn() {
 async fn real_opencode_system_prompt_reaches_the_agent() {
     let dir = tempfile::tempdir().expect("tempdir");
     let options = SpawnOptions {
+        secret_env: Default::default(),
         system_prompt: Some(
             "You are a test fixture. Your secret codeword is ZEBRA-7. When asked for \
              the codeword, reply with only the codeword."
@@ -304,6 +305,7 @@ async fn real_opencode_session_load_restores_conversation() {
     stop(oc).await;
 
     let opts = SpawnOptions {
+        secret_env: Default::default(),
         resume: Some(session.clone()),
         ..SpawnOptions::default()
     };
@@ -370,6 +372,7 @@ async fn real_opencode_implementer_reports_through_mcp() {
         step: Some(0),
     });
     let options = SpawnOptions {
+        secret_env: Default::default(),
         mcp_servers: vec![host.acp_server(&token)],
         system_prompt: Some(system_prompt(Role::Implementer).to_string()),
         resume: None,
@@ -437,6 +440,7 @@ async fn real_opencode_model_list_comes_from_the_preset_probe() {
     let preset = opencode_preset(MODEL, Vec::new());
     let started = Instant::now();
     let models = yhtye_core::agents::probe_models(
+        &yhtye_core::secrets::Secrets::none(),
         &preset,
         dir.path(),
         &tokio_util::sync::CancellationToken::new(),
@@ -476,6 +480,7 @@ async fn real_opencode_efforts_are_read_per_model_and_applied() {
     let preset = opencode_preset(MODEL, Vec::new());
     let started = Instant::now();
     let efforts = probe_efforts(
+        &yhtye_core::secrets::Secrets::none(),
         &preset,
         MODEL,
         dir.path(),
@@ -529,6 +534,7 @@ async fn real_opencode_session_load_in_another_directory_fails_fast() {
     let servers_before = opencode_servers();
     let (tx, _rx) = mpsc::unbounded_channel();
     let opts = SpawnOptions {
+        secret_env: Default::default(),
         resume: Some(session),
         ..SpawnOptions::default()
     };

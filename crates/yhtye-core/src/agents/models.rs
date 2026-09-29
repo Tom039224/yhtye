@@ -5,7 +5,9 @@
 //! the same kind of session and reading the `effort` option again.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -13,13 +15,15 @@ use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
-use super::catalog::HarnessPreset;
-use crate::acp::EFFORT_CONFIG_ID;
+use super::catalog::{HarnessPreset, ModelSource};
+use super::codex_config::configured_provider;
+use super::openrouter::{OPENROUTER_MODELS_URL, OPENROUTER_PROVIDER, fetch_openrouter_models};
 use crate::acp::schema::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
     SessionConfigSelectOption, SessionConfigSelectOptions,
 };
-use crate::acp::{AgentHandle, SpawnOptions, spawn_agent};
+use crate::acp::{AgentHandle, SpawnOptions};
+use crate::secrets::{Secrets, spawn_agent_with_secrets};
 
 /// Upper bound for starting the listing session.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -35,6 +39,9 @@ const SET_MODEL_TIMEOUT: Duration = Duration::from_secs(30);
 /// lists (OpenCode: hundreds) are read per model on demand
 /// ([`ModelService::get_efforts`]).
 const EAGER_EFFORT_MODELS: usize = 12;
+
+/// Reads an environment variable (the process's own, or a fake in tests).
+type EnvLookup = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
 
 /// One model a harness offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -108,17 +115,17 @@ fn flat_options(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption>
     }
 }
 
-/// The efforts listed in `options`: the select with id `effort`, else the one
+/// The efforts listed in `options`: the select with id `config_id`, else the one
 /// of category `thought_level`. Empty when there is none. A value `default`
 /// (Claude Code adds it for clients that predate the option) is left out: an
 /// unset effort is "not specified" in Yhtye.
 #[must_use]
-pub fn efforts_from_options(options: &[SessionConfigOption]) -> Vec<EffortOption> {
+pub fn efforts_from_options(options: &[SessionConfigOption], config_id: &str) -> Vec<EffortOption> {
     let is_select = |o: &&SessionConfigOption| matches!(o.kind, SessionConfigKind::Select(_));
     let found = options
         .iter()
         .filter(is_select)
-        .find(|o| &*o.id.0 == EFFORT_CONFIG_ID)
+        .find(|o| &*o.id.0 == config_id)
         .or_else(|| {
             options
                 .iter()
@@ -172,6 +179,7 @@ pub fn models_from_options(
 /// Opens a listing session of `preset` in `cwd`; gives up (stopping the agent)
 /// when `cancel` fires.
 async fn open_probe(
+    secrets: &Secrets,
     preset: &HarnessPreset,
     cwd: &Path,
     cancel: &CancellationToken,
@@ -180,7 +188,7 @@ async fn open_probe(
     let (tx, _rx) = mpsc::unbounded_channel();
     // Dropping a pending spawn kills the new process group (GroupKillGuard).
     let started = tokio::select! {
-        r = tokio::time::timeout(PROBE_TIMEOUT, spawn_agent(&harness, cwd, SpawnOptions::default(), tx)) => r,
+        r = tokio::time::timeout(PROBE_TIMEOUT, spawn_agent_with_secrets(secrets, &harness, cwd, SpawnOptions::default(), tx)) => r,
         () = cancel.cancelled() => return Err("Yhtye is shutting down".into()),
     };
     started
@@ -192,17 +200,17 @@ async fn open_probe(
 /// `Err` when the harness refuses the model.
 async fn efforts_of(
     handle: &AgentHandle,
-    config_id: &str,
+    preset: &HarnessPreset,
     model: &str,
 ) -> Result<Vec<EffortOption>, String> {
     let options = tokio::time::timeout(
         SET_MODEL_TIMEOUT,
-        handle.set_config_option(config_id, model),
+        handle.set_config_option(preset.model_config_id(), model),
     )
     .await
     .map_err(|_| format!("selecting {model} timed out"))?
     .map_err(|e| format!("could not select {model}: {e}"))?;
-    Ok(efforts_from_options(&options))
+    Ok(efforts_from_options(&options, &preset.effort_config_id))
 }
 
 /// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
@@ -210,11 +218,12 @@ async fn efforts_of(
 /// every model's efforts read (a model the harness refuses keeps `efforts:
 /// None`). Gives up (stopping the agent) when `cancel` fires.
 pub async fn probe_models(
+    secrets: &Secrets,
     preset: &HarnessPreset,
     cwd: &Path,
     cancel: &CancellationToken,
 ) -> Result<HarnessModels, String> {
-    let handle = open_probe(preset, cwd, cancel).await?;
+    let handle = open_probe(secrets, preset, cwd, cancel).await?;
     let config_id = preset.model_config_id();
     let (mut models, current) = models_from_options(&handle.info().config_options, config_id);
     if models.len() <= EAGER_EFFORT_MODELS {
@@ -222,7 +231,7 @@ pub async fn probe_models(
             if cancel.is_cancelled() {
                 break;
             }
-            match efforts_of(&handle, config_id, &m.value).await {
+            match efforts_of(&handle, preset, &m.value).await {
                 Ok(efforts) => m.efforts = Some(efforts),
                 Err(e) => tracing::warn!("efforts of {}/{}: {e}", preset.id, m.value),
             }
@@ -239,13 +248,14 @@ pub async fn probe_models(
 
 /// Opens a listing session, selects `model` and reads its efforts.
 pub async fn probe_efforts(
+    secrets: &Secrets,
     preset: &HarnessPreset,
     model: &str,
     cwd: &Path,
     cancel: &CancellationToken,
 ) -> Result<Vec<EffortOption>, String> {
-    let handle = open_probe(preset, cwd, cancel).await?;
-    let efforts = efforts_of(&handle, preset.model_config_id(), model).await;
+    let handle = open_probe(secrets, preset, cwd, cancel).await?;
+    let efforts = efforts_of(&handle, preset, model).await;
     handle.shutdown().await;
     efforts
 }
@@ -256,6 +266,11 @@ type CachedEfforts = (Instant, Result<Vec<EffortOption>, String>);
 /// Cached, one-at-a-time access to [`probe_models`] for the API.
 pub struct ModelService {
     cwd: PathBuf,
+    secrets: Arc<Secrets>,
+    /// The environment the user's Codex home is found in (the process's own).
+    env: EnvLookup,
+    /// Where the OpenRouter model list is downloaded from.
+    openrouter_url: String,
     /// Held while probing, so concurrent callers share the result.
     cache: Mutex<HashMap<String, Cached>>,
     /// Efforts read for one model on demand, by `(harness, model)`.
@@ -266,13 +281,58 @@ pub struct ModelService {
 impl ModelService {
     /// `cwd` (the listing sessions' working directory) is created on first use.
     #[must_use]
-    pub fn new(cwd: PathBuf) -> Self {
+    pub fn new(cwd: PathBuf, secrets: Arc<Secrets>) -> Self {
         Self {
             cwd,
+            secrets,
+            env: Arc::new(|k| std::env::var_os(k)),
+            openrouter_url: OPENROUTER_MODELS_URL.to_string(),
             cache: Mutex::new(HashMap::new()),
             efforts: Mutex::new(HashMap::new()),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Finds the user's Codex home (`CODEX_HOME`, `HOME`) in `env` instead of
+    /// the process environment (tests).
+    #[must_use]
+    pub fn with_env(
+        mut self,
+        env: impl Fn(&str) -> Option<OsString> + Send + Sync + 'static,
+    ) -> Self {
+        self.env = Arc::new(env);
+        self
+    }
+
+    /// Downloads OpenRouter's model list from `url` (tests).
+    #[must_use]
+    pub fn with_openrouter_url(mut self, url: impl Into<String>) -> Self {
+        self.openrouter_url = url.into();
+        self
+    }
+
+    /// Whether `preset`'s models come from OpenRouter: Codex with the
+    /// `openrouter` provider in the user's Codex config.
+    async fn uses_openrouter(&self, preset: &HarnessPreset) -> bool {
+        preset.model_source == ModelSource::Codex
+            && configured_provider(&*self.env).await.as_deref() == Some(OPENROUTER_PROVIDER)
+    }
+
+    /// The models of `preset` from where they come (ACP or OpenRouter).
+    async fn load(&self, preset: &HarnessPreset) -> Result<HarnessModels, String> {
+        if !self.uses_openrouter(preset).await {
+            return probe_models(&self.secrets, preset, &self.cwd, &self.cancel).await;
+        }
+        let models = tokio::select! {
+            r = fetch_openrouter_models(&self.openrouter_url) => r?,
+            () = self.cancel.cancelled() => return Err("Yhtye is shutting down".into()),
+        };
+        Ok(HarnessModels {
+            harness: preset.id.clone(),
+            models,
+            current: None,
+            fetched_at_ms: now_ms(),
+        })
     }
 
     /// Stops a running probe and refuses new ones; waits until none runs.
@@ -303,7 +363,7 @@ impl ModelService {
             }
         }
         let outcome = match std::fs::create_dir_all(&self.cwd) {
-            Ok(()) => probe_models(preset, &self.cwd, &self.cancel).await,
+            Ok(()) => self.load(preset).await,
             Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
         };
         cache.insert(preset.id.clone(), (Instant::now(), outcome.clone()));
@@ -320,6 +380,16 @@ impl ModelService {
         preset: &HarnessPreset,
         model: &str,
     ) -> Result<Vec<EffortOption>, String> {
+        if self.uses_openrouter(preset).await {
+            // OpenRouter's list carries every model's efforts.
+            let listed = self.get(preset, false).await?;
+            return Ok(listed
+                .models
+                .into_iter()
+                .find(|m| m.value == model)
+                .and_then(|m| m.efforts)
+                .unwrap_or_default());
+        }
         if let Some((at, Ok(listed))) = self.cache.lock().await.get(&preset.id)
             && at.elapsed() < FRESH_FOR
             && let Some(e) = listed
@@ -346,7 +416,7 @@ impl ModelService {
             }
         }
         let outcome = match std::fs::create_dir_all(&self.cwd) {
-            Ok(()) => probe_efforts(preset, model, &self.cwd, &self.cancel).await,
+            Ok(()) => probe_efforts(&self.secrets, preset, model, &self.cwd, &self.cancel).await,
             Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
         };
         cache.insert(key, (Instant::now(), outcome.clone()));

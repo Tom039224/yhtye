@@ -55,8 +55,24 @@ pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
 /// asking for paths outside the session directory (answered by Yhtye).
 pub const OPENCODE_BUILD_MODE: &str = "build";
 
-/// The config id of the effort option (Claude Code's `thought_level`, OpenCode's variant).
+/// The default config id of the effort option (Claude Code's `thought_level`,
+/// OpenCode's variant). A preset may name another one (Codex: `reasoning_effort`).
 pub const EFFORT_CONFIG_ID: &str = "effort";
+
+/// The Codex ACP adapter run through `npx` (an exact version, like
+/// [`CLAUDE_AGENT_ACP`]; `docs/architecture/acp-harnesses.md` §9).
+pub const CODEX_ACP: &str = "@agentclientprotocol/codex-acp@2.0.0";
+
+/// Codex's mode without approvals and without a sandbox (the "yolo" of
+/// Claude Code's `bypassPermissions` / OpenCode's `build`).
+pub const CODEX_FULL_ACCESS_MODE: &str = "agent-full-access";
+
+/// The adapter's environment variable with session settings (a JSON object
+/// merged into Codex's thread config: `model`, `model_reasoning_effort`, ...).
+pub const CODEX_CONFIG_ENV: &str = "CODEX_CONFIG";
+
+/// The adapter's environment variable naming the `codex` executable to use.
+pub const CODEX_PATH_ENV: &str = "CODEX_PATH";
 
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +201,36 @@ impl HarnessConfig {
         }
     }
 
+    /// Codex through `@agentclientprotocol/codex-acp` (2.0.0, verified against
+    /// Codex 0.159), see `docs/architecture/acp-harnesses.md` §9. `codex_path`
+    /// is the user's `codex` (`CODEX_PATH`; the adapter bundles an older one
+    /// otherwise). Every role runs in `agent-full-access` mode (no approvals);
+    /// the role prompt is prepended to the first prompt (no `_meta` hook). No
+    /// model is set here: [`crate::agents::HarnessPreset::config`] passes the
+    /// chosen model and effort through `CODEX_CONFIG`, because the adapter
+    /// refuses `set_config_option` for models outside its own catalog (OpenRouter
+    /// and other custom providers). The user's `CODEX_HOME` (config, skills,
+    /// `AGENTS.md`) stays in effect.
+    #[must_use]
+    pub fn codex(codex_path: Option<&str>) -> Self {
+        let mut env = BTreeMap::new();
+        if let Some(path) = codex_path {
+            env.insert(CODEX_PATH_ENV.to_string(), path.to_string());
+        }
+        Self {
+            command: "npx".into(),
+            args: vec!["-y".into(), CODEX_ACP.into()],
+            env,
+            env_remove: Vec::new(),
+            mode_after_new: Some(CODEX_FULL_ACCESS_MODE.into()),
+            model: None,
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+        }
+    }
+
     /// A bare harness running `command args...` with no mode/model configuration.
     #[must_use]
     pub fn plain(command: impl Into<String>, args: Vec<String>) -> Self {
@@ -281,6 +327,31 @@ mod tests {
         );
         assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
         assert!(h.session_meta.is_none());
+    }
+
+    #[test]
+    fn codex_defaults_use_full_access_first_prompt_and_the_users_codex() {
+        let h = HarnessConfig::codex(Some("/home/u/.local/bin/codex"));
+        assert_eq!(
+            (h.command.as_str(), h.args.as_slice()),
+            (
+                "npx",
+                &[
+                    "-y".to_string(),
+                    "@agentclientprotocol/codex-acp@2.0.0".to_string()
+                ][..]
+            ),
+            "the adapter version is pinned exactly"
+        );
+        assert_eq!(h.mode_after_new.as_deref(), Some("agent-full-access"));
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert_eq!(
+            h.env.get("CODEX_PATH").map(String::as_str),
+            Some("/home/u/.local/bin/codex")
+        );
+        assert!(h.model.is_none() && h.effort.is_none() && h.session_meta.is_none());
+        assert!(h.env_remove.is_empty(), "CODEX_HOME is inherited as is");
+        assert!(!HarnessConfig::codex(None).env.contains_key("CODEX_PATH"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ use super::events::{AgentError, AgentEvent, AgentInfo};
 use super::process::spawn_process;
 use super::session::{AgentCmd, ReadySlot, TurnState, run_actor};
 use super::startup::StartupParams;
+use crate::secrets::SecretEnv;
 
 /// Options for [`spawn_agent`] besides the harness and working directory.
 #[derive(Debug, Clone, Default)]
@@ -23,6 +24,9 @@ pub struct SpawnOptions {
     pub resume: Option<SessionId>,
     /// Role system prompt (delivery depends on `HarnessConfig::system_prompt`).
     pub system_prompt: Option<String>,
+    /// Secret environment variables added to the agent process (below the
+    /// harness's own `env`, which wins on a clash). `Debug` shows names only.
+    pub secret_env: SecretEnv,
 }
 
 /// Launches the harness in `cwd`, opens one ACP session and returns once it is ready.
@@ -36,7 +40,7 @@ pub async fn spawn_agent(
     options: SpawnOptions,
     events: mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<AgentHandle, AgentError> {
-    let process = spawn_process(harness, cwd, events.clone())?;
+    let process = spawn_process(harness, cwd, &options.secret_env, events.clone())?;
     let pid = process.child.id();
     let params = StartupParams {
         harness: harness.clone(),

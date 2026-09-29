@@ -12,4 +12,4 @@ export type ApiResponse = { "type": "projects", projects: Array<ProjectInfo>, } 
 /**
  * More events follow (the page was full).
  */
-more: boolean, } | { "type": "accepted" } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, };
+more: boolean, } | { "type": "accepted" } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, };

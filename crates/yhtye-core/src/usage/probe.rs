@@ -1,13 +1,15 @@
 //! Runs `/usage` in a short-lived agent session and caches the result.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{UsageReport, parse_usage_markdown};
-use crate::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions, spawn_agent};
+use crate::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions};
+use crate::secrets::{Secrets, spawn_agent_with_secrets};
 
 /// The prompt: Claude Code's local usage command (no model call).
 const USAGE_COMMAND: &str = "/usage";
@@ -38,19 +40,20 @@ pub enum UsageError {
 /// Asks the harness once: starts a session in `cwd`, sends `/usage`, reads the
 /// reply and stops the session (the process group is reaped by `shutdown`).
 pub async fn probe_usage(harness: &HarnessConfig, cwd: &Path) -> Result<UsageReport, UsageError> {
-    probe_until(harness, cwd, &CancellationToken::new()).await
+    probe_until(harness, cwd, &Secrets::none(), &CancellationToken::new()).await
 }
 
 /// [`probe_usage`] that gives up (stopping the agent) when `cancel` fires.
 async fn probe_until(
     harness: &HarnessConfig,
     cwd: &Path,
+    secrets: &Secrets,
     cancel: &CancellationToken,
 ) -> Result<UsageReport, UsageError> {
     let (tx, mut rx) = mpsc::unbounded_channel();
     // Dropping a pending spawn kills the new process group (GroupKillGuard).
     let started = tokio::select! {
-        r = tokio::time::timeout(PROBE_TIMEOUT, spawn_agent(harness, cwd, SpawnOptions::default(), tx)) => r,
+        r = tokio::time::timeout(PROBE_TIMEOUT, spawn_agent_with_secrets(secrets, harness, cwd, SpawnOptions::default(), tx)) => r,
         () = cancel.cancelled() => return Err(UsageError::Closed),
     }
     .map_err(|_| UsageError::Timeout)?;
@@ -95,6 +98,7 @@ async fn reply_text(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) -> Result<Stri
 pub struct UsageService {
     harness: Option<HarnessConfig>,
     cwd: PathBuf,
+    secrets: Arc<Secrets>,
     /// The last outcome (a failure too, so waiting callers do not each start
     /// another agent). Held while probing, so concurrent callers share one probe.
     last: Mutex<Option<(std::time::Instant, Result<UsageReport, UsageError>)>>,
@@ -111,9 +115,17 @@ impl UsageService {
         Self {
             harness,
             cwd,
+            secrets: Arc::new(Secrets::none()),
             last: Mutex::new(None),
             cancel: CancellationToken::new(),
         }
+    }
+
+    /// Gives the probe agent the secret environment variables too.
+    #[must_use]
+    pub fn with_secrets(mut self, secrets: Arc<Secrets>) -> Self {
+        self.secrets = secrets;
+        self
     }
 
     /// Stops a running probe (its agent is shut down) and refuses new ones.
@@ -142,7 +154,7 @@ impl UsageService {
             }
         }
         let outcome = match std::fs::create_dir_all(&self.cwd) {
-            Ok(()) => probe_until(harness, &self.cwd, &self.cancel).await,
+            Ok(()) => probe_until(harness, &self.cwd, &self.secrets, &self.cancel).await,
             Err(e) => Err(UsageError::Start(format!(
                 "could not create {}: {e}",
                 self.cwd.display()

@@ -158,6 +158,7 @@ async fn real_session_load_restores_conversation() {
     stop(s).await;
 
     let opts = SpawnOptions {
+        secret_env: Default::default(),
         resume: Some(session.clone()),
         ..SpawnOptions::default()
     };
@@ -209,6 +210,7 @@ async fn real_model_list_comes_from_the_adapter() {
     let started = Instant::now();
     let preset = HarnessPreset::claude_code(MODEL);
     let listed = probe_models(
+        &yhtye_core::secrets::Secrets::none(),
         &preset,
         dir.path(),
         &tokio_util::sync::CancellationToken::new(),
@@ -259,6 +261,7 @@ async fn real_effort_is_applied_after_the_model() {
     let dir = tempfile::tempdir().expect("tempdir");
     let preset = HarnessPreset::claude_code(MODEL);
     let listed = probe_models(
+        &yhtye_core::secrets::Secrets::none(),
         &preset,
         dir.path(),
         &tokio_util::sync::CancellationToken::new(),

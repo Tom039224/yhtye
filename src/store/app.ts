@@ -452,6 +452,24 @@ export class AppStore {
     return r.efforts;
   }
 
+  // ---- secret environment variables (Stage 7e) ------------------------------
+  // Only names come back; a value goes to the core once and is not kept here.
+  // Like the agent settings, failures reject for the section to show.
+
+  /** The registered names, sorted. */
+  async listSecretEnv(): Promise<string[]> {
+    return (await this.invoke({ type: "list_secret_env" }, "secret_env")).names;
+  }
+
+  /** Stores `value` in the OS keyring under `name` (replacing an earlier one). */
+  async setSecretEnv(name: string, value: string): Promise<string[]> {
+    return (await this.invoke({ type: "set_secret_env", name, value }, "secret_env")).names;
+  }
+
+  async deleteSecretEnv(name: string): Promise<string[]> {
+    return (await this.invoke({ type: "delete_secret_env", name }, "secret_env")).names;
+  }
+
   // ---- helpers --------------------------------------------------------------
 
   /** Runs a command; failures become visible errors and return `null`. */

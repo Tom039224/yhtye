@@ -27,6 +27,9 @@ schemars = "1"
 async-trait = "0.1"
 getrandom = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# Stage 7e: secret environment variables in the OS keyring (Secret Service on Linux), Codex config.toml
+keyring = { version = "3.6", default-features = false }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 # SQLite persistence (Stage 3b). `query_as` + `FromRow` only (no compile-time DB); migrations embedded with `migrate!`.
 # TypeScript bindings for the UI API (Stage 4). Generated into src/api/generated/ by a test.
 ts-rs = { version = "12.0", features = ["serde-json-impl", "no-serde-warnings"] }

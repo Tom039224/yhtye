@@ -1,6 +1,7 @@
-//! Real mixed harnesses (Stage 7c-2) through the settings: Claude Code (always
-//! Haiku) and OpenCode (always `opencode/muse-spark-1.3-contributor-free`)
-//! registered as presets, each role picking one, on a temporary git repository
+//! Real mixed harnesses (Stage 7c-2, 7e) through the settings: Claude Code (always
+//! Haiku), OpenCode (always `opencode/muse-spark-1.3-contributor-free`) and Codex
+//! (always `nvidia/nemotron-3-super-120b-a12b:free`, needs `OPENROUTER_API_KEY_CODEX`:
+//! run through `fish -c '...'`) registered as presets, each role picking one, on a temporary git repository
 //! whose group is merged. Ignored by default:
 //! `cargo test -p yhtye-core --test orchestration_mixed_real -- --ignored --test-threads=1 --nocapture`.
 
@@ -9,6 +10,10 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
+use common::codex::{
+    MODEL as CODEX_MODEL, REAL_TIMEOUT as CODEX_TIMEOUT, RUN_TIMEOUT, assert_no_new_processes,
+    codex_preset, codex_processes,
+};
 use common::opencode::{MODEL as FREE, assert_no_new_servers, opencode_preset, opencode_servers};
 use common::orch::{shutdown_and_check, tool_calls, until_healthy};
 use common::real::{MODEL as HAIKU, REAL_TIMEOUT, is_orchestrator_turn_end, real_git_config};
@@ -28,6 +33,20 @@ fn claude() -> AgentChoice {
 
 fn opencode() -> AgentChoice {
     AgentChoice::new("opencode", Some(FREE))
+}
+
+fn codex() -> AgentChoice {
+    AgentChoice::new("codex", Some(CODEX_MODEL))
+}
+
+/// Claude Code (Haiku, the built-in default) and Codex (`~/.codex`), with `roles` set globally.
+fn codex_catalog(roles: &[(AgentRole, AgentChoice)]) -> AgentCatalog {
+    let presets = vec![HarnessPreset::claude_code(HAIKU), codex_preset()];
+    let agents = AgentCatalog::new(presets, claude());
+    for (role, choice) in roles {
+        agents.set(None, *role, Some(RoleSettings::only(choice.clone())));
+    }
+    agents
 }
 
 /// Both presets as the app registers them (`installed_presets`), Claude Code
@@ -144,6 +163,16 @@ async fn run_with(
     agents: AgentCatalog,
     request: &str,
 ) -> (Orchestration, Vec<ApiEvent>) {
+    run_within(repo, agents, request, REAL_TIMEOUT).await
+}
+
+/// [`run_with`] waiting up to `timeout` for each event.
+async fn run_within(
+    repo: &TempRepo,
+    agents: AgentCatalog,
+    request: &str,
+    timeout: Duration,
+) -> (Orchestration, Vec<ApiEvent>) {
     let mut cfg = real_git_config(repo);
     cfg.agents = Arc::new(agents);
     let (orch, mut rx) = Orchestration::start(cfg)
@@ -151,8 +180,14 @@ async fn run_with(
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
     orch.send_user_message(request).expect("send");
-    until_healthy(&mut rx, &mut events, REAL_TIMEOUT, group_merged).await;
-    until_healthy(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    let whole = async {
+        until_healthy(&mut rx, &mut events, timeout, group_merged).await;
+        until_healthy(&mut rx, &mut events, timeout, is_orchestrator_turn_end).await;
+    };
+    // Bounded as a whole too: a slow provider fails the test instead of hanging it.
+    if tokio::time::timeout(RUN_TIMEOUT, whole).await.is_err() {
+        panic!("the run did not finish within {RUN_TIMEOUT:?}");
+    }
     eprintln!("tool calls: {:#?}", tool_calls(&events));
     (orch, events)
 }
@@ -344,4 +379,99 @@ async fn real_effort_rows_are_matched_exactly_and_applied() {
     assert!(r.read("README.md").contains("effort ok"));
     shutdown_and_check(orch, &events).await;
     assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
+}
+
+/// Claude Code (Haiku) orchestrator, Codex (nemotron free) implementer, Claude
+/// Code (Haiku) reviewer: implement → review, merged into the base branch.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku) + Codex (nemotron free via OpenRouter)"]
+async fn real_mixed_claude_orchestrator_codex_implementer_claude_reviewer() {
+    let before = codex_processes();
+    let r = TempRepo::new();
+    let (orch, events) = run_within(
+        &r,
+        codex_catalog(&[
+            (AgentRole::Implementer, codex()),
+            (AgentRole::Reviewer, claude()),
+        ]),
+        "Create one group with exactly one code task (steps: implement, then review) that \
+         appends the line `codex ok` to README.md. When the group settles, call finish_group.",
+        CODEX_TIMEOUT,
+    )
+    .await;
+    assert_models(&events);
+    let agents = started(&events);
+    eprintln!("sessions: {agents:#?}");
+    let implementers: Vec<&AgentChoice> = agents
+        .iter()
+        .filter(|(s, _)| s.ends_with("/implementer"))
+        .map(|(_, a)| a)
+        .collect();
+    assert!(
+        !implementers.is_empty() && implementers.iter().all(|a| **a == codex()),
+        "{implementers:?}"
+    );
+    let reviewers: Vec<&AgentChoice> = agents
+        .iter()
+        .filter(|(s, _)| s.contains("/review-"))
+        .map(|(_, a)| a)
+        .collect();
+    assert!(
+        !reviewers.is_empty() && reviewers.iter().all(|a| **a == claude()),
+        "{reviewers:?}"
+    );
+    let calls = tool_calls(&events);
+    assert!(
+        calls
+            .iter()
+            .any(|(s, t, ok)| s.ends_with("/implementer") && t == "report_step_done" && *ok),
+        "the Codex implementer reported through MCP: {calls:?}"
+    );
+    assert!(
+        r.read("README.md").contains("codex ok"),
+        "merged into the base branch"
+    );
+    shutdown_and_check(orch, &events).await;
+    assert_no_new_processes(&before, Duration::from_secs(10)).await;
+}
+
+/// A Codex (nemotron free) orchestrator with a Claude Code (Haiku) implementer.
+/// The Codex orchestrator runs in `agent-full-access` mode (no read-only
+/// restriction, `acp-harnesses.md` §9.3); only the prompt keeps it from writing.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku) + Codex (nemotron free via OpenRouter)"]
+async fn real_codex_orchestrator_with_a_claude_implementer() {
+    let before = codex_processes();
+    let r = TempRepo::new();
+    let (orch, events) = run_within(
+        &r,
+        codex_catalog(&[(AgentRole::Orchestrator, codex())]),
+        "Create a group with one code task (steps: implement only) that appends the line \
+         `codex orchestrated` to README.md. When the group settles, call finish_group.",
+        CODEX_TIMEOUT,
+    )
+    .await;
+    assert_models(&events);
+    let agents = started(&events);
+    eprintln!("sessions: {agents:#?}");
+    assert!(
+        agents
+            .iter()
+            .any(|(s, a)| s == ORCHESTRATOR_SESSION && *a == codex())
+    );
+    assert!(
+        agents
+            .iter()
+            .any(|(s, a)| s.ends_with("/implementer") && *a == claude())
+    );
+    let calls = tool_calls(&events);
+    for tool in ["create_group", "create_task", "finish_group"] {
+        assert!(
+            calls.contains(&(ORCHESTRATOR_SESSION.into(), tool.into(), true)),
+            "{tool}: {calls:?}"
+        );
+    }
+    assert!(r.read("README.md").contains("codex orchestrated"));
+    shutdown_and_check(orch, &events).await;
+    assert_no_new_processes(&before, Duration::from_secs(10)).await;
 }

@@ -87,6 +87,11 @@ export class FakeCore {
   usage: UsageReport | null = null;
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
   agents = new FakeAgentSettings();
+  /** Registered secret env names, and the values the core "stored" (test-only, never shown). */
+  secretNames: string[] = [];
+  secretValues: Record<string, string> = {};
+  /** Makes the secret commands fail like an unavailable OS keyring. */
+  secretError: string | null = null;
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -138,6 +143,18 @@ export class FakeCore {
         if (!efforts) throw new CommandError("unavailable", `efforts of ${cmd.harness}/${cmd.model}: could not select ${cmd.model}`);
         return { type: "model_efforts", efforts: { harness: cmd.harness, model: cmd.model, efforts } };
       }
+      case "list_secret_env":
+        return { type: "secret_env", names: [...this.secretNames] };
+      case "set_secret_env":
+        if (this.secretError) throw new CommandError("unavailable", this.secretError);
+        if (!this.secretNames.includes(cmd.name)) this.secretNames = [...this.secretNames, cmd.name].sort();
+        this.secretValues[cmd.name] = cmd.value;
+        return { type: "secret_env", names: [...this.secretNames] };
+      case "delete_secret_env":
+        if (this.secretError) throw new CommandError("unavailable", this.secretError);
+        this.secretNames = this.secretNames.filter((n) => n !== cmd.name);
+        delete this.secretValues[cmd.name];
+        return { type: "secret_env", names: [...this.secretNames] };
       default:
         return { type: "accepted" };
     }

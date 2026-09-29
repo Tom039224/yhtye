@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { AgentSettingsSection, type Scope } from "./AgentSettingsSection";
+import { SecretEnvSection } from "./SecretEnvSection";
 
 /** The sections of the settings. More are added here (each is a left-hand entry). */
-const SECTIONS = [{ id: "agents", label: "エージェント" }] as const;
+const SECTIONS = [
+  { id: "agents", label: "エージェント" },
+  { id: "secrets", label: "秘密の環境変数" },
+] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 interface Props {
@@ -56,6 +60,7 @@ export function SettingsModal({ project, onClose }: Props) {
         <div className="settings-main">
           <header className="settings-head">
             <h3 className="settings-title">{SECTIONS.find((s) => s.id === section)?.label}</h3>
+            {section === "agents" ? (
             <div className="scope-toggle" role="group" aria-label="設定の範囲">
               <button type="button" aria-pressed={scope === "global"} onClick={() => setScope("global")}>
                 全体
@@ -70,12 +75,15 @@ export function SettingsModal({ project, onClose }: Props) {
                 このプロジェクト{project ? ` (${project.name})` : ""}
               </button>
             </div>
+            ) : null}
             <span className="spacer" />
             <button type="button" className="icon-btn" aria-label="閉じる" title="閉じる (Esc)" onClick={onClose}>
               ×
             </button>
           </header>
-          <div className="settings-body">{section === "agents" ? <AgentSettingsSection project={project} scope={scope} /> : null}</div>
+          <div className="settings-body">
+            {section === "agents" ? <AgentSettingsSection project={project} scope={scope} /> : <SecretEnvSection />}
+          </div>
         </div>
       </div>
     </div>

@@ -28,7 +28,8 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 |---|---|
 | Claude Code | **採用** (`@agentclientprotocol/claude-agent-acp` 経由、§4) |
 | OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` がインストールされていれば全役割で選べる (7c-2、§7.6) |
-| Codex / Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
+| Codex | **採用 (Stage 7e)** — `@agentclientprotocol/codex-acp` 2.0.0 (npx、Codex 本体はユーザーの `codex`)、§9。`codex` が `PATH` にあれば全役割で選べる。調査: [`research/codex-acp.md`](research/codex-acp.md) |
+| Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
 ## 4. Rust クライアント: `agent-client-protocol` 2.2
@@ -447,3 +448,91 @@ ACP のセッション設定 `configOptions` に **`effort`** があるハーネ
   `acp_opencode_real::real_opencode_efforts_are_read_per_model_and_applied` (無料モデルの effort 一覧を読み `minimal` を設定 →
   `effort=minimal` を報告)、`orchestration_mixed_real::real_effort_rows_are_matched_exactly_and_applied` (Haiku のオーケストレータが
   存在しない effort を指定して拒否 → 行の一覧と用途メモを読んで OpenCode の `minimal` の行を選び、implementer が `effort=minimal` で動いて main にマージ)。
+
+## 9. Codex: `@agentclientprotocol/codex-acp` (Stage 7e、2026-09-29)
+
+調査の全記録は [`research/codex-acp.md`](research/codex-acp.md) (ラベル [実測] / [文書/コード] / [推測])。ここは採用した仕様と実装後の実測。
+Codex 本体は ACP を話さない (`codex app-server` は独自の JSON-RPC)。アダプタ `@agentclientprotocol/codex-acp` (TypeScript、旧 Zed 製 Rust 版の後継)
+が `codex app-server` を stdio の専用の子プロセスとして起動して ACP に翻訳する。デーモンは使わず、終了時に一緒に終わる
+(実機: 終了後の残存 0、ユーザーの `~/.codex` のデーモンは起動前後で同じ PID)。
+
+### 9.1 起動 (`HarnessConfig::codex` / `HarnessPreset::codex`)
+
+- コマンド: `npx -y @agentclientprotocol/codex-acp@2.0.0` (**バージョン完全固定**、`claude-agent-acp` と同じ理由)。初回は約 440 MB のダウンロード
+  (`startup_timeout` 120 秒)。
+- **`CODEX_PATH`** = `PATH` で見つけたユーザーの `codex` (アダプタ同梱の 0.158 ではなくユーザーの 0.159。`config.toml` との互換が取れる)。
+- **`codex` が `PATH` にあるときだけ** preset を登録する (`agents::installed_presets`、OpenCode と同じ。無ければ UI に出ない)。
+- モード: **全役割 `agent-full-access`** (承認なし・サンドボックスなし = Claude の `bypassPermissions` / OpenCode の `build` 相当) を `session/new` /
+  `session/load` の後に `session/set_mode` で設定する (`session/load` するとモードは既定の `agent` に戻るため、Yhtye が毎回設定する現行の作りのまま)。
+  `agent-full-access` はネットワークもホスト全体も制限なしで、承認要求はゼロ (実機で確認)。
+- システムプロンプト: `SystemPromptStyle::FirstPrompt` (`_meta` に systemPrompt の口が無い。最初のプロンプトの前置。`session/load` 後も履歴に残る)。
+- 環境: **`CODEX_HOME` はそのまま継承する** (ユーザーの `config.toml`・skills・`AGENTS.md`・hooks が有効。OpenCode の Orca `env_remove` のような処理はしない)。
+  注意: Orca の端末はこの端末のように `CODEX_HOME` を Orca 自身の runtime home に注入する。そこから Yhtye を起動すると Orca の設定が使われる (ユーザー決定: 特別扱いしない)。
+  実機テストは `CODEX_HOME=$HOME/.codex` を明示する。
+- ユーザーの `~/.codex/sessions` に Yhtye のセッションが残る (ユーザー決定: 削除しない)。モデル一覧のプローブのセッションも同様。
+
+### 9.2 モデルと effort — `CODEX_CONFIG`
+
+- アダプタは**カタログに無いモデルを `set_config_option` で拒否する** (`-32602`)。そこで選んだモデルと effort を起動時の環境変数
+  **`CODEX_CONFIG` (JSON)** で渡す: `{"model":"<model>","model_reasoning_effort":"<effort>"}` (effort が無ければそのキーは省く)。
+  `HarnessPreset.model_config_env = Some("CODEX_CONFIG")`。アダプタはこれを `thread/start` の `config` にマージする。
+- **モデルの検証**は従来どおり (`HarnessConfig.model` = `ModelSelect{model, value}` を `session/set_config_option` して「要求値 = 応答の currentValue」を確認)。
+  `CODEX_CONFIG` で先に入れた値と同じ値の `set_config_option` は通る (実機で確認: 全セッションで `config_value("model")` = 指定モデル)。
+- **effort は option として送らず、`CODEX_CONFIG` にだけ入れる** (検証しない)。OpenRouter のモデルはアダプタがメタデータを持たず、`reasoning_effort` の
+  option が出ないことがあるため、option を要求すると起動が失敗する。(Claude Code / OpenCode のような「effort の無いモデルに指定したら起動失敗」は Codex では起きない。)
+- **effort の config id は `reasoning_effort`** (Claude / OpenCode は `effort`)。global 定数 `EFFORT_CONFIG_ID` に頼らず `HarnessPreset.effort_config_id` に持たせ、
+  `HarnessPreset::config` と effort 一覧の読み取り (`efforts_from_options(options, config_id)`) がそれを使う。
+- **Codex が受け付ける effort の値**: Codex 0.159 の app-server スキーマ (`ReasoningEffort`) は「モデルが示す**空でない任意の文字列**」で、値の列挙を持たない。
+  `codex -c model_reasoning_effort="<値>"` は `max` / `xhigh` / `none` / `minimal` のどれでも (`bogus` でも) 設定の読み込みに通る。つまり Codex 自身は値を検証せず**そのまま
+  プロバイダに渡す**。実際に通るかは**プロバイダ (OpenRouter) の `reasoning.supported_efforts`** で決まるので、Yhtye はそのモデルの `supported_efforts`
+  (このマシンの 2026-09-29 の一覧では `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max` が現れる) **だけ**を提示する。effort を持たないモデル
+  (`reasoning` 無し) は選択肢が出ない。**実機での確認** (テスト用の `nvidia/nemotron-3-super-120b-a12b:free`、OpenRouter の `supported_efforts` = `medium` / `low`):
+  `CODEX_CONFIG` の `model_reasoning_effort = "low"` で起動し 1 プロンプトを送ると、Codex のロールアウト (`~/.codex/sessions/.../rollout-*.jsonl`) の全 `turn_context` が
+  `effort: "low"` (`acp_codex_real::real_codex_effort_from_codex_config_is_applied`)。effort を渡さないときはユーザーの設定の値が使われる。
+- 注意: ユーザーの `~/.codex/config.toml` の `model_reasoning_effort` は既定値として効く (Yhtye が何も指定しないとその値で動く)。
+
+### 9.3 オーケストレータは読み取り専用にできない
+
+`read-only` モードは「承認が要る」で、Yhtye の自動承認 (allow_always 優先) だと書けてしまい、`reject_once` を返すとターンごと `cancelled` になる。
+そこで OpenCode と同じ扱い (ユーザー決定): オーケストレータも `agent-full-access`、preset の `orchestrator_read_only = false`
+(設定パネルが「⚠ 書き込み制限なし」を出す)、役割のプロンプト (`orchestrator.md`) が書き込みを禁じる。
+
+### 9.4 モデル一覧はプロバイダで変わる (`agents/openrouter.rs`、`agents/codex_config.rs`)
+
+`ModelSource::Codex` の preset は、モデル一覧を取る時に**ユーザーの Codex 設定の `model_provider`** を読む
+(`$CODEX_HOME/config.toml`、既定 `~/.codex/config.toml`、継承した `CODEX_HOME` に従う。ファイルは読むだけで、トップレベルの `model_provider` 以外は見ない):
+
+- **`openrouter`**: OpenRouter の公開 API **`GET https://openrouter.ai/api/v1/models`** から作る。**認証ヘッダなし** (公開エンドポイント。キーは読まない・送らない。
+  テスト `codex_models` でリクエストに `Authorization` が無いことを確認)。`data[].id` のうち `supported_parameters` に **`tools`** を含むものだけ (エージェントとして
+  使えない対話専用モデルを除く。2026-09-29 は 460 件中 392 件)。モデルごとの effort は `reasoning.supported_efforts` (無ければ effort なし = `efforts: Some([])`)。
+  effort は一覧に含まれるので `list_model_efforts` は追加のプローブを起こさない。キャッシュは他のハーネスと同じ (成功 10 分・失敗 10 秒、`refresh` でも 10 秒)。
+  取得に失敗したら空の一覧ではなく `unavailable` のエラー。
+- **それ以外** (プロバイダ無し = OpenAI / ChatGPT、他のカスタムプロバイダ): 他のハーネスと同じくアダプタの `configOptions` のモデル一覧 (プローブのセッション、プロンプトなし)。
+  他のカスタムプロバイダ専用の処理はしない (アダプタが返すものをそのまま出す)。
+- 実測の補足: Codex 0.159 (`CODEX_PATH`) + `~/.codex` (openrouter) では、**アダプタ自身の一覧も OpenRouter のモデルを含む** (464 件、`tools` 非対応も含み、effort は
+  option を持つモデルだけ・現在のモデル `stealth/space-bunny-alpha` が先頭に足される)。調査時 (同梱 0.158 / Orca の `CODEX_HOME`) は OpenAI のカタログ 8 件だけだった。
+  OpenRouter の一覧を使うのは、`tools` での絞り込みと**全モデルの effort を 1 回の取得で得られる**ため (ユーザー決定)。
+
+### 9.5 秘密の環境変数 (認証キーの渡し方、`crate::secrets`)
+
+ユーザーの Codex 設定は OpenRouter のキーを `[model_providers.openrouter.auth] command = "sh"、args = ["-c", "echo $OPENROUTER_API_KEY_CODEX"]` で取り、
+この `auth.command` は**アダプタ (= Yhtye が起動したプロセス) の環境**で動く。デスクトップから起動した Yhtye は fish の設定を継承しないので、キーが空になり
+`provider auth command sh produced an empty token` (応答テキスト + `end_turn`) になる。そこで Yhtye に**アプリ全体の「秘密の環境変数」**を持たせた
+([`core-design.md`](core-design.md) §16): 名前と値を登録し、値は OS のキーリング (Secret Service。`keyring` crate、service `yhtye`、account = 変数名) にだけ保存、
+Yhtye の DB は**名前だけ**、起動する**すべてのエージェントプロセス**の環境に注入する。ユーザーの端末・`config.fish` は変えない。
+
+### 9.6 失敗の見え方 (未対応・ユーザー決定)
+
+実機で何度も見た: OpenRouter の無料モデルが 429 を返すと、Codex は再試行して諦め、**`exceeded retry limit, last status: 429 Too Many Requests, request id: …` という普通のメッセージ + `end_turn`**
+でターンを終える (`session/load` のリプレイにも「ユーザー発言だけでエージェントの発言が無い」形で残る)。実装者では「報告なしのターン」として `agent_crashed` の help になり、オーケストレータが
+`cancel_task` する。無料モデルは時間帯で 3〜6 分/回の遅延 (`nvidia/nemotron-3.5-lightning:free`、この日は障害) や 429 が起きるため、実機テストは 1 イベント 240 秒・1 実行 20 分で打ち切り、
+モデルは `nemotron-3-super-120b-a12b:free` に変えた (ユーザー決定)。
+
+認証エラー・課金上限・プロバイダの 400/403 は JSON-RPC エラーではなく **`agent_message_chunk` のテキスト + `stopReason: end_turn`** (usage が null か 0) で返る。
+Yhtye はこれを「エージェントがエラーを喋った」と「作業した」と区別しない (報告ツールが呼ばれなければ既存の `protocol_violation` / 催促として現れる)。今回は検出しない。
+カタログに無いモデルでは毎ターン先頭に `Warning: Model metadata for … not found. Defaulting to fallback metadata; …` が `agent_message_chunk` として混ざる
+(そのまま表示する、ユーザー決定)。
+
+### 9.7 実機の結果 (`nvidia/nemotron-3-super-120b-a12b:free`、OpenRouter 経由、Codex 0.159 + アダプタ 2.0.0)
+
+実行結果と未達の項目 (429 でオーケストレーション実機が通せていない) は [`PLAN.md`](../../PLAN.md) Stage 7e の結果メモ。

@@ -12,10 +12,11 @@ use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
-use crate::acp::{AgentError, AgentEvent, AgentHandle, spawn_agent};
+use crate::acp::{AgentError, AgentEvent, AgentHandle};
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
+use crate::secrets::spawn_agent_with_secrets;
 
 /// The prompts to send first: the queued ones, with the fallback in front if
 /// the stored session was to be restored but was not (`session/load` unsupported).
@@ -182,7 +183,10 @@ impl Sessions {
         let (harness, options, events, agent) = self
             .launch_parts(&binding, &token, resume, &pick, launch)
             .inspect_err(|_| self.revoke(&token))?;
-        let result = spawn_agent(&harness, &self.cfg.project_dir, options, events).await;
+        let secrets = self.cfg.agents.secrets();
+        let result =
+            spawn_agent_with_secrets(&secrets, &harness, &self.cfg.project_dir, options, events)
+                .await;
         let restored = match &result {
             Ok(handle) => handle.info().resumed,
             Err(e) => {

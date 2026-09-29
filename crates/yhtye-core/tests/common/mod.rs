@@ -1,6 +1,7 @@
 //! Shared helpers for ACP integration tests.
 #![allow(dead_code)]
 
+pub mod codex;
 pub mod opencode;
 pub mod orch;
 pub mod real;

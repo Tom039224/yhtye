@@ -1,5 +1,5 @@
 //! Which harnesses the app registers (Stage 7c-2, `core-design.md` §15.2):
-//! Claude Code always, OpenCode only when `opencode` is installed. Pure
+//! Claude Code always, OpenCode / Codex only when `opencode` / `codex` is installed. Pure
 //! functions over an injected environment so they can be tested.
 
 use std::ffi::{OsStr, OsString};
@@ -9,6 +9,10 @@ use super::catalog::HarnessPreset;
 
 /// The OpenCode executable looked up on `PATH`.
 pub const OPENCODE_COMMAND: &str = "opencode";
+
+/// The Codex executable looked up on `PATH` (the adapter runs it through
+/// `CODEX_PATH`; the adapter itself is fetched by `npx`).
+pub const CODEX_COMMAND: &str = "codex";
 
 /// Model OpenCode runs if a setting without a model ever reaches it (settings
 /// are validated to name one): a free model, never OpenCode's own last-used
@@ -53,7 +57,8 @@ pub fn inherited_opencode_env_remove(env: impl Fn(&str) -> Option<OsString>) -> 
 }
 
 /// The presets to register: Claude Code with `model` (always; a missing `npx`
-/// shows up when a session starts), and OpenCode if `opencode` is on `PATH`.
+/// shows up when a session starts), OpenCode if `opencode` is on `PATH`, and
+/// Codex if `codex` is (the found path becomes the adapter's `CODEX_PATH`).
 pub fn installed_presets(
     claude_model: &str,
     env: impl Fn(&str) -> Option<OsString>,
@@ -68,6 +73,19 @@ pub fn installed_presets(
             ));
         }
         None => tracing::info!("OpenCode (`opencode`) is not installed; not offered"),
+    }
+    match find_in_path(CODEX_COMMAND, env("PATH").as_deref()) {
+        Some(path) => {
+            tracing::info!("Codex found at {}", path.display());
+            if path.to_str().is_none() {
+                tracing::warn!(
+                    "{} is not valid UTF-8; the adapter's own codex is used",
+                    path.display()
+                );
+            }
+            presets.push(HarnessPreset::codex(path.to_str()));
+        }
+        None => tracing::info!("Codex (`codex`) is not installed; not offered"),
     }
     presets
 }
@@ -108,13 +126,86 @@ mod tests {
         };
         let found = installed_presets("haiku", env(&[("PATH", &path(with.path()))]));
         assert_eq!(ids(found), ["claude-code", "opencode"]);
+        fake_bin(with.path(), "codex", 0o755);
+        fake_bin(without.path(), "codex", 0o644);
+        let found = installed_presets("haiku", env(&[("PATH", &path(with.path()))]));
+        assert_eq!(ids(found.clone()), ["claude-code", "opencode", "codex"]);
+        let codex = found.last().expect("codex");
+        let expected = with.path().join("codex").display().to_string();
+        assert_eq!(
+            codex
+                .config(super::super::AgentRole::Implementer, Some("m"), None)
+                .env
+                .get("CODEX_PATH"),
+            Some(&expected),
+            "the adapter runs the user's codex"
+        );
         let missing = installed_presets("haiku", env(&[("PATH", &path(without.path()))]));
-        assert_eq!(ids(missing), ["claude-code"]);
+        assert_eq!(ids(missing), ["claude-code"], "not executable: not offered");
         assert_eq!(ids(installed_presets("haiku", env(&[]))), ["claude-code"]);
         assert_eq!(
             find_in_path("opencode", Some(OsStr::new("relative"))),
             None,
             "relative PATH entries are ignored"
+        );
+    }
+
+    #[test]
+    fn the_codex_preset_passes_model_and_effort_through_codex_config() {
+        use super::super::AgentRole;
+        let p = HarnessPreset::codex(Some("/bin/codex"));
+        assert!(p.requires_model && !p.orchestrator_read_only);
+        assert_eq!(p.model_config_id(), "model");
+        assert_eq!(p.effort_config_id, "reasoning_effort");
+        let info = p.info();
+        assert_eq!((info.id.as_str(), info.label.as_str()), ("codex", "Codex"));
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            let h = p.config(
+                role,
+                Some("nvidia/nemotron-3.5-lightning:free"),
+                Some("high"),
+            );
+            assert_eq!(h.mode_after_new.as_deref(), Some("agent-full-access"));
+            let config: serde_json::Value =
+                serde_json::from_str(h.env.get("CODEX_CONFIG").expect("CODEX_CONFIG"))
+                    .expect("JSON");
+            assert_eq!(
+                config,
+                serde_json::json!({
+                    "model": "nvidia/nemotron-3.5-lightning:free",
+                    "model_reasoning_effort": "high"
+                })
+            );
+            assert_eq!(
+                h.model.as_ref().map(|m| m.value.as_str()),
+                Some("nvidia/nemotron-3.5-lightning:free"),
+                "the model is still verified through its config option"
+            );
+            assert!(
+                h.effort.is_none(),
+                "the effort is not sent as an option: the adapter shows none for models it has no metadata of"
+            );
+        }
+        let h = p.config(AgentRole::Implementer, Some("m"), None);
+        let config: serde_json::Value =
+            serde_json::from_str(h.env.get("CODEX_CONFIG").expect("env")).expect("JSON");
+        assert_eq!(config, serde_json::json!({"model": "m"}), "no effort key");
+        assert!(
+            !p.config(AgentRole::Implementer, None, None)
+                .env
+                .contains_key("CODEX_CONFIG")
+        );
+        let probe = p.probe_config();
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
+        assert!(!probe.env.contains_key("CODEX_CONFIG"));
+        assert_eq!(
+            probe.env.get("CODEX_PATH").map(String::as_str),
+            Some("/bin/codex")
         );
     }
 

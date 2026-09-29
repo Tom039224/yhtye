@@ -28,6 +28,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 7c-1 | OpenCode ハーネスの ACP 検証 (`HarnessConfig::opencode`) | **完了** |
 | 7c-2 | OpenCode を選べるハーネスとして組み込む (設定・検出・UI) | **完了** |
 | 7d | effort + 用途メモ付きの候補の行、アプリ全体の設定モーダル | **完了** |
+| 7e | Codex ハーネス (OpenRouter のモデル一覧)、OS キーリングの秘密の環境変数 | **完了** (実機のオーケストレーション実行は上流の 429 で未達、下の残課題) |
 
 ## 再開の仕方
 
@@ -767,7 +768,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 ## Stage 7 — 不具合修正とハーネス / モデルの選択
 
 ユーザーの決定 (上の未決事項) を受けた作業。**7a** = ユーザー報告の不具合と小さな決定事項、**7b** = ハーネス / モデルの選択、
-**7c** = OpenCode ハーネス、**7d** = effort と用途メモ付きの候補の行 + 設定モーダル。
+**7c** = OpenCode ハーネス、**7d** = effort と用途メモ付きの候補の行 + 設定モーダル、**7e** = Codex ハーネス + 秘密の環境変数。
 
 ### Stage 7a — 完了したグループが「進行中」のまま + 決定事項の反映 (完了)
 
@@ -979,3 +980,48 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   (無料モデルが合言葉を答えない回がある `real_opencode_system_prompt_reaches_the_agent` は不安定、再実行で通る)。残存プロセス 0。
 - 残課題: 上の OpenCode の環境問題 (混成の実機テストが通せない)。モデルが effort を持たなくなった古い設定はセッション起動が失敗する (警告のみで既定に戻す挙動にはしていない)。
   設定モーダルは項目が 1 つだけ (足す作りは用意した)。
+
+### Stage 7e — Codex ハーネスと秘密の環境変数 (完了、ユーザー決定済みの仕様)
+
+調査: [`research/codex-acp.md`](docs/architecture/research/codex-acp.md)。仕様と実測: [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §9、[`core-design.md`](docs/architecture/core-design.md) §15.2・§15.6・§16。
+
+ユーザー決定 (再検討しない):
+1. 入口 `npx -y @agentclientprotocol/codex-acp@2.0.0` (完全固定)、`CODEX_PATH` = `PATH` のユーザーの `codex`。`codex` が `PATH` にあるときだけ登録 (OpenCode と同じ)。
+2. 全役割 `agent-full-access`。オーケストレータも選べるが読み取り専用にできない (`orchestrator_read_only = false`、⚠ 書き込み制限なし、プロンプトで禁止)。
+3. システムプロンプトは `FirstPrompt`。
+4. モデル一覧はプロバイダ次第: Codex 設定の `model_provider = openrouter` なら OpenRouter の公開 `GET /api/v1/models` (認証なし、`tools` 対応のみ、effort は `reasoning.supported_efforts`)、
+   それ以外はアダプタの一覧。
+5. モデルと effort は環境変数 `CODEX_CONFIG` (JSON) で渡す (アダプタはカタログ外のモデルを `set_config_option` で拒否)。モデルは従来どおり検証。effort の config id は preset ごと (`reasoning_effort`)。
+6. 秘密の環境変数: OS キーリング (Secret Service)、DB は名前だけ、全エージェントの環境に注入、設定モーダルの新項目。
+7. `CODEX_HOME` は継承のまま。8. 認証・課金エラー (応答テキスト + `end_turn`) の検出は今回しない。9. セッション履歴は `~/.codex/sessions` に残す。10. 「Model metadata not found」の警告はそのまま。
+
+**結果メモ (2026-09-29)**
+
+- コア: `HarnessConfig::codex`、`HarnessPreset::codex` + `model_config_env` / `effort_config_id` / `ModelSource` (`agents/catalog.rs`)、`agents/openrouter.rs` (取得と絞り込み、リダイレクトなし・16 MiB 上限)、
+  `agents/codex_config.rs` (`config.toml` のトップレベル `model_provider` だけ読む)、`ModelService` (`with_env` / `with_openrouter_url`、OpenRouter のときは `list_model_efforts` を一覧から返す)、
+  `installed_presets` が `codex` を登録。`efforts_from_options(options, config_id)`。
+- 秘密の環境変数 (`crates/yhtye-core/src/secrets/`): `SecretBackend` (`KeyringBackend` = `keyring` 3.6 / `MemoryBackend`)、`Secrets`、`spawn_agent_with_secrets` (サブエージェント・オーケストレータ・モデル一覧・使用量の**全 spawn**)。
+  適用順は 秘密 → 削除 → ハーネスの env。名前は環境変数の文字種 + 予約 (`YHTYE_BRIDGE_TOKEN` 等) + 読み込みを変える名前 (`PATH` / `LD_*` …) を拒否。DB の `secret_env_names` (マイグレーション 0005、名前だけ)。
+  API `list_secret_env` / `set_secret_env` / `delete_secret_env`。値は `Debug`・ログ・応答・エラーに出ない。読めないときは起動を失敗させる (`secret environment variables`)。
+  UI: `SecretEnvSection` (登録・検証・上書き・削除確認・エラー表示、値は保存後に保持しない)。開発ブリッジは id 無しメッセージのログを長さだけにした。
+- **Codex が受け付ける effort**: Codex 0.159 は `model_reasoning_effort` を**空でない任意の文字列**として受け、検証せずプロバイダに渡す (`max` / `xhigh` / `none` / `minimal` / `bogus` でも設定は読める)。
+  Yhtye は OpenRouter が示すそのモデルの `supported_efforts` だけを提示する (一覧では `none` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`)。実機: `medium` / `low` のモデルで `low` を渡し、
+  Codex のロールアウトの全 `turn_context.effort` が `low`。
+- **実機のモデル**: 当初の `nvidia/nemotron-3.5-lightning:free` は OpenRouter の障害で 1 回の推論が 2〜6 分 (この日) のため、ユーザー決定で `nvidia/nemotron-3-super-120b-a12b:free` (effort = medium / low) に変更。
+- 実行結果:
+  - `cargo test --workspace` 257 件成功 (ignored 42)、`cargo clippy --workspace --all-targets` 警告なし、`cargo fmt --check` 成功、`pnpm test` 96 件 (89 → +7)、`pnpm gen:types` で型を再生成。
+    新規: secrets 単体 8 (実キーリングの往復 1 件は `--ignored` で成功)、`tests/acp_secret_env.rs` 2、`tests/secret_env_api.rs` 2、`tests/codex_models.rs` 3 (OpenRouter の模擬サーバー: `Authorization` 無し・
+    `tools` 絞り込み・effort・プロバイダ違い・失敗)、`agents/openrouter.rs` 2 / `codex_config.rs` 3 / `installed.rs` / `config.rs` / `store` の単体、Vitest `SecretEnv.test.tsx` 7。
+  - 実 Codex (`acp_codex_real`、`fish -c` 経由で `OPENROUTER_API_KEY_CODEX` あり、`CODEX_HOME=~/.codex`): 9 件すべてが少なくとも 1 回成功。
+    `nemotron-3-super`: cancel (約 8 ms で `cancelled`)、MCP で implementer が `report_step_done`、effort=low の適用、OpenRouter のモデル一覧 (392 件・約 0.3 秒、effort は medium / low)、
+    アダプタの一覧 (464 件)、prompt (pong)。`nemotron-3.5-lightning` (障害前後): system prompt (ZEBRA-7)、cwd での `pwd`/`echo` (承認ゼロ)、`session/load` で合言葉 (PINEAPPLE-42) を復元 (リプレイ + 再モード設定)。
+    **`nemotron-3-super` での再実行は system prompt / cwd / session_load が OpenRouter の `429 Too Many Requests` で失敗** (429 は「`exceeded retry limit … 429` というメッセージ + `end_turn`」で返る = §9.6 の見え方の実例)。
+    終了後、`codex-acp` / `codex app-server` / `claude-agent-acp` の残存 0、ユーザーの `~/.codex` のデーモンは元の PID のまま。
+  - Chrome (`pnpm dev:browser` + 実コア、`docs/e2e/stage7e/`): 設定モーダルに Codex の行が並び、モデルは 392 件から検索できる (`1-codex-openrouter-model-search.jpg`)。「秘密の環境変数」に
+    ダミー `YHTYE_TEST_SECRET` を登録 (`2-secret-env-registered.jpg`、`secret-tool` で `service=yhtye` のキーリング項目と DB の名前を確認、値は表示しない) → 削除 (`3-secret-env-deleted.jpg`、キーリング・DB とも 0 件)。
+    ブリッジ・Vite は停止済み。
+- レビュー (rust-reviewer / security-reviewer) の指摘のうち、秘密が `env_remove` を上書きできる順序・DB とキーリングの不整合・DB 手書きの禁止名・ブリッジのログ・OpenRouter の応答サイズとリダイレクトは対応。
+  未対応 (core-design §16 に記載): 全エージェントへの一律注入、stderr の値の伏せ字化、キーリング不可時の全起動失敗、モデル一覧キャッシュがプロバイダ変更に追従しない (最大 10 分)。
+- **残課題**: (1) **Codex を含むオーケストレーションの実機実行 (`orchestration_mixed_real` の Codex 実装者 / Codex オーケストレータ) は成功していない**: `nemotron-3.5-lightning` は障害で遅く (実装者のセッションが 25 分以上)、
+  `nemotron-3-super` は 429 を返し続けた (実装者が「報告なしのターン」になり `cancel_task`、Codex オーケストレータは 240 秒で無応答)。テストは追加済み・コンパイル済みで、Codex オーケストレータのセッション起動 (`agent-full-access`、モデル検証) までは
+  実機で動いた。プロバイダが回復したら `fish -c '… orchestration_mixed_real -- --ignored codex'` で再実行する。(2) 認証・課金・429 の失敗検出 (§9.6)。(3) Codex 0.159 + `~/.codex` ではアダプタ自身の一覧にも OpenRouter が含まれる。

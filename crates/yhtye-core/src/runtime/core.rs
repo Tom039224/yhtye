@@ -24,6 +24,10 @@ use crate::api::{
 };
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
+use crate::secrets::{
+    KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
+    validate_secret_value,
+};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
@@ -53,6 +57,9 @@ pub struct CoreConfig {
     /// Harness asked for subscription usage (`ApiCommand::GetUsage`); `None`
     /// answers `unavailable`.
     pub usage: Option<HarnessConfig>,
+    /// Where the values of the secret environment variables live (the OS
+    /// credential store; tests use an in-memory one).
+    pub secret_backend: Arc<dyn SecretBackend>,
 }
 
 impl CoreConfig {
@@ -68,6 +75,7 @@ impl CoreConfig {
             mcp_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
+            secret_backend: Arc::new(KeyringBackend::new()),
         }
     }
 
@@ -99,6 +107,7 @@ struct Inner {
     usage: UsageService,
     agents: Arc<AgentCatalog>,
     models: ModelService,
+    secrets: Arc<Secrets>,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -108,15 +117,20 @@ impl Core {
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
-        let usage = UsageService::new(cfg.usage.clone(), cfg.data_dir.join(USAGE_PROBE_DIR));
-        let agents = Arc::new(AgentCatalog::new(
-            cfg.harnesses.clone(),
-            cfg.default_agent.clone(),
+        let secrets = Arc::new(Secrets::new(
+            cfg.secret_backend.clone(),
+            store.secret_names().await?,
         ));
+        let usage = UsageService::new(cfg.usage.clone(), cfg.data_dir.join(USAGE_PROBE_DIR))
+            .with_secrets(secrets.clone());
+        let agents = Arc::new(
+            AgentCatalog::new(cfg.harnesses.clone(), cfg.default_agent.clone())
+                .with_secrets(secrets.clone()),
+        );
         for row in store.agent_settings().await? {
             agents.set(row.project.as_deref(), row.role, Some(row.settings));
         }
-        let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR));
+        let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -127,6 +141,7 @@ impl Core {
                 usage,
                 agents,
                 models,
+                secrets,
                 closed: AtomicBool::new(false),
             }),
         })
@@ -260,7 +275,54 @@ impl Core {
                     },
                 })
             }
+            ApiCommand::ListSecretEnv => Ok(ApiResponse::SecretEnv {
+                names: self.inner.secrets.names(),
+            }),
+            ApiCommand::SetSecretEnv { name, value } => {
+                self.set_secret(&name, value).await?;
+                Ok(ApiResponse::SecretEnv {
+                    names: self.inner.secrets.names(),
+                })
+            }
+            ApiCommand::DeleteSecretEnv { name } => {
+                self.delete_secret(&name).await?;
+                Ok(ApiResponse::SecretEnv {
+                    names: self.inner.secrets.names(),
+                })
+            }
         }
+    }
+
+    /// Registers the name in the database, then stores the value in the
+    /// credential store; a failure of the second undoes the first (unless the
+    /// name was registered before), so the two never disagree.
+    async fn set_secret(&self, name: &str, value: SecretValue) -> Result<(), ApiError> {
+        let secrets = &self.inner.secrets;
+        validate_secret_name(name).map_err(secret_error)?;
+        validate_secret_value(value.expose()).map_err(secret_error)?;
+        let was_registered = secrets.names().iter().any(|n| n == name);
+        self.inner.store.add_secret_name(name, now_ms()).await?;
+        if let Err(e) = secrets.set(name, value).await {
+            if !was_registered && let Err(undo) = self.inner.store.remove_secret_name(name).await {
+                tracing::error!("could not undo registering the secret name {name}: {undo}");
+            }
+            return Err(secret_error(e));
+        }
+        Ok(())
+    }
+
+    /// Removes the name from the database, then the value from the credential
+    /// store; a failure of the second registers the name again.
+    async fn delete_secret(&self, name: &str) -> Result<(), ApiError> {
+        validate_secret_name(name).map_err(secret_error)?;
+        self.inner.store.remove_secret_name(name).await?;
+        if let Err(e) = self.inner.secrets.remove(name).await {
+            if let Err(undo) = self.inner.store.add_secret_name(name, now_ms()).await {
+                tracing::error!("could not undo removing the secret name {name}: {undo}");
+            }
+            return Err(secret_error(e));
+        }
+        Ok(())
     }
 
     /// The settings of every role, globally or for a registered `project`.
@@ -556,6 +618,14 @@ fn reason_or_default(reason: Option<String>) -> String {
     reason
         .filter(|r| !r.trim().is_empty())
         .unwrap_or_else(|| USER_CANCEL_REASON.to_string())
+}
+
+/// The message never contains a value (`SecretError` does not carry one).
+fn secret_error(e: SecretError) -> ApiError {
+    match e {
+        SecretError::Invalid(m) => ApiError::invalid_argument(m),
+        e @ SecretError::Unavailable(_) => ApiError::unavailable(e.to_string()),
+    }
 }
 
 fn orch_error(e: OrchError) -> ApiError {

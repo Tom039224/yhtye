@@ -212,6 +212,20 @@ impl Store {
     ) -> Result<(), StoreError> {
         settings::set(&self.pool, project, role, settings, now_ms).await
     }
+
+    /// The registered secret environment variable names (never their values).
+    pub async fn secret_names(&self) -> Result<Vec<String>, StoreError> {
+        settings::secret_names(&self.pool).await
+    }
+
+    /// Registers a secret environment variable name.
+    pub async fn add_secret_name(&self, name: &str, now_ms: u64) -> Result<(), StoreError> {
+        settings::add_secret_name(&self.pool, name, now_ms).await
+    }
+
+    pub async fn remove_secret_name(&self, name: &str) -> Result<(), StoreError> {
+        settings::remove_secret_name(&self.pool, name).await
+    }
 }
 
 async fn write_events(
