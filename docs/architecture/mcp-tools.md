@@ -65,19 +65,22 @@ type Verdict = "approve" | "needs_changes";
 
 | | |
 |---|---|
-| 引数 | `group_id: string`, `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `review_harness?: string`, `review_model?: string` (Stage 7b。普段は省略) |
+| 引数 | `group_id: string`, `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `effort?: string`, `review_harness?: string`, `review_model?: string`, `review_effort?: string` (Stage 7b、`effort` は 7d。普段は省略) |
 | 戻り値 | `{ task_id, status, steps: StepSpec[] }` (末尾 `done` 補完後の正規化済み工程) |
 | 遷移 | Task を `pending` で作成。依存が全て `done` なら即座に評価し、`instruction` があれば `running` (最初の Step を開始)、無ければ `awaiting_instruction` として受信箱に `instruction_needed` を積む |
 | エラー | `not_found` (group / depends_on の ID。他グループのタスクも), `invalid_state` (グループが `active` でない / depends_on のタスクが `cancelled` か、それが原因で開始不能 — 決して始まらないため), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため) |
 
 `depends_on` は既存タスクしか指せないので循環は起こりえない (`conflict` は返らない)。重複は取り除く。
 
-**エージェントの上書き (Stage 7b、[`core-design.md`](core-design.md) §15)**: `harness` / `model` はこのタスクの
-エージェント (implementer セッション) のハーネス × モデル。`code` タスクは implementer、`investigate` タスクは
-investigator の役割の**候補集合の中からだけ**選べる。`review_harness` / `review_model` はこのタスクの review Step の
-セッション (reviewer の役割の候補から)。片方だけ指定すると、もう片方は一致する候補から選ぶ (既定が一致すれば既定)。
-候補外なら `invalid_argument` で、message に許される `harness/model` の一覧を含める。省略すれば各役割の既定
-(セッション起動時点の設定)。許される組は `get_status` の `agents` とシステムプロンプトにある。
+**エージェントの上書き (Stage 7b、7d で effort を追加、[`core-design.md`](core-design.md) §15)**: `harness` / `model` / `effort` は
+このタスクのエージェント (implementer セッション) のハーネス × モデル × effort。`code` タスクは implementer、`investigate`
+タスクは investigator の役割の**候補の行の中からだけ**選べる。`review_harness` / `review_model` / `review_effort` はこの
+タスクの review Step のセッション (reviewer の役割の行から)。**組は候補の行と完全一致しなければならない**。
+`effort` を省略できるのは、そのハーネス × モデルの行が 1 行だけのとき (その行の effort が使われる)。同じハーネス × モデルの行が
+effort 違いで複数あるのに `effort` が無ければ、`invalid_argument` で「`effort` も指定して」と該当の行を挙げる。行に無い組
+(存在しない effort を含む) も `invalid_argument` で、message に全行 `harness=… model=… effort=… (用途メモ)` を含める。
+省略すれば各役割の既定 (セッション起動時点の設定)。各行は用途メモ付きで `get_status` の `agents` とシステムプロンプトにあり、
+オーケストレータはメモを読んで「この用途ならこの行」と選ぶ。
 
 ### `set_instruction`
 
@@ -149,7 +152,7 @@ investigator の役割の**候補集合の中からだけ**選べる。`review_h
 | | |
 |---|---|
 | 引数 | `group_id?` (省略時は active グループ) |
-| 戻り値 | グループと全タスクの要約: `{ group, tasks: [{ task_id, title, kind, status, depends_on, current_step, steps_summary }], open_helps, agents }`。`agents` (Stage 7b) = `{ implementer, investigator, reviewer: { default: {harness, model}, allowed: [{harness, model}] } }` — `create_task` で選べる組 |
+| 戻り値 | グループと全タスクの要約: `{ group, tasks: [{ task_id, title, kind, status, depends_on, current_step, steps_summary }], open_helps, agents }`。`agents` (Stage 7b、7d) = `{ implementer, investigator, reviewer: { default: {harness, model, effort}, allowed: [{harness, model, effort, note}] } }` — `create_task` で選べる行 (用途メモ付き) |
 | 遷移 | なし |
 
 ### `get_task`

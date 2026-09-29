@@ -43,19 +43,30 @@ pub struct CreateTaskArgs {
     /// with set_instruction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
-    /// Usually omit. Harness of the task's agent, one of the allowed choices of
-    /// the implementer (code) / investigator (investigate) role (see get_status `agents`).
+    /// Usually omit. Harness of the task's agent; with `model` / `effort` it must
+    /// select one of the candidate rows of the implementer (code) / investigator
+    /// (investigate) role listed in your system prompt / get_status `agents`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
-    /// Usually omit. Model of the task's agent, one of the allowed choices.
+    /// Usually omit. Model of the task's agent (a candidate row's model).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Usually omit. Harness of the task's review steps (an allowed reviewer choice).
+    /// Usually omit. Effort (thought level) of the task's agent. harness × model
+    /// × effort must EXACTLY match one candidate row. May be omitted when only
+    /// one row has that harness × model; required when several rows differ by
+    /// effort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Usually omit. Harness of the task's review steps (a reviewer candidate row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_harness: Option<String>,
-    /// Usually omit. Model of the task's review steps (an allowed reviewer choice).
+    /// Usually omit. Model of the task's review steps (a reviewer candidate row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_model: Option<String>,
+    /// Usually omit. Effort of the task's review steps; same rule as `effort`,
+    /// against the reviewer candidate rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -173,6 +184,7 @@ macro_rules! tool_catalog {
         pub enum ToolName { $($variant),* }
 
         /// A parsed tool call (typed arguments).
+        #[allow(clippy::large_enum_variant)] // `create_task` is much larger than the rest
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(tag = "tool", content = "args", rename_all = "snake_case")]
         pub enum ToolCall { $($variant($args)),* }

@@ -18,47 +18,74 @@ pub fn system_prompt(role: Role) -> &'static str {
     }
 }
 
-/// Appended to the orchestrator's system prompt: the harness × model choices
-/// `create_task` accepts, as of the session start (`core-design.md` §15.5).
+/// Appended to the orchestrator's system prompt: the candidate rows (harness ×
+/// model × effort, with their notes) `create_task` accepts, as of the session
+/// start (`core-design.md` §15.5).
 #[must_use]
 pub fn agent_choices_prompt(settings: &AgentSettings) -> String {
     let mut text = String::from(
-        "\n\n## Agents (harness × model)\n\nAllowed choices when this session started \
-         (`get_status` has the current ones under `agents`). Normally omit `harness` / `model` \
-         in `create_task` and the default is used; pass them only when the user asks for a \
-         specific agent or model. Anything not listed is rejected.\n",
+        "\n\n## Agents (harness × model × effort)\n\nEach role below has candidate rows as they \
+         were when this session started (`get_status` has the current ones under `agents`); the \
+         note says when to use a row. Normally omit `harness` / `model` / `effort` in \
+         `create_task` and the role's default (marked default) is used. To pick a row for a \
+         task, pass its harness, model and effort exactly as listed (effort may be omitted when \
+         only one row has that harness and model). Anything that does not match a row is \
+         rejected.\n",
     );
     for (role, what, args) in [
-        (AgentRole::Implementer, "code tasks", "harness / model"),
+        (
+            AgentRole::Implementer,
+            "code tasks",
+            "harness / model / effort",
+        ),
         (
             AgentRole::Investigator,
             "investigate tasks",
-            "harness / model",
+            "harness / model / effort",
         ),
         (
             AgentRole::Reviewer,
             "review steps",
-            "review_harness / review_model",
+            "review_harness / review_model / review_effort",
         ),
     ] {
         let s = settings.get(role);
-        let allowed: Vec<String> = s.candidates.iter().map(choice_text).collect();
         text.push_str(&format!(
-            "- {} ({what}, `{args}`): default {}; allowed {}\n",
+            "\n- {} ({what}, `{args}`): default {}\n",
             role.as_str(),
             choice_text(&s.default),
-            allowed.join(", "),
         ));
+        for c in &s.candidates {
+            let note = c.note.trim();
+            let mark = if c.choice() == s.default {
+                " [default]"
+            } else {
+                ""
+            };
+            if note.is_empty() {
+                text.push_str(&format!("  - {}{mark}\n", choice_text(&c.choice())));
+            } else {
+                text.push_str(&format!(
+                    "  - {}{mark} — {note}\n",
+                    choice_text(&c.choice())
+                ));
+            }
+        }
     }
     text
 }
 
-/// `harness=claude-code model=haiku` (no model: the harness default).
+/// `harness=claude-code model=haiku effort=high` (no model: the harness default;
+/// no effort: it is not set).
 fn choice_text(c: &AgentChoice) -> String {
-    match &c.model {
+    let mut text = match &c.model {
         Some(m) => format!("harness={} model={m}", c.harness),
         None => format!("harness={} (its default model)", c.harness),
+    };
+    if let Some(e) = &c.effort {
+        text.push_str(&format!(" effort={e}"));
     }
+    text
 }
 
 /// What a sub-agent needs to start a step.
@@ -265,27 +292,37 @@ mod tests {
     }
 
     #[test]
-    fn agent_choices_list_each_task_role() {
-        use crate::agents::{AgentSettingsLayer, RoleSettings, effective};
+    fn agent_choices_list_each_row_with_its_note() {
+        use crate::agents::{AgentSettingsLayer, Candidate, RoleSettings, effective};
         let builtin = AgentChoice::new("claude-code", Some("haiku"));
         let mut layer = AgentSettingsLayer::default();
+        let deep = AgentChoice::new("claude-code", Some("sonnet")).with_effort("high");
         layer.set(
             AgentRole::Reviewer,
             Some(RoleSettings {
-                candidates: vec![builtin.clone(), AgentChoice::new("opencode", None)],
-                default: AgentChoice::new("opencode", None),
+                candidates: vec![
+                    Candidate::from(builtin.clone()).with_note("cheap first pass"),
+                    Candidate::from(deep.clone()).with_note("for risky changes"),
+                    AgentChoice::new("opencode", None).into(),
+                ],
+                default: deep,
             }),
         );
         let text = agent_choices_prompt(&effective(&builtin, &layer, None));
         assert!(text.contains(
-            "- implementer (code tasks, `harness / model`): default harness=claude-code model=haiku; \
-             allowed harness=claude-code model=haiku\n"
+            "- implementer (code tasks, `harness / model / effort`): default harness=claude-code model=haiku\n  \
+             - harness=claude-code model=haiku [default]\n"
         ));
         assert!(text.contains("- investigator (investigate tasks"));
         assert!(text.contains(
-            "- reviewer (review steps, `review_harness / review_model`): default harness=opencode \
-             (its default model); allowed harness=claude-code model=haiku, harness=opencode (its default model)\n"
+            "- reviewer (review steps, `review_harness / review_model / review_effort`): default \
+             harness=claude-code model=sonnet effort=high\n"
         ));
+        assert!(text.contains("  - harness=claude-code model=haiku — cheap first pass\n"));
+        assert!(text.contains(
+            "  - harness=claude-code model=sonnet effort=high [default] — for risky changes\n"
+        ));
+        assert!(text.contains("  - harness=opencode (its default model)\n"));
         assert!(
             !text.contains("orchestrator ("),
             "the orchestrator's own role is not offered"

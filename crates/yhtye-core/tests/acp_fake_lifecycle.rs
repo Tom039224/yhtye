@@ -9,7 +9,9 @@ use common::{
 };
 use serde_json::json;
 use yhtye_core::acp::schema::{SessionId, StopReason};
-use yhtye_core::acp::{AgentError, AgentEvent, AgentOutput, HarnessConfig, SpawnOptions};
+use yhtye_core::acp::{
+    AgentError, AgentEvent, AgentOutput, HarnessConfig, ModelSelect, SpawnOptions,
+};
 
 const GONE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -221,6 +223,59 @@ async fn unknown_mode_or_model_fails_startup() {
         panic!("{err:?}")
     };
     assert_eq!(step, "session/set_config_option");
+}
+
+#[tokio::test]
+async fn effort_is_set_after_the_model_and_verified() {
+    let dir = tmp();
+    let script = json!({
+        "models": ["default", "haiku", "sonnet"],
+        "efforts": {"sonnet": ["low", "high"]}
+    });
+    let effort = |value: &str| ModelSelect {
+        config_id: "effort".into(),
+        value: value.into(),
+    };
+
+    // The model comes first (the efforts belong to it), then the effort.
+    let mut h = fake_harness(script.clone());
+    h.model = Some(ModelSelect {
+        config_id: "model".into(),
+        value: "sonnet".into(),
+    });
+    h.effort = Some(effort("high"));
+    let mut s = start(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentEvent::Ready(info) = s.next().await else {
+        panic!("expected Ready")
+    };
+    assert_eq!(info.config_value("model"), Some("sonnet"));
+    assert_eq!(info.config_value("effort"), Some("high"));
+    s.handle.shutdown().await;
+
+    // Without an effort the option stays at the agent's own default.
+    h.effort = None;
+    let mut s = start(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentEvent::Ready(info) = s.next().await else {
+        panic!("expected Ready")
+    };
+    assert_eq!(info.config_value("effort"), Some("default"));
+    s.handle.shutdown().await;
+
+    // A value the model does not offer, and a model without the option,
+    // fail the start instead of running with another effort.
+    h.effort = Some(effort("max"));
+    let (err, _) = start_err(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentError::Startup { step, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(step, "session/set_config_option");
+    let mut h = fake_harness(script);
+    h.effort = Some(effort("high"));
+    let (err, _) = start_err(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentError::Startup { step, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(step, "session/set_config_option", "haiku has no effort");
 }
 
 #[tokio::test]

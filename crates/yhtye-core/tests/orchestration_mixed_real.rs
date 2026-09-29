@@ -15,8 +15,8 @@ use common::real::{MODEL as HAIKU, REAL_TIMEOUT, is_orchestrator_turn_end, real_
 use common::repo::TempRepo;
 use yhtye_core::acp::{AgentEvent, AgentOutput};
 use yhtye_core::agents::{
-    AgentCatalog, AgentChoice, AgentRole, HarnessPreset, OPENCODE_FALLBACK_MODEL, RoleSettings,
-    inherited_opencode_env_remove,
+    AgentCatalog, AgentChoice, AgentRole, Candidate, HarnessPreset, OPENCODE_FALLBACK_MODEL,
+    RoleSettings, inherited_opencode_env_remove,
 };
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::DomainEvent;
@@ -83,11 +83,19 @@ fn assert_models(events: &[ApiEvent]) {
                 .unwrap_or_else(|| panic!("{session} was started"));
             let model = info.config_value("model");
             eprintln!(
-                "{session}: {} model={model:?} mode={:?}",
+                "{session}: {} model={model:?} effort={:?} mode={:?}",
                 agent.harness,
+                info.config_value("effort"),
                 info.current_mode()
             );
             assert_eq!(model, agent.model.as_deref(), "{session}");
+            if let Some(effort) = &agent.effort {
+                assert_eq!(
+                    info.config_value("effort"),
+                    Some(effort.as_str()),
+                    "{session}"
+                );
+            }
         }
     }
 }
@@ -128,8 +136,16 @@ async fn run(
     roles: &[(AgentRole, AgentChoice)],
     request: &str,
 ) -> (Orchestration, Vec<ApiEvent>) {
+    run_with(repo, catalog(roles), request).await
+}
+
+async fn run_with(
+    repo: &TempRepo,
+    agents: AgentCatalog,
+    request: &str,
+) -> (Orchestration, Vec<ApiEvent>) {
     let mut cfg = real_git_config(repo);
-    cfg.agents = Arc::new(catalog(roles));
+    cfg.agents = Arc::new(agents);
     let (orch, mut rx) = Orchestration::start(cfg)
         .await
         .unwrap_or_else(|e| panic!("{e}"));
@@ -242,6 +258,90 @@ async fn real_opencode_orchestrator_with_a_claude_implementer() {
         );
     }
     assert!(r.read("README.md").contains("opencode orchestrated"));
+    shutdown_and_check(orch, &events).await;
+    assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
+}
+
+/// Stage 7d: the implementer role has two OpenCode rows that differ only in
+/// effort, each with a note. The Haiku orchestrator is told to try an effort no
+/// row has (rejected, with the rows and their notes listed), then to pick the
+/// row by its note; that row's effort is really set in the OpenCode session.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku) + OpenCode (muse-spark free)"]
+async fn real_effort_rows_are_matched_exactly_and_applied() {
+    let servers_before = opencode_servers();
+    let r = TempRepo::new();
+    let quick = opencode().with_effort("minimal");
+    let agents = catalog(&[]);
+    agents.set(
+        None,
+        AgentRole::Implementer,
+        Some(RoleSettings {
+            candidates: vec![
+                Candidate::from(quick.clone()).with_note("quick appends and tiny edits"),
+                Candidate::from(opencode().with_effort("high")).with_note("hard debugging"),
+            ],
+            default: quick.clone(),
+        }),
+    );
+    let (orch, events) = run_with(
+        &r,
+        agents,
+        "Create one group with exactly one code task (steps: implement only) that appends the \
+         line `effort ok` to README.md. As a deliberate check, FIRST call create_task with \
+         harness=opencode, model=opencode/muse-spark-1.3-contributor-free and effort=ultra; \
+         Yhtye will reject it and list the candidate rows with their notes. THEN call \
+         create_task again with the row whose note is about quick appends (give its harness, \
+         model and effort exactly as listed). When the group settles, call finish_group.",
+    )
+    .await;
+    assert_models(&events);
+
+    let creates: Vec<_> = events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::ToolCalled { record } if record.tool == "create_task" => Some(record),
+            _ => None,
+        })
+        .collect();
+    let rejected = creates
+        .iter()
+        .find(|c| c.args.get("effort").and_then(|v| v.as_str()) == Some("ultra"))
+        .expect("the orchestrator tried effort=ultra");
+    let error = rejected
+        .result
+        .as_ref()
+        .expect_err("no row has effort=ultra");
+    eprintln!("rejection: {}", error.message);
+    assert!(error.message.contains(
+        "model=opencode/muse-spark-1.3-contributor-free effort=minimal (quick appends and tiny edits)"
+    ));
+    assert!(error.message.contains("effort=high (hard debugging)"));
+    let accepted: Vec<_> = creates.iter().filter(|c| c.result.is_ok()).collect();
+    eprintln!(
+        "accepted create_task args: {:?}",
+        accepted.iter().map(|c| &c.args).collect::<Vec<_>>()
+    );
+    // (Haiku sometimes creates the task twice; what matters is that every accepted
+    // call named the exact row.)
+    assert!(!accepted.is_empty(), "a task was created");
+    for c in &accepted {
+        assert_eq!(
+            c.args.get("effort").and_then(|v| v.as_str()),
+            Some("minimal")
+        );
+    }
+
+    let implementers: Vec<AgentChoice> = started(&events)
+        .into_iter()
+        .filter(|(s, _)| s.ends_with("/implementer"))
+        .map(|(_, a)| a)
+        .collect();
+    assert!(
+        !implementers.is_empty() && implementers.iter().all(|a| *a == quick),
+        "the row picked by its note (minimal), applied: {implementers:?}"
+    );
+    assert!(r.read("README.md").contains("effort ok"));
     shutdown_and_check(orch, &events).await;
     assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
 }

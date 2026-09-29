@@ -63,8 +63,8 @@ describe("a replaced harness", () => {
       pid: 1,
       acp_session_id: "x",
       resumed: false,
-      agent: { harness: "claude-code", model: "haiku" },
-      ...(replaced ? { replaced: { harness: "opencode", model: "opencode/free" } } : {}),
+      agent: { harness: "claude-code", model: "haiku", effort: null },
+      ...(replaced ? { replaced: { harness: "opencode", model: "opencode/free", effort: null } } : {}),
     });
     const t = fold([ev(1, started(true)), ev(2, started(false))]);
     expect(t[S].map((i) => (i.kind === "lifecycle" ? [i.text, i.error] : null))).toEqual([

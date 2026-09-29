@@ -118,6 +118,7 @@ pub enum GitResult {
     },
 }
 
+#[allow(clippy::large_enum_variant)] // `create_task` carries the agent arguments
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainCommand {

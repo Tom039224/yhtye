@@ -127,10 +127,12 @@ impl Tx {
                 agent: a.harness.map(|harness| AgentChoice {
                     harness,
                     model: a.model,
+                    effort: a.effort,
                 }),
                 review_agent: a.review_harness.map(|harness| AgentChoice {
                     harness,
                     model: a.review_model,
+                    effort: a.review_effort,
                 }),
             },
         });

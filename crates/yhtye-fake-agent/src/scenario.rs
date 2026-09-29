@@ -5,6 +5,7 @@
 //!   "load_session": true,
 //!   "modes": ["default", "bypassPermissions"],
 //!   "models": ["default", "haiku"],
+//!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
 //!   "fail_at": null,            // "initialize" | "session/new" | ... → JSON-RPC error
 //!   "exit_at": null,            // same steps → print to stderr and exit(2)
 //!   "hang_at": null,            // same steps → never answer
@@ -33,6 +34,10 @@ pub struct Scenario {
     pub modes: Vec<String>,
     #[serde(default = "default_models")]
     pub models: Vec<String>,
+    /// Models that have an `effort` select option, with its values (after a
+    /// leading `default`, like Claude Code's). Changing the model rebuilds it.
+    #[serde(default)]
+    pub efforts: std::collections::BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub fail_at: Option<String>,
     #[serde(default)]

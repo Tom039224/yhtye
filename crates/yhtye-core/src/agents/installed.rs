@@ -156,7 +156,7 @@ mod tests {
             super::super::AgentRole::Investigator,
             super::super::AgentRole::Reviewer,
         ] {
-            let h = p.config(role, Some("opencode/x"));
+            let h = p.config(role, Some("opencode/x"), None);
             assert_eq!(
                 (h.command.as_str(), h.args.as_slice()),
                 ("opencode", &["acp".to_string()][..])
@@ -167,7 +167,7 @@ mod tests {
                 Some("opencode/x")
             );
             assert_eq!(h.env_remove, ["OPENCODE_CONFIG_DIR"]);
-            let fallback = p.config(role, None);
+            let fallback = p.config(role, None, None);
             assert_eq!(
                 fallback.model.as_ref().map(|m| m.value.as_str()),
                 Some(OPENCODE_FALLBACK_MODEL),

@@ -119,6 +119,19 @@ pub(crate) async fn open_session(
         )
         .await?;
     }
+    // The available efforts depend on the model, so the effort always comes
+    // after it. A model without that effort makes the start fail
+    // (`core-design.md` §15.1).
+    if let Some(effort) = &p.harness.effort {
+        info.config_options = set_config_option(
+            cx,
+            &info.acp_session_id,
+            &effort.config_id,
+            &effort.value,
+            timeout,
+        )
+        .await?;
+    }
     Ok(info)
 }
 

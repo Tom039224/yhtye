@@ -1,37 +1,41 @@
-// The composer's ⚙ agent settings panel (Stage 7b): roles with candidates
-// (harness × model from the harness's model list) and a default, the global
-// and project scopes, inheritance, and the edits it saves.
+// The settings modal's "エージェント" section (Stage 7b, tables in 7d): per role a
+// table of candidate rows (harness × model × effort + a note, one default), the
+// global and project scopes, inheritance, and the edits it saves.
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import App from "../App";
-import type { AgentChoice, HarnessInfo, HarnessModels, RoleSettings } from "../api/generated";
+import type { AgentChoice, Candidate, EffortOption, HarnessInfo, HarnessModels, RoleSettings } from "../api/generated";
 import { AppStore } from "../store/app";
 import { StoreContext } from "../store/useStore";
 import { FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { MAX_MATCHES, choiceOptions, toggleCandidate, visibleOptions } from "./agentSettings";
+import { DUPLICATE_ROW, MAX_MATCHES, addRow, newRow, pickerModels, removeRow, updateRow, withDefaultRow } from "./agentSettings";
 
-const HAIKU: AgentChoice = { harness: "claude-code", model: "haiku" };
-const SONNET: AgentChoice = { harness: "claude-code", model: "sonnet" };
+const HAIKU: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
+const SONNET_HIGH: AgentChoice = { harness: "claude-code", model: "sonnet", effort: "high" };
 const FREE = "opencode/muse-spark-1.3-contributor-free";
 const OPENCODE: HarnessInfo = { id: "opencode", label: "OpenCode", requires_model: true, orchestrator_read_only: false };
 const PLAIN = { requires_model: false, orchestrator_read_only: true };
 
-/** OpenCode's long model list in miniature: 3 providers × 10 models (> LONG_LIST). */
+const row = (c: AgentChoice, note = ""): Candidate => ({ ...c, note });
+const efforts = (...values: string[]): EffortOption[] => values.map((v) => ({ value: v, name: v, description: null }));
+
+/** OpenCode's long model list in miniature: 3 providers × 10 models (> LONG_LIST), efforts not listed. */
 function opencodeModels(): HarnessModels {
   const models = ["opencode", "openai", "ollama"].flatMap((p) =>
-    Array.from({ length: 10 }, (_, i) => ({ value: `${p}/model-${i}`, name: `${p} model ${i}`, description: null })),
+    Array.from({ length: 10 }, (_, i) => ({ value: `${p}/model-${i}`, name: `${p} model ${i}`, description: null, efforts: null })),
   );
-  models[0] = { value: FREE, name: "Muse Spark 1.3 (free)", description: null };
+  models[0] = { value: FREE, name: "Muse Spark 1.3 (free)", description: null, efforts: null };
   return { harness: "opencode", models, current: "openai/model-1", fetched_at_ms: 0 };
 }
 
 function withOpenCode(core: FakeCore) {
   core.agents.harnesses.push(OPENCODE);
   core.agents.models.opencode = opencodeModels();
+  core.agents.efforts[`opencode/${FREE}`] = efforts("low", "high");
 }
 
 async function setup(configure?: (core: FakeCore) => void) {
@@ -50,221 +54,277 @@ async function setup(configure?: (core: FakeCore) => void) {
   return { transport, core };
 }
 
-async function openPanel() {
+async function openSettings() {
   const user = userEvent.setup();
-  const gear = await screen.findByRole("button", { name: "エージェントの設定" });
-  await waitFor(() => expect(gear).toBeEnabled());
-  await user.click(gear);
-  const panel = await screen.findByRole("dialog", { name: "エージェントの設定" });
-  return { user, panel };
+  await user.click(await screen.findByRole("button", { name: "設定" }));
+  const dialog = await screen.findByRole("dialog", { name: "設定" });
+  return { user, dialog };
 }
 
-function role(panel: HTMLElement, name: string): HTMLElement {
-  return within(panel).getByRole("group", { name });
+function role(dialog: HTMLElement, name: string): HTMLElement {
+  return within(dialog).getByRole("group", { name });
 }
 
-describe("agent settings panel", () => {
-  it("shows every role with the harness's models, for this project by default", async () => {
-    const { transport } = await setup();
-    const { panel } = await openPanel();
-    await waitFor(() => expect(within(role(panel, "実装")).getAllByRole("checkbox")).toHaveLength(4));
-    for (const name of ["オーケストレータ", "実装", "調査", "レビュー"]) {
-      const group = role(panel, name);
-      expect(within(group).getByRole("checkbox", { name: "全体の設定を使う" })).toBeChecked();
-      expect(within(group).getByRole("checkbox", { name: "Claude Code · Haiku (haiku)" })).toBeChecked();
-      expect(within(group).getByRole("checkbox", { name: "Claude Code · Sonnet (sonnet)" })).not.toBeChecked();
-    }
-    expect(transport.callsOf("get_agent_settings")[0].project).toBe(PROJECT.id);
-    expect(transport.callsOf("list_harness_models")).toEqual([{ type: "list_harness_models", harness: "claude-code", refresh: false }]);
-    expect(panel).toHaveTextContent("新しく起動するエージェントから有効");
+/** The rows of a role's table (without the header). */
+function rowsOf(group: HTMLElement): HTMLElement[] {
+  return within(within(group).getByRole("table")).getAllByRole("row").slice(1);
+}
+
+describe("settings modal", () => {
+  it("opens from the bottom of the icon strip, and closes with Esc and ×", async () => {
+    await setup();
+    const rail = screen.getByRole("navigation", { name: "views" });
+    const buttons = within(rail).getAllByRole("button");
+    expect(buttons.at(-1)).toHaveAccessibleName("設定");
+    expect(screen.queryByRole("button", { name: "エージェントの設定" })).toBeNull();
+
+    const { user, dialog } = await openSettings();
+    expect(within(dialog).getByRole("button", { name: "エージェント" })).toHaveAttribute("aria-current", "page");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "設定" })).toBeNull();
+    const again = await openSettings();
+    await again.user.click(within(again.dialog).getByRole("button", { name: "閉じる" }));
+    expect(screen.queryByRole("dialog", { name: "設定" })).toBeNull();
   });
 
-  it("overrides a role for the project, adds a candidate and changes the default", async () => {
+  it("shows every role's table with the built-in row, for this project by default", async () => {
+    const { transport } = await setup();
+    const { dialog } = await openSettings();
+    await waitFor(() => expect(rowsOf(role(dialog, "実装"))).toHaveLength(1));
+    for (const name of ["オーケストレータ", "実装", "調査", "レビュー"]) {
+      const group = role(dialog, name);
+      expect(within(group).getByRole("checkbox", { name: "全体の設定を使う" })).toBeChecked();
+      expect(within(group).getByRole("combobox", { name: `${name} 候補1 のモデル` })).toHaveDisplayValue("Haiku (haiku)");
+      expect(within(group).getByRole("radio", { name: `${name} 候補1 を既定にする` })).toBeChecked();
+      expect(within(group).getByRole("combobox", { name: `${name} 候補1 の effort` })).toBeDisabled();
+    }
+    expect(within(dialog).getByRole("button", { name: /このプロジェクト/ })).toHaveAttribute("aria-pressed", "true");
+    expect(transport.callsOf("get_agent_settings")[0].project).toBe(PROJECT.id);
+    expect(transport.callsOf("list_harness_models")).toEqual([{ type: "list_harness_models", harness: "claude-code", refresh: false }]);
+    expect(dialog).toHaveTextContent("新しく起動するエージェントから有効");
+  });
+
+  it("adds rows with the same model and different efforts, a note, and moves the default", async () => {
     const { transport, core } = await setup();
-    const { user, panel } = await openPanel();
-    const implementer = () => role(panel, "実装");
-    await waitFor(() => expect(within(implementer()).getAllByRole("checkbox")).toHaveLength(4));
+    const { user, dialog } = await openSettings();
+    const implementer = () => role(dialog, "実装");
+    await waitFor(() => expect(rowsOf(implementer())).toHaveLength(1));
     // Inherited settings cannot be edited until the role stops inheriting.
-    expect(within(implementer()).getByRole("checkbox", { name: /Sonnet/ })).toBeDisabled();
+    expect(within(implementer()).getByRole("button", { name: "+ 行を追加" })).toBeDisabled();
 
     await user.click(within(implementer()).getByRole("checkbox", { name: "全体の設定を使う" }));
-    await waitFor(() => expect(within(implementer()).getByRole("checkbox", { name: /Sonnet/ })).toBeEnabled());
-    await user.click(within(implementer()).getByRole("checkbox", { name: /Sonnet/ }));
-    await waitFor(() => expect(within(implementer()).getByRole("checkbox", { name: /Sonnet/ })).toBeChecked());
-    await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 の既定" }), "claude-code/sonnet");
+    await waitFor(() => expect(within(implementer()).getByRole("button", { name: "+ 行を追加" })).toBeEnabled());
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
+    await waitFor(() => expect(rowsOf(implementer())).toHaveLength(2));
+    // The new row is the first model nobody uses yet; switch it to Sonnet.
+    await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 候補2 のモデル" }), "sonnet");
+    const effort = () => within(implementer()).getByRole("combobox", { name: "実装 候補2 の effort" });
+    await waitFor(() => expect(effort()).toBeEnabled());
+    expect(within(effort()).getAllByRole("option").map((o) => o.textContent)).toEqual(["指定なし", "low", "medium", "high"]);
+    await user.selectOptions(effort(), "high");
+    await user.type(within(implementer()).getByRole("textbox", { name: "実装 候補2 の用途メモ" }), "設計が絡む難しい変更");
+    await user.tab();
+    await user.click(within(implementer()).getByRole("radio", { name: "実装 候補2 を既定にする" }));
+    // A second Sonnet row with another effort is a different row.
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
+    await waitFor(() => expect(rowsOf(implementer())).toHaveLength(3));
 
-    const sets = transport.callsOf("set_agent_settings");
-    expect(sets.map((s) => [s.project, s.role, s.settings])).toEqual([
-      [PROJECT.id, "implementer", { candidates: [HAIKU], default: HAIKU }],
-      [PROJECT.id, "implementer", { candidates: [HAIKU, SONNET], default: HAIKU }],
-      [PROJECT.id, "implementer", { candidates: [HAIKU, SONNET], default: SONNET }],
-    ]);
-    expect(core.agents.projects.get(PROJECT.id)?.implementer?.default).toEqual(SONNET);
+    const saved = core.agents.projects.get(PROJECT.id)?.implementer;
+    expect(saved?.candidates.slice(0, 2)).toEqual([row(HAIKU), row(SONNET_HIGH, "設計が絡む難しい変更")]);
+    expect(saved?.default).toEqual(SONNET_HIGH);
     expect(core.agents.global.implementer).toBeNull();
-    // The only remaining candidate cannot be unchecked.
-    expect(within(role(panel, "レビュー")).getByRole("checkbox", { name: /Haiku/ })).toBeDisabled();
+    expect(transport.callsOf("set_agent_settings").every((c) => c.project === PROJECT.id && c.role === "implementer")).toBe(true);
+    // The only row of another role cannot be removed.
+    expect(within(role(dialog, "レビュー")).getByRole("button", { name: "レビュー 候補1 を削除" })).toBeDisabled();
+  });
+
+  it("refuses two rows with the same harness × model × effort and removes rows", async () => {
+    const { transport, core } = await setup((c) => {
+      c.agents.global.implementer = { candidates: [row(HAIKU), row(SONNET_HIGH)], default: HAIKU };
+    });
+    const { user, dialog } = await openSettings();
+    await user.click(within(dialog).getByRole("button", { name: "全体" }));
+    const implementer = () => role(dialog, "実装");
+    await waitFor(() => expect(rowsOf(implementer())).toHaveLength(2));
+    const before = transport.callsOf("set_agent_settings").length;
+    await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 候補2 のモデル" }), "haiku");
+    // Moving row 2 to haiku would make it (haiku, no effort): the effort is dropped -> same as row 1.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(DUPLICATE_ROW);
+    expect(transport.callsOf("set_agent_settings")).toHaveLength(before);
+
+    await user.click(within(implementer()).getByRole("button", { name: "実装 候補1 を削除" }));
+    await waitFor(() => expect(core.agents.global.implementer).toEqual({ candidates: [row(SONNET_HIGH)], default: SONNET_HIGH }));
   });
 
   it("edits the global layer in the global scope", async () => {
     const { transport, core } = await setup();
-    const { user, panel } = await openPanel();
-    await user.click(within(panel).getByRole("button", { name: "全体" }));
+    const { user, dialog } = await openSettings();
+    await user.click(within(dialog).getByRole("button", { name: "全体" }));
     await waitFor(() => expect(transport.callsOf("get_agent_settings").at(-1)?.project).toBeUndefined());
-    const reviewer = () => role(panel, "レビュー");
+    const reviewer = () => role(dialog, "レビュー");
     await waitFor(() => expect(within(reviewer()).getByRole("checkbox", { name: "組み込みの既定を使う" })).toBeChecked());
-    await user.click(within(reviewer()).getByRole("checkbox", { name: /Sonnet/ }));
-    await waitFor(() => expect(core.agents.global.reviewer).toEqual({ candidates: [HAIKU, SONNET], default: HAIKU }));
+    await user.click(within(reviewer()).getByRole("checkbox", { name: "組み込みの既定を使う" }));
+    await waitFor(() => expect(core.agents.global.reviewer).toEqual({ candidates: [row(HAIKU)], default: HAIKU }));
     expect(transport.callsOf("set_agent_settings")[0].project).toBeUndefined();
     await user.click(within(reviewer()).getByRole("checkbox", { name: "組み込みの既定を使う" }));
     await waitFor(() => expect(core.agents.global.reviewer).toBeNull());
   });
 
-  it("reports a harness whose models cannot be read and keeps saved candidates", async () => {
+  it("reports a harness whose models cannot be read and keeps its saved rows", async () => {
     await setup((core) => {
       core.agents.harnesses.push({ id: "other", label: "Other", ...PLAIN });
       core.agents.global.implementer = {
-        candidates: [HAIKU, { harness: "other", model: null }],
+        candidates: [row(HAIKU), row({ harness: "other", model: null, effort: null })],
         default: HAIKU,
       };
     });
-    const { panel } = await openPanel();
-    await waitFor(() => expect(panel).toHaveTextContent("Other: モデル一覧を取得できません"));
-    expect(within(role(panel, "実装")).getByRole("checkbox", { name: "Other · 既定のモデル" })).toBeChecked();
+    const { dialog } = await openSettings();
+    await waitFor(() => expect(dialog).toHaveTextContent("Other: モデル一覧を取得できません"));
+    const implementer = role(dialog, "実装");
+    expect(within(implementer).getByRole("combobox", { name: "実装 候補2 のハーネス" })).toHaveDisplayValue("Other");
+    expect(rowsOf(implementer)[1]).toHaveTextContent("既定のモデル");
   });
 
-  it("searches OpenCode's long model list, grouped by provider, and adds a match", async () => {
+  it("searches OpenCode's long model list in a picker grouped by provider and reads its efforts on demand", async () => {
     const { transport, core } = await setup(withOpenCode);
-    const { user, panel } = await openPanel();
-    await user.click(within(panel).getByRole("button", { name: "全体" }));
-    const implementer = () => role(panel, "実装");
-    await waitFor(() => expect(implementer()).toHaveTextContent("OpenCode: 30 モデル — 検索して候補に追加"));
-    // Only Claude Code's short list is shown until OpenCode is searched.
-    expect(within(implementer()).getAllByRole("checkbox").map((c) => c.getAttribute("aria-label") ?? "")).toHaveLength(4);
-    expect(within(implementer()).queryByRole("checkbox", { name: /OpenCode/ })).toBeNull();
-    expect(transport.callsOf("list_harness_models").map((c) => c.harness)).toEqual(["claude-code", "opencode"]);
-
-    await user.type(within(implementer()).getByRole("searchbox", { name: "実装 のモデルを検索" }), "model 1");
-    const found = within(implementer()).getAllByRole("checkbox", { name: /OpenCode/ });
-    expect(found).toHaveLength(3);
-    expect(implementer()).toHaveTextContent("OpenCode · openai");
-    expect(implementer()).toHaveTextContent("OpenCode · ollama");
-    expect(within(implementer()).queryByRole("checkbox", { name: /Sonnet/ })).toBeNull();
-
+    const { user, dialog } = await openSettings();
+    await user.click(within(dialog).getByRole("button", { name: "全体" }));
+    const implementer = () => role(dialog, "実装");
+    await waitFor(() => expect(transport.callsOf("list_harness_models").map((c) => c.harness)).toEqual(["claude-code", "opencode"]));
     await user.click(within(implementer()).getByRole("checkbox", { name: "組み込みの既定を使う" }));
-    await user.clear(within(implementer()).getByRole("searchbox", { name: "実装 のモデルを検索" }));
-    await user.type(within(implementer()).getByRole("searchbox", { name: "実装 のモデルを検索" }), "free");
-    await user.click(within(implementer()).getByRole("checkbox", { name: `OpenCode · Muse Spark 1.3 (free) (${FREE})` }));
-    const free: AgentChoice = { harness: "opencode", model: FREE };
-    await waitFor(() => expect(core.agents.global.implementer).toEqual({ candidates: [HAIKU, free], default: HAIKU }));
-    // A chosen candidate stays listed after the search is cleared.
-    await user.clear(within(implementer()).getByRole("searchbox", { name: "実装 のモデルを検索" }));
-    expect(within(implementer()).getByRole("checkbox", { name: /Muse Spark/ })).toBeChecked();
-    // No "default model" entry for OpenCode (it would start on its last-used model).
-    expect(within(implementer()).queryByRole("checkbox", { name: "OpenCode · 既定のモデル" })).toBeNull();
+    await waitFor(() => expect(core.agents.global.implementer).not.toBeNull());
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
+    await waitFor(() => expect(rowsOf(implementer())).toHaveLength(2));
+    // Row 2: switch to OpenCode; its first (long-list) model has no effort list yet.
+    await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 候補2 のハーネス" }), "opencode");
+    const picker = () => within(implementer()).getByRole("button", { name: "実装 候補2 のモデル" });
+    await waitFor(() => expect(picker()).toBeEnabled());
+    await user.click(picker());
+    const list = within(implementer()).getByRole("listbox", { name: "実装 候補2 のモデルの候補" });
+    expect(list).toHaveTextContent("検索語を入力してください");
+
+    const search = within(implementer()).getByRole("searchbox", { name: "実装 候補2 のモデルを検索" });
+    await user.type(search, "model 1");
+    expect(within(list).getAllByRole("option")).toHaveLength(3);
+    expect(list).toHaveTextContent("openai");
+    expect(list).toHaveTextContent("ollama");
+    // Esc closes the picker, not the dialog.
+    await user.keyboard("{Escape}");
+    expect(within(implementer()).queryByRole("listbox")).toBeNull();
+    expect(screen.getByRole("dialog", { name: "設定" })).toBeInTheDocument();
+
+    await user.click(picker());
+    await user.type(within(implementer()).getByRole("searchbox"), "free");
+    await user.click(within(implementer()).getByRole("option", { name: `Muse Spark 1.3 (free) (${FREE})` }));
+    const effort = () => within(implementer()).getByRole("combobox", { name: "実装 候補2 の effort" });
+    await waitFor(() => expect(effort()).toBeEnabled());
+    expect(transport.callsOf("list_model_efforts")).toEqual([{ type: "list_model_efforts", harness: "opencode", model: FREE }]);
+    expect(within(effort()).getAllByRole("option").map((o) => o.textContent)).toEqual(["指定なし", "low", "high"]);
+    await user.selectOptions(effort(), "low");
+    const free: AgentChoice = { harness: "opencode", model: FREE, effort: "low" };
+    await waitFor(() => expect(core.agents.global.implementer?.candidates[1]).toEqual(row(free)));
   });
 
   it("warns that an OpenCode orchestrator cannot be made read-only", async () => {
-    const free: AgentChoice = { harness: "opencode", model: FREE };
+    const free: AgentChoice = { harness: "opencode", model: FREE, effort: null };
     await setup((core) => {
       withOpenCode(core);
-      core.agents.global.orchestrator = { candidates: [HAIKU, free], default: HAIKU };
-      core.agents.global.implementer = { candidates: [HAIKU, free], default: HAIKU };
+      core.agents.global.orchestrator = { candidates: [row(HAIKU), row(free)], default: HAIKU };
+      core.agents.global.implementer = { candidates: [row(HAIKU), row(free)], default: HAIKU };
     });
-    const { panel } = await openPanel();
-    const orchestrator = role(panel, "オーケストレータ");
-    await waitFor(() =>
-      expect(within(orchestrator).getByRole("checkbox", { name: /Muse Spark.*⚠ 書き込み制限なし/ })).toBeChecked(),
-    );
-    expect(within(orchestrator).getByRole("note")).toHaveTextContent("OpenCode のオーケストレータは書き込みを制限できません");
-    expect(within(orchestrator).getByRole("option", { name: /Muse Spark.*⚠ 書き込み制限なし/ })).toBeInTheDocument();
-    // Offered (searched) OpenCode models are marked too, Claude Code is not.
-    const user = userEvent.setup();
-    await user.type(within(orchestrator).getByRole("searchbox"), "openai model 2");
-    expect(within(orchestrator).getByRole("checkbox", { name: /openai model 2.*⚠ 書き込み制限なし/ })).not.toBeChecked();
-    expect(within(orchestrator).getByRole("checkbox", { name: /Haiku/ }).parentElement).not.toHaveTextContent("書き込み制限なし");
-    // Other roles: no warning.
-    const implementer = role(panel, "実装");
+    const { dialog } = await openSettings();
+    const orchestrator = role(dialog, "オーケストレータ");
+    await waitFor(() => expect(within(orchestrator).getByRole("note")).toHaveTextContent("OpenCode のオーケストレータは書き込みを制限できません"));
+    const [claudeRow, openCodeRow] = rowsOf(orchestrator);
+    expect(within(openCodeRow).getAllByText("⚠ 書き込み制限なし")).toHaveLength(1);
+    expect(within(claudeRow).queryByText("⚠ 書き込み制限なし")).toBeNull();
+    // The harness choice itself carries the mark in the orchestrator's list only.
+    expect(within(orchestrator).getAllByRole("option", { name: /OpenCode.*⚠ 書き込み制限なし/ }).length).toBeGreaterThan(0);
+    const implementer = role(dialog, "実装");
     expect(within(implementer).queryByRole("note")).toBeNull();
-    expect(implementer).not.toHaveTextContent("書き込み制限なし");
+    expect(within(implementer).queryByText(/書き込み制限なし/)).toBeNull();
   });
 
   it("shows settings that name a harness which is no longer installed", async () => {
     await setup((core) => {
       core.agents.global.implementer = {
-        candidates: [HAIKU, { harness: "opencode", model: FREE }],
-        default: { harness: "opencode", model: FREE },
+        candidates: [row(HAIKU), row({ harness: "opencode", model: FREE, effort: null })],
+        default: { harness: "opencode", model: FREE, effort: null },
       };
     });
-    const { panel } = await openPanel();
-    const implementer = role(panel, "実装");
+    const { dialog } = await openSettings();
+    const implementer = role(dialog, "実装");
     await waitFor(() => expect(within(implementer).getByRole("alert")).toHaveTextContent("opencode が見つかりません"));
     expect(within(implementer).getByRole("alert")).toHaveTextContent("既定 (Claude Code · Haiku (haiku)) で起動します");
-    expect(within(implementer).getByRole("checkbox", { name: /opencode.*\(見つからない\)/ })).toBeChecked();
-    expect(within(role(panel, "レビュー")).queryByRole("alert")).toBeNull();
-  });
-
-  it("closes with ×", async () => {
-    await setup();
-    const { user, panel } = await openPanel();
-    await user.click(within(panel).getByRole("button", { name: "閉じる" }));
-    expect(screen.queryByRole("dialog", { name: "エージェントの設定" })).toBeNull();
+    expect(within(implementer).getByRole("combobox", { name: "実装 候補2 のハーネス" })).toHaveDisplayValue("opencode (見つからない)");
+    expect(within(role(dialog, "レビュー")).queryByRole("alert")).toBeNull();
   });
 });
 
 describe("agent settings helpers", () => {
-  const only = (c: AgentChoice): RoleSettings => ({ candidates: [c], default: c });
+  const rows = (...c: AgentChoice[]): RoleSettings => ({ candidates: c.map((x) => row(x)), default: c[0] });
+  const SONNET: AgentChoice = { harness: "claude-code", model: "sonnet", effort: null };
 
-  it("keep at least one candidate and move the default off a removed one", () => {
-    expect(toggleCandidate(only(HAIKU), HAIKU, false)).toBeNull();
-    const both = toggleCandidate(only(HAIKU), SONNET, true);
-    expect(both).toEqual({ candidates: [HAIKU, SONNET], default: HAIKU });
-    expect(toggleCandidate(both!, HAIKU, false)).toEqual({ candidates: [SONNET], default: SONNET });
-    expect(toggleCandidate(both!, SONNET, true)).toBe(both);
+  it("keep the default on its row when the row changes, and refuse duplicates", () => {
+    const s = rows(HAIKU, SONNET);
+    const moved = updateRow(s, 0, { model: "sonnet", effort: "high" });
+    expect(moved).toEqual({ ok: { candidates: [row(SONNET_HIGH), row(SONNET)], default: SONNET_HIGH } });
+    expect(updateRow(s, 0, { model: "sonnet" })).toEqual({ error: DUPLICATE_ROW });
+    // Only the note changed: never a duplicate of itself.
+    expect(updateRow(s, 1, { note: "x" })).toEqual({ ok: { candidates: [row(HAIKU), { ...row(SONNET), note: "x" }], default: HAIKU } });
+    expect(addRow(s, row(SONNET))).toEqual({ error: DUPLICATE_ROW });
+    expect(addRow(s, row(SONNET_HIGH))).toEqual({ ok: { candidates: [...s.candidates, row(SONNET_HIGH)], default: HAIKU } });
   });
 
-  it("offer a harness without models as its default and mark unlisted candidates", () => {
+  it("keep at least one row and move the default off a removed one", () => {
+    expect(removeRow(rows(HAIKU), 0)).toBeNull();
+    const s = rows(HAIKU, SONNET_HIGH);
+    expect(removeRow(s, 0)).toEqual({ candidates: [row(SONNET_HIGH)], default: SONNET_HIGH });
+    expect(removeRow(s, 1)).toEqual({ candidates: [row(HAIKU)], default: HAIKU });
+    expect(withDefaultRow(s, 1).default).toEqual(SONNET_HIGH);
+  });
+
+  it("propose a new row nobody has, starting with the last row's harness", () => {
     const harnesses = [
       { id: "a", label: "A", ...PLAIN },
       { id: "b", label: "B", ...PLAIN },
       { id: "c", label: "C", ...PLAIN, requires_model: true },
     ];
-    const models = {
-      a: { models: { harness: "a", models: [{ value: "x", name: "x", description: null }], current: "x", fetched_at_ms: 0 }, error: null, loading: false },
-      b: { models: { harness: "b", models: [], current: null, fetched_at_ms: 0 }, error: null, loading: false },
-      c: { models: { harness: "c", models: [], current: null, fetched_at_ms: 0 }, error: null, loading: false },
-    };
-    const opts = choiceOptions(harnesses, models, [{ harness: "a", model: "gone" }]);
-    expect(opts.map((o) => [o.label, o.unlisted])).toEqual([
-      ["A · x", false],
-      ["B · 既定のモデル", false],
-      ["A · gone", true],
-    ]);
+    const listed = (harness: string, ...values: string[]): HarnessModels => ({
+      harness,
+      models: values.map((value) => ({ value, name: value, description: null, efforts: [] })),
+      current: null,
+      fetched_at_ms: 0,
+    });
+    const state = (m: HarnessModels) => ({ models: m, error: null, loading: false });
+    const models = { a: state(listed("a", "x", "y")), b: state(listed("b")), c: state(listed("c")) };
+    const one = (h: string, m: string | null): RoleSettings => rows({ harness: h, model: m, effort: null });
+    expect(newRow(harnesses, models, one("a", "x"))).toEqual({ harness: "a", model: "y", effort: null, note: "" });
+    // a is exhausted: b has no model option (its default), c requires a model and has none.
+    expect(newRow(harnesses, models, rows({ harness: "a", model: "x", effort: null }, { harness: "a", model: "y", effort: null }))).toEqual({
+      harness: "b",
+      model: null,
+      effort: null,
+      note: "",
+    });
+    expect(newRow(harnesses, { a: state(listed("a", "x")), c: state(listed("c")) }, one("a", "x"))).toBeNull();
+    expect(newRow(harnesses, {}, one("a", "x"))).toBeNull();
   });
 
-  it("limit search matches and always keep the candidates", () => {
-    const harnesses = [OPENCODE];
+  it("limit search matches, group them by provider and show nothing for an empty search", () => {
     const listed = opencodeModels();
-    const models = { opencode: { models: listed, error: null, loading: false } };
-    const chosen: AgentChoice = { harness: "opencode", model: "ollama/model-9" };
-    const opts = choiceOptions(harnesses, models, [chosen]);
-    expect(opts).toHaveLength(30);
-    const idle = visibleOptions(opts, harnesses, models, [chosen], "");
-    expect(idle.groups.flatMap((g) => g.options.map((o) => o.choice.model))).toEqual(["ollama/model-9"]);
-    expect(idle.searchable).toEqual([{ label: "OpenCode", count: 30 }]);
-    const all = visibleOptions(opts, harnesses, models, [chosen], "model");
-    expect(all.groups.map((g) => g.label)).toEqual(["OpenCode · opencode", "OpenCode · openai", "OpenCode · ollama"]);
-    // 28 matches ("Muse Spark" has no "model" in it) + the candidate.
-    expect(all.groups.reduce((n, g) => n + g.options.length, 0)).toBe(29);
-    expect(all.more).toBe(0);
+    expect(pickerModels(listed, "  ")).toEqual({ groups: [], more: 0 });
+    const all = pickerModels(listed, "model");
+    expect(all.groups.map((g) => g.provider)).toEqual(["opencode", "openai", "ollama"]);
+    // 29 matches: "Muse Spark" has no "model" in its name, but its value has none either.
+    expect(all.groups.reduce((n, g) => n + g.models.length, 0)).toBe(29);
     const many: HarnessModels = {
       ...listed,
-      models: Array.from({ length: MAX_MATCHES + 25 }, (_, i) => ({ value: `p/m-${i}`, name: `m ${i}`, description: null })),
+      models: Array.from({ length: MAX_MATCHES + 25 }, (_, i) => ({ value: `p/m-${i}`, name: `m ${i}`, description: null, efforts: null })),
     };
-    const big = { opencode: { models: many, error: null, loading: false } };
-    const capped = visibleOptions(choiceOptions(harnesses, big, []), harnesses, big, [], "m");
-    expect(capped.groups.reduce((n, g) => n + g.options.length, 0)).toBe(MAX_MATCHES);
+    const capped = pickerModels(many, "m");
+    expect(capped.groups.reduce((n, g) => n + g.models.length, 0)).toBe(MAX_MATCHES);
     expect(capped.more).toBe(25);
-    const words = visibleOptions(opts, harnesses, models, [], "OPENAI 3");
-    expect(words.groups.flatMap((g) => g.options.map((o) => o.choice.model))).toEqual(["openai/model-3"]);
+    expect(pickerModels(listed, "OPENAI 3").groups.flatMap((g) => g.models.map((m) => m.value))).toEqual(["openai/model-3"]);
   });
 });

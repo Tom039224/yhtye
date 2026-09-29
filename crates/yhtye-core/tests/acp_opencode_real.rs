@@ -454,6 +454,59 @@ async fn real_opencode_model_list_comes_from_the_preset_probe() {
         "<provider>/<model>"
     );
     assert!(models.models.iter().any(|m| m.value == MODEL));
+    assert!(
+        models.models.iter().all(|m| m.efforts.is_none()),
+        "a long list does not read every model's efforts"
+    );
+    assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
+}
+
+/// Stage 7d: the efforts (OpenCode's variants) of one model are read on demand
+/// with a listing session that selects it, and one of them is applied when a
+/// session starts (no prompt, so no model call). Skips the apply step if the
+/// free model has no effort option.
+#[tokio::test]
+#[ignore = "real OpenCode (muse-spark free)"]
+async fn real_opencode_efforts_are_read_per_model_and_applied() {
+    use yhtye_core::agents::{AgentRole, HarnessPreset, probe_efforts};
+    let servers_before = opencode_servers();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let preset = HarnessPreset::opencode(MODEL, Vec::new());
+    let started = Instant::now();
+    let efforts = probe_efforts(
+        &preset,
+        MODEL,
+        dir.path(),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("efforts");
+    eprintln!(
+        "efforts of {MODEL} in {:?}: {:?}",
+        started.elapsed(),
+        efforts.iter().map(|e| e.value.as_str()).collect::<Vec<_>>()
+    );
+    if let Some(effort) = efforts.first() {
+        let harness = preset.config(AgentRole::Implementer, Some(MODEL), Some(&effort.value));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = spawn_agent(&harness, dir.path(), SpawnOptions::default(), tx)
+            .await
+            .expect("session with the effort");
+        eprintln!(
+            "session reports model={:?} effort={:?}",
+            handle.info().config_value("model"),
+            handle.info().config_value("effort")
+        );
+        assert_eq!(handle.info().config_value("model"), Some(MODEL));
+        assert_eq!(
+            handle.info().config_value("effort"),
+            Some(effort.value.as_str())
+        );
+        let pid = handle.pid().expect("pid");
+        handle.shutdown().await;
+        drop(rx);
+        assert_group_gone(pid, Duration::from_secs(5)).await;
+    }
     assert_no_new_servers(&servers_before, Duration::from_secs(10)).await;
 }
 

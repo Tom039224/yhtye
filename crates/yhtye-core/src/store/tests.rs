@@ -143,7 +143,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 3);
+    assert_eq!(applied, 4);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -174,7 +174,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 3);
+    assert_eq!(applied, 4);
 }
 
 #[tokio::test]
@@ -318,7 +318,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             pid: Some(1),
             acp_session_id: acp.into(),
             resumed: false,
-            agent: Some(AgentChoice::new("claude-code", Some(acp))),
+            agent: Some(AgentChoice::new("claude-code", Some(acp)).with_effort("high")),
             replaced: None,
         },
     )
@@ -423,20 +423,23 @@ async fn sessions_record_the_agent_they_ran() {
     let sessions = store.sessions("P-1").await.expect("sessions");
     assert_eq!(
         sessions[0].agent,
-        Some(AgentChoice::new("claude-code", Some("acp-1")))
+        Some(AgentChoice::new("claude-code", Some("acp-1")).with_effort("high")),
+        "the effort is stored with the session (migration 0004)"
     );
 }
 
 #[tokio::test]
 async fn agent_settings_are_stored_per_scope_and_role() {
-    use crate::agents::{AgentRole, RoleSettings};
+    use crate::agents::{AgentRole, Candidate, RoleSettings};
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&db(dir.path())).await.expect("open");
     let a = RoleSettings::only(AgentChoice::new("claude-code", Some("haiku")));
     let b = RoleSettings {
         candidates: vec![
-            AgentChoice::new("claude-code", Some("haiku")),
-            AgentChoice::new("other", None),
+            AgentChoice::new("claude-code", Some("haiku")).into(),
+            Candidate::from(AgentChoice::new("claude-code", Some("sonnet")).with_effort("high"))
+                .with_note("hard bugs"),
+            AgentChoice::new("other", None).into(),
         ],
         default: AgentChoice::new("other", None),
     };

@@ -17,6 +17,7 @@ import type {
   ApiResponse,
   GitOverview,
   HarnessModels,
+  ModelEfforts,
   ProjectInfo,
   RoleSettings,
   UsageReport,
@@ -443,6 +444,12 @@ export class AppStore {
   async listHarnessModels(harness: string, refresh = false): Promise<HarnessModels> {
     const r = await this.invoke({ type: "list_harness_models", harness, refresh }, "harness_models");
     return r.models;
+  }
+
+  /** The efforts of one model whose efforts the model list did not include (Stage 7d). */
+  async listModelEfforts(harness: string, model: string): Promise<ModelEfforts> {
+    const r = await this.invoke({ type: "list_model_efforts", harness, model }, "model_efforts");
+    return r.efforts;
   }
 
   // ---- helpers --------------------------------------------------------------

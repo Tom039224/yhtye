@@ -43,7 +43,7 @@ pub struct SessionRecord {
     pub status: SessionStatus,
     /// A prompt was sent and its turn had not ended.
     pub turn_running: bool,
-    /// The harness × model it ran (Stage 7b; `None` for older sessions).
+    /// The harness × model × effort it ran (Stage 7b; `None` for older sessions).
     pub agent: Option<AgentChoice>,
 }
 
@@ -57,6 +57,7 @@ struct Row {
     turn_running: i64,
     harness: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
 }
 
 pub(super) async fn list(
@@ -64,7 +65,7 @@ pub(super) async fn list(
     project: &str,
 ) -> Result<Vec<SessionRecord>, StoreError> {
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT session_key, role, task_id, acp_session_id, status, turn_running, harness, model \
+        "SELECT session_key, role, task_id, acp_session_id, status, turn_running, harness, model, effort \
          FROM agent_sessions WHERE project_id = ? ORDER BY session_key",
     )
     .bind(project)
@@ -82,6 +83,7 @@ pub(super) async fn list(
                 agent: r.harness.map(|harness| AgentChoice {
                     harness,
                     model: r.model,
+                    effort: r.effort,
                 }),
             })
         })
@@ -106,12 +108,12 @@ pub(super) async fn apply(
             sqlx::query(
                 "INSERT INTO agent_sessions \
                  (project_id, session_key, role, task_id, acp_session_id, status, turn_running, updated_ms, \
-                 harness, model) \
-                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?, ?, ?) \
+                 harness, model, effort) \
+                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?, ?, ?, ?) \
                  ON CONFLICT (project_id, session_key) DO UPDATE SET role = excluded.role, \
                  task_id = excluded.task_id, acp_session_id = excluded.acp_session_id, \
                  status = 'live', turn_running = 0, updated_ms = excluded.updated_ms, \
-                 harness = excluded.harness, model = excluded.model",
+                 harness = excluded.harness, model = excluded.model, effort = excluded.effort",
             )
             .bind(project)
             .bind(session)
@@ -121,6 +123,7 @@ pub(super) async fn apply(
             .bind(ts)
             .bind(agent.as_ref().map(|a| a.harness.as_str()))
             .bind(agent.as_ref().and_then(|a| a.model.as_deref()))
+            .bind(agent.as_ref().and_then(|a| a.effort.as_deref()))
             .execute(&mut **tx)
             .await?;
         }

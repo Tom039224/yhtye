@@ -47,13 +47,17 @@ impl AgentRole {
     }
 }
 
-/// One harness × model combination. `model: None` is the harness's own default
-/// (for harnesses that expose no model option).
+/// One harness × model × effort combination. `model: None` is the harness's
+/// own default (for harnesses that expose no model option); `effort: None` means
+/// "do not set the effort option" (Stage 7d, `core-design.md` §15.1). Old stored
+/// values without `effort` read as `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 pub struct AgentChoice {
     pub harness: String,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 impl AgentChoice {
@@ -62,23 +66,109 @@ impl AgentChoice {
         Self {
             harness: harness.into(),
             model: model.map(str::to_string),
+            effort: None,
         }
     }
 
-    /// `harness/model`, or just `harness` for its default model.
+    #[must_use]
+    pub fn with_effort(mut self, effort: &str) -> Self {
+        self.effort = Some(effort.to_string());
+        self
+    }
+
+    /// `harness/model effort=high`; just `harness` for its default model, no
+    /// `effort=` part when the effort is not set.
     #[must_use]
     pub fn label(&self) -> String {
-        match &self.model {
+        let mut text = match &self.model {
             Some(m) => format!("{}/{m}", self.harness),
             None => self.harness.clone(),
+        };
+        if let Some(e) = &self.effort {
+            text.push_str(&format!(" effort={e}"));
+        }
+        text
+    }
+}
+
+/// Longest allowed [`Candidate::note`] (characters).
+pub const MAX_NOTE_CHARS: usize = 400;
+
+/// A candidate row: an [`AgentChoice`] plus a free-text `note` saying when to
+/// use it (shown to the orchestrator, who picks by it). The same
+/// harness × model may appear in several rows with different efforts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Candidate {
+    pub harness: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub note: String,
+}
+
+impl Candidate {
+    /// The row's combination without the note.
+    #[must_use]
+    pub fn choice(&self) -> AgentChoice {
+        AgentChoice {
+            harness: self.harness.clone(),
+            model: self.model.clone(),
+            effort: self.effort.clone(),
         }
     }
+
+    #[must_use]
+    pub fn with_note(mut self, note: &str) -> Self {
+        self.note = note.to_string();
+        self
+    }
+
+    /// `harness=cc model=sonnet effort=high (note)`: the arguments the
+    /// orchestrator passes (a model may contain `/`, so no `harness/model`).
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut text = format!("harness={}", self.harness);
+        match &self.model {
+            Some(m) => text.push_str(&format!(" model={m}")),
+            None => text.push_str(" (its default model)"),
+        }
+        if let Some(e) = &self.effort {
+            text.push_str(&format!(" effort={e}"));
+        }
+        if !self.note.trim().is_empty() {
+            text.push_str(&format!(" ({})", self.note.trim()));
+        }
+        text
+    }
+}
+
+impl From<AgentChoice> for Candidate {
+    fn from(c: AgentChoice) -> Self {
+        Self {
+            harness: c.harness,
+            model: c.model,
+            effort: c.effort,
+            note: String::new(),
+        }
+    }
+}
+
+/// Why [`RoleSettings::pick`] found no single candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PickError {
+    /// Nothing matches; carries all candidates.
+    NoMatch(Vec<Candidate>),
+    /// The rows for the asked harness × model differ only in effort and none was
+    /// named; carries those rows.
+    NeedsEffort(Vec<Candidate>),
 }
 
 /// The candidates of one role and its default (which is one of them).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct RoleSettings {
-    pub candidates: Vec<AgentChoice>,
+    pub candidates: Vec<Candidate>,
     pub default: AgentChoice,
 }
 
@@ -87,25 +177,25 @@ impl RoleSettings {
     #[must_use]
     pub fn only(choice: AgentChoice) -> Self {
         Self {
-            candidates: vec![choice.clone()],
+            candidates: vec![choice.clone().into()],
             default: choice,
         }
     }
 
     /// Checks the settings against the registered harnesses; returns them with
-    /// duplicate candidates removed.
+    /// duplicate rows (same harness × model × effort, the first one wins) removed.
     pub fn validate(&self, harnesses: &[&str]) -> Result<Self, String> {
-        let mut candidates: Vec<AgentChoice> = Vec::new();
+        let mut candidates: Vec<Candidate> = Vec::new();
         for c in &self.candidates {
-            check_choice(c, harnesses)?;
-            if !candidates.contains(c) {
+            check_candidate(c, harnesses)?;
+            if candidates.iter().all(|x| x.choice() != c.choice()) {
                 candidates.push(c.clone());
             }
         }
         if candidates.is_empty() {
             return Err("at least one candidate is required".into());
         }
-        if !candidates.contains(&self.default) {
+        if candidates.iter().all(|c| c.choice() != self.default) {
             return Err(format!(
                 "the default {} is not one of the candidates",
                 self.default.label()
@@ -117,35 +207,63 @@ impl RoleSettings {
         })
     }
 
-    /// The candidate matching `harness` / `model` (either may be omitted): the
-    /// default when both are omitted or it matches, else the first match.
-    /// `Err` lists the candidates when nothing matches.
+    /// The candidate row selected by `harness` / `model` / `effort` (each may
+    /// be omitted; an omitted one matches anything). Nothing omitted: an exact
+    /// match. When several rows match: the default if it is one of them, unless
+    /// the matches are all the same harness × model (with `effort` omitted) —
+    /// then the caller must name the effort ([`PickError::NeedsEffort`]).
     pub fn pick(
         &self,
         harness: Option<&str>,
         model: Option<&str>,
-    ) -> Result<AgentChoice, Vec<AgentChoice>> {
-        let matches = |c: &AgentChoice| {
-            harness.is_none_or(|h| c.harness == h)
-                && model.is_none_or(|m| c.model.as_deref() == Some(m))
-        };
-        if matches(&self.default) {
-            return Ok(self.default.clone());
-        }
-        self.candidates
+        effort: Option<&str>,
+    ) -> Result<Candidate, PickError> {
+        let matches: Vec<&Candidate> = self
+            .candidates
             .iter()
-            .find(|c| matches(c))
-            .cloned()
-            .ok_or_else(|| self.candidates.clone())
+            .filter(|c| {
+                harness.is_none_or(|h| c.harness == h)
+                    && model.is_none_or(|m| c.model.as_deref() == Some(m))
+                    && effort.is_none_or(|e| c.effort.as_deref() == Some(e))
+            })
+            .collect();
+        let Some(first) = matches.first() else {
+            return Err(PickError::NoMatch(self.candidates.clone()));
+        };
+        if matches.len() == 1 {
+            return Ok((*first).clone());
+        }
+        let same_model = matches
+            .iter()
+            .all(|c| c.harness == first.harness && c.model == first.model);
+        if same_model && effort.is_none() {
+            return Err(PickError::NeedsEffort(
+                matches.into_iter().cloned().collect(),
+            ));
+        }
+        let chosen = matches
+            .iter()
+            .find(|c| c.choice() == self.default)
+            .unwrap_or(first);
+        Ok((*chosen).clone())
     }
 }
 
-fn check_choice(c: &AgentChoice, harnesses: &[&str]) -> Result<(), String> {
+fn check_candidate(c: &Candidate, harnesses: &[&str]) -> Result<(), String> {
     if c.harness.trim().is_empty() {
         return Err("a candidate has an empty harness".into());
     }
     if c.model.as_deref().is_some_and(|m| m.trim().is_empty()) {
         return Err(format!("{}: the model is empty", c.harness));
+    }
+    if c.effort.as_deref().is_some_and(|e| e.trim().is_empty()) {
+        return Err(format!("{}: the effort is empty", c.harness));
+    }
+    if c.note.chars().count() > MAX_NOTE_CHARS {
+        return Err(format!(
+            "{}: the note is longer than {MAX_NOTE_CHARS} characters",
+            c.harness
+        ));
     }
     if !harnesses.contains(&c.harness.as_str()) {
         return Err(format!(
@@ -250,7 +368,7 @@ mod tests {
 
     fn settings(candidates: &[AgentChoice], default: &AgentChoice) -> RoleSettings {
         RoleSettings {
-            candidates: candidates.to_vec(),
+            candidates: candidates.iter().cloned().map(Candidate::from).collect(),
             default: default.clone(),
         }
     }
@@ -338,6 +456,15 @@ mod tests {
         );
     }
 
+    fn cand(h: &str, m: &str, e: Option<&str>) -> Candidate {
+        Candidate {
+            harness: h.into(),
+            model: Some(m.into()),
+            effort: e.map(str::to_string),
+            note: String::new(),
+        }
+    }
+
     #[test]
     fn pick_prefers_the_default_then_the_first_match() {
         let s = settings(
@@ -349,28 +476,168 @@ mod tests {
             ],
             &c("cc", Some("sonnet")),
         );
-        assert_eq!(s.pick(None, None), Ok(c("cc", Some("sonnet"))));
-        assert_eq!(s.pick(Some("cc"), None), Ok(c("cc", Some("sonnet"))));
-        assert_eq!(s.pick(Some("oc"), None), Ok(c("oc", Some("a"))));
-        assert_eq!(s.pick(None, Some("b")), Ok(c("oc", Some("b"))));
+        let all: Vec<Candidate> = s.candidates.clone();
         assert_eq!(
-            s.pick(Some("cc"), Some("haiku")),
+            s.pick(None, None, None).map(|x| x.choice()),
+            Ok(c("cc", Some("sonnet")))
+        );
+        assert_eq!(
+            s.pick(Some("cc"), None, None).map(|x| x.choice()),
+            Ok(c("cc", Some("sonnet")))
+        );
+        assert_eq!(
+            s.pick(Some("oc"), None, None).map(|x| x.choice()),
+            Ok(c("oc", Some("a")))
+        );
+        assert_eq!(
+            s.pick(None, Some("b"), None).map(|x| x.choice()),
+            Ok(c("oc", Some("b")))
+        );
+        assert_eq!(
+            s.pick(Some("cc"), Some("haiku"), None).map(|x| x.choice()),
             Ok(c("cc", Some("haiku")))
         );
-        assert_eq!(s.pick(Some("cc"), Some("opus")), Err(s.candidates.clone()));
-        assert_eq!(s.pick(Some("zz"), None), Err(s.candidates.clone()));
+        assert_eq!(
+            s.pick(Some("cc"), Some("opus"), None),
+            Err(PickError::NoMatch(all.clone()))
+        );
+        assert_eq!(s.pick(Some("zz"), None, None), Err(PickError::NoMatch(all)));
+    }
+
+    #[test]
+    fn the_same_model_may_appear_with_different_efforts() {
+        let rows = vec![
+            cand("cc", "sonnet", Some("low")).with_note("quick fixes"),
+            cand("cc", "sonnet", Some("high")).with_note("hard bugs"),
+            cand("cc", "haiku", None),
+        ];
+        let s = RoleSettings {
+            candidates: rows.clone(),
+            default: rows[0].choice(),
+        };
+        assert!(s.validate(&["cc"]).is_ok(), "same model, different efforts");
+
+        // An exact triple selects its row, with its note.
+        let hit = s
+            .pick(Some("cc"), Some("sonnet"), Some("high"))
+            .expect("row");
+        assert_eq!(
+            (hit.effort.as_deref(), hit.note.as_str()),
+            (Some("high"), "hard bugs")
+        );
+        // An effort no row has does not match, even for a known model.
+        assert_eq!(
+            s.pick(Some("cc"), Some("sonnet"), Some("max")),
+            Err(PickError::NoMatch(rows.clone()))
+        );
+        // The effort of a row without one cannot be named.
+        assert!(matches!(
+            s.pick(Some("cc"), Some("haiku"), Some("low")),
+            Err(PickError::NoMatch(_))
+        ));
+        // Several rows for the model and no effort: the caller must choose,
+        // even though one of them is the default.
+        assert_eq!(
+            s.pick(Some("cc"), Some("sonnet"), None),
+            Err(PickError::NeedsEffort(rows[..2].to_vec()))
+        );
+        // Exactly one row for the model: an omitted effort takes that row's.
+        assert_eq!(
+            s.pick(Some("cc"), Some("haiku"), None).map(|x| x.effort),
+            Ok(None)
+        );
+        let only = RoleSettings {
+            candidates: vec![cand("cc", "opus", Some("max"))],
+            default: cand("cc", "opus", Some("max")).choice(),
+        };
+        assert_eq!(
+            only.pick(Some("cc"), Some("opus"), None).map(|x| x.effort),
+            Ok(Some("max".into()))
+        );
+    }
+
+    #[test]
+    fn duplicate_rows_are_removed_by_their_triple_and_the_default_must_match_exactly() {
+        let rows = vec![
+            cand("cc", "sonnet", Some("low")).with_note("first"),
+            cand("cc", "sonnet", Some("low")).with_note("second"),
+            cand("cc", "sonnet", None),
+        ];
+        let s = RoleSettings {
+            candidates: rows.clone(),
+            default: rows[0].choice(),
+        };
+        let v = s.validate(&["cc"]).expect("valid");
+        assert_eq!(v.candidates.len(), 2);
+        assert_eq!(v.candidates[0].note, "first");
+        let bad = RoleSettings {
+            candidates: rows,
+            default: cand("cc", "sonnet", Some("high")).choice(),
+        };
+        assert!(
+            bad.validate(&["cc"])
+                .unwrap_err()
+                .contains("not one of the candidates")
+        );
+    }
+
+    #[test]
+    fn empty_efforts_and_long_notes_are_rejected() {
+        let mut row = cand("cc", "sonnet", Some(" "));
+        let s = |c: &Candidate| RoleSettings {
+            candidates: vec![c.clone()],
+            default: c.choice(),
+        };
+        assert!(
+            s(&row)
+                .validate(&["cc"])
+                .unwrap_err()
+                .contains("effort is empty")
+        );
+        row.effort = None;
+        row.note = "x".repeat(MAX_NOTE_CHARS + 1);
+        assert!(
+            s(&row)
+                .validate(&["cc"])
+                .unwrap_err()
+                .contains("note is longer")
+        );
+        row.note = "x".repeat(MAX_NOTE_CHARS);
+        assert!(s(&row).validate(&["cc"]).is_ok());
+    }
+
+    #[test]
+    fn settings_stored_before_stage_7d_read_with_no_effort_and_an_empty_note() {
+        let old = r#"{"candidates":[{"harness":"cc","model":"haiku"},{"harness":"oc"}],
+                      "default":{"harness":"cc","model":"haiku"}}"#;
+        let s: RoleSettings = serde_json::from_str(old).expect("old JSON");
+        assert_eq!(s.candidates[0].effort, None);
+        assert_eq!(s.candidates[0].note, "");
+        assert_eq!(s.candidates[1].model, None);
+        assert_eq!(s.default, c("cc", Some("haiku")));
+        assert!(s.validate(&["cc", "oc"]).is_ok());
+        let task_agent: AgentChoice =
+            serde_json::from_str(r#"{"harness":"cc","model":null}"#).expect("old task agent");
+        assert_eq!(task_agent.effort, None);
     }
 
     #[test]
     fn a_model_less_candidate_only_matches_without_a_model() {
         let s = RoleSettings::only(c("oc", None));
-        assert_eq!(s.pick(Some("oc"), None), Ok(c("oc", None)));
-        assert!(s.pick(Some("oc"), Some("x")).is_err());
+        assert_eq!(
+            s.pick(Some("oc"), None, None).map(|x| x.choice()),
+            Ok(c("oc", None))
+        );
+        assert!(s.pick(Some("oc"), Some("x"), None).is_err());
     }
 
     #[test]
     fn labels_show_the_model_when_there_is_one() {
         assert_eq!(c("cc", Some("haiku")).label(), "cc/haiku");
         assert_eq!(c("oc", None).label(), "oc");
+        assert_eq!(
+            c("cc", Some("sonnet")).with_effort("high").label(),
+            "cc/sonnet effort=high"
+        );
     }
 }

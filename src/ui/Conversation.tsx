@@ -73,7 +73,6 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         onRemoveMention={onRemoveMention}
         onSend={send}
         onCancel={() => void store.cancelTurn()}
-        project={{ id: view.info.id, name: view.info.name }}
       />
     </section>
   );

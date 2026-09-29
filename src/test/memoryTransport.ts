@@ -6,6 +6,7 @@ import type {
   AgentRole,
   AgentSettingsLayer,
   AgentSettingsView,
+  EffortOption,
   ApiCommand,
   ApiEvent,
   ApiResponse,
@@ -132,6 +133,11 @@ export class FakeCore {
         if (!models) throw new CommandError("unavailable", `models of ${cmd.harness}: could not start the harness`);
         return { type: "harness_models", models };
       }
+      case "list_model_efforts": {
+        const efforts = this.agents.efforts[`${cmd.harness}/${cmd.model}`];
+        if (!efforts) throw new CommandError("unavailable", `efforts of ${cmd.harness}/${cmd.model}: could not select ${cmd.model}`);
+        return { type: "model_efforts", efforts: { harness: cmd.harness, model: cmd.model, efforts } };
+      }
       default:
         return { type: "accepted" };
     }
@@ -147,17 +153,24 @@ function emptyLayer(): AgentSettingsLayer {
 /** The core's settings layers in miniature (no validation). */
 export class FakeAgentSettings {
   harnesses: HarnessInfo[] = [{ id: "claude-code", label: "Claude Code", requires_model: false, orchestrator_read_only: true }];
-  builtin: AgentChoice = { harness: "claude-code", model: "haiku" };
+  builtin: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
   global: AgentSettingsLayer = emptyLayer();
   projects = new Map<string, AgentSettingsLayer>();
+  /** Served by `list_model_efforts` for models whose list entry has `efforts: null`, by `harness/model`. */
+  efforts: Record<string, EffortOption[]> = {};
   /** Served by `list_harness_models`; a missing harness fails (unavailable). */
   models: Record<string, HarnessModels> = {
     "claude-code": {
       harness: "claude-code",
       models: [
-        { value: "default", name: "Default (recommended)", description: null },
-        { value: "haiku", name: "Haiku", description: null },
-        { value: "sonnet", name: "Sonnet", description: null },
+        { value: "default", name: "Default (recommended)", description: null, efforts: [] },
+        { value: "haiku", name: "Haiku", description: null, efforts: [] },
+        {
+          value: "sonnet",
+          name: "Sonnet",
+          description: null,
+          efforts: ["low", "medium", "high"].map((v) => ({ value: v, name: v, description: null })),
+        },
       ],
       current: "haiku",
       fetched_at_ms: 0,
@@ -173,7 +186,8 @@ export class FakeAgentSettings {
   view(project: string | null): AgentSettingsView {
     const projectLayer = project === null ? null : (this.projects.get(project) ?? emptyLayer());
     const role = (r: AgentRole): RoleSettings =>
-      projectLayer?.[r] ?? this.global[r] ?? { candidates: [this.builtin], default: this.builtin };
+      projectLayer?.[r] ??
+      this.global[r] ?? { candidates: [{ ...this.builtin, note: "" }], default: this.builtin };
     const effective = Object.fromEntries(ROLES.map((r) => [r, role(r)])) as AgentSettingsView["effective"];
     return {
       harnesses: this.harnesses,

@@ -27,6 +27,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 7b | ハーネス / モデルの選択 (役割ごと、⚙ ボタン) | **完了** |
 | 7c-1 | OpenCode ハーネスの ACP 検証 (`HarnessConfig::opencode`) | **完了** |
 | 7c-2 | OpenCode を選べるハーネスとして組み込む (設定・検出・UI) | **完了** |
+| 7d | effort + 用途メモ付きの候補の行、アプリ全体の設定モーダル | **完了** |
 
 ## 再開の仕方
 
@@ -766,7 +767,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 ## Stage 7 — 不具合修正とハーネス / モデルの選択
 
 ユーザーの決定 (上の未決事項) を受けた作業。**7a** = ユーザー報告の不具合と小さな決定事項、**7b** = ハーネス / モデルの選択、
-**7c** = OpenCode ハーネス。
+**7c** = OpenCode ハーネス、**7d** = effort と用途メモ付きの候補の行 + 設定モーダル。
 
 ### Stage 7a — 完了したグループが「進行中」のまま + 決定事項の反映 (完了)
 
@@ -920,3 +921,53 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 残課題: OpenCode の MCP 隔離が無い (ユーザーが OpenCode に MCP を足すと付く。必要になれば Yhtye 専用 `OPENCODE_CONFIG_DIR`)。
   モデル一覧のプローブが OpenCode の履歴にセッションを 1 つ残す。消えたハーネスの記録を持つセッションの load は別ハーネスで試みて失敗 → 新しいセッション
   (その場合 `replaced` は付かない)。OpenCode オーケストレータの書き込みはプロンプト頼み。
+
+### Stage 7d — effort + 用途メモ付きの候補の行、アプリ全体の設定モーダル (完了、ユーザー決定済みの仕様)
+
+- 候補 = 行 (ハーネス × モデル × effort (任意) + 用途メモ)。同じハーネス × モデルを effort 違いの別の行として置ける。役割ごとに行の一覧と既定の行 (★)。
+- オーケストレータの `create_task` に `effort` / `review_effort`。**組が行と完全一致**しなければ拒否 (全行を用途メモ付きで列挙)。effort を
+  省略できるのはそのハーネス × モデルの行が 1 行だけのとき、複数行なら effort の指定を求める。システムプロンプトと `get_status` は行 + 用途メモ。
+- effort の一覧は ACP の `configOptions` から (モデルごと)。セッション起動は**モデル → effort の順**で設定し、要求値 = 現在値を検証。
+  effort を持たないモデルに指定したら起動を失敗させる。
+- 設定 UI: コンポーザの ⚙ を廃止し、左端の縦バーの最下部の ⚙ でアプリ全体の設定モーダル (約 90%、Esc / × で閉じる)。左に項目 (いまは「エージェント」)、
+  上に 全体 / このプロジェクト、役割ごとの行の表。
+
+**結果メモ (2026-09-29)** — 詳細は [`core-design.md`](docs/architecture/core-design.md) §15、[`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §8、
+[`mcp-tools.md`](docs/architecture/mcp-tools.md) `create_task`、[`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8。
+
+- コア: `AgentChoice` に `effort`、新しい `Candidate { harness, model, effort, note }`、`RoleSettings.candidates: Vec<Candidate>`、
+  `RoleSettings::pick(harness?, model?, effort?)` → `PickError::{NoMatch, NeedsEffort}` (`agents/settings.rs`)。`HarnessConfig.effort`
+  (`acp/startup.rs` がモデルの後に設定・検証)、`HarnessPreset::config(role, model, effort)`。`runtime/agent_args.rs` が完全一致を検査、
+  `prompts::agent_choices_prompt` が行 + 用途メモ。
+- **移行**: 設定と `tasks.agent` は JSON なので、古い保存値は serde の既定 (effort なし・メモ空) で読める (単体テストあり)。SQL は `0004_agent_effort.sql`
+  (`agent_sessions.effort`) だけ。
+- **effort 一覧の取り方と費用**: モデルごとに選択肢が変わる (Claude Code はモデルを変えると作り直す) ので、プローブのセッションでモデルを 1 つずつ選んで読む。
+  12 モデル以下のハーネス (Claude Code = 5) はモデル一覧と一緒に全モデル分 (プローブ全体で約 2.7 秒、以前は約 2 秒)。それ以上 (OpenCode ≈ 480) は
+  一覧では読まず、UI が選んだモデルについて新 API `list_model_efforts` で 1 つだけ (約 1.2 秒、10 分キャッシュ)。先頭の `default` 行は一覧から除く。
+- 偽エージェントに `efforts` (モデルごとの effort option、モデルを変えるとリセット) を追加。
+- UI: `SettingsModal` (シェル + 項目一覧 + 範囲切替)、`AgentSettingsSection` (取得・保存)、`CandidateTable` (行の表)、`ModelPicker` (OpenCode の検索・プロバイダ別)、
+  `agentSettings.ts` (純粋な行の編集: 重複の拒否・既定の追従・行の削除・新しい行の提案)。⚠ 書き込み制限なし / 見つからないハーネスの警告は維持。
+- 実行したコマンドと結果:
+  - `cargo test --workspace` → 234 件成功 (ignored 30)、`cargo clippy --workspace --all-targets` 警告なし (`create_task` の引数が大きくなったので enum 3 か所に
+    `allow(clippy::large_enum_variant)`)、`cargo fmt --check` 成功、`pnpm test` → 13 ファイル 89 件成功、`pnpm build` 成功、`pnpm gen:types` で型を再生成。
+    新規: 設定の単体 (完全一致・effort 違いの行・重複・古い JSON)、`agent_args` (拒否と曖昧さ)、プロンプト、store (effort の往復・マイグレーション 4)、
+    ACP (`effort_is_set_after_the_model_and_verified`)、偽エージェントの Core (`create_task_needs_an_exact_row_and_the_effort_is_applied`、
+    `efforts_of_a_long_model_list_are_read_per_model`)、Vitest 設定モーダル 13 件 (旧 `AgentSettings.test.tsx` を全面書き換え)。
+  - 実 Claude Code (Haiku): `acp_claude_real::real_model_list_comes_from_the_adapter` (全モデルの effort: `default`/`opus[1m]`/`fable`/`sonnet` = low〜max、
+    **haiku = 無し**)、`real_effort_is_applied_after_the_model` (Haiku に effort が無いので、**プロンプトを送らず** sonnet のセッション起動だけ: `effort=low` を
+    アダプタが報告、未知の値は `set_config_option` で失敗)、`agent_selection_claude::real_orchestrator_override_is_checked_and_runs_the_resolved_model`
+    (Haiku のオーケストレータが行に無い `effort=high` を指定 → 行 + 用途メモ付きで拒否 → 完全一致の行で作り直し、Haiku で起動して main にマージ)。
+  - 実 OpenCode (`opencode/muse-spark-1.3-contributor-free`): `acp_opencode_real::real_opencode_efforts_are_read_per_model_and_applied` (variant =
+    minimal/low/medium/high/xhigh を約 1.2 秒で読み、`minimal` を設定 → `effort=minimal` を報告)。
+  - **実 OpenCode を含む混成実行は今は再現できない (環境の問題)**: 開発中に OpenCode が 2.0.12 → 2.0.18 に更新され、この環境では **git リポジトリの cwd で
+    `opencode acp` に無料モデルを `set_config_option` すると `model not found` になる** (git 以外のディレクトリでは通る。最小の再現: 一時 git リポジトリ +
+    `HarnessPreset::opencode` の設定で起動。`opencode models` にも muse-spark が出ない)。7c-2 の `orchestration_mixed_real` 既存 2 件も同じ理由で今は通らない
+    (7d の変更とは無関係)。追加した `orchestration_mixed_real::real_effort_rows_are_matched_exactly_and_applied` は、OpenCode が使える状態だった開発序盤の
+    2 回の実行で「存在しない effort の拒否 → 行の一覧と用途メモから `minimal` の行を選んで作成成功」まで確認済み (その後 OpenCode 側で失敗)。OpenCode が
+    直れば通す想定 (未確認)。終了後 `claude-agent-acp` / `opencode acp` の残存 0。
+  - Chrome (`pnpm dev:browser` + 実 Claude Code / OpenCode、一時リポジトリ、`docs/e2e/stage7d/`): ⚙ が左端バーの最下部、コンポーザに ⚙ が無い
+    (`4-gear-at-bottom-of-rail.jpg`)。設定モーダルで実装に行を追加 → sonnet + High + 用途メモ (`1-settings-modal-effort-rows.jpg`、DB の `agent_settings` に
+    effort・note が保存されたことを確認)。OpenCode の行で検索付きピッカー (`2-opencode-model-picker.jpg`)、無料モデルを選ぶと effort 一覧
+    (minimal〜xhigh) を `list_model_efforts` で取得 (`3-opencode-lazy-efforts.jpg`)。Esc で閉じる。ブリッジ・Vite は停止済み。
+- 残課題: 上の OpenCode の環境問題 (混成の実機テストが通せない)。モデルが effort を持たなくなった古い設定はセッション起動が失敗する (警告のみで既定に戻す挙動にはしていない)。
+  設定モーダルは項目が 1 つだけ (足す作りは用意した)。

@@ -1,6 +1,8 @@
 //! The models a harness offers, read over ACP (`core-design.md` §15.6): a
 //! short-lived session is opened without sending a prompt (no model call) and
-//! its model option in `config_options` is read.
+//! its model option in `config_options` is read. The efforts of a model
+//! (Stage 7d) depend on the model, so they are read by selecting that model in
+//! the same kind of session and reading the `effort` option again.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,11 +14,12 @@ use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
 use super::catalog::HarnessPreset;
+use crate::acp::EFFORT_CONFIG_ID;
 use crate::acp::schema::{
-    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
-    SessionConfigSelectOptions,
+    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
+    SessionConfigSelectOption, SessionConfigSelectOptions,
 };
-use crate::acp::{SpawnOptions, spawn_agent};
+use crate::acp::{AgentHandle, SpawnOptions, spawn_agent};
 
 /// Upper bound for starting the listing session.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -24,6 +27,14 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(90);
 const FRESH_FOR: Duration = Duration::from_secs(600);
 /// Failures, and explicit refreshes, reuse a result younger than this.
 const MIN_REFRESH: Duration = Duration::from_secs(10);
+/// Upper bound for selecting one model in the listing session.
+const SET_MODEL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Harnesses with at most this many models get every model's efforts read
+/// with the model list (one `set_config_option` each, no model call); bigger
+/// lists (OpenCode: hundreds) are read per model on demand
+/// ([`ModelService::get_efforts`]).
+const EAGER_EFFORT_MODELS: usize = 12;
 
 /// One model a harness offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -33,6 +44,26 @@ pub struct ModelOption {
     /// Display name.
     pub name: String,
     pub description: Option<String>,
+    /// The efforts this model supports; `None`: not read yet (ask with
+    /// `list_model_efforts`), empty: the model has no effort option.
+    pub efforts: Option<Vec<EffortOption>>,
+}
+
+/// One effort (thought level) a model supports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct EffortOption {
+    /// The value to select (`high`).
+    pub value: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// The efforts of one model of a harness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct ModelEfforts {
+    pub harness: String,
+    pub model: String,
+    pub efforts: Vec<EffortOption>,
 }
 
 /// The models of one harness. Empty `models`: it has no model option (only its
@@ -66,7 +97,53 @@ fn model_option<'a>(
         })
 }
 
+/// The options of a select, groups flattened.
+fn flat_options(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption> {
+    match &select.options {
+        SessionConfigSelectOptions::Ungrouped(v) => v.iter().collect(),
+        SessionConfigSelectOptions::Grouped(groups) => {
+            groups.iter().flat_map(|g| g.options.iter()).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The efforts listed in `options`: the select with id `effort`, else the one
+/// of category `thought_level`. Empty when there is none. A value `default`
+/// (Claude Code adds it for clients that predate the option) is left out: an
+/// unset effort is "not specified" in Yhtye.
+#[must_use]
+pub fn efforts_from_options(options: &[SessionConfigOption]) -> Vec<EffortOption> {
+    let is_select = |o: &&SessionConfigOption| matches!(o.kind, SessionConfigKind::Select(_));
+    let found = options
+        .iter()
+        .filter(is_select)
+        .find(|o| &*o.id.0 == EFFORT_CONFIG_ID)
+        .or_else(|| {
+            options
+                .iter()
+                .filter(is_select)
+                .find(|o| o.category == Some(SessionConfigOptionCategory::ThoughtLevel))
+        });
+    let Some(SessionConfigKind::Select(select)) = found.map(|o| &o.kind) else {
+        return Vec::new();
+    };
+    let mut efforts: Vec<EffortOption> = Vec::new();
+    for o in flat_options(select) {
+        let value = o.value.0.to_string();
+        if value != "default" && efforts.iter().all(|e| e.value != value) {
+            efforts.push(EffortOption {
+                value,
+                name: o.name.clone(),
+                description: o.description.clone(),
+            });
+        }
+    }
+    efforts
+}
+
 /// The models and current value listed in `options` (groups are flattened).
+/// `efforts` of every model is `None`.
 #[must_use]
 pub fn models_from_options(
     options: &[SessionConfigOption],
@@ -76,13 +153,7 @@ pub fn models_from_options(
     else {
         return (Vec::new(), None);
     };
-    let flat: Vec<&SessionConfigSelectOption> = match &select.options {
-        SessionConfigSelectOptions::Ungrouped(v) => v.iter().collect(),
-        SessionConfigSelectOptions::Grouped(groups) => {
-            groups.iter().flat_map(|g| g.options.iter()).collect()
-        }
-        _ => Vec::new(),
-    };
+    let flat = flat_options(select);
     let mut models: Vec<ModelOption> = Vec::new();
     for o in flat {
         let value = o.value.0.to_string();
@@ -91,19 +162,20 @@ pub fn models_from_options(
                 value,
                 name: o.name.clone(),
                 description: o.description.clone(),
+                efforts: None,
             });
         }
     }
     (models, Some(select.current_value.0.to_string()))
 }
 
-/// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
-/// stops it. Gives up (stopping the agent) when `cancel` fires.
-pub async fn probe_models(
+/// Opens a listing session of `preset` in `cwd`; gives up (stopping the agent)
+/// when `cancel` fires.
+async fn open_probe(
     preset: &HarnessPreset,
     cwd: &Path,
     cancel: &CancellationToken,
-) -> Result<HarnessModels, String> {
+) -> Result<AgentHandle, String> {
     let harness = preset.probe_config();
     let (tx, _rx) = mpsc::unbounded_channel();
     // Dropping a pending spawn kills the new process group (GroupKillGuard).
@@ -111,11 +183,51 @@ pub async fn probe_models(
         r = tokio::time::timeout(PROBE_TIMEOUT, spawn_agent(&harness, cwd, SpawnOptions::default(), tx)) => r,
         () = cancel.cancelled() => return Err("Yhtye is shutting down".into()),
     };
-    let handle = started
+    started
         .map_err(|_| "the harness did not start in time".to_string())?
-        .map_err(|e| format!("could not start the harness: {e}"))?;
-    let (models, current) =
-        models_from_options(&handle.info().config_options, preset.model_config_id());
+        .map_err(|e| format!("could not start the harness: {e}"))
+}
+
+/// Selects `model` in the listing session and reads the efforts it offers.
+/// `Err` when the harness refuses the model.
+async fn efforts_of(
+    handle: &AgentHandle,
+    config_id: &str,
+    model: &str,
+) -> Result<Vec<EffortOption>, String> {
+    let options = tokio::time::timeout(
+        SET_MODEL_TIMEOUT,
+        handle.set_config_option(config_id, model),
+    )
+    .await
+    .map_err(|_| format!("selecting {model} timed out"))?
+    .map_err(|e| format!("could not select {model}: {e}"))?;
+    Ok(efforts_from_options(&options))
+}
+
+/// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
+/// stops it. Harnesses with at most [`EAGER_EFFORT_MODELS`] models also get
+/// every model's efforts read (a model the harness refuses keeps `efforts:
+/// None`). Gives up (stopping the agent) when `cancel` fires.
+pub async fn probe_models(
+    preset: &HarnessPreset,
+    cwd: &Path,
+    cancel: &CancellationToken,
+) -> Result<HarnessModels, String> {
+    let handle = open_probe(preset, cwd, cancel).await?;
+    let config_id = preset.model_config_id();
+    let (mut models, current) = models_from_options(&handle.info().config_options, config_id);
+    if models.len() <= EAGER_EFFORT_MODELS {
+        for m in &mut models {
+            if cancel.is_cancelled() {
+                break;
+            }
+            match efforts_of(&handle, config_id, &m.value).await {
+                Ok(efforts) => m.efforts = Some(efforts),
+                Err(e) => tracing::warn!("efforts of {}/{}: {e}", preset.id, m.value),
+            }
+        }
+    }
     handle.shutdown().await;
     Ok(HarnessModels {
         harness: preset.id.clone(),
@@ -125,13 +237,29 @@ pub async fn probe_models(
     })
 }
 
+/// Opens a listing session, selects `model` and reads its efforts.
+pub async fn probe_efforts(
+    preset: &HarnessPreset,
+    model: &str,
+    cwd: &Path,
+    cancel: &CancellationToken,
+) -> Result<Vec<EffortOption>, String> {
+    let handle = open_probe(preset, cwd, cancel).await?;
+    let efforts = efforts_of(&handle, preset.model_config_id(), model).await;
+    handle.shutdown().await;
+    efforts
+}
+
 type Cached = (Instant, Result<HarnessModels, String>);
+type CachedEfforts = (Instant, Result<Vec<EffortOption>, String>);
 
 /// Cached, one-at-a-time access to [`probe_models`] for the API.
 pub struct ModelService {
     cwd: PathBuf,
     /// Held while probing, so concurrent callers share the result.
     cache: Mutex<HashMap<String, Cached>>,
+    /// Efforts read for one model on demand, by `(harness, model)`.
+    efforts: Mutex<HashMap<(String, String), CachedEfforts>>,
     cancel: CancellationToken,
 }
 
@@ -142,6 +270,7 @@ impl ModelService {
         Self {
             cwd,
             cache: Mutex::new(HashMap::new()),
+            efforts: Mutex::new(HashMap::new()),
             cancel: CancellationToken::new(),
         }
     }
@@ -150,6 +279,7 @@ impl ModelService {
     pub async fn close(&self) {
         self.cancel.cancel();
         drop(self.cache.lock().await);
+        drop(self.efforts.lock().await);
     }
 
     /// The models of `preset`: cached if fresh enough, otherwise probed.
@@ -177,6 +307,49 @@ impl ModelService {
             Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
         };
         cache.insert(preset.id.clone(), (Instant::now(), outcome.clone()));
+        outcome
+    }
+}
+
+impl ModelService {
+    /// The efforts of one model: from the harness's cached listing when that
+    /// has them, else cached per model, else read with a listing session that
+    /// selects the model (about as slow as starting the harness: ~1.5–2 s).
+    pub async fn get_efforts(
+        &self,
+        preset: &HarnessPreset,
+        model: &str,
+    ) -> Result<Vec<EffortOption>, String> {
+        if let Some((at, Ok(listed))) = self.cache.lock().await.get(&preset.id)
+            && at.elapsed() < FRESH_FOR
+            && let Some(e) = listed
+                .models
+                .iter()
+                .find(|m| m.value == model)
+                .and_then(|m| m.efforts.clone())
+        {
+            return Ok(e);
+        }
+        let mut cache = self.efforts.lock().await;
+        if self.cancel.is_cancelled() {
+            return Err("Yhtye is shutting down".into());
+        }
+        let key = (preset.id.clone(), model.to_string());
+        if let Some((at, outcome)) = cache.get(&key) {
+            let max_age = if outcome.is_err() {
+                MIN_REFRESH
+            } else {
+                FRESH_FOR
+            };
+            if at.elapsed() < max_age {
+                return outcome.clone();
+            }
+        }
+        let outcome = match std::fs::create_dir_all(&self.cwd) {
+            Ok(()) => probe_efforts(preset, model, &self.cwd, &self.cancel).await,
+            Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
+        };
+        cache.insert(key, (Instant::now(), outcome.clone()));
         outcome
     }
 }

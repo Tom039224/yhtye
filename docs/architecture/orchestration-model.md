@@ -282,15 +282,18 @@ Stage 3a で明確化した細部:
 - 本文は `crates/yhtye-core/prompts/{orchestrator,implementer,reviewer}.md` (初版は Stage 2)。
   LLM 向けなので英語で書き、オーケストレータには「ユーザーの言語で返答する」と指示する。
 
-### 8.0 役割ごとのハーネス × モデル (Stage 7b で決定)
+### 8.0 役割ごとのハーネス × モデル × effort (Stage 7b で決定、7d で effort と用途メモ)
 
 - 設定の役割は 4 つ: **orchestrator** / **implementer** (`code` タスク) / **investigator** (`investigate` タスク) /
-  **reviewer**。それぞれに候補集合 (ハーネス × モデル) と既定値を持つ。全体の既定値の上にプロジェクトの既定値を
-  役割単位で重ねる。UI はコンポーザの ⚙ から ([`core-design.md`](core-design.md) §15)。
+  **reviewer**。それぞれに候補の行 (ハーネス × モデル × effort (任意) + 用途メモ) と既定の行を持つ。同じハーネス × モデルを
+  effort 違いの別の行として置ける。全体の既定値の上にプロジェクトの既定値を役割単位で重ねる。
+  UI は左端の細いバーの下の設定モーダルから ([`core-design.md`](core-design.md) §15)。
+- オーケストレータは各行の**用途メモ** (「難しい設計の変更に」など) を読んで、タスクごとに「この用途ならこの行」と選ぶ。
+  行は `create_task` の `harness` / `model` / `effort` で**完全一致**させる (effort は 1 行しかないハーネス × モデルなら省略可)。
 - 変更は**新しく起動するセッション**から効く。動いているセッションはそのまま、`session/load` で復元するセッションも
   記録した組のまま。
 - オーケストレータは `create_task` の任意引数でタスクごとに上書きできるが、その役割の**候補集合の中だけ**
-  (候補外はツールエラー)。普段は省略して既定を使う。review Step は `review_harness` / `review_model` があればそれ、
+  (候補外はツールエラー)。普段は省略して既定を使う。review Step は `review_harness` / `review_model` / `review_effort` があればそれ、
   無ければ reviewer の既定 ([`mcp-tools.md`](mcp-tools.md) §3)。
 
 ### 8.1 オーケストレータに書き込ませない (Stage 2 で決定)

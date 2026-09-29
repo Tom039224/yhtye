@@ -13,7 +13,7 @@ use common::repo::TempRepo;
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use yhtye_core::acp::{AgentEvent, HarnessConfig};
-use yhtye_core::agents::{AgentChoice, AgentRole, HarnessPreset, RoleSettings};
+use yhtye_core::agents::{AgentChoice, AgentRole, Candidate, HarnessPreset, RoleSettings};
 use yhtye_core::api::{
     AgentSettingsView, ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse, TextKind,
 };
@@ -25,6 +25,7 @@ const MODELS: [&str; 3] = ["default", "haiku", "sonnet"];
 
 fn with_models(mut script: Value) -> Value {
     script["models"] = json!(MODELS);
+    script["efforts"] = json!({"sonnet": ["low", "high"]});
     script
 }
 
@@ -99,7 +100,7 @@ fn c(harness: &str, model: Option<&str>) -> AgentChoice {
 
 fn settings(candidates: &[AgentChoice], default: &AgentChoice) -> RoleSettings {
     RoleSettings {
-        candidates: candidates.to_vec(),
+        candidates: candidates.iter().cloned().map(Into::into).collect(),
         default: default.clone(),
     }
 }
@@ -257,7 +258,9 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
         "{rejected}"
     );
     assert!(
-        rejected.contains("fake/haiku, fake/sonnet, fake-b/haiku"),
+        rejected.contains(
+            "harness=fake model=haiku; harness=fake model=sonnet; harness=fake-b model=haiku"
+        ),
         "{rejected}"
     );
 
@@ -289,7 +292,7 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
     let status = tool_results(&seen, "get_status").remove(0).expect("status");
     assert_eq!(
         status["agents"]["implementer"]["default"],
-        json!({"harness": "fake", "model": "haiku"})
+        json!({"harness": "fake", "model": "haiku", "effort": null})
     );
     assert_eq!(
         status["agents"]["implementer"]["allowed"]
@@ -299,7 +302,7 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
     );
     assert_eq!(
         status["agents"]["reviewer"]["allowed"],
-        json!([{"harness": "fake", "model": "haiku"}])
+        json!([{"harness": "fake", "model": "haiku", "effort": null, "note": ""}])
     );
 
     let ApiResponse::Snapshot { snapshot } = run(&core, ApiCommand::GetSnapshot { project }).await
@@ -591,6 +594,36 @@ async fn models_are_read_from_the_harness() {
         Some("default"),
         "the probe does not switch the model"
     );
+    // Few models: their efforts come with the list (haiku has none).
+    let efforts: Vec<(&str, Option<Vec<&str>>)> = models
+        .models
+        .iter()
+        .map(|m| {
+            let e = m
+                .efforts
+                .as_ref()
+                .map(|e| e.iter().map(|o| o.value.as_str()).collect());
+            (m.value.as_str(), e)
+        })
+        .collect();
+    assert_eq!(
+        efforts,
+        [
+            ("default", Some(vec![])),
+            ("haiku", Some(vec![])),
+            ("sonnet", Some(vec!["low", "high"])),
+        ],
+        "the leading `default` row of the adapter is not offered"
+    );
+    let cmd = ApiCommand::ListModelEfforts {
+        harness: "fake".into(),
+        model: "sonnet".into(),
+    };
+    let ApiResponse::ModelEfforts { efforts } = run(&core, cmd).await else {
+        panic!("efforts");
+    };
+    assert_eq!(efforts.model, "sonnet");
+    assert_eq!(efforts.efforts.len(), 2, "served from the cached listing");
     let cmd = ApiCommand::ListHarnessModels {
         harness: "nope".into(),
         refresh: Some(true),
@@ -731,6 +764,208 @@ async fn a_vanished_harness_is_replaced_and_reported() {
             .filter(|(s, ..)| s == ORCHESTRATOR_SESSION)
             .all(|(_, _, r)| r.is_none()),
         "{replaced:?}"
+    );
+    core.shutdown().await;
+}
+
+/// A listing with many models (like OpenCode's) has no efforts; they are read
+/// per model on demand.
+#[tokio::test]
+async fn efforts_of_a_long_model_list_are_read_per_model() {
+    let r = TempRepo::new();
+    let many: Vec<String> = (0..20).map(|i| format!("m{i}")).collect();
+    let script = json!({
+        "turns": [], "models": many, "efforts": {"m7": ["low", "medium", "high"]}
+    });
+    let mut cfg = CoreConfig::claude_code(&r.data, "m0");
+    cfg.harnesses = vec![HarnessPreset::fixed(
+        "many",
+        fake_harness(script.clone()),
+        fake_harness(script.clone()),
+        fake_harness(script),
+    )];
+    cfg.default_agent = AgentChoice::new("many", Some("m0"));
+    cfg.usage = None;
+    let core = Core::start(cfg).await.expect("core");
+    let cmd = ApiCommand::ListHarnessModels {
+        harness: "many".into(),
+        refresh: None,
+    };
+    let ApiResponse::HarnessModels { models } = run(&core, cmd).await else {
+        panic!("models");
+    };
+    assert_eq!(models.models.len(), 20);
+    assert!(
+        models.models.iter().all(|m| m.efforts.is_none()),
+        "not read for every model"
+    );
+    let ask = |model: &str| ApiCommand::ListModelEfforts {
+        harness: "many".into(),
+        model: model.into(),
+    };
+    let ApiResponse::ModelEfforts { efforts } = run(&core, ask("m7")).await else {
+        panic!("efforts");
+    };
+    let values: Vec<&str> = efforts.efforts.iter().map(|e| e.value.as_str()).collect();
+    assert_eq!(values, ["low", "medium", "high"]);
+    let ApiResponse::ModelEfforts { efforts } = run(&core, ask("m8")).await else {
+        panic!("efforts");
+    };
+    assert!(efforts.efforts.is_empty(), "m8 has no effort option");
+    let err = core
+        .command(ask("nope"))
+        .await
+        .expect_err("a model the harness refuses");
+    assert_eq!(err.code, ApiErrorCode::Unavailable);
+    assert!(
+        err.message.contains("could not select nope"),
+        "{}",
+        err.message
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
+    let r = TempRepo::new();
+    let create = |title: &str, extra: Value| {
+        let mut args = json!({
+            "group_id": "${group_id}", "title": title, "kind": "code",
+            "steps": [{"kind": "implement"}], "instruction": title
+        });
+        for (k, v) in extra.as_object().expect("object") {
+            args[k] = v.clone();
+        }
+        json!({"mcp_call": {"tool": "create_task", "args": args}})
+    };
+    let orch = json!({"turns": [
+        {"match": "[yhtye:user_message]", "actions": [
+            "report_state",
+            {"mcp_call": {"tool": "create_group", "args": {"title": "efforts"}}},
+            // 1: two sonnet rows and no effort named -> rejected.
+            create("ambiguous", json!({"harness": "fake", "model": "sonnet"})),
+            // 2: an effort no row has -> rejected.
+            create("no row", json!({"harness": "fake", "model": "sonnet", "effort": "max"})),
+            // 3: the exact row.
+            create("exact", json!({"harness": "fake", "model": "sonnet", "effort": "high"})),
+            // 4: only one haiku row: the effort may be omitted (it has none).
+            create("unique", json!({"model": "haiku"})),
+            // 5: the reviewer's row, by its effort only.
+            create("reviewed", json!({"review_effort": "low"})),
+        ]},
+        {"match": "[yhtye:group_settled]", "actions": [
+            {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "ok"}}}
+        ]}
+    ]});
+    let implementer = json!({"turns": [{"match": "[yhtye:step]", "actions": [
+        "report_state",
+        {"mcp_call": {"tool": "report_step_done", "args": {"result": "done"}}}
+    ]}]});
+    let core = Core::start(config(&r, orch, implementer))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let row = |model: &str, effort: Option<&str>, note: &str| {
+        let mut choice = c("fake", Some(model));
+        choice.effort = effort.map(str::to_string);
+        Candidate::from(choice).with_note(note)
+    };
+    let implementers = RoleSettings {
+        candidates: vec![
+            row("sonnet", Some("low"), "quick fixes"),
+            row("sonnet", Some("high"), "deeper reasoning"),
+            row("haiku", None, "trivial edits"),
+        ],
+        default: c("fake", Some("haiku")),
+    };
+    set(&core, None, AgentRole::Implementer, Some(implementers)).await;
+    let reviewers = RoleSettings {
+        candidates: vec![
+            row("haiku", None, ""),
+            row("sonnet", Some("low"), "careful review"),
+        ],
+        default: c("fake", Some("haiku")),
+    };
+    set(&core, None, AgentRole::Reviewer, Some(reviewers)).await;
+    // The orchestrator starts with the candidates as they are when it opens.
+    let project = open(&core, &r).await;
+
+    run(
+        &core,
+        ApiCommand::SendUserMessage {
+            project: project.clone(),
+            text: "go".into(),
+        },
+    )
+    .await;
+    let mut seen = Vec::new();
+    until(&mut rx, &mut seen, |e| {
+        domain(e, |d| {
+            matches!(d, DomainEvent::GroupMergeFinished { ok: true, .. })
+        })
+    })
+    .await;
+
+    let created = tool_results(&seen, "create_task");
+    assert_eq!(created.len(), 5);
+    let ambiguous = created[0].as_ref().expect_err("two sonnet rows");
+    assert!(ambiguous.contains("also give `effort`"), "{ambiguous}");
+    assert!(
+        ambiguous.contains(
+            "harness=fake model=sonnet effort=low (quick fixes); harness=fake model=sonnet effort=high (deeper reasoning)"
+        ),
+        "{ambiguous}"
+    );
+    let no_row = created[1].as_ref().expect_err("no such effort");
+    assert!(no_row.contains("effort=max is not an allowed"), "{no_row}");
+    assert!(
+        no_row.contains("harness=fake model=haiku (trivial edits)"),
+        "{no_row}"
+    );
+    assert!(created[2].is_ok() && created[3].is_ok() && created[4].is_ok());
+
+    // The exact row runs with its model and effort; a model without an effort runs without.
+    assert_eq!(
+        started(&seen, "T-1/implementer"),
+        [(Some(c("fake", Some("sonnet")).with_effort("high")), false)]
+    );
+    let texts = messages(&seen, "T-1/implementer");
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains(";model=sonnet;") && t.contains(";effort=high;")),
+        "the agent reports the effort it was given: {texts:?}"
+    );
+    assert_eq!(
+        started(&seen, "T-2/implementer"),
+        [(Some(c("fake", Some("haiku"))), false)]
+    );
+    assert!(
+        messages(&seen, "T-2/implementer")
+            .iter()
+            .all(|t| !t.contains("effort=")),
+    );
+    // The orchestrator's prompt lists every row with its note.
+    let prompt = messages(&seen, ORCHESTRATOR_SESSION).join("\n");
+    assert!(
+        prompt.contains("harness=fake model=sonnet effort=high — deeper reasoning"),
+        "{prompt}"
+    );
+
+    let ApiResponse::Snapshot { snapshot } = run(&core, ApiCommand::GetSnapshot { project }).await
+    else {
+        panic!("snapshot");
+    };
+    let t = &snapshot.state.tasks;
+    assert_eq!(
+        t[0].agent,
+        Some(c("fake", Some("sonnet")).with_effort("high"))
+    );
+    assert_eq!(t[1].agent, Some(c("fake", Some("haiku"))));
+    assert_eq!(
+        t[2].review_agent,
+        Some(c("fake", Some("sonnet")).with_effort("low")),
+        "review_effort alone selects the reviewer row"
     );
     core.shutdown().await;
 }

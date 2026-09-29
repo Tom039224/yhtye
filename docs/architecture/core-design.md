@@ -705,17 +705,20 @@ Stage 4 の構成 (`src/`):
 - `UsageService`: 単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
 - UI: 接続時と 5 分ごとに `get_usage`、メーターのクリックで `refresh: true`。
 
-## 15. エージェント (ハーネス × モデル) の選択 (Stage 7b)
+## 15. エージェント (ハーネス × モデル × effort) の選択 (Stage 7b、7d で effort と用途メモを追加)
 
 ユーザーの決定 (PLAN.md Stage 7b): 役割ごとに**候補集合**と**既定値**を持ち、全体の既定値の上にプロジェクトの
 既定値を重ねる。モデル一覧はハーネスから ACP で取る (ハードコードしない)。変更は新しく起動するセッションから効く。
+**7d**: 候補は「行」= ハーネス × モデル × effort (任意) + 用途メモ (自由記述)。同じハーネス × モデルを effort 違いで
+何行でも置ける。effort とモデルごとの effort 一覧も ACP の `configOptions` から取る。
 
 ### 15.1 型 (`crates/yhtye-core/src/agents/`)
 
 ```rust
 pub enum AgentRole { Orchestrator, Implementer, Investigator, Reviewer }   // 設定の役割
-pub struct AgentChoice { harness: String, model: Option<String> }          // model None = ハーネスの既定
-pub struct RoleSettings { candidates: Vec<AgentChoice>, default: AgentChoice }   // default ∈ candidates
+pub struct AgentChoice { harness: String, model: Option<String>, effort: Option<String> }  // model None = ハーネスの既定、effort None = 設定しない
+pub struct Candidate { harness, model, effort, note: String }              // 候補の 1 行 (7d)。choice() = 用途メモを除いた AgentChoice
+pub struct RoleSettings { candidates: Vec<Candidate>, default: AgentChoice }     // default = どれかの行の choice()
 pub struct AgentSettings { orchestrator, implementer, investigator, reviewer: RoleSettings }       // 実効値
 pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewer: Option<RoleSettings> } // 1 層
 ```
@@ -726,17 +729,29 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 - **重ね方** (`agents::effective`、純粋関数): 役割ごとに「プロジェクトの層 → 全体の層 → 組み込みの既定
   (`CoreConfig::default_agent` だけを候補にした RoleSettings)」の最初にあるもの。層は役割単位で丸ごと置き換える
   (候補と既定は一緒に上書き・継承する)。
-- **検査** (`RoleSettings::validate`): 候補が 1 つ以上・既定が候補に含まれる・ハーネスが登録簿にある・空文字なし。
-  重複は取り除く。モデル名は検査しない (一覧は遅れて取るため。UI は一覧にあるものだけを選ばせる)。
-- **上書きの選び方** (`RoleSettings::pick(harness?, model?)`): どちらも無ければ既定。あれば両方に一致する候補
-  (指定の無い方は任意) のうち、既定が一致すれば既定、無ければ最初のもの。一致が無ければエラーで候補一覧を返す。
+- **検査** (`RoleSettings::validate`): 候補が 1 つ以上・既定が候補のどれかと (ハーネス × モデル × effort で) 完全一致・
+  ハーネスが登録簿にある・モデル / effort が空文字でない・用途メモは 400 文字まで。同じ組 (ハーネス × モデル × effort) の行は
+  最初のものを残して取り除く。モデル名・effort の値は検査しない (一覧は遅れて取るため。UI は一覧にあるものだけを選ばせる。
+  実際にそのモデルが effort を持たなければ**セッション起動が失敗する** (§15.4))。
+- **上書きの選び方** (`RoleSettings::pick(harness?, model?, effort?)`): すべて省略なら既定。指定があれば一致する行
+  (省略したものは任意) を探す: 0 行 → `PickError::NoMatch` (全行を返す)。1 行 → それ。複数行で、すべて同じハーネス × モデルで
+  effort が省略されている → `PickError::NeedsEffort` (その行を返し、effort の指定を求める)。それ以外の複数行 →
+  既定が含まれれば既定、無ければ最初の行。つまり「ハーネス × モデル × effort が行と完全一致」が原則で、effort を省略できるのは
+  そのハーネス × モデルの行が 1 行だけのとき (その行の effort が使われる)。
+- **7d の移行**: 設定・`tasks.agent` は JSON なので、古い保存値の `effort` (なし) と `note` (空) は serde の既定値で読める
+  (書き換え不要、単体テストあり)。SQL の移行はセッションに effort を残す `0004` だけ。
 
 ### 15.2 ハーネスの登録簿
 
 `HarnessPreset { id, label, orchestrator, implementer, investigator, reviewer: HarnessConfig, probe: Option<HarnessConfig>, model_env: Option<String> }`。
-`HarnessPreset::config(role, model)` は役割の `HarnessConfig` を複製し、モデルが指定されていれば `model`
+`HarnessPreset::config(role, model, effort)` は役割の `HarnessConfig` を複製し、モデルが指定されていれば `model`
 (`set_config_option`、config id は既存の `ModelSelect` のもの、無ければ `"model"`) と `model_env` の環境変数
-(Claude Code は `ANTHROPIC_MODEL`) を差し替える。`None` なら何も変えない (ハーネスの既定)。
+(Claude Code は `ANTHROPIC_MODEL`) を差し替える。`None` なら何も変えない (ハーネスの既定)。**7d**: effort が
+あれば `HarnessConfig.effort` (`ModelSelect { config_id: "effort", value }`) を設定する。起動手順 (`acp/startup.rs`) は
+**モデル → effort の順**に `set_config_option` を送り、どちらも「要求した値 = 応答の currentValue」を確かめる
+(effort の選択肢はモデルごとに変わり、モデルを変えると作り直されるため、必ずモデルが先)。effort を持たないモデルに
+effort を指定したら**起動を失敗させる** (`session/set_config_option` の `Startup` エラー: 黙って別の effort で動かさない。
+UI は一覧にある値しか選ばせず、`create_task` は行との完全一致を要求するので、古い設定でしか起きない)。
 `HarnessPreset::claude_code(model)` は Stage 6b までの 3 役割の設定そのもの (probe = `claude_code_usage_probe`)。
 7c で OpenCode を足すときは preset を 1 つ登録するだけ (`CoreConfig::harnesses`)。
 
@@ -757,6 +772,7 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 - `tasks.agent` / `tasks.review_agent` (JSON の `AgentChoice`、NULL = 上書きなし) — オーケストレータの `create_task` の上書き。
   ドメインの `Task.agent` / `Task.review_agent` (イベント `task_created` に含まれる。古いイベントは `serde(default)` で無し)。
 - `agent_sessions.harness` / `agent_sessions.model` — そのセッションが実際に使ったもの (`session_started.agent`)。
+  **7d (マイグレーション `0004_agent_effort.sql`)**: `agent_sessions.effort` を追加 (復元するセッションは記録した effort のまま)。
 
 ### 15.4 セッション起動時の解決 (runtime)
 
@@ -779,12 +795,14 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 
 ### 15.5 `create_task` の上書きとオーケストレータへの提示
 
-- `create_task` の任意引数 `harness` / `model` (implementer か investigator の候補から) と `review_harness` / `review_model`
-  (reviewer の候補から) ([`mcp-tools.md`](mcp-tools.md) §3)。ドライバが状態機械に渡す前に `RoleSettings::pick` で検査し、
-  候補外なら `invalid_argument` (message に許される `harness/model` の一覧)。通れば引数を解決済みの組に書き換えて渡す
-  (状態機械は純粋なまま、`Task.agent` に記録するだけ)。
-- `get_status` の戻り値に `agents: { implementer, investigator, reviewer: { default, allowed: [..] } }` をドライバが足す
-  (呼んだ時点の実効値)。オーケストレータのシステムプロンプトには起動時点の同じ一覧を付け、「普段は省略する」「最新は get_status」と書く。
+- `create_task` の任意引数 `harness` / `model` / `effort` (implementer か investigator の候補から) と
+  `review_harness` / `review_model` / `review_effort` (reviewer の候補から) ([`mcp-tools.md`](mcp-tools.md) §3)。ドライバが
+  状態機械に渡す前に `RoleSettings::pick` で検査し、**組が行と完全一致しなければ** `invalid_argument` (message に全行
+  `harness=… model=… effort=… (用途メモ)`)。同じハーネス × モデルの行が複数あって effort が無ければ「`effort` も指定して」と
+  行を挙げて拒否する。通れば引数を解決済みの組 (effort も埋める) に書き換えて渡す (状態機械は純粋なまま、`Task.agent` に記録するだけ)。
+- `get_status` の戻り値に `agents: { implementer, investigator, reviewer: { default, allowed: [行 (用途メモ付き)] } }` をドライバが足す
+  (呼んだ時点の実効値)。オーケストレータのシステムプロンプトには起動時点の同じ一覧を**役割ごとに行 + 用途メモ**で付け
+  (`prompts::agent_choices_prompt`)、「普段は省略する」「用途メモを読んで行を選ぶ」「行と完全一致させる」「最新は get_status」と書く。
 
 ### 15.6 モデル一覧 (`agents/models.rs`)
 
@@ -792,8 +810,19 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
   `data_dir/model-probe` で**プロンプトを送らずに**起動し (`session/new` だけ。モデルは呼ばない)、`Ready` の `config_options` から
   モデルの選択肢を読んで止める。モデルの選択肢 = `category: model` の select、無ければ id が preset のモデル config id (`"model"`) の select。
   グループ付きの選択肢は平らにする。見つからなければ `models: []` (そのハーネスはモデルを選べない = 既定だけ)。
-- 応答 `HarnessModels { harness, models: [{value, name, description?}], current (ハーネスの既定値), fetched_at_ms }`。
+- 応答 `HarnessModels { harness, models: [{value, name, description?, efforts}], current (ハーネスの既定値), fetched_at_ms }`。
 - キャッシュ: 成功 10 分・失敗 10 秒、`refresh` でも 10 秒以内の結果は再利用。1 度に 1 プローブ。終了時に実行中のプローブを止める (使用量と同じ)。
+- **effort 一覧 (7d)**: effort の選択肢 (`id: effort` の select、無ければ `category: thought_level`) は**現在のモデルによって変わる**
+  (Claude Code アダプタは `supportedEffortLevels` から作り、先頭に古いクライアント用の `default` を足す。モデルを変えると作り直す。
+  OpenCode は variant)。そこで同じプローブのセッションで**モデルを 1 つずつ `set_config_option` で選び、返ってきた
+  `configOptions` の effort を読む** (モデルの呼び出しは無い)。`default` の値は「指定なし」と同じなので一覧から除く。
+  - モデルが 12 個以下 (Claude Code は 5 個) のハーネスは、モデル一覧のプローブの中で全モデルを読む (`ModelOption.efforts = Some(..)`、
+    空 = そのモデルに effort は無い)。実測: Claude Code のプローブ全体が約 2.7 秒 (モデル一覧だけのときは約 2 秒)。
+  - それより多い (OpenCode は約 480 個) ハーネスは一覧では読まず (`efforts = None`)、UI が選ばれたモデルについて
+    `list_model_efforts{harness, model}` で**そのとき 1 つだけ**読む (プローブのセッションを 1 つ起動: OpenCode で約 1.2 秒)。
+    結果は (ハーネス, モデル) ごとに 10 分 (失敗 10 秒) キャッシュし、モデル一覧のキャッシュに載っていればそれを返す。
+    480 個を全部読むと 480 回の `set_config_option` になるので避けた。
+  - ハーネスが拒否するモデルは `efforts = None` のまま (一覧のプローブ) / `unavailable` (`list_model_efforts`)。
 
 ### 15.7 API
 
@@ -802,3 +831,6 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
 - `set_agent_settings{project?, role, settings: RoleSettings | null}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
   (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
 - `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。
+- `list_model_efforts{harness, model}` (7d) → `model_efforts{efforts: {harness, model, efforts: [{value, name, description?}]}}`。エラーは同上。
+- **設定 UI (7d)**: アプリ全体の設定モーダル ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。API は上のとおりで、
+  行の編集はすべてクライアント側で「役割の設定全体を `set_agent_settings` で置き換える」形 (同じ組の重複は UI が先に断る)。

@@ -15,7 +15,11 @@ pub use installed::{
     OPENCODE_COMMAND, OPENCODE_FALLBACK_MODEL, find_in_path, inherited_opencode_env_remove,
     installed_presets,
 };
-pub use models::{HarnessModels, ModelOption, ModelService, models_from_options, probe_models};
+pub use models::{
+    EffortOption, HarnessModels, ModelEfforts, ModelOption, ModelService, efforts_from_options,
+    models_from_options, probe_efforts, probe_models,
+};
 pub use settings::{
-    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, RoleSettings, effective,
+    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, MAX_NOTE_CHARS,
+    PickError, RoleSettings, effective,
 };

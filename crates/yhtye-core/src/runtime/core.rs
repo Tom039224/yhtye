@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
 use crate::agents::{
-    AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelService, RoleSettings,
+    AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelEfforts, ModelService, RoleSettings,
     installed_presets,
 };
 use crate::api::{
@@ -237,6 +237,28 @@ impl Core {
                     .await
                     .map_err(|e| ApiError::unavailable(format!("models of {harness}: {e}")))?;
                 Ok(ApiResponse::HarnessModels { models })
+            }
+            ApiCommand::ListModelEfforts { harness, model } => {
+                let preset = self
+                    .inner
+                    .agents
+                    .preset(&harness)
+                    .ok_or_else(|| ApiError::not_found(format!("unknown harness {harness}")))?;
+                let efforts = self
+                    .inner
+                    .models
+                    .get_efforts(preset, &model)
+                    .await
+                    .map_err(|e| {
+                        ApiError::unavailable(format!("efforts of {harness}/{model}: {e}"))
+                    })?;
+                Ok(ApiResponse::ModelEfforts {
+                    efforts: ModelEfforts {
+                        harness,
+                        model,
+                        efforts,
+                    },
+                })
             }
         }
     }

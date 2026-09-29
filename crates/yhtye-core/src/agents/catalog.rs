@@ -12,7 +12,7 @@ use ts_rs::TS;
 use super::settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, RoleSettings, effective,
 };
-use crate::acp::{AgentError, HarnessConfig, ModelSelect};
+use crate::acp::{AgentError, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect};
 
 /// The config id used for the model when a harness config names none.
 pub const MODEL_CONFIG_ID: &str = "model";
@@ -156,10 +156,20 @@ impl HarnessPreset {
             .map_or(MODEL_CONFIG_ID, |m| m.config_id.as_str())
     }
 
-    /// The launch config of `role` with `model` put in (`None`: unchanged).
+    /// The launch config of `role` with `model` and `effort` put in (`None`:
+    /// unchanged / not set).
     #[must_use]
-    pub fn config(&self, role: AgentRole, model: Option<&str>) -> HarnessConfig {
+    pub fn config(
+        &self,
+        role: AgentRole,
+        model: Option<&str>,
+        effort: Option<&str>,
+    ) -> HarnessConfig {
         let mut h = self.role_config(role).clone();
+        h.effort = effort.map(|value| ModelSelect {
+            config_id: EFFORT_CONFIG_ID.to_string(),
+            value: value.to_string(),
+        });
         if let Some(model) = model {
             let config_id = h.model.as_ref().map_or_else(
                 || self.model_config_id().to_string(),
@@ -365,7 +375,7 @@ impl AgentCatalog {
     #[must_use]
     pub fn launch_config(&self, role: AgentRole, choice: &AgentChoice) -> Option<HarnessConfig> {
         self.preset(&choice.harness)
-            .map(|p| p.config(role, choice.model.as_deref()))
+            .map(|p| p.config(role, choice.model.as_deref(), choice.effort.as_deref()))
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, Layers> {
@@ -393,16 +403,24 @@ mod tests {
     #[test]
     fn claude_code_configs_carry_the_chosen_model() {
         let p = HarnessPreset::claude_code("haiku");
-        let h = p.config(AgentRole::Implementer, Some("sonnet"));
+        let h = p.config(AgentRole::Implementer, Some("sonnet"), Some("high"));
         assert_eq!(h.model.as_ref().map(|m| m.value.as_str()), Some("sonnet"));
+        assert_eq!(
+            h.effort,
+            Some(ModelSelect {
+                config_id: "effort".into(),
+                value: "high".into()
+            }),
+            "the effort is a separate option, applied after the model"
+        );
         assert_eq!(
             h.env.get("ANTHROPIC_MODEL").map(String::as_str),
             Some("sonnet")
         );
-        let o = p.config(AgentRole::Orchestrator, Some("haiku"));
+        let o = p.config(AgentRole::Orchestrator, Some("haiku"), None);
         assert_eq!(o, HarnessConfig::claude_code_orchestrator("haiku"));
         assert_eq!(
-            p.config(AgentRole::Reviewer, None),
+            p.config(AgentRole::Reviewer, None, None),
             HarnessConfig::claude_code("haiku")
         );
         assert_eq!(p.model_config_id(), "model");
@@ -417,7 +435,7 @@ mod tests {
             HarnessConfig::plain("i", vec![]),
             HarnessConfig::plain("r", vec![]),
         );
-        let h = p.config(AgentRole::Investigator, Some("m"));
+        let h = p.config(AgentRole::Investigator, Some("m"), None);
         assert_eq!(h.command, "i");
         assert_eq!(
             h.model,
@@ -427,7 +445,7 @@ mod tests {
             })
         );
         assert!(h.env.is_empty(), "no model env var for this harness");
-        assert_eq!(p.config(AgentRole::Reviewer, None).command, "r");
+        assert_eq!(p.config(AgentRole::Reviewer, None, None).command, "r");
     }
 
     #[test]

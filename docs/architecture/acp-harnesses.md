@@ -405,3 +405,28 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
   - `real_opencode_orchestrator_with_a_claude_implementer` (OpenCode のオーケストレータ + Claude Haiku の implementer): 成功。
     `create_group` → `create_task` → `finish_group`、マージ済み。
   - 終了後 `opencode acp` / `opencode serve --stdio` / `claude-agent-acp` の残存 0 (ユーザーの `opencode serve --service` は元から動いているもの)。
+
+## 8. effort (思考の深さ) の設定 (Stage 7d、2026-09-29)
+
+ACP のセッション設定 `configOptions` に **`effort`** があるハーネスでは、Yhtye は行 (ハーネス × モデル × effort) の effort を
+`session/set_config_option` で設定する ([`core-design.md`](core-design.md) §15)。
+
+| | Claude Code (`claude-agent-acp` 0.81.0) | OpenCode (`opencode acp` 2.0.12) |
+|---|---|---|
+| config option | id `effort`、`category: thought_level`、select | id `effort` (OpenCode の variant) |
+| 選択肢 | **モデルごと** (そのモデルの `supportedEffortLevels`)。先頭に古いクライアント用の `default` 行。モデルが effort を持たなければ option 自体が無い。**モデルを変えると作り直される** (`session-effort.js`、`acp-agent.js`) | モデルごと (variant) |
+| 実測 (このマシン) | `default` / `opus[1m]` / `claude-fable-5-1[1m]` / `sonnet` = `low, medium, high, xhigh, max`、**`haiku` = effort 無し** | `opencode/muse-spark-1.3-contributor-free` = `minimal, low, medium, high, xhigh` |
+| 未知の値 | `Invalid value for config option effort: no-such-effort` (JSON-RPC の内部エラー) → 起動失敗 | — |
+
+- **順序**: 必ずモデルを先に設定してから effort (`acp/startup.rs`)。モデルを変えると effort の選択肢が作り直されるため。
+  どちらも「要求した値 = 応答の `currentValue`」を検証する。
+- **一覧の取り方**: モデルの選択肢は現在のモデルに依存するので、プローブのセッションでモデルを 1 つずつ選んで effort を読む
+  ([`core-design.md`](core-design.md) §15.6)。Claude Code (5 モデル) はモデル一覧と一緒に約 2.7 秒、OpenCode (約 480 モデル) は
+  選んだモデル 1 つだけ約 1.2 秒 (`list_model_efforts`)。先頭の `default` 行は「指定なし」と同じなので Yhtye の一覧から除く。
+- **未対応モデルに effort を指定したら**: セッション起動を**失敗させる** (黙って別の effort で動かさない)。
+- 実機での確認 (Claude Code は Haiku のみ長い実行をする。Haiku に effort は無いので、effort の適用だけは **プロンプトを送らず**
+  `sonnet` のセッション起動とプローブのみ): `acp_claude_real::real_effort_is_applied_after_the_model` (sonnet に `low` を設定 →
+  アダプタが `model=sonnet effort=low` を報告、未知の effort は `set_config_option` で失敗)、
+  `acp_opencode_real::real_opencode_efforts_are_read_per_model_and_applied` (無料モデルの effort 一覧を読み `minimal` を設定 →
+  `effort=minimal` を報告)、`orchestration_mixed_real::real_effort_rows_are_matched_exactly_and_applied` (Haiku のオーケストレータが
+  存在しない effort を指定して拒否 → 行の一覧と用途メモを読んで OpenCode の `minimal` の行を選び、implementer が `effort=minimal` で動いて main にマージ)。

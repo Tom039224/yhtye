@@ -12,7 +12,7 @@ mod session;
 mod startup;
 
 pub use config::{
-    DEFAULT_STARTUP_TIMEOUT, HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE,
+    DEFAULT_STARTUP_TIMEOUT, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE,
     ORCHESTRATOR_BUILTIN_TOOLS, SystemPromptStyle,
 };
 pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value};

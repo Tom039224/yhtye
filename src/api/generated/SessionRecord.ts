@@ -12,6 +12,6 @@ export type SessionRecord = { session_key: string, role: Role, task: string | nu
  */
 turn_running: boolean, 
 /**
- * The harness × model it ran (Stage 7b; `None` for older sessions).
+ * The harness × model × effort it ran (Stage 7b; `None` for older sessions).
  */
 agent: AgentChoice | null, };

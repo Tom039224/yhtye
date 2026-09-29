@@ -11,7 +11,7 @@ use ts_rs::TS;
 use super::{ApiEventBody, Snapshot};
 use crate::agents::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessInfo, HarnessModels,
-    RoleSettings,
+    ModelEfforts, RoleSettings,
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
@@ -124,6 +124,14 @@ pub enum ApiCommand {
         #[ts(optional)]
         refresh: Option<bool>,
     },
+    /// The efforts (thought levels) one model of a harness supports, for
+    /// models whose efforts `list_harness_models` did not include (harnesses
+    /// with many models). Cached for 10 minutes; costs one short listing
+    /// session the first time.
+    ListModelEfforts {
+        harness: String,
+        model: String,
+    },
 }
 
 /// Everything the settings panel shows (`core-design.md` §15.7).
@@ -210,6 +218,9 @@ pub enum ApiResponse {
     },
     HarnessModels {
         models: HarnessModels,
+    },
+    ModelEfforts {
+        efforts: ModelEfforts,
     },
 }
 

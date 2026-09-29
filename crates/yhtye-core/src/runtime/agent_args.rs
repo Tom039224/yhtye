@@ -1,81 +1,108 @@
-//! The orchestrator's harness × model arguments (`core-design.md` §15.5):
-//! `create_task` overrides are checked against the role's candidates before the
-//! state machine sees them, and `get_status` lists the allowed choices.
+//! The orchestrator's harness × model × effort arguments (`core-design.md`
+//! §15.5): `create_task` overrides are checked against the role's candidate rows
+//! before the state machine sees them, and `get_status` lists the allowed rows.
 
 use serde_json::{Value, json};
 
-use crate::agents::{AgentChoice, AgentRole, AgentSettings, RoleSettings};
+use crate::agents::{AgentChoice, AgentRole, AgentSettings, Candidate, PickError, RoleSettings};
 use crate::domain::ToolError;
 use crate::mcp::tools::CreateTaskArgs;
 
-/// Replaces the agent arguments of `args` with the candidates they select
-/// (both harness and model filled in), or rejects them with `invalid_argument`
-/// listing the allowed choices.
+/// The argument names of one role's override (`harness`… or `review_harness`…).
+struct ArgNames {
+    harness: &'static str,
+    effort: &'static str,
+}
+
+/// Replaces the agent arguments of `args` with the candidate row they select
+/// (harness, model and effort filled in), or rejects them with
+/// `invalid_argument` listing the candidate rows.
 pub(super) fn choose_agents(
     settings: &AgentSettings,
     mut args: CreateTaskArgs,
 ) -> Result<CreateTaskArgs, ToolError> {
     let role = AgentRole::of_task(args.kind);
-    if let Some(c) = pick(
-        settings.get(role),
-        role,
-        "harness",
-        &args.harness,
-        &args.model,
-    )? {
+    let names = ArgNames {
+        harness: "harness",
+        effort: "effort",
+    };
+    let asked = (&args.harness, &args.model, &args.effort);
+    if let Some(c) = pick(settings.get(role), role, &names, asked)? {
         args.harness = Some(c.harness);
         args.model = c.model;
+        args.effort = c.effort;
     }
-    let reviewer = settings.get(AgentRole::Reviewer);
-    let review = pick(
-        reviewer,
-        AgentRole::Reviewer,
-        "review_harness",
+    let names = ArgNames {
+        harness: "review_harness",
+        effort: "review_effort",
+    };
+    let asked = (
         &args.review_harness,
         &args.review_model,
-    )?;
-    if let Some(c) = review {
+        &args.review_effort,
+    );
+    let reviewer = settings.get(AgentRole::Reviewer);
+    if let Some(c) = pick(reviewer, AgentRole::Reviewer, &names, asked)? {
         args.review_harness = Some(c.harness);
         args.review_model = c.model;
+        args.review_effort = c.effort;
     }
     Ok(args)
 }
 
-/// `None` when neither is given (the role default applies at session start).
+type Asked<'a> = (&'a Option<String>, &'a Option<String>, &'a Option<String>);
+
+/// `None` when nothing is given (the role default applies at session start).
 fn pick(
     settings: &RoleSettings,
     role: AgentRole,
-    arg: &str,
-    harness: &Option<String>,
-    model: &Option<String>,
+    names: &ArgNames,
+    (harness, model, effort): Asked<'_>,
 ) -> Result<Option<AgentChoice>, ToolError> {
-    if harness.is_none() && model.is_none() {
+    if harness.is_none() && model.is_none() && effort.is_none() {
         return Ok(None);
     }
-    settings
-        .pick(harness.as_deref(), model.as_deref())
-        .map(Some)
-        .map_err(|allowed| {
-            let asked = [
-                harness.as_deref().map(|h| format!("harness={h}")),
-                model.as_deref().map(|m| format!("model={m}")),
-            ]
-            .into_iter()
-            .flatten()
+    let rows = |rows: &[Candidate]| {
+        rows.iter()
+            .map(Candidate::describe)
             .collect::<Vec<_>>()
-            .join(" ");
-            let allowed: Vec<String> = allowed.iter().map(AgentChoice::label).collect();
-            ToolError::invalid_argument(format!(
-                "{arg}: {asked} is not an allowed {} choice; allowed (harness/model): {} \
-                 — or omit it to use the default {}",
+            .join("; ")
+    };
+    settings
+        .pick(harness.as_deref(), model.as_deref(), effort.as_deref())
+        .map(|c| Some(c.choice()))
+        .map_err(|e| match e {
+            PickError::NoMatch(all) => {
+                let asked = [
+                    harness.as_deref().map(|h| format!("harness={h}")),
+                    model.as_deref().map(|m| format!("model={m}")),
+                    effort.as_deref().map(|e| format!("effort={e}")),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" ");
+                ToolError::invalid_argument(format!(
+                    "{}: {asked} is not an allowed {} choice — harness × model × effort must \
+                     exactly match one candidate row; candidate rows: {} \
+                     — or omit the arguments to use the default {}",
+                    names.harness,
+                    role.as_str(),
+                    rows(&all),
+                    Candidate::from(settings.default.clone()).describe(),
+                ))
+            }
+            PickError::NeedsEffort(matching) => ToolError::invalid_argument(format!(
+                "{}: several {} candidate rows match; also give `{}` to choose one of: {}",
+                names.harness,
                 role.as_str(),
-                allowed.join(", "),
-                settings.default.label(),
-            ))
+                names.effort,
+                rows(&matching),
+            )),
         })
 }
 
-/// `get_status`'s `agents`: default and allowed choices per task role.
+/// `get_status`'s `agents`: default and candidate rows (with notes) per task role.
 pub(super) fn agents_status(settings: &AgentSettings) -> Value {
     let role = |r: AgentRole| {
         let s = settings.get(r);
@@ -100,7 +127,13 @@ mod tests {
         layer.set(
             AgentRole::Implementer,
             Some(RoleSettings {
-                candidates: vec![haiku.clone(), AgentChoice::new("cc", Some("sonnet"))],
+                candidates: vec![
+                    haiku.clone().into(),
+                    Candidate::from(AgentChoice::new("cc", Some("sonnet")).with_effort("low"))
+                        .with_note("quick edits"),
+                    Candidate::from(AgentChoice::new("cc", Some("sonnet")).with_effort("high"))
+                        .with_note("hard bugs"),
+                ],
                 default: haiku.clone(),
             }),
         );
@@ -126,6 +159,8 @@ mod tests {
             model: None,
             review_harness: None,
             review_model: None,
+            effort: None,
+            review_effort: None,
         }
     }
 
@@ -138,17 +173,69 @@ mod tests {
     #[test]
     fn an_allowed_choice_is_filled_in() {
         let mut a = args(TaskKind::Code);
-        a.model = Some("sonnet".into());
+        a.model = Some("haiku".into());
         a.review_harness = Some("cc".into());
         let out = choose_agents(&settings(), a).expect("allowed");
         assert_eq!(
-            (out.harness.as_deref(), out.model.as_deref()),
-            (Some("cc"), Some("sonnet"))
+            (out.harness.as_deref(), out.model.as_deref(), out.effort),
+            (Some("cc"), Some("haiku"), None)
         );
         assert_eq!(
             (out.review_harness.as_deref(), out.review_model.as_deref()),
             (Some("cc"), Some("haiku")),
             "the reviewer role's builtin candidate"
+        );
+    }
+
+    #[test]
+    fn an_exact_triple_is_accepted_and_a_missing_effort_needs_a_unique_row() {
+        let mut a = args(TaskKind::Code);
+        a.harness = Some("cc".into());
+        a.model = Some("sonnet".into());
+        a.effort = Some("high".into());
+        let out = choose_agents(&settings(), a).expect("exact row");
+        assert_eq!(out.effort.as_deref(), Some("high"));
+
+        // Two rows for cc/sonnet: the effort must be named.
+        let mut a = args(TaskKind::Code);
+        a.harness = Some("cc".into());
+        a.model = Some("sonnet".into());
+        let e = choose_agents(&settings(), a).expect_err("ambiguous");
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(e.message.contains("also give `effort`"), "{}", e.message);
+        assert!(
+            e.message.contains(
+                "effort=low (quick edits); harness=cc model=sonnet effort=high (hard bugs)"
+            ),
+            "{}",
+            e.message
+        );
+
+        // An effort no row has is not silently dropped.
+        let mut a = args(TaskKind::Code);
+        a.harness = Some("cc".into());
+        a.model = Some("sonnet".into());
+        a.effort = Some("max".into());
+        let e = choose_agents(&settings(), a).expect_err("no such row");
+        assert!(
+            e.message.contains("effort=max is not an allowed"),
+            "{}",
+            e.message
+        );
+        assert!(
+            e.message.contains("harness=cc model=haiku;"),
+            "{}",
+            e.message
+        );
+
+        // The reviewer arguments are named review_*.
+        let mut a = args(TaskKind::Code);
+        a.review_effort = Some("high".into());
+        let e = choose_agents(&settings(), a).expect_err("reviewer has no efforts");
+        assert!(
+            e.message.starts_with("review_harness: effort=high"),
+            "{}",
+            e.message
         );
     }
 
@@ -163,7 +250,7 @@ mod tests {
         let e = choose_agents(&settings(), a).expect_err("not an investigator choice");
         assert_eq!(e.code, ErrorCode::InvalidArgument);
         assert!(
-            e.message.contains("allowed (harness/model): oc"),
+            e.message.contains("candidate rows: harness=oc"),
             "{}",
             e.message
         );
@@ -182,7 +269,12 @@ mod tests {
             "{}",
             e.message
         );
-        assert!(e.message.contains("cc/haiku, cc/sonnet"), "{}", e.message);
+        assert!(
+            e.message
+                .contains("harness=cc model=haiku; harness=cc model=sonnet effort=low"),
+            "{}",
+            e.message
+        );
         let mut a = args(TaskKind::Code);
         a.review_model = Some("sonnet".into());
         let e = choose_agents(&settings(), a).expect_err("reviewer");
@@ -199,15 +291,16 @@ mod tests {
         let v = agents_status(&settings());
         assert_eq!(
             v["implementer"]["default"],
-            json!({"harness": "cc", "model": "haiku"})
+            json!({"harness": "cc", "model": "haiku", "effort": null})
         );
         assert_eq!(
             v["implementer"]["allowed"].as_array().map(Vec::len),
-            Some(2)
+            Some(3)
         );
+        assert_eq!(v["implementer"]["allowed"][2]["note"], "hard bugs");
         assert_eq!(
             v["investigator"]["default"],
-            json!({"harness": "oc", "model": null})
+            json!({"harness": "oc", "model": null, "effort": null})
         );
         assert!(v.get("orchestrator").is_none());
     }

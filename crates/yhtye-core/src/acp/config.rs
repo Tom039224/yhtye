@@ -30,6 +30,10 @@ pub struct HarnessConfig {
     /// `session/set_config_option` sent after the mode is set.
     #[serde(default)]
     pub model: Option<ModelSelect>,
+    /// `session/set_config_option` for the effort (thought level), sent right
+    /// after the model: the available efforts depend on the model (Stage 7d).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<ModelSelect>,
     #[serde(default)]
     pub system_prompt: SystemPromptStyle,
     /// Extra harness-specific fields merged into `_meta` of `session/new` /
@@ -51,7 +55,10 @@ pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
 /// asking for paths outside the session directory (answered by Yhtye).
 pub const OPENCODE_BUILD_MODE: &str = "build";
 
-/// Selects the model via `session/set_config_option`.
+/// The config id of the effort option (Claude Code's `thought_level`, OpenCode's variant).
+pub const EFFORT_CONFIG_ID: &str = "effort";
+
+/// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelect {
     pub config_id: String,
@@ -100,6 +107,7 @@ impl HarnessConfig {
                 config_id: "model".into(),
                 value: model.into(),
             }),
+            effort: None,
             system_prompt: SystemPromptStyle::MetaAppend,
             // Only the MCP servers Yhtye passes (not the user's .mcp.json / plugins).
             session_meta:
@@ -170,6 +178,7 @@ impl HarnessConfig {
                 config_id: "model".into(),
                 value: model.into(),
             }),
+            effort: None,
             system_prompt: SystemPromptStyle::FirstPrompt,
             session_meta: None,
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
@@ -186,6 +195,7 @@ impl HarnessConfig {
             env_remove: Vec::new(),
             mode_after_new: None,
             model: None,
+            effort: None,
             system_prompt: SystemPromptStyle::MetaAppend,
             session_meta: None,
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,

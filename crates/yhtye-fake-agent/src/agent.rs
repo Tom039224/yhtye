@@ -8,9 +8,9 @@ use agent_client_protocol::schema::v1::{
     LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, NewSessionRequest,
     NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, SessionConfigOption,
-    SessionConfigSelectOption, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
-    SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
-    ToolCallUpdate, ToolCallUpdateFields,
+    SessionConfigOptionCategory, SessionConfigSelectOption, SessionMode, SessionModeState,
+    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
+    SetSessionModeResponse, StopReason, ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, Error, Stdio};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ struct State {
     session_id: String,
     mode: String,
     model: String,
+    /// Current value of the `effort` option (when the model has one).
+    effort: String,
     system_prompt: Option<String>,
     /// Full `_meta` of `session/new` / `session/load`.
     meta: Option<serde_json::Map<String, serde_json::Value>>,
@@ -53,6 +55,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
     let state = State {
         mode: scenario.modes.first().cloned().unwrap_or_default(),
         model: scenario.models.first().cloned().unwrap_or_default(),
+        effort: "default".into(),
         ..State::default()
     };
     let fake: Shared = Arc::new(Fake {
@@ -93,7 +96,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 responder.respond(
                     NewSessionResponse::new(id)
                         .modes(f2.modes())
-                        .config_options(vec![f2.model_option()]),
+                        .config_options(f2.options()),
                 )
             },
             agent_client_protocol::on_receive_request!(),
@@ -113,7 +116,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 responder.respond(
                     LoadSessionResponse::new()
                         .modes(f3.modes())
-                        .config_options(vec![f3.model_option()]),
+                        .config_options(f3.options()),
                 )
             },
             agent_client_protocol::on_receive_request!(),
@@ -140,13 +143,27 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                     .as_value_id()
                     .map(|v| v.0.to_string())
                     .unwrap_or_default();
-                if &*req.config_id.0 != "model" || !f5.scenario.models.contains(&value) {
+                let known = match &*req.config_id.0 {
+                    "model" => f5.scenario.models.contains(&value),
+                    "effort" => f5.effort_values().contains(&value),
+                    _ => false,
+                };
+                if !known {
                     return responder.respond_with_error(
                         Error::invalid_params().data(json!("unknown option/value")),
                     );
                 }
-                f5.lock().model = value;
-                responder.respond(SetSessionConfigOptionResponse::new(vec![f5.model_option()]))
+                {
+                    let mut st = f5.lock();
+                    if &*req.config_id.0 == "model" {
+                        st.model = value;
+                        // The efforts depend on the model: back to the default.
+                        st.effort = "default".into();
+                    } else {
+                        st.effort = value;
+                    }
+                }
+                responder.respond(SetSessionConfigOptionResponse::new(f5.options()))
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -228,6 +245,35 @@ impl Fake {
             .map(|m| SessionMode::new(m.clone(), m.clone()))
             .collect();
         SessionModeState::new(self.lock().mode.clone(), available)
+    }
+
+    /// The config options now: the model, plus the effort when the current
+    /// model has efforts.
+    fn options(&self) -> Vec<SessionConfigOption> {
+        let mut options = vec![self.model_option()];
+        let values = self.effort_values();
+        if !values.is_empty() {
+            let rows: Vec<_> = values
+                .iter()
+                .map(|v| SessionConfigSelectOption::new(v.clone(), v.clone()))
+                .collect();
+            options.push(
+                SessionConfigOption::select("effort", "Effort", self.lock().effort.clone(), rows)
+                    .category(SessionConfigOptionCategory::ThoughtLevel),
+            );
+        }
+        options
+    }
+
+    /// `default` and the efforts of the current model (empty: no effort option).
+    fn effort_values(&self) -> Vec<String> {
+        let model = self.lock().model.clone();
+        match self.scenario.efforts.get(&model) {
+            Some(values) => std::iter::once("default".to_string())
+                .chain(values.iter().cloned())
+                .collect(),
+            None => Vec::new(),
+        }
     }
 
     fn model_option(&self) -> SessionConfigOption {
@@ -362,8 +408,13 @@ async fn run_action(
         Action::ReportState => {
             let report = {
                 let st = fake.lock();
+                let effort = if fake.scenario.efforts.contains_key(&st.model) {
+                    format!(";effort={}", st.effort)
+                } else {
+                    String::new()
+                };
                 format!(
-                    "state:mode={};model={};system_prompt={};prompt={prompt}",
+                    "state:mode={};model={};system_prompt={}{effort};prompt={prompt}",
                     st.mode,
                     st.model,
                     st.system_prompt.as_deref().unwrap_or("<none>")

@@ -35,6 +35,7 @@ use crate::store::StoreError;
 /// Session key of tool calls made by the user through the API (not an agent).
 pub const USER_SESSION: &str = "user";
 
+#[allow(clippy::large_enum_variant)] // `UserTool` carries a `create_task`-sized call
 pub(super) enum Cmd {
     UserMessage(String),
     CancelOrchestrator,

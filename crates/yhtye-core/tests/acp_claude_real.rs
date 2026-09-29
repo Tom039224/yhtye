@@ -225,6 +225,19 @@ async fn real_model_list_comes_from_the_adapter() {
             .map(|m| format!("{} ({})", m.value, m.name))
             .collect::<Vec<_>>()
     );
+    for m in &listed.models {
+        eprintln!(
+            "  efforts of {}: {:?}",
+            m.value,
+            m.efforts
+                .as_ref()
+                .map(|e| e.iter().map(|o| o.value.as_str()).collect::<Vec<_>>())
+        );
+    }
+    assert!(
+        listed.models.iter().all(|m| m.efforts.is_some()),
+        "a short list has every model's efforts read: {listed:?}"
+    );
     assert_eq!(listed.harness, "claude-code");
     assert!(listed.models.iter().any(|m| m.value == MODEL), "{listed:?}");
     assert_eq!(
@@ -232,4 +245,91 @@ async fn real_model_list_comes_from_the_adapter() {
         Some(MODEL),
         "ANTHROPIC_MODEL of the probe"
     );
+}
+
+/// Stage 7d: the effort of a model is set with `set_config_option` after the
+/// model and the adapter reports it back. No prompt is sent (no model call):
+/// Haiku has no effort option, so `sonnet`'s session start is exercised, never
+/// a turn.
+#[tokio::test]
+#[ignore = "real Claude Code (no prompt)"]
+async fn real_effort_is_applied_after_the_model() {
+    use yhtye_core::acp::{ModelSelect, SpawnOptions, spawn_agent};
+    use yhtye_core::agents::{AgentRole, HarnessPreset, probe_models};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let preset = HarnessPreset::claude_code(MODEL);
+    let listed = probe_models(
+        &preset,
+        dir.path(),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("models");
+    let with_efforts =
+        |m: &&yhtye_core::agents::ModelOption| m.efforts.as_ref().is_some_and(|e| !e.is_empty());
+    let chosen = listed
+        .models
+        .iter()
+        .filter(with_efforts)
+        .find(|m| m.value == "sonnet")
+        .expect("sonnet has efforts");
+    let efforts: Vec<&str> = chosen
+        .efforts
+        .iter()
+        .flatten()
+        .map(|e| e.value.as_str())
+        .collect();
+    eprintln!("using {} with efforts {efforts:?}", chosen.value);
+    assert!(
+        !efforts.contains(&"default"),
+        "the `default` row is filtered"
+    );
+    // Not the adapter's own default, so a passing check cannot be a coincidence.
+    let effort = efforts
+        .iter()
+        .find(|e| **e != "medium")
+        .copied()
+        .expect("an effort");
+
+    let harness = preset.config(AgentRole::Implementer, Some(&chosen.value), Some(effort));
+    assert_eq!(
+        harness.effort,
+        Some(ModelSelect {
+            config_id: "effort".into(),
+            value: effort.into()
+        })
+    );
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = spawn_agent(&harness, dir.path(), SpawnOptions::default(), tx)
+        .await
+        .expect("session with the effort");
+    assert_eq!(
+        handle.info().config_value("model"),
+        Some(chosen.value.as_str())
+    );
+    assert_eq!(handle.info().config_value("effort"), Some(effort));
+    eprintln!(
+        "session reports model={:?} effort={:?}",
+        handle.info().config_value("model"),
+        handle.info().config_value("effort")
+    );
+
+    // An effort the model does not offer fails the start with a clear error.
+    let bad = preset.config(
+        AgentRole::Implementer,
+        Some(&chosen.value),
+        Some("no-such-effort"),
+    );
+    let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+    let err = spawn_agent(&bad, dir.path(), SpawnOptions::default(), tx2)
+        .await
+        .err()
+        .expect("unknown effort is refused");
+    eprintln!("refused: {err}");
+    assert!(err.to_string().contains("set_config_option"), "{err}");
+
+    let pid = handle.pid().expect("pid");
+    handle.shutdown().await;
+    drop(rx);
+    assert_group_gone(pid, Duration::from_secs(5)).await;
 }
