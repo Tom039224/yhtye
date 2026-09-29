@@ -33,7 +33,14 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
+    env:
+      # Debug info would fill the runner's disk (the tests also build the fake
+      # agent separately); line tables are enough for backtraces.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
     steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: |
