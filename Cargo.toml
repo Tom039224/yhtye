@@ -5,7 +5,7 @@ members = ["crates/*", "src-tauri"]
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
-license = "MIT"
+license = "BSD-3-Clause"
 
 [workspace.dependencies]
 # ACP: pin the minor version (API changes quickly; see docs/architecture/acp-harnesses.md §4)

@@ -1,6 +1,6 @@
 # 再構築のまとめ (2026-09-23、Stage 7c 時点)
 
-`rebuild` ブランチ (push していません)。詳細は [`PLAN.md`](../PLAN.md) の各 Stage の結果メモ。
+開発時の記録 (当時は `rebuild` ブランチで作業し、その後 `main` に統合)。詳細は [`PLAN.md`](PLAN.md) の各 Stage の結果メモ。
 
 ## いま動くもの
 
@@ -24,7 +24,7 @@
 
 ## 動かし方
 
-- アプリ: `pnpm tauri dev` (データ `~/.local/share/com.tom039224.yhtye`、モデルは既定 `haiku`、`YHTYE_MODEL` で変更)。
+- アプリ: `pnpm tauri dev` (データ `~/.local/share/io.github.tom039224.yhtye`、モデルは既定 `haiku`、`YHTYE_MODEL` で変更)。
 - ブラウザ: `pnpm dev:browser` → Chrome で `http://localhost:1420` → 左の欄に git リポジトリの最上位パスを入れて「開く」。
 - テスト: `pnpm test` / `pnpm build` / `cargo test --workspace` /
   実エージェント `cargo test -p yhtye-core -- --ignored --test-threads=1` (Haiku・トークンを使う)。

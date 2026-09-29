@@ -7,121 +7,89 @@
 異常が出たタスクはグループ全体の完了を待たずに報告が上がり、
 オーケストレータ自身が対処に入る。
 
-現在の状態: **再構築中 (`rebuild` ブランチ)。** 静的モックの上に組んだ前回の実装は
-実際には動かなかったため破棄し、下層 (ACP コア → MCP サーバー → ドメインコア →
-フロントエンド → 統合) から「本物で動くこと」を各段の完了条件として積み直している。
-進捗と各段の範囲は [`PLAN.md`](PLAN.md)、機能設計は [`docs/architecture/`](docs/architecture/)、
-画面設計は [`docs/design/`](docs/design/)。現時点では素の UI で依頼 → タスク分割 → 実装 → base への
-マージまでが動く (デザインの適用は Stage 6)。
+English: [README-EN.md](README-EN.md)
 
-## 構成
+![依頼からタスク分割、実装、レビュー、base ブランチへのマージまで](docs/e2e/stage6a/2-done-merged-mention-chip.jpg)
 
-| 層 | 技術 |
-|---|---|
-| シェル | Tauri 2 (Rust 2021) |
-| フロントエンド | React 19 / TypeScript / Vite |
-| ハーネス接続 | [ACP](https://agentclientprotocol.com) (Agent Client Protocol) — 当面 Claude Code |
-| 指示・報告の経路 | Yhtye がホストする MCP サーバー (streamable HTTP) |
-| パッケージマネージャ | pnpm |
+![エージェント (ハーネス × モデル × effort) の設定](docs/e2e/stage7d/1-settings-modal-effort-rows.jpg)
 
-採用理由は [ADR-0001](docs/adr/0001-tauri-react-vite.md) を参照。
+## 状態
 
-```
-docs/design/         Claude Design から起こした画面仕様・デザイントークン・原本スナップショット
-docs/architecture/   オーケストレーションモデル・MCP ツール・コア設計・ACP ハーネスの機能設計
-PLAN.md              再構築の段階計画と進捗
-docs/adr/            設計判断の記録
-src/                 React フロントエンド
-src-tauri/           Rust バックエンド
-```
+個人で作っている初期段階のプロジェクト (v0.1)。プレビルドのバイナリやリリースはまだ無く、
+ソースからビルドして使う。
+
+動いているもの:
+
+- プロジェクト (git リポジトリ) を開き、オーケストレータに依頼すると、グループとタスクに分割して
+  サブエージェントが git worktree 上で実装し、レビューを経て base ブランチへマージするところまで
+- 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)
+- 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
+- API キーなどの秘密の環境変数の登録 (OS のキーリングに保存)
+
+できていないもの・制約:
+
+- 対応 OS は Linux のみ (下記)。配布用パッケージ、自動更新は無い
+- 過去のグループを辿る履歴 (runs) ビューは保留で、空表示のまま
+- OpenCode のオーケストレータは読み取り専用にできず、Codex はオーケストレータとして使えない
+  ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
+- Codex は OpenRouter 経由でのみ実機確認している
+
+段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
+
+## 対応環境
+
+- **Linux のみ。** 動作確認は Arch / CachyOS (Wayland) だけ。他のディストリビューションは未確認。
+- macOS は未検証。
+- Windows は非対応。エージェントのプロセス管理が Unix のプロセスグループに依存している
+  ([`crates/yhtye-core/src/acp/process.rs`](crates/yhtye-core/src/acp/process.rs))。
+
+## 注意
+
+- エージェントはあなたのリポジトリのコピー (git worktree) でコードとシェルコマンドを承認なしで実行する。
+  Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
+- エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`)。
+  サンドボックスは無い。
+- Claude Code / OpenCode / Codex (OpenRouter) の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
+  Yhtye は課金を管理しない。
+- 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
+  ただし登録した変数は**すべてのエージェント**に渡る。
+
+## 使い方
+
+前提のインストールから初回の使い方までは [`SETUP.md`](SETUP.md) (日本語)。
 
 ## 開発
 
-### 前提
-
-| 必要なもの | 確認コマンド |
-|---|---|
-| Rust 1.98+ | `rustc --version` |
-| Node 22+ | `node --version` |
-| pnpm 11+ | `pnpm --version` |
-
-Linux ではさらに WebKitGTK が要る。
-
-```sh
-pkg-config --modversion webkit2gtk-4.1 javascriptcoregtk-4.1 libsoup-3.0
-```
-
-Arch / CachyOS 系で足りない場合:
-
-```sh
-sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
-  appmenu-gtk-module libappindicator-gtk3 librsvg
-```
-
-### 起動
+前提、起動、ブラウザ開発用ブリッジ、Wayland + NVIDIA の回避策、ビルドと検証のコマンドは
+[`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
 
 ```sh
 pnpm install
-pnpm tauri dev      # デスクトップアプリとして起動 (本物のコア + Claude Code)
-pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に起動 → http://localhost:1420
+pnpm tauri dev
 ```
 
-- エージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
-  モデルは `YHTYE_MODEL` (既定 `haiku`)。
-- アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/com.tom039224.yhtye`。
-  Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
-- アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
-  次の起動時に自動で開き、中断したタスクを再開する。
+アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`。
+以前の識別子 `com.tom039224.yhtye` のディレクトリが残っていれば、初回起動時に自動で移す。
 
-#### ブラウザで動かす (開発・E2E 用)
+## ドキュメント
 
-素の Chrome には Tauri の IPC が無いので、同じ API を WebSocket で出す開発用ブリッジ
-`yhtye-dev-bridge` を使う ([`core-design.md`](docs/architecture/core-design.md) §10)。
+| パス | 内容 |
+|---|---|
+| [`SETUP.md`](SETUP.md) | 使う人向けのセットアップ |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | 開発ガイド |
+| [`docs/PLAN.md`](docs/PLAN.md) | 段階計画と進捗、未決事項 |
+| [`docs/architecture/`](docs/architecture/) | オーケストレーションモデル・MCP ツール・コア設計・ACP ハーネスの機能設計 |
+| [`docs/design/`](docs/design/) | 画面仕様・デザイントークン・Claude Design 原本のスナップショット |
+| [`docs/adr/`](docs/adr/) | 設計判断の記録 |
+| [`docs/e2e/`](docs/e2e/) | 各段階の実機確認のスクリーンショット |
+| [`docs/rebuild-summary.md`](docs/rebuild-summary.md) | 再構築の要約 |
+| [`docs/planned/`](docs/planned/) | 未着手の機能案 |
 
-```sh
-pnpm dev:browser                              # ブリッジ (ws://127.0.0.1:1422/ws) + Vite (1420)
-pnpm dev:browser --data-dir /tmp/yhtye-dev    # 以降の引数はブリッジへ (--port / --model / --token)
-```
+画面デザインは Claude Design で起こした。原本と仕様は [`docs/design/`](docs/design/) にある。
 
-- ブリッジは 127.0.0.1 のみで待ち受け、`Origin` が `http://localhost:1420` / `http://127.0.0.1:1420`
-  (ブラウザからの接続) で、`?token=` が一致する接続だけ受け付ける。`pnpm dev:browser` はランダムな
-  トークンを作ってブリッジ (`YHTYE_BRIDGE_TOKEN`) と Vite (`VITE_YHTYE_BRIDGE_TOKEN`) の両方に渡す。
-- ブリッジのデータは既定で `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリとは別)。
-- 別々に起動する場合: `pnpm bridge -- --token T` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
-- **dev ブリッジは単一ユーザーのマシン専用。** トークンは Vite のバンドルに埋め込まれるため、同じマシンの
-  他のユーザーは `localhost:1420` から読めてしまう (配布物には含まれない。Stage 7a でこの前提で決定)。
+## ライセンス
 
-#### Wayland + NVIDIA で起動直後に落ちる場合
+BSD-3-Clause。[`LICENSE`](LICENSE) を参照。
 
-WebKitGTK の DMA-BUF レンダラが NVIDIA プロプライエタリドライバと噛み合わず、
-`Gdk-Message: Error 71 (プロトコルエラー) dispatching to Wayland display` を出して
-即クラッシュすることがある。
-
-`src-tauri/.cargo/config.toml` で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定済みなので
-`pnpm tauri dev` では対処されている。古いビルドなどで必要なら自分で渡す。
-
-```sh
-WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/debug/yhtye
-```
-
-アプリ本体も起動時に Wayland + NVIDIA を検出したとき (かつ未設定のとき) だけ自分で設定するので
-(`src-tauri/src/webkit_env.rs`、[`core-design.md`](docs/architecture/core-design.md) §9)、
-ビルド済みバイナリでも通常は不要。変数が既に設定されていれば (値にかかわらず) アプリは触らない。
-
-### ビルド・検証
-
-```sh
-pnpm build                                         # tsc + vite build
-pnpm test                                          # Vitest
-cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
-cargo test -p yhtye-core -- --ignored --test-threads=1   # 実 Claude Code (Haiku)
-cargo clippy --workspace --all-targets && cargo fmt --check
-pnpm tauri build --debug --no-bundle               # アプリのデバッグビルド (target/debug/yhtye)
-pnpm tauri build                                   # 配布用バイナリ
-```
-
-## 設計の参照元
-
-Claude Design プロジェクト `0e49485a-0f81-42f7-8207-0e30f582bbc3` の
-`Orchestrator Desktop.dc.html`。取り込み日 2026-09-21。
-詳細は [`docs/design/README.md`](docs/design/README.md)。
+作者: Kirsikka (GitHub: [Tom039224](https://github.com/Tom039224))

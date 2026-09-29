@@ -2,6 +2,7 @@
 //! production configuration, forwards `yhtye_command` to it, emits every core
 //! event as `yhtye://event`, and shuts every agent down when the app exits.
 
+mod legacy_data;
 mod webkit_env;
 
 use std::path::PathBuf;
@@ -15,7 +16,7 @@ use yhtye_core::runtime::{Core, CoreConfig};
 const EVENT: &str = "yhtye://event";
 
 /// Model of every role unless `YHTYE_MODEL` says otherwise (Haiku while the
-/// rebuild is being verified; PLAN.md).
+/// rebuild is being verified; docs/PLAN.md).
 const DEFAULT_MODEL: &str = "haiku";
 
 /// The one command: runs an [`ApiCommand`] on the core.
@@ -25,12 +26,15 @@ async fn yhtye_command(core: State<'_, Core>, cmd: ApiCommand) -> Result<ApiResp
 }
 
 /// `YHTYE_DATA_DIR`, else the app data directory
-/// (`~/.local/share/com.tom039224.yhtye` on Linux): the database and worktrees.
+/// (`~/.local/share/io.github.tom039224.yhtye` on Linux): the database and worktrees.
+/// On the default path the pre-rename `com.tom039224.yhtye` directory is moved first.
 fn data_dir(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(dir) = std::env::var_os("YHTYE_DATA_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    Ok(app.path().app_data_dir()?)
+    let dir = app.path().app_data_dir()?;
+    legacy_data::migrate(&dir);
+    Ok(dir)
 }
 
 fn start_core(app: &AppHandle) -> Result<Core, Box<dyn std::error::Error>> {

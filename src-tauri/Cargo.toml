@@ -2,8 +2,9 @@
 name = "yhtye"
 version = "0.1.0"
 description = "Yhtye desktop app (Tauri shell around yhtye-core)"
-authors = ["you"]
+authors = ["Kirsikka (GitHub: Tom039224)"]
 edition = "2021"
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -27,3 +28,6 @@ tokio = { workspace = true, features = ["signal"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+
+[dev-dependencies]
+tempfile.workspace = true

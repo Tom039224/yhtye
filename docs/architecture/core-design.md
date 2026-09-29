@@ -563,7 +563,7 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   (broadcast の `Lagged` は捨てる。UI が seq 飛びで補う)。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
 - Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
-  app data dir (Linux: `~/.local/share/com.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
+  app data dir (Linux: `~/.local/share/io.github.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
@@ -581,6 +581,10 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   `/sys/module/nvidia` がある)** ときだけ設定する。ユーザーが既に設定していれば (値にかかわらず) 触らない。
   プロセスを起こさない安価な判定で、スレッド起動前に呼ぶ。判定は注入した入力で単体テスト。
   dev の `src-tauri/.cargo/config.toml` の `[env]` はそのまま (設定済みなので検出は何もしない)。
+- データディレクトリの移行: identifier を `com.tom039224.yhtye` から `io.github.tom039224.yhtye` に変えたので、
+  `src-tauri/src/legacy_data.rs` が既定パスのときだけ (`YHTYE_DATA_DIR` 未設定)、旧ディレクトリだけが存在すれば
+  新ディレクトリへ `rename` し、移動した `worktrees/*/*/*` (`.git` ファイルあり) で `git worktree repair` を実行する。
+  両方ある・旧がない・rename 失敗 (別デバイスなど) は何もせず警告のみで、新しい空ディレクトリで起動する。
 
 ## 10. 開発用 WS ブリッジ (`yhtye-dev-bridge`)
 

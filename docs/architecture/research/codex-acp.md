@@ -1,7 +1,7 @@
 # 調査: OpenAI Codex CLI を Yhtye のハーネスにする (codex-acp)
 
 > **状況 (2026-09-29): この調査に基づいて Stage 7e で実装済み。** 採用した仕様・ユーザー決定・実機の結果は [`../acp-harnesses.md`](../acp-harnesses.md) §9 と
-> [`PLAN.md`](../../../PLAN.md) の Stage 7e。以下は調査時点の記録で、そのまま残す (Codex 0.159 + `~/.codex` では、アダプタ自身のモデル一覧が OpenRouter のモデルも
+> [`PLAN.md`](../../PLAN.md) の Stage 7e。以下は調査時点の記録で、そのまま残す (Codex 0.159 + `~/.codex` では、アダプタ自身のモデル一覧が OpenRouter のモデルも
 > 含むなど、§4 の記述と実測が変わった点は acp-harnesses.md §9.4 に書いた)。
 
 

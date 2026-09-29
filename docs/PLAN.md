@@ -1,13 +1,15 @@
 # Yhtye 再構築計画
 
+> 開発時の作業計画と記録。書かれている前提 (Haiku 固定など) は当時のもので、現在の使い方は [`README.md`](../README.md) と [`SETUP.md`](../SETUP.md) を参照。
+
 前回の試みは UI を静的モックの上に組んだため、実際にはほぼ何も動かなかった
 (メッセージ送信が "session not started" で失敗する)。コードを捨て、下層から積み直す。
 **各 Stage の完了条件は「本物で動くこと」** — 偽エージェントの決定的テストに加え、
 実エージェント (Claude Code、**必ず Haiku**) での確認を含む。
 
-設計: [`docs/architecture/`](docs/architecture/)
+設計: [`docs/architecture/`](architecture/)
 (モデル: `orchestration-model.md` / ツール: `mcp-tools.md` / 構成: `core-design.md` /
-ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)。
+ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](design/)。
 
 ## 状態
 
@@ -41,7 +43,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   Stage の節に「結果メモ」(実行したコマンド・実エージェントでの観察・残課題) を追記 →
   `rebuild` ブランチにコミット (`<type>: <description>`)。push はしない。
 - 実エージェントテストは Claude Code のローカルログインを使う。モデルは必ず Haiku
-  (`ANTHROPIC_MODEL=haiku`、[`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5)。
+  (`ANTHROPIC_MODEL=haiku`、[`acp-harnesses.md`](architecture/acp-harnesses.md) §5)。
 
 ---
 
@@ -59,7 +61,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 **範囲**
 - Cargo workspace をリポジトリ直下に作り、`crates/yhtye-core` (まず `acp` モジュールのみ) と
   `crates/yhtye-fake-agent` を追加。`src-tauri` も member にする。
-- `acp::spawn_agent` / `AgentHandle` / `AgentCmd` / `AgentEvent` ([`core-design.md`](docs/architecture/core-design.md) §3)。
+- `acp::spawn_agent` / `AgentHandle` / `AgentCmd` / `AgentEvent` ([`core-design.md`](architecture/core-design.md) §3)。
   - プロセス起動、`initialize`、`session/new` (mcp_servers と `_meta.systemPrompt.append` を渡せる)、
     `session/load` (capability 確認付き)、`set_mode`、`set_config_option`。
   - prompt のストリーミング。**ターン中キャンセル** (コマンドループが prompt を待たない構造)。
@@ -101,10 +103,10 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - 各実テスト後に npx→node→claude のプロセスグループが空であることを /proc で確認。
     `ps` でも claude-agent-acp / yhtye-fake-agent の残存なし。
   - `cargo clippy --workspace --all-targets` 警告なし / `cargo check` (src-tauri) / `pnpm build` 成功。
-- 実エージェントでの観察は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.1。
+- 実エージェントでの観察は [`acp-harnesses.md`](architecture/acp-harnesses.md) §5.1。
   bypassPermissions では権限要求が**来なかった**ため、kind による自動承認は偽エージェントでのみ検証
   (完了条件 3 の「来たら」の分岐は未発生)。
-- 設計からの変更 (理由は [`core-design.md`](docs/architecture/core-design.md) §3.5):
+- 設計からの変更 (理由は [`core-design.md`](architecture/core-design.md) §3.5):
   `AcpAgent` を使わず自前のプロセスグループ管理 / イベントチャネルを unbounded に /
   `AgentCmd` を内部化してハンドルのメソッドに / `Exited{code, signal}` / `choose_permission` は
   選択肢を返す + `outcome_for`。偽エージェントの動作に `update` (任意 JSON)・`spawn_child`・
@@ -121,7 +123,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **範囲**
 - `mcp` モジュール: rmcp 3.4 + axum、`/mcp/{token}`、`TokenRegistry`、役割別 `tools/list`、
-  `ToolPort` 経由の呼び出し。まずは [`mcp-tools.md`](docs/architecture/mcp-tools.md) の
+  `ToolPort` 経由の呼び出し。まずは [`mcp-tools.md`](architecture/mcp-tools.md) の
   ツールのうち `create_group` / `create_task` / `report_step_done` / `help` / `get_status` を
   **最小の仮実装の ToolPort** (メモリ上) でつなぐ。本物の状態機械は Stage 3。
 - 複数 ACP セッションの並行管理 (オーケストレータ 1 + サブエージェント N)。
@@ -138,7 +140,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **結果メモ (2026-09-23)**
 
-- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §4・§4.1):
+- 構成 (詳細は [`core-design.md`](architecture/core-design.md) §4・§4.1):
   - `domain/` — 共有の語彙 (`Role` / `StepKind` / `TaskKind` / `StepSpec` / `Verdict` /
     `HelpKind` / `ErrorCode` / `ToolError`) と `normalize_steps` (Step 列の規則)。
   - `mcp/` — `McpHost` (rmcp 3.4 + axum、`/mcp/{token}`、ステートレス)、`TokenRegistry`
@@ -168,7 +170,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
     (2) オーケストレータ用ハーネスでは直接頼んでもファイルを書けない。
   - 実テスト後 `ps` で claude-agent-acp / yhtye-fake-agent の残存なし、各プロセスグループも空。
   - `cargo clippy --workspace --all-targets` 警告なし / `cargo check --workspace` / `pnpm build` 成功。
-- 実機で分かったこと (詳細 [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.2):
+- 実機で分かったこと (詳細 [`acp-harnesses.md`](architecture/acp-harnesses.md) §5.2):
   - **Claude Code 2.1.280 は MCP 2026-07-28 版で接続し、`tools/list` に `ttlMs`/`cacheScope`
     が無いと `INVALID_RESULT` で一覧を捨てる** (rmcp 3.4 は任意扱い)。最初はこれで
     オーケストレータに Yhtye のツールが見えなかった。明示して解決。
@@ -230,7 +232,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **3a 結果メモ (2026-09-23)**
 
-- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §4.1・§5・§7・§8):
+- 構成 (詳細は [`core-design.md`](architecture/core-design.md) §4.1・§5・§7・§8):
   - `domain/` — 純粋な状態機械。`decide(&State, DomainCommand) -> (State, Transition{events,
     effects, reply})`。状態は `DomainEvent` を `State::apply` (reducer) で適用してしか変わらない
     (`Tx` が作業用コピーにイベントを発行しながら判断する)。`state` / `event` / `command` /
@@ -306,7 +308,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **3b 結果メモ (2026-09-23)**
 
-- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §2・§4.1・§6・§8.1):
+- 構成 (詳細は [`core-design.md`](architecture/core-design.md) §2・§4.1・§6・§8.1):
   - `store/` — sqlx 0.9 (SQLite bundled、WAL + NORMAL)。`migrations/0001_init.sql`
     (`sqlx::migrate!` で埋め込み)。`events` (追記のみ、`(project_id, seq)` が主キー、`kind` /
     `session` に索引) + 現在状態 `projects` / `task_groups` / `tasks` / `task_deps` / `steps` /
@@ -353,7 +355,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
     Claude Code セッション UUID に `session/load` で復元 → `[yhtye:resume]` だけで実装者が
     README に 1 行足して**新しいトークンの URL で** `report_step_done` → `done` →
     `group_settled` → `finish_group`。README の行は 1 つ (二重作業なし)。
-    観察は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.3。
+    観察は [`acp-harnesses.md`](architecture/acp-harnesses.md) §5.3。
   - 実テスト後 `pgrep` で claude-agent-acp / yhtye-fake-agent の残存なし、各プロセスグループも空。
   - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` / `cargo check --workspace` /
     `pnpm build` 成功。
@@ -396,8 +398,8 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 
 **3c 結果メモ (2026-09-23)**
 
-- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §7.1、規則は
-  [`orchestration-model.md`](docs/architecture/orchestration-model.md) §6「Stage 3c で決めた細部」):
+- 構成 (詳細は [`core-design.md`](architecture/core-design.md) §7.1、規則は
+  [`orchestration-model.md`](architecture/orchestration-model.md) §6「Stage 3c で決めた細部」):
   - `git/` — `GitCli` (git CLI を `tokio::process` で実行。git2/gix は不採用: worktree・merge・
     フック・ユーザー設定の挙動を git 本体と一致させるため) = `run` (環境の掃除・プロンプト無効・
     120 秒タイムアウト) / `repo` (照会・commit・merge・stash) / `worktree` (作成・再利用・削除) /
@@ -462,17 +464,17 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
   - git はループ内で await (大きなリポジトリで遅い場合はタスク化を検討)。
   - UI の git グラフ (Stage 6) はブランチ名 `yhtye/G-n` / `yhtye/G-n-T-m` を前提にできる。
 
-**未決事項 (ユーザー判断待ち)** — 全 Stage 分をここにまとめる (朝の要約: [`docs/rebuild-summary.md`](docs/rebuild-summary.md))
+**未決事項 (ユーザー判断待ち)** — 全 Stage 分をここにまとめる (朝の要約: [`docs/rebuild-summary.md`](rebuild-summary.md))
 
 Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果メモ、決定の記録は各設計ドキュメント):
 
 1. ~~`~/.claude` を効かせるか~~ → **常に有効** (現状維持: CLAUDE.md・フック・スキルを読み込む、MCP サーバーだけ隔離)。
-   [`orchestration-model.md`](docs/architecture/orchestration-model.md) §11 / [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §5.2。
+   [`orchestration-model.md`](architecture/orchestration-model.md) §11 / [`acp-harnesses.md`](architecture/acp-harnesses.md) §5.2。
 2. **runs (履歴) ビューの中身** → **保留** (「現状は何もありません」の空表示のまま)。再開するときの案は前回の推奨
    (過去のグループ一覧 → クリックで会話のその位置へ)。
-3. ~~「対処の内容を見る」「差分を見る」の遷移先~~ → **ボタンを出さない** ([`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §3.4 / §8)。
+3. ~~「対処の内容を見る」「差分を見る」の遷移先~~ → **ボタンを出さない** ([`orchestrator-desktop.md`](design/orchestrator-desktop.md) §3.4 / §8)。
 4. ~~他ハーネスの追加~~ → **Stage 7b / 7c として実施予定** (下の Stage 7 の節)。
-5. ~~配布バイナリでの DMABUF~~ → **起動時に Wayland + NVIDIA を検出したときだけ設定** (7a で実装、[`core-design.md`](docs/architecture/core-design.md) §9)。
+5. ~~配布バイナリでの DMABUF~~ → **起動時に Wayland + NVIDIA を検出したときだけ設定** (7a で実装、[`core-design.md`](architecture/core-design.md) §9)。
 6. ~~使用量の取得頻度~~ → **現状のまま** (接続時 + 5 分ごと + クリック)。
 7. ~~dev ブリッジのトークン~~ → **現状のまま**、単一ユーザー機専用と README に明記。
 8. ~~以前からの要確認~~ → すべて確認済み: タスクブランチ名 `yhtye/<G>-<T>`、UI からの中止経路、ブリッジのポート 1422 と
@@ -498,7 +500,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 
 **結果メモ (2026-09-23)**
 
-- Rust (API ファサード、詳細は [`core-design.md`](docs/architecture/core-design.md) §2・§11):
+- Rust (API ファサード、詳細は [`core-design.md`](architecture/core-design.md) §2・§11):
   - `runtime::Core` / `CoreConfig` (`runtime/core.rs`): 共有 DB + 開いたプロジェクトごとの `Orchestration`
     (`GitCli`)、`command(ApiCommand) -> Result<ApiResponse, ApiError>`、`subscribe()` (broadcast、全プロジェクト)、
     `shutdown()`。Tauri コマンドと WS ブリッジはこの 2 つを中継するだけで済む形。
@@ -564,7 +566,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 
 **結果メモ (2026-09-23)**
 
-- 構成 (詳細は [`core-design.md`](docs/architecture/core-design.md) §2「Stage 5 の決定」・§9・§10):
+- 構成 (詳細は [`core-design.md`](architecture/core-design.md) §2「Stage 5 の決定」・§9・§10):
   - `src-tauri/src/lib.rs`: `Core::start(CoreConfig::claude_code(data_dir, model))` を manage、
     `yhtye_command` 1 本、`subscribe` → `emit("yhtye://event")`、起動後に `resume_unfinished`、
     `RunEvent::Exit` で `block_on(core.shutdown())`、SIGINT/SIGTERM → `app.exit(0)`。
@@ -607,12 +609,12 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   - 観察: 「`sleep 45` してからファイル作成」の依頼では Haiku の実装者が 2 回報告なしでターンを終え
     `protocol_violation` → オーケストレータがタスクを中止した (Claude Code が長いコマンドを背景実行した
     とみられる)。Yhtye の規則どおりの挙動。ページ再読み込み後はプロジェクトを自動では選ばない (クリックが要る)。
-  - スクリーンショット: [`docs/e2e/stage5/`](docs/e2e/stage5/) (Stage 6a で一時ディレクトリから移した)
+  - スクリーンショット: [`docs/e2e/stage5/`](e2e/stage5/) (Stage 6a で一時ディレクトリから移した)
     `0-request-sent.jpg` (依頼直後) / `1-tasks-running.jpg` (タスク並行実行) /
     `2-after-reload-done.jpg` (再読み込み後・完了) / `3-long-streaming.jpg` (長文ストリーミング) /
     `4-after-cancel.jpg` (中止後) / `5-restart-completed.jpg` (再起動後に完走) / `6-merge-retried.jpg` (マージ再試行後)。
 - 開発での起動コマンド:
-  - アプリ: `pnpm tauri dev` (データ: `~/.local/share/com.tom039224.yhtye`、`YHTYE_DATA_DIR` / `YHTYE_MODEL` で変更)。
+  - アプリ: `pnpm tauri dev` (データ: `~/.local/share/io.github.tom039224.yhtye`、`YHTYE_DATA_DIR` / `YHTYE_MODEL` で変更)。
   - ブラウザ: `pnpm dev:browser [--data-dir DIR]` → Chrome で `http://localhost:1420`。
     別々に: `pnpm bridge -- --token T --data-dir DIR` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
 - 設計への反映: core-design §2 (Stage 5 の決定・コマンド一覧)・§9・§10 (ポート 1422、Origin が無い接続の扱い、
@@ -635,7 +637,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 ### Stage 6a — Claude Design の適用・UX / 堅牢性 (完了)
 
 **範囲**
-- [`docs/design/orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) のレイアウト・トークン・
+- [`docs/design/orchestrator-desktop.md`](design/orchestrator-desktop.md) のレイアウト・トークン・
   アニメーション (`prefers-reduced-motion` 対応を含む) を**実データだけで**適用。データの無い要素は空 / プレースホルダ。
 - git パネル・ブランチ一覧用のコアコマンド、前回のプロジェクトの自動選択、履歴の遅延読み込み、
   タスクカードの `@` メンション。
@@ -650,7 +652,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 **結果メモ (2026-09-23)**
 
 - デザインの適用 (`src/ui/`、対応表と「実データ / 空表示」の区別は
-  [`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8、追加トークンは [`tokens.md`](docs/design/tokens.md)):
+  [`orchestrator-desktop.md`](design/orchestrator-desktop.md) §8、追加トークンは [`tokens.md`](design/tokens.md)):
   タイトルバー (現在ブランチ)、アイコンレール (work / runs)、サイドバー (PROJECTS のリング = 開いている /
   ターン中、BRANCHES = 実ブランチ、フッタ = ローカルコアへの接続と最後のイベント)、会話 (発話ラベル・
   GROUP TASK カード・グループ待機バナー・メンションチップ付きコンポーザ)、タスク列 (注目グループ、
@@ -701,7 +703,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   チップ → 質問を送信 → オーケストレータが `@T-1 …` を受けて回答 → ページ再読み込みで demo が自動で開く →
   T-2 のタイトルで出力タブ (セッションの `process exited` の後に `session stopped` の順)。コンソールエラーなし。
   終了後ブリッジ・Vite・エージェント残存 0。
-  スクリーンショット: [`docs/e2e/stage6a/`](docs/e2e/stage6a/) `1-group-running.jpg` / `2-done-merged-mention-chip.jpg` /
+  スクリーンショット: [`docs/e2e/stage6a/`](e2e/stage6a/) `1-group-running.jpg` / `2-done-merged-mention-chip.jpg` /
   `3-mention-sent-answered.jpg` / `4-reloaded-auto-reopened.jpg` / `5-task-agent-output.jpg`。
   (runs ビューのスクリーンショットは Chrome のウィンドウが非表示になり撮れなかった。ページは動作していた —
   read_page で「現状は何もありません」を確認、rAF 77fps。表示は Vitest で検査。)
@@ -725,7 +727,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   要素にならない)、URL は http(s)/mailto のみ (Tauri では opener で外部に開く、webview は遷移しない)、画像は読み込まず
   `[alt]`。会話とエージェント出力のエージェント発話 (ストリーミング中も) に適用。コード・表・引用はトークンの色。
   Vitest 5 件 (書式・閉じていないフェンスのストリーミング・**XSS** (`<script>` / `onerror` / `javascript:` / `data:`) ・URL)。
-- **使用量 / quota** (`crates/yhtye-core/src/usage/`、設計 [`core-design.md`](docs/architecture/core-design.md) §14):
+- **使用量 / quota** (`crates/yhtye-core/src/usage/`、設計 [`core-design.md`](architecture/core-design.md) §14):
   データ源を調査し、**Claude Code の `/usage` (ローカルコマンド、モデル呼び出しなし) を短命の ACP セッションで実行して
   アダプタの Markdown を読む**方式を採用。`usage_update` はコンテキスト量とコストだけ、`_claude/rateLimit` は変化時のみで
   常時表示には使えない、OAuth の非公開 API は不採用。`ApiCommand::GetUsage{refresh?}` (キャッシュ 60 秒・単一実行)。
@@ -762,7 +764,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
     **全 11 件の再実行はしていない** (quota)。終了後 `claude-agent-acp` 残存 0。
   - Chrome (WS ブリッジ + 本番バンドル + CSP ヘッダ + 実 Haiku): プロジェクトを開き「見出し・太字・箇条書き・インラインコード・
     コードブロック・表」の返答を依頼 → 正しく描画、ステータスバーに `claude max`・5h 4% (4h 52m)・week 100% (1d 18h)、
-    コンソールに CSP 違反なし。スクリーンショット [`docs/e2e/stage6b/1-markdown-and-usage.jpg`](docs/e2e/stage6b/1-markdown-and-usage.jpg)。
+    コンソールに CSP 違反なし。スクリーンショット [`docs/e2e/stage6b/1-markdown-and-usage.jpg`](e2e/stage6b/1-markdown-and-usage.jpg)。
     ブリッジ・プレビューは停止済み。
 
 ## Stage 7 — 不具合修正とハーネス / モデルの選択
@@ -783,7 +785,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   設計上グループは `finish_group` まで `active` なので、UI の「進行中」と「送信保留」は状態の忠実な表示だった。
   TS のリデューサ・スナップショット / 追いつきの経路に食い違いは無い (記録済みの 3 本の実イベント列で Rust と一致を検査)。
 - **修正 (コア)**: サブエージェントの催促 (§7) と同じ安全網をオーケストレータにも
-  ([`orchestration-model.md`](docs/architecture/orchestration-model.md) §2.1):
+  ([`orchestration-model.md`](architecture/orchestration-model.md) §2.1):
   オーケストレータのターンが `end_turn` で終わり、受信箱が空で次のプロンプトも無いのに、全タスクが落ち着いた active グループが
   あれば 1 回目は `group_settled` を `reminder=1` 付きで再送、それでも終わらなければ Yhtye が `finish_group` を代行して
   `merge_result` で知らせる (開始不能タスクが残る場合は代行しない)。新しいドメインコマンド `OrchestratorTurnEnded`、
@@ -795,7 +797,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - **修正 (UI)**: 全タスクが落ち着いた active グループを「進行中 / 送信保留」と区別して表示: グループのバッジ「完了待ち」、
   完了タスクの補足行「全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち」、待機バナー
   「全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています」。finishing は「base ブランチへマージ中」。
-  done / cancelled / merge_blocked では補足行もバナーも出ない ([`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8)。
+  done / cancelled / merge_blocked では補足行もバナーも出ない ([`orchestrator-desktop.md`](design/orchestrator-desktop.md) §8)。
 - **テスト (先に失敗を確認)**:
   - Rust ドメイン `domain/tests/orch.rs` 7 件 (催促 → 代行 / 催促後に自分で finish / 動いているタスク・未配達の受信箱・
     キャンセルされたターン・キューあり・空グループでは何もしない / 開始不能タスクは催促のみ / 代行マージが dirty で
@@ -837,9 +839,9 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 
 **結果メモ (2026-09-23)**
 
-- 設計: [`core-design.md`](docs/architecture/core-design.md) §15 (新設)、[`mcp-tools.md`](docs/architecture/mcp-tools.md) の
-  `create_task` / `get_status`、[`orchestration-model.md`](docs/architecture/orchestration-model.md) §8.0、
-  [`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8 を先に更新した。
+- 設計: [`core-design.md`](architecture/core-design.md) §15 (新設)、[`mcp-tools.md`](architecture/mcp-tools.md) の
+  `create_task` / `get_status`、[`orchestration-model.md`](architecture/orchestration-model.md) §8.0、
+  [`orchestrator-desktop.md`](design/orchestrator-desktop.md) §8 を先に更新した。
 - コア: `crates/yhtye-core/src/agents/` — `settings.rs` (役割 4 つ・`AgentChoice`・`RoleSettings`・層の重ね合わせ・
   検査・`pick`。純粋関数)、`catalog.rs` (`HarnessPreset` = ハーネスの登録簿、`AgentCatalog` = 設定の写しと起動時の解決)、
   `models.rs` (プロンプトを送らない短命セッションの `configOptions` からモデル一覧、キャッシュ 10 分)。
@@ -866,7 +868,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
     `orchestration_claude_real::real_orchestrator_creates_task_and_sub_agent_reports_back`、`orchestration_claude_restart` — すべて成功。
     安いモデルが haiku だけなので 2 つのモデルでの実行は偽エージェントで検証。終了後 `claude-agent-acp` 残存 0。
   - Chrome (WS ブリッジ + Vite + 実 Claude Code、一時リポジトリ): ⚙ → パネルに実モデル一覧、「このプロジェクト」でレビューの継承を外し
-    sonnet を候補に追加 → DB の `agent_settings` に保存を確認。[`docs/e2e/stage7b/`](docs/e2e/stage7b/) `1-settings-panel-real-models.jpg` /
+    sonnet を候補に追加 → DB の `agent_settings` に保存を確認。[`docs/e2e/stage7b/`](e2e/stage7b/) `1-settings-panel-real-models.jpg` /
     `2-project-reviewer-override.jpg`。ブリッジ・Vite は停止済み。
 - 7c への申し送り: OpenCode は `HarnessPreset` を 1 つ作り `CoreConfig::claude_code` (または新しい既定の構成関数) の `harnesses` に足すだけで
   UI・検査・一覧に載る。モデル一覧は `configOptions` の `category: model` か id `model` の select を読む (無ければ「既定のモデル」だけ)。
@@ -883,14 +885,14 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 7c-2 のユーザー決定: オーケストレータにも選べる (読み取り専用にできないので設定パネルで警告、プロンプトでの禁止は維持)。
   実テストは OpenCode = `opencode/muse-spark-1.3-contributor-free`、Claude Code = Haiku のみ。`~/.claude` とユーザーの OpenCode 設定は有効のまま。
 
-**7c-1 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §7.1〜7.5。
+**7c-1 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](architecture/acp-harnesses.md) §7.1〜7.5。
 `opencode acp` (2.0.12) は ACP の cwd を守り、`build` モードで自動承認、モデルは `set_config_option` (`<provider>/<model>`、475 件、
 既定は最後に使ったモデル)、システムプロンプトは FirstPrompt、MCP は HTTP のみでコードモードの `execute` 経由、session/load は
 作成時の cwd でのみ可、オーケストレータを読み取り専用にする手段は無い。`HarnessConfig::opencode`、実テスト
 `acp_opencode_real` 7 件・`orchestration_opencode_real` 2 件 (各 2 回成功)。
 
-**7c-2 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §7.2・§7.6、
-[`core-design.md`](docs/architecture/core-design.md) §3.4・§15.2・§15.4、[`orchestration-model.md`](docs/architecture/orchestration-model.md) §8.1。
+**7c-2 結果メモ (2026-09-23)** — 詳細は [`acp-harnesses.md`](architecture/acp-harnesses.md) §7.2・§7.6、
+[`core-design.md`](architecture/core-design.md) §3.4・§15.2・§15.4、[`orchestration-model.md`](architecture/orchestration-model.md) §8.1。
 
 - コア: `HarnessPreset::opencode` (全役割 `HarnessConfig::opencode`、probe は mode / model なし)、preset と `HarnessInfo` に
   `requires_model` / `orchestrator_read_only`。`AgentCatalog::validate` が OpenCode の `model: null` を拒否 (念のため preset 側にも
@@ -917,7 +919,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   `cargo fmt --check` 成功、`pnpm test` → 13 ファイル 87 件成功、`pnpm build` 成功、`pnpm gen:types` で TS 型を再生成 (フィクスチャは変更なし)。
 - Chrome (`pnpm dev:browser` + 実 OpenCode / Claude Code、一時リポジトリ): ⚙ パネルに Claude Code の 5 モデルと「OpenCode: 475 モデル — 検索して候補に追加」、
   オーケストレータで「muse free」を検索 → `OpenCode · opencode` 見出しに 2 件 (⚠ 書き込み制限なし)、1.3 を選ぶと警告の帯。
-  [`docs/e2e/stage7c/`](docs/e2e/stage7c/) `1-settings-opencode-models.jpg` / `2-opencode-orchestrator-warning.jpg`。
+  [`docs/e2e/stage7c/`](e2e/stage7c/) `1-settings-opencode-models.jpg` / `2-opencode-orchestrator-warning.jpg`。
   ブラウザでの実混成実行は行っていない (上の実テストで代替)。ブリッジ・Vite は停止済み。
 - 残課題: OpenCode の MCP 隔離が無い (ユーザーが OpenCode に MCP を足すと付く。必要になれば Yhtye 専用 `OPENCODE_CONFIG_DIR`)。
   モデル一覧のプローブが OpenCode の履歴にセッションを 1 つ残す。消えたハーネスの記録を持つセッションの load は別ハーネスで試みて失敗 → 新しいセッション
@@ -933,8 +935,8 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 設定 UI: コンポーザの ⚙ を廃止し、左端の縦バーの最下部の ⚙ でアプリ全体の設定モーダル (約 90%、Esc / × で閉じる)。左に項目 (いまは「エージェント」)、
   上に 全体 / このプロジェクト、役割ごとの行の表。
 
-**結果メモ (2026-09-29)** — 詳細は [`core-design.md`](docs/architecture/core-design.md) §15、[`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §8、
-[`mcp-tools.md`](docs/architecture/mcp-tools.md) `create_task`、[`orchestrator-desktop.md`](docs/design/orchestrator-desktop.md) §8。
+**結果メモ (2026-09-29)** — 詳細は [`core-design.md`](architecture/core-design.md) §15、[`acp-harnesses.md`](architecture/acp-harnesses.md) §8、
+[`mcp-tools.md`](architecture/mcp-tools.md) `create_task`、[`orchestrator-desktop.md`](design/orchestrator-desktop.md) §8。
 
 - コア: `AgentChoice` に `effort`、新しい `Candidate { harness, model, effort, note }`、`RoleSettings.candidates: Vec<Candidate>`、
   `RoleSettings::pick(harness?, model?, effort?)` → `PickError::{NoMatch, NeedsEffort}` (`agents/settings.rs`)。`HarnessConfig.effort`
@@ -983,7 +985,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 
 ### Stage 7e — Codex ハーネスと秘密の環境変数 (完了、ユーザー決定済みの仕様)
 
-調査: [`research/codex-acp.md`](docs/architecture/research/codex-acp.md)。仕様と実測: [`acp-harnesses.md`](docs/architecture/acp-harnesses.md) §9、[`core-design.md`](docs/architecture/core-design.md) §15.2・§15.6・§16。
+調査: [`research/codex-acp.md`](architecture/research/codex-acp.md)。仕様と実測: [`acp-harnesses.md`](architecture/acp-harnesses.md) §9、[`core-design.md`](architecture/core-design.md) §15.2・§15.6・§16。
 
 ユーザー決定 (再検討しない):
 1. 入口 `npx -y @agentclientprotocol/codex-acp@2.0.0` (完全固定)、`CODEX_PATH` = `PATH` のユーザーの `codex`。`codex` が `PATH` にあるときだけ登録 (OpenCode と同じ)。

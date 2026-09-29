@@ -1,7 +1,7 @@
 //! WebKitGTK's DMA-BUF renderer crashes on Wayland with NVIDIA's proprietary
 //! driver (Gdk Error 71, README "Wayland + NVIDIA"). The app sets
 //! `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup only in that environment, so
-//! other machines keep the fast GPU path (decided in Stage 7a, PLAN.md).
+//! other machines keep the fast GPU path (decided in Stage 7a, docs/PLAN.md).
 
 use std::path::Path;
 
