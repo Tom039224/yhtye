@@ -50,7 +50,7 @@
 
 ## 既知の制限
 
-- 対応ハーネスは Claude Code (`claude-agent-acp@0.81.0` を npx で起動) と OpenCode 2.0.12 (`opencode acp`)。プロセス管理は Unix 専用。
+- 対応ハーネスは Claude Code (`claude-agent-acp@0.84.0` を npx で起動) と OpenCode 2.0.12 (`opencode acp`)。プロセス管理は Unix 専用。
 - OpenCode は MCP サーバーを隔離できない (ユーザーが OpenCode に MCP を足すと Yhtye のエージェントにも付く)。オーケストレータは書き込み可能。
 - 使用量は Claude Code の `/usage` の表示書式に依存 (アダプタのバージョン固定で安定、変われば「—」表示になる)。
 - CSP はブラウザで同等の設定を検証済み。Tauri ウィンドウでの基本動作はユーザーが確認済み。

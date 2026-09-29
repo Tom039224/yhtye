@@ -119,6 +119,8 @@ connect_with(agent, async |cx| {
 調査日 2026-09-23、npm 最新 0.81.0 (bin `claude-agent-acp`、Node >= 22、
 依存 `@anthropic-ai/claude-agent-sdk` 0.3.280)。`dist/` を読み、実際に
 initialize / session/new / set_config_option まで疎通確認した。行番号は `dist/` 相対。
+(2026-09-30: Sonnet 5.5 を選べるよう **0.84.0** (SDK 0.3.284 / Claude Code 2.1.284) に更新。
+Claude Code は `claude` CLI ではなく SDK 同梱のバイナリなので、モデルの追加はアダプタの更新で入る。)
 
 | 項目 | 結論 |
 |---|---|
@@ -138,7 +140,7 @@ Yhtye での Claude Code 用 `HarnessConfig` (初期値):
 ```toml
 [harness.claude-code]
 command = "npx"
-args = ["-y", "@agentclientprotocol/claude-agent-acp@0.81.0"]   # Stage 6b で完全一致に固定 (npx -y は解決したものを実行するため)
+args = ["-y", "@agentclientprotocol/claude-agent-acp@0.84.0"]   # Stage 6b で完全一致に固定 (npx -y は解決したものを実行するため)
 env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1" }  # §5.2
 mode_after_new = "bypassPermissions"
 model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する
@@ -152,11 +154,20 @@ startup_timeout = 120                  # 秒。各起動段ごと
 (Stage 7b: 役割ごとの設定は `HarnessPreset::claude_code(model)` (id `claude-code`、`model_env = ANTHROPIC_MODEL`) として
 登録し、選んだモデルを `model` と `ANTHROPIC_MODEL` に差し込む。[`core-design.md`](core-design.md) §15。)
 
-**モデル一覧 (Stage 7b、実機 2026-09-23)**: `session/new` の `configOptions` の `id: "model"` の select
+**モデル一覧 (Stage 7b、実機 2026-09-23、0.81.0)**: `session/new` の `configOptions` の `id: "model"` の select
 (カテゴリ付き) に、`default` (Default (recommended)) / `opus[1m]` (Opus 5.5) / `claude-fable-5-1[1m]` (Fable 5.1) /
 `sonnet` (Sonnet 5) / `haiku` (Haiku 4.5) が並ぶ。プロンプトを送らない短命のセッション
 (`claude_code_usage_probe` の設定) で約 2 秒、現在値は `ANTHROPIC_MODEL` の値 (`haiku`)。
 `tests/acp_claude_real.rs::real_model_list_comes_from_the_adapter`。
+
+**0.84.0 (実機 2026-09-30)**: `default` / `opus` (Opus 5.5) / `claude-fable-5-1` (Fable 5.1) / `sonnet` (**Sonnet 5.5**) /
+`haiku` (Haiku 4.5) に加え、旧版の `claude-sonnet-5` / `claude-opus-5` / `claude-fable-5` / `claude-opus-4-8` /
+`claude-opus-4-7` / `claude-opus-4-6` / `claude-sonnet-4-6` の計 12 個。
+- **値から `[1m]` が消えた。** `opus[1m]` を `ANTHROPIC_MODEL` / `set_config_option` で渡すと現在値は `opus` と返る
+  (`claude-fable-5-1[1m]` はそのまま返る)。Yhtye は要求した値と現在値の完全一致で検証する (`startup.rs`) ので、
+  `opus[1m]` を保存した設定は起動エラーになる。移行処理は入れず、アプリの設定で選び直す (2026-09-30 決定)。
+- 12 個は `EAGER_EFFORT_MODELS` (12) ちょうどなので全モデルの effort をまとめて読み、一覧の取得に約 30〜50 秒かかる
+  (1 モデル約 2.5 秒)。一覧は 10 分キャッシュされる。モデルが 1 つ増えると effort は選んだときの個別読み取りに切り替わる。
 
 ### 5.1 実機での観察 (Stage 1、2026-09-23、adapter 0.81.0 + Haiku)
 
@@ -429,11 +440,11 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
 ACP のセッション設定 `configOptions` に **`effort`** があるハーネスでは、Yhtye は行 (ハーネス × モデル × effort) の effort を
 `session/set_config_option` で設定する ([`core-design.md`](core-design.md) §15)。
 
-| | Claude Code (`claude-agent-acp` 0.81.0) | OpenCode (`opencode acp` 2.0.12) |
+| | Claude Code (`claude-agent-acp` 0.84.0) | OpenCode (`opencode acp` 2.0.12) |
 |---|---|---|
 | config option | id `effort`、`category: thought_level`、select | id `effort` (OpenCode の variant) |
 | 選択肢 | **モデルごと** (そのモデルの `supportedEffortLevels`)。先頭に古いクライアント用の `default` 行。モデルが effort を持たなければ option 自体が無い。**モデルを変えると作り直される** (`session-effort.js`、`acp-agent.js`) | モデルごと (variant) |
-| 実測 (このマシン) | `default` / `opus[1m]` / `claude-fable-5-1[1m]` / `sonnet` = `low, medium, high, xhigh, max`、**`haiku` = effort 無し** | `opencode/muse-spark-1.3-contributor-free` = `minimal, low, medium, high, xhigh` |
+| 実測 (このマシン) | `default` / `opus` / `claude-fable-5-1` / `sonnet` ほか = `low, medium, high, xhigh, max` (`claude-opus-4-6` / `claude-sonnet-4-6` は `xhigh` 無し)、**`haiku` = effort 無し** | `opencode/muse-spark-1.3-contributor-free` = `minimal, low, medium, high, xhigh` |
 | 未知の値 | `Invalid value for config option effort: no-such-effort` (JSON-RPC の内部エラー) → 起動失敗 | — |
 
 - **順序**: 必ずモデルを先に設定してから effort (`acp/startup.rs`)。モデルを変えると effort の選択肢が作り直されるため。

@@ -46,7 +46,7 @@ pub struct HarnessConfig {
 }
 
 /// The Claude Code ACP adapter run through `npx` (an exact version).
-pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.81.0";
+pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.84.0";
 
 /// Claude Code built-in tools left to the orchestrator (read-only).
 pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];

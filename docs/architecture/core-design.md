@@ -273,7 +273,7 @@ Stage 7b: ハーネスは `HarnessPreset` (§15) として登録し、役割ご�
 プロジェクトで起動すると、信頼できないリポジトリの `.npmrc` (registry の差し替え) や `node_modules` の
 同名パッケージを `npx` が読み、エージェントが動く前に任意コードが走りうるため。偽エージェントも
 `session/new` / `session/load` の `cwd` に `chdir` する (実エージェントと同じ振る舞い)。
-アダプタは `@agentclientprotocol/claude-agent-acp@0.81.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`)。
+アダプタは `@agentclientprotocol/claude-agent-acp@0.84.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`)。
 Yhtye 自身の秘密 (`YHTYE_BRIDGE_TOKEN` / `VITE_YHTYE_BRIDGE_TOKEN`) はエージェントの環境から除く。
 回帰テスト `tests/acp_launch.rs`。
 `HarnessConfig::claude_code_usage_probe()` は §14 の使用量取得用 (ツールなし・`persistSession: false`・`TZ=UTC`)。
