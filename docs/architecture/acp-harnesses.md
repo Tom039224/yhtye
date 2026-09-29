@@ -406,6 +406,23 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
     `create_group` → `create_task` → `finish_group`、マージ済み。
   - 終了後 `opencode acp` / `opencode serve --stdio` / `claude-agent-acp` の残存 0 (ユーザーの `opencode serve --service` は元から動いているもの)。
 
+### 7.7 OpenCode 2.0.18 の上流バグと、テスト専用のウォームアップシム (2026-09-29)
+
+- **バグ**: anomalyco/opencode#50236 (修正 PR #50619 は未マージ)。`session/new` のモデル一覧が cwd ごとに、プロバイダの読み込み完了**前**に
+  スナップショットされ、プロセスの生存中キャッシュされる。実際には **`opencode acp` プロセスの最初の `session/new` だけ**が `opencode/*` のモデルを
+  1 つも含まない一覧になり、`set_config_option model=opencode/muse-spark-1.3-contributor-free` が `Invalid params: model not found` で失敗する。
+  同じプロセスの 2 つ目以降の `session/new` (別の cwd) は正しい一覧になる。実測: ウォームアップ無し 3/3 失敗、捨ての `session/new` を 1 回挟むと 5/5 成功 (+約 0.2 秒)。
+  (7d で「git リポジトリの cwd で失敗する」と見えていたのはこれ。壊れた OpenCode プラグインを外すことも必要だった。)
+- **Yhtye 本体は回避しない (ユーザー決定)**: 本番のハーネス設定・コアの挙動は変えない。上流の修正待ち。
+- **テストだけウォームアップのシムを使う**: `crates/yhtye-fake-agent/src/bin/opencode-warmup-shim.rs` (アプリには含まれない、テスト用クレートのバイナリ)。
+  `opencode acp` を起動して改行区切りの JSON-RPC を両方向に中継し、クライアントの `initialize` 応答を転送した直後に、文字列 id `yhtye-test-warmup`・
+  新しい一時ディレクトリの cwd・`mcpServers: []` の捨ての `session/new` を注入する。応答が来るまでクライアントからのメッセージは保留し、その応答と
+  捨てのセッションの通知は捨てる (それ以外は無変更)。stdin の EOF は OpenCode の stdin を閉じて伝え (`serve --stdio` も一緒に終わる)、OpenCode が
+  終わるとシムも終わり、一時ディレクトリを消す。実 OpenCode のテストはヘルパー (`tests/common/opencode.rs` の `opencode_harness` / `opencode_preset`)
+  でコマンドをシムに差し替える (`acp_opencode_real`・`orchestration_opencode_real`・`orchestration_mixed_real`)。モデルは常に無料モデル、Claude Code は常に Haiku のまま。
+- 実機の結果 (シム経由): `orchestration_mixed_real` 3 件・`orchestration_opencode_real` 2 件は成功、`acp_opencode_real` 10 件中 9 件 (残る
+  `real_opencode_system_prompt_reaches_the_agent` は無料モデルが合言葉を答えたり答えなかったりする不安定さで、再実行で通る)。終了後の残存プロセス 0。
+
 ## 8. effort (思考の深さ) の設定 (Stage 7d、2026-09-29)
 
 ACP のセッション設定 `configOptions` に **`effort`** があるハーネスでは、Yhtye は行 (ハーネス × モデル × effort) の effort を

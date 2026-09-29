@@ -5,13 +5,14 @@
 mod common;
 
 use common::opencode::{
-    MODEL, REAL_TIMEOUT, assert_model, assert_no_new_servers, opencode_servers, real_config,
+    MODEL, REAL_TIMEOUT, assert_model, assert_no_new_servers, opencode_harness, opencode_servers,
+    real_config,
 };
-use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until};
+use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until_healthy};
 use common::real::is_orchestrator_turn_end;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig};
+use yhtye_core::acp::{AgentEvent, AgentOutput};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::Role;
 use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
@@ -38,12 +39,12 @@ async fn run_request(
 ) -> Vec<ApiEvent> {
     let mut events = Vec::new();
     orch.send_user_message(request).expect("send");
-    until(rx, &mut events, REAL_TIMEOUT, |e| {
+    until_healthy(rx, &mut events, REAL_TIMEOUT, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, text }
             if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))
     })
     .await;
-    until(rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    until_healthy(rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     events
 }
 
@@ -56,10 +57,9 @@ async fn real_opencode_orchestrator_creates_task_and_sub_agent_reports_back() {
     let dir = tempfile::tempdir().expect("tempdir");
     let readme = dir.path().join("README.md");
     std::fs::write(&readme, "# demo\n").expect("write README");
-    let (orch, mut rx) =
-        Orchestration::start(real_config(dir.path(), HarnessConfig::opencode(MODEL)))
-            .await
-            .unwrap_or_else(|e| panic!("{e}"));
+    let (orch, mut rx) = Orchestration::start(real_config(dir.path(), opencode_harness(MODEL)))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
     let events = run_request(
         &orch,
         &mut rx,
@@ -121,10 +121,9 @@ async fn real_opencode_implement_then_review() {
     let dir = tempfile::tempdir().expect("tempdir");
     let readme = dir.path().join("README.md");
     std::fs::write(&readme, "# demo\n").expect("write README");
-    let (orch, mut rx) =
-        Orchestration::start(real_config(dir.path(), HarnessConfig::opencode(MODEL)))
-            .await
-            .unwrap_or_else(|e| panic!("{e}"));
+    let (orch, mut rx) = Orchestration::start(real_config(dir.path(), opencode_harness(MODEL)))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
     let events = run_request(
         &orch,
         &mut rx,

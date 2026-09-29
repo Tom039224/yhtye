@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use common::opencode::{MODEL, REAL_TIMEOUT, assert_no_new_servers, opencode_servers};
+use common::opencode::{
+    MODEL, REAL_TIMEOUT, assert_no_new_servers, opencode_harness, opencode_preset, opencode_servers,
+};
 use common::{Session, assert_group_gone, message_text};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -70,7 +72,7 @@ async fn start(harness: &HarnessConfig, cwd: &Path, options: SpawnOptions) -> Oc
 }
 
 async fn start_build(cwd: &Path, options: SpawnOptions) -> Oc {
-    start(&HarnessConfig::opencode(MODEL), cwd, options).await
+    start(&opencode_harness(MODEL), cwd, options).await
 }
 
 /// Shuts down; no process of the agent's group and no `opencode serve --stdio`
@@ -432,7 +434,7 @@ async fn real_opencode_implementer_reports_through_mcp() {
 async fn real_opencode_model_list_comes_from_the_preset_probe() {
     let servers_before = opencode_servers();
     let dir = tempfile::tempdir().expect("tempdir");
-    let preset = yhtye_core::agents::HarnessPreset::opencode(MODEL, Vec::new());
+    let preset = opencode_preset(MODEL, Vec::new());
     let started = Instant::now();
     let models = yhtye_core::agents::probe_models(
         &preset,
@@ -468,10 +470,10 @@ async fn real_opencode_model_list_comes_from_the_preset_probe() {
 #[tokio::test]
 #[ignore = "real OpenCode (muse-spark free)"]
 async fn real_opencode_efforts_are_read_per_model_and_applied() {
-    use yhtye_core::agents::{AgentRole, HarnessPreset, probe_efforts};
+    use yhtye_core::agents::{AgentRole, probe_efforts};
     let servers_before = opencode_servers();
     let dir = tempfile::tempdir().expect("tempdir");
-    let preset = HarnessPreset::opencode(MODEL, Vec::new());
+    let preset = opencode_preset(MODEL, Vec::new());
     let started = Instant::now();
     let efforts = probe_efforts(
         &preset,
@@ -531,7 +533,7 @@ async fn real_opencode_session_load_in_another_directory_fails_fast() {
         ..SpawnOptions::default()
     };
     let started = Instant::now();
-    let result = spawn_agent(&HarnessConfig::opencode(MODEL), b.path(), opts, tx).await;
+    let result = spawn_agent(&opencode_harness(MODEL), b.path(), opts, tx).await;
     let elapsed = started.elapsed();
     let err = result.err().expect("load in another directory is rejected");
     eprintln!("rejected after {elapsed:?}: {err}");

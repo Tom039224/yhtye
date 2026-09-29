@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig};
 use yhtye_core::agents::AgentCatalog;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::domain::{DomainConfig, DomainEvent, TaskStatus};
+use yhtye_core::domain::{DomainConfig, DomainEvent, HelpKind, TaskStatus};
 use yhtye_core::git::NoopGit;
 use yhtye_core::runtime::{Orchestration, OrchestrationConfig};
 
@@ -77,6 +77,33 @@ pub async fn until(
             return;
         }
     }
+}
+
+/// Like [`until`] for real-agent runs, which never expect a failure: a session
+/// that fails to start (`SessionFailed`) or an agent that crashed
+/// (`AgentCrashed` help) fails the test at once with the error instead of after
+/// the whole timeout.
+pub async fn until_healthy(
+    rx: &mut mpsc::UnboundedReceiver<ApiEvent>,
+    seen: &mut Vec<ApiEvent>,
+    timeout: Duration,
+    done: impl Fn(&ApiEvent) -> bool,
+) {
+    until(rx, seen, timeout, |ev| {
+        match &ev.body {
+            ApiEventBody::SessionFailed { session, error } => {
+                panic!("{session} failed to start: {error}")
+            }
+            ApiEventBody::Domain {
+                event: DomainEvent::HelpRaised { help },
+            } if help.kind == HelpKind::AgentCrashed => {
+                panic!("agent crashed (task {}): {}", help.task, help.message)
+            }
+            _ => {}
+        }
+        done(ev)
+    })
+    .await;
 }
 
 pub fn message<'a>(ev: &'a ApiEvent, session: &str) -> Option<&'a str> {

@@ -959,7 +959,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
     (Haiku のオーケストレータが行に無い `effort=high` を指定 → 行 + 用途メモ付きで拒否 → 完全一致の行で作り直し、Haiku で起動して main にマージ)。
   - 実 OpenCode (`opencode/muse-spark-1.3-contributor-free`): `acp_opencode_real::real_opencode_efforts_are_read_per_model_and_applied` (variant =
     minimal/low/medium/high/xhigh を約 1.2 秒で読み、`minimal` を設定 → `effort=minimal` を報告)。
-  - **実 OpenCode を含む混成実行は今は再現できない (環境の問題)**: 開発中に OpenCode が 2.0.12 → 2.0.18 に更新され、この環境では **git リポジトリの cwd で
+  - **[解決済み: 下の 2026-09-29 の追記]** **実 OpenCode を含む混成実行は今は再現できない (環境の問題)**: 開発中に OpenCode が 2.0.12 → 2.0.18 に更新され、この環境では **git リポジトリの cwd で
     `opencode acp` に無料モデルを `set_config_option` すると `model not found` になる** (git 以外のディレクトリでは通る。最小の再現: 一時 git リポジトリ +
     `HarnessPreset::opencode` の設定で起動。`opencode models` にも muse-spark が出ない)。7c-2 の `orchestration_mixed_real` 既存 2 件も同じ理由で今は通らない
     (7d の変更とは無関係)。追加した `orchestration_mixed_real::real_effort_rows_are_matched_exactly_and_applied` は、OpenCode が使える状態だった開発序盤の
@@ -969,5 +969,13 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
     (`4-gear-at-bottom-of-rail.jpg`)。設定モーダルで実装に行を追加 → sonnet + High + 用途メモ (`1-settings-modal-effort-rows.jpg`、DB の `agent_settings` に
     effort・note が保存されたことを確認)。OpenCode の行で検索付きピッカー (`2-opencode-model-picker.jpg`)、無料モデルを選ぶと effort 一覧
     (minimal〜xhigh) を `list_model_efforts` で取得 (`3-opencode-lazy-efforts.jpg`)。Esc で閉じる。ブリッジ・Vite は停止済み。
+- 2026-09-29 追記 (OpenCode の環境問題の原因と対処): 原因は OpenCode 2.0.18 の上流バグ anomalyco/opencode#50236 (修正 PR #50619 未マージ) —
+  `opencode acp` の**最初の `session/new`** のモデル一覧にプロバイダ読み込み前のスナップショットが使われ `opencode/*` が無く、`model not found` になる
+  (git リポジトリかどうかは無関係だった)。**Yhtye 本体では回避しない (ユーザー決定)**。実機テストだけ、`crates/yhtye-fake-agent` の
+  テスト用シム `opencode-warmup-shim` (捨ての `session/new` を 1 回先に流す) 経由で `opencode acp` を起動する。詳細は `acp-harnesses.md` §7.7。
+  実 OpenCode を含むテストのヘルパーは `tests/common/opencode.rs::{opencode_harness, opencode_preset}`。実 Agent のオーケストレーションテストは、想定外の
+  `SessionFailed` / `AgentCrashed` の help で全体のタイムアウトを待たず即失敗する (`common/orch.rs::until_healthy`)。
+  シム経由の実機: `orchestration_mixed_real` 3 件 (混成 + effort の行) と `orchestration_opencode_real` 2 件が成功、`acp_opencode_real` は 10 件中 9 件成功
+  (無料モデルが合言葉を答えない回がある `real_opencode_system_prompt_reaches_the_agent` は不安定、再実行で通る)。残存プロセス 0。
 - 残課題: 上の OpenCode の環境問題 (混成の実機テストが通せない)。モデルが effort を持たなくなった古い設定はセッション起動が失敗する (警告のみで既定に戻す挙動にはしていない)。
   設定モーダルは項目が 1 つだけ (足す作りは用意した)。

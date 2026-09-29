@@ -5,6 +5,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use yhtye_core::acp::{AgentEvent, HarnessConfig};
+use yhtye_core::agents::HarnessPreset;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::runtime::OrchestrationConfig;
 
@@ -76,7 +77,41 @@ pub fn real_config(dir: &Path, orchestrator: HarnessConfig) -> OrchestrationConf
     config(
         dir,
         orchestrator,
-        HarnessConfig::opencode(MODEL),
-        HarnessConfig::opencode(MODEL),
+        opencode_harness(MODEL),
+        opencode_harness(MODEL),
     )
+}
+
+/// Runs `opencode acp` through the test-only warm-up shim
+/// (`crates/yhtye-fake-agent/src/bin/opencode-warmup-shim.rs`). OpenCode 2.0.18
+/// snapshots the model catalog of the first `session/new` of a process before
+/// the providers are loaded (upstream anomalyco/opencode#50236), so `model not
+/// found` follows; the shim sends a throwaway `session/new` first. Yhtye itself
+/// does not work around it (user decision); only tests use the shim.
+pub fn with_warmup_shim(mut harness: HarnessConfig) -> HarnessConfig {
+    assert_eq!(harness.command, "opencode", "an OpenCode harness");
+    harness.command = super::fake_agent_crate_bin("opencode-warmup-shim")
+        .display()
+        .to_string();
+    harness
+}
+
+/// [`HarnessConfig::opencode`] behind the warm-up shim.
+pub fn opencode_harness(model: &str) -> HarnessConfig {
+    with_warmup_shim(HarnessConfig::opencode(model))
+}
+
+/// [`HarnessPreset::opencode`] (every role and the probe) behind the warm-up shim.
+pub fn opencode_preset(fallback_model: &str, env_remove: Vec<String>) -> HarnessPreset {
+    let mut p = HarnessPreset::opencode(fallback_model, env_remove);
+    for h in [
+        &mut p.orchestrator,
+        &mut p.implementer,
+        &mut p.investigator,
+        &mut p.reviewer,
+    ] {
+        *h = with_warmup_shim(h.clone());
+    }
+    p.probe = p.probe.map(with_warmup_shim);
+    p
 }

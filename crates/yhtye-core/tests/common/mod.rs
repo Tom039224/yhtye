@@ -24,21 +24,25 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Path of the fake agent binary, building it once per test process.
-pub fn fake_agent_bin() -> PathBuf {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
+/// Path of a binary of `yhtye-fake-agent`, building the crate once per test process.
+pub fn fake_agent_crate_bin(name: &str) -> PathBuf {
+    static BUILT: OnceLock<()> = OnceLock::new();
+    BUILT.get_or_init(|| {
         let status = std::process::Command::new(env!("CARGO"))
             .args(["build", "--quiet", "-p", "yhtye-fake-agent"])
             .current_dir(workspace_root())
             .status()
             .expect("run cargo build for yhtye-fake-agent");
         assert!(status.success(), "building yhtye-fake-agent failed");
-        let target = std::env::var_os("CARGO_TARGET_DIR")
-            .map_or_else(|| workspace_root().join("target"), PathBuf::from);
-        target.join("debug").join("yhtye-fake-agent")
-    })
-    .clone()
+    });
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| workspace_root().join("target"), PathBuf::from);
+    target.join("debug").join(name)
+}
+
+/// Path of the fake agent binary.
+pub fn fake_agent_bin() -> PathBuf {
+    fake_agent_crate_bin("yhtye-fake-agent")
 }
 
 /// A fake-agent harness configured like Claude Code (bypass mode, haiku model).

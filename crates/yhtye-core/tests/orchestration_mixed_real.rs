@@ -9,8 +9,8 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::opencode::{MODEL as FREE, assert_no_new_servers, opencode_servers};
-use common::orch::{shutdown_and_check, tool_calls, until};
+use common::opencode::{MODEL as FREE, assert_no_new_servers, opencode_preset, opencode_servers};
+use common::orch::{shutdown_and_check, tool_calls, until_healthy};
 use common::real::{MODEL as HAIKU, REAL_TIMEOUT, is_orchestrator_turn_end, real_git_config};
 use common::repo::TempRepo;
 use yhtye_core::acp::{AgentEvent, AgentOutput};
@@ -35,7 +35,7 @@ fn opencode() -> AgentChoice {
 fn catalog(roles: &[(AgentRole, AgentChoice)]) -> AgentCatalog {
     let presets = vec![
         HarnessPreset::claude_code(HAIKU),
-        HarnessPreset::opencode(
+        opencode_preset(
             OPENCODE_FALLBACK_MODEL,
             inherited_opencode_env_remove(|k| std::env::var_os(k)),
         ),
@@ -151,8 +151,8 @@ async fn run_with(
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
     orch.send_user_message(request).expect("send");
-    until(&mut rx, &mut events, REAL_TIMEOUT, group_merged).await;
-    until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
+    until_healthy(&mut rx, &mut events, REAL_TIMEOUT, group_merged).await;
+    until_healthy(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     eprintln!("tool calls: {:#?}", tool_calls(&events));
     (orch, events)
 }
