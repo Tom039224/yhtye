@@ -535,4 +535,8 @@ Yhtye はこれを「エージェントがエラーを喋った」と「作業�
 
 ### 9.7 実機の結果 (`nvidia/nemotron-3-super-120b-a12b:free`、OpenRouter 経由、Codex 0.159 + アダプタ 2.0.0)
 
-実行結果と未達の項目 (429 でオーケストレーション実機が通せていない) は [`PLAN.md`](../../PLAN.md) Stage 7e の結果メモ。
+実行結果は [`PLAN.md`](../../PLAN.md) Stage 7e の結果メモ。Codex の実装者は実機でマージまで通った (`stealth/space-bunny-alpha`)。
+
+**Codex をオーケストレータにすると `create_task` が呼べない**: Codex の既知バグ [openai/codex#13746](https://github.com/openai/codex/issues/13746) で、
+MCP ツールスキーマの `$defs` / `$ref` が解決されずモデルに崩れたスキーマが渡る (`steps` を `{"item": …}` や文字列で送る)。
+Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude のため当面放置 (ユーザー決定、2026-09-29)。

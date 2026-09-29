@@ -28,7 +28,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](docs/design/)
 | 7c-1 | OpenCode ハーネスの ACP 検証 (`HarnessConfig::opencode`) | **完了** |
 | 7c-2 | OpenCode を選べるハーネスとして組み込む (設定・検出・UI) | **完了** |
 | 7d | effort + 用途メモ付きの候補の行、アプリ全体の設定モーダル | **完了** |
-| 7e | Codex ハーネス (OpenRouter のモデル一覧)、OS キーリングの秘密の環境変数 | **完了** (実機のオーケストレーション実行は上流の 429 で未達、下の残課題) |
+| 7e | Codex ハーネス (OpenRouter のモデル一覧)、OS キーリングの秘密の環境変数 | **完了** (Codex 実装者の実機は通過。Codex オーケストレータは codex#13746 で不可、当面放置) |
 
 ## 再開の仕方
 
@@ -1025,3 +1025,8 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - **残課題**: (1) **Codex を含むオーケストレーションの実機実行 (`orchestration_mixed_real` の Codex 実装者 / Codex オーケストレータ) は成功していない**: `nemotron-3.5-lightning` は障害で遅く (実装者のセッションが 25 分以上)、
   `nemotron-3-super` は 429 を返し続けた (実装者が「報告なしのターン」になり `cancel_task`、Codex オーケストレータは 240 秒で無応答)。テストは追加済み・コンパイル済みで、Codex オーケストレータのセッション起動 (`agent-full-access`、モデル検証) までは
   実機で動いた。プロバイダが回復したら `fish -c '… orchestration_mixed_real -- --ignored codex'` で再実行する。(2) 認証・課金・429 の失敗検出 (§9.6)。(3) Codex 0.159 + `~/.codex` ではアダプタ自身の一覧にも OpenRouter が含まれる。
+- **2026-09-29 追試 (`stealth/space-bunny-alpha`、テスト定数を一時的に差し替え、コミットはしていない)**:
+  `real_mixed_claude_orchestrator_codex_implementer_claude_reviewer` は**通過** (Haiku オーケストレータ + Codex 実装者 + Haiku レビュー → main へマージ)。
+  `real_codex_orchestrator_with_a_claude_implementer` は失敗: Codex の既知バグ [openai/codex#13746](https://github.com/openai/codex/issues/13746)
+  (MCP ツールスキーマの `$defs` / `$ref` を解決せずモデルに崩れたスキーマを見せる) により、`create_task` の `steps` (`items: {$ref: StepSpec}`) を
+  `{"item": {...}}` や文字列で送り 6 回とも拒否された。Yhtye 側でスキーマの `$ref` を展開すれば回避できるが、**メインは Claude のため当面放置 (ユーザー決定)**。
