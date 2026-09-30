@@ -18,12 +18,20 @@ use serde_json::json;
 use tokio::sync::watch;
 
 use crate::mcp;
-use crate::scenario::{Action, PermissionChoice, Scenario};
+use crate::scenario::{Action, FailKind, PermissionChoice, Scenario};
+
+/// The id of the effort option unless the scenario names another.
+const DEFAULT_EFFORT_ID: &str = "effort";
 
 /// Raw `session/update` so any update JSON can be sent.
 #[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcNotification)]
 #[notification(method = "session/update")]
 struct RawSessionUpdate(serde_json::Value);
+
+/// Devin's vendor request asking the client for diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcRequest)]
+#[request(method = "_cognition.ai/request_diagnostics", response = serde_json::Value)]
+struct RequestDiagnostics(serde_json::Value);
 
 #[derive(Default)]
 struct State {
@@ -33,6 +41,8 @@ struct State {
     /// Current value of the `effort` option (when the model has one).
     effort: String,
     system_prompt: Option<String>,
+    /// `clientInfo` of `initialize` as `(name, version)`.
+    client_info: Option<(String, String)>,
     /// Full `_meta` of `session/new` / `session/load`.
     meta: Option<serde_json::Map<String, serde_json::Value>>,
     next_seq: usize,
@@ -78,6 +88,10 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         .on_receive_request(
             async move |req: InitializeRequest, responder, _cx| {
                 gate(&f1, "initialize").await?;
+                f1.lock().client_info = req
+                    .client_info
+                    .as_ref()
+                    .map(|c| (c.name.clone(), c.version.clone()));
                 let caps = AgentCapabilities::new()
                     .load_session(f1.scenario.load_session)
                     .mcp_capabilities(McpCapabilities::new().http(true));
@@ -145,7 +159,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                     .unwrap_or_default();
                 let known = match &*req.config_id.0 {
                     "model" => f5.scenario.models.contains(&value),
-                    "effort" => f5.effort_values().contains(&value),
+                    id if id == f5.effort_id() => f5.effort_values().contains(&value),
                     _ => false,
                 };
                 if !known {
@@ -201,9 +215,15 @@ async fn gate(fake: &Fake, step: &str) -> Result<(), Error> {
         std::future::pending::<()>().await;
     }
     if s.at(&s.fail_at, step) {
-        return Err(
-            Error::internal_error().data(json!(format!("fake: scripted failure at {step}")))
-        );
+        let error = match s.fail_kind {
+            FailKind::Internal => Error::internal_error(),
+            FailKind::AuthRequired => Error::auth_required(),
+        };
+        let data = s
+            .fail_message
+            .clone()
+            .unwrap_or_else(|| format!("fake: scripted failure at {step}"));
+        return Err(error.data(json!(data)));
     }
     Ok(())
 }
@@ -258,11 +278,23 @@ impl Fake {
                 .map(|v| SessionConfigSelectOption::new(v.clone(), v.clone()))
                 .collect();
             options.push(
-                SessionConfigOption::select("effort", "Effort", self.lock().effort.clone(), rows)
-                    .category(SessionConfigOptionCategory::ThoughtLevel),
+                SessionConfigOption::select(
+                    self.effort_id().to_string(),
+                    "Effort",
+                    self.lock().effort.clone(),
+                    rows,
+                )
+                .category(SessionConfigOptionCategory::ThoughtLevel),
             );
         }
         options
+    }
+
+    fn effort_id(&self) -> &str {
+        self.scenario
+            .effort_id
+            .as_deref()
+            .unwrap_or(DEFAULT_EFFORT_ID)
     }
 
     /// `default` and the efforts of the current model (empty: no effort option).
@@ -321,6 +353,17 @@ async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -
         fake.scenario.pick(&prompt, &mut st.next_seq)
     };
     let session = req.session_id.0.to_string();
+    if fake.scenario.vendor_requests {
+        let report = request_diagnostics(cx).await;
+        if let Err(e) = send_update(
+            cx,
+            &session,
+            json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}),
+        ) {
+            eprintln!("fake: action failed: {e}");
+            return StopReason::Refusal;
+        }
+    }
     for action in actions {
         if *fake.cancelled.borrow() {
             return StopReason::Cancelled;
@@ -379,6 +422,11 @@ async fn run_action(
             let report = request_permission(cx, session, &choices).await?;
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
+        Action::AskPermission => {
+            let choices = &fake.scenario.permission_options;
+            let report = request_permission(cx, session, choices).await?;
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
         Action::Sleep(ms) => {
             if wait_or_cancel(fake, Some(Duration::from_millis(ms))).await {
                 return Ok(Some(StopReason::Cancelled));
@@ -433,6 +481,13 @@ async fn run_action(
             let report = mcp_call(fake, &tool, &args).await;
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
+        Action::ReportClientInfo => {
+            let report = match &fake.lock().client_info {
+                Some((name, version)) => format!("client_info:name={name};version={version}"),
+                None => "client_info:<none>".into(),
+            };
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
         Action::ReportMeta => {
             let meta = serde_json::Value::Object(fake.lock().meta.clone().unwrap_or_default());
             update(
@@ -453,6 +508,19 @@ async fn run_action(
         }
     }
     Ok(None)
+}
+
+/// Sends Devin's `_cognition.ai/request_diagnostics` and returns the report
+/// line: `vendor:request_diagnostics:ok:<json>` or `:error:<message>`.
+async fn request_diagnostics(cx: &ConnectionTo<Client>) -> String {
+    let result = cx
+        .send_request(RequestDiagnostics(json!({})))
+        .block_task()
+        .await;
+    match result {
+        Ok(value) => format!("vendor:request_diagnostics:ok:{value}"),
+        Err(e) => format!("vendor:request_diagnostics:error:{e}"),
+    }
 }
 
 /// Runs one `mcp_call` and returns its report line.

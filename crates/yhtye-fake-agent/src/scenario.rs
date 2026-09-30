@@ -6,15 +6,28 @@
 //!   "modes": ["default", "bypassPermissions"],
 //!   "models": ["default", "haiku"],
 //!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
+//!   "effort_id": "reasoning",   // id of that option (default "effort"; category stays thought_level)
 //!   "fail_at": null,            // "initialize" | "session/new" | ... → JSON-RPC error
+//!   "fail_kind": "internal",    // the error: "internal" (default) | "auth_required"
+//!   "fail_message": null,       // its data (default "fake: scripted failure at <step>")
 //!   "exit_at": null,            // same steps → print to stderr and exit(2)
 //!   "hang_at": null,            // same steps → never answer
+//!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
+//!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "turns": [
 //!     { "match": "hello", "actions": [ {"message": "hi"}, {"end": "end_turn"} ] },
 //!     { "actions": [ {"sleep": 50}, "wait_cancel" ] }
 //!   ]
 //! }
 //! ```
+//!
+//! Devin-like behaviour: `effort_id` renames the effort option, `"ask_permission"`
+//! offers `permission_options` (`switch_*` / `*_always` ids included, as Devin does),
+//! `vendor_requests` makes the agent send Devin's diagnostics request and report
+//! the client's answer as `vendor:request_diagnostics:ok:<json>` (or `:error:<msg>`),
+//! `"report_client_info"` reports the `clientInfo` of `initialize`
+//! (`client_info:name=<n>;version=<v>`), and `fail_kind` + `fail_message` make
+//! `fail_at` an authentication error (`"login required"`).
 //!
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
@@ -38,14 +51,41 @@ pub struct Scenario {
     /// leading `default`, like Claude Code's). Changing the model rebuilds it.
     #[serde(default)]
     pub efforts: std::collections::BTreeMap<String, Vec<String>>,
+    /// Id of the `effort` option (its category stays `thought_level`, so a
+    /// client that looks the option up by category finds it under any id).
+    #[serde(default)]
+    pub effort_id: Option<String>,
     #[serde(default)]
     pub fail_at: Option<String>,
+    /// What `fail_at` answers with.
+    #[serde(default)]
+    pub fail_kind: FailKind,
+    /// The data of the `fail_at` error (a default text names the step).
+    #[serde(default)]
+    pub fail_message: Option<String>,
     #[serde(default)]
     pub exit_at: Option<String>,
     #[serde(default)]
     pub hang_at: Option<String>,
+    /// The options the `ask_permission` action offers.
+    #[serde(default)]
+    pub permission_options: Vec<PermissionChoice>,
+    /// Every turn starts with Devin's `_cognition.ai/request_diagnostics`
+    /// request to the client; the outcome is reported as a message.
+    #[serde(default)]
+    pub vendor_requests: bool,
     #[serde(default)]
     pub turns: Vec<Turn>,
+}
+
+/// The JSON-RPC error `fail_at` answers with.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailKind {
+    #[default]
+    Internal,
+    /// ACP's "authentication required" (`-32000`), like an agent that is not logged in.
+    AuthRequired,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -78,6 +118,8 @@ pub enum Action {
     /// `session/request_permission`; the outcome is reported back as a message
     /// `permission:selected:<id>` or `permission:cancelled`.
     RequestPermission(Vec<PermissionChoice>),
+    /// [`Action::RequestPermission`] with the scenario's `permission_options`.
+    AskPermission,
     Sleep(u64),
     /// Waits until `session/cancel` arrives.
     WaitCancel,
@@ -89,6 +131,9 @@ pub enum Action {
     SpawnChild,
     /// Reports `state:mode=<m>;model=<v>;system_prompt=<s>;prompt=<text>`.
     ReportState,
+    /// Reports `client_info:name=<n>;version=<v>` (the `clientInfo` of `initialize`,
+    /// `<none>` when the client sent none).
+    ReportClientInfo,
     /// Reports `meta:<json>` (the `_meta` received in `session/new` / `session/load`).
     ReportMeta,
     /// Writes `text` to `path` (relative to the working directory).
