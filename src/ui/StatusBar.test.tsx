@@ -1,5 +1,6 @@
 // The status bar's plan name and usage meters (Stage 6b): real values from
 // `get_usage`, empty ("—") with the reason when the core cannot report them.
+// The connection to the core is not shown here (the sidebar's host footer does).
 
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,7 +12,7 @@ import { AppStore } from "../store/app";
 import { StoreContext } from "../store/useStore";
 import { FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { formatRemaining } from "./StatusBar";
+import { formatRemaining, planLabel } from "./StatusBar";
 
 const HOUR = 3_600_000;
 
@@ -48,7 +49,7 @@ describe("usage meters", () => {
     await waitFor(() => expect(screen.getByTestId("usage-5h")).toHaveTextContent("94%"));
     expect(screen.getByTestId("usage-5h")).toHaveTextContent("5h94%3h 35m");
     expect(screen.getByTestId("usage-week")).toHaveTextContent("7d40%2d 4h");
-    expect(screen.getByTestId("plan")).toHaveTextContent("max");
+    expect(screen.getByTestId("plan")).toHaveTextContent("Claude Max");
     // The plan sits in the same group as the meters.
     expect(screen.getByRole("group", { name: "プランと使用量" })).toContainElement(screen.getByTestId("plan"));
     expect(screen.getByRole("group", { name: "プランと使用量" })).toContainElement(screen.getByTestId("usage-5h"));
@@ -77,12 +78,23 @@ describe("usage meters", () => {
     expect(screen.getByRole("button", { name: /5h.*7d/ }).title).toMatch(/使用量を取得できません/);
   });
 
-  it("shows the connection as an icon, with the words in its tooltip", async () => {
+  it("has no connection item on the left: only the plan and usage group", async () => {
     setup(report(Date.now()));
-    const connection = await screen.findByTestId("connection");
-    await waitFor(() => expect(connection).toHaveClass("status-icon-ok"));
-    expect(connection.title).toMatch(/^接続済み/);
-    expect(connection.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    await waitFor(() => expect(screen.getByTestId("usage-5h")).toHaveTextContent("94%"));
+    const footer = screen.getByRole("group", { name: "プランと使用量" }).closest("footer");
+    expect(footer).not.toBeNull();
+    expect(screen.queryByTestId("connection")).not.toBeInTheDocument();
+    expect(footer?.querySelector(".status-icon")).toBeNull();
+    // The only child of the bar besides the spacer is the group on the right.
+    expect(Array.from(footer?.children ?? []).filter((el) => !el.classList.contains("spacer"))).toHaveLength(1);
+  });
+
+  it("names the plan as the Claude subscription it is", () => {
+    expect(planLabel("max")).toBe("Claude Max");
+    expect(planLabel("pro")).toBe("Claude Pro");
+    expect(planLabel("Team")).toBe("Claude Team");
+    expect(planLabel("Claude Enterprise")).toBe("Claude Enterprise");
+    expect(planLabel(" max 5x ")).toBe("Claude Max 5x");
   });
 
   it("formats the time to reset", () => {

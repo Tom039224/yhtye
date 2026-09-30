@@ -95,7 +95,7 @@ button:disabled { cursor: default; }
   display: flex; align-items: center; gap: 10px; height: 18px; padding: 0 9px;
   border: 1px solid var(--border-pill); border-radius: 5px;
 }
-.statusbar .plan { color: var(--text-secondary); font-weight: 500; text-transform: capitalize; white-space: nowrap; }
+.statusbar .plan { color: var(--text-secondary); font-weight: 500; white-space: nowrap; }
 .statusbar .usage {
   display: flex; align-items: center; gap: 10px; height: 16px; margin: 0 -4px; padding: 0 4px;
   background: none; border: 0; border-radius: 3px; font: inherit; color: inherit; cursor: pointer;
@@ -278,10 +278,13 @@ details.tool { display: block; }
   border: 1px solid var(--border-card); border-radius: 7px; background: var(--surface-inset);
   padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;
 }
+/* The text and the buttons side by side, buttons at the bottom: the text is not pushed down by them. The margin centres one row on the 28px send button. */
+.composer-body { display: flex; align-items: flex-end; gap: 8px; }
 .composer textarea {
-  width: 100%; resize: none; border: 0; outline: 0; padding: 0; background: transparent;
+  flex: 1; min-width: 0; resize: none; border: 0; outline: 0; padding: 0; margin: 3.6px 0; background: transparent;
   font-size: 13px; line-height: 1.6; color: var(--text-body);
 }
+.composer-actions { flex: none; display: flex; align-items: center; gap: 6px; }
 .composer textarea::placeholder { color: var(--text-dim); }
 .composer-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .mention {
