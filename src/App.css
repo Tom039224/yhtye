@@ -128,8 +128,11 @@ button:disabled { cursor: default; }
 
 /* ---- sidebar -------------------------------------------------------------- */
 
+/* Width: 214px until the user drags it (--sidebar-width, set by App). The limits also hold
+   when the window shrinks: the rail, conversation and right column keep their minimum. */
 .sidebar {
-  width: 214px; flex: none; background: var(--surface-panel); border-right: 1px solid var(--border);
+  width: var(--sidebar-width, 214px); min-width: 160px; max-width: calc(100% - 44px - 380px - 420px);
+  flex: none; background: var(--surface-panel); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow: hidden;
 }
 .section-title { padding: 12px 12px 6px; color: var(--text-faint); }
@@ -185,7 +188,7 @@ button:disabled { cursor: default; }
 /* ---- conversation --------------------------------------------------------- */
 
 .conversation {
-  flex: 1 1 44%; min-width: 380px; display: flex; flex-direction: column;
+  flex: 1 1 0; min-width: 380px; display: flex; flex-direction: column;
   background: var(--surface-chat); border-right: 1px solid var(--border); overflow: hidden;
 }
 .transcript { padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 16px; }
@@ -405,7 +408,9 @@ details.tool { display: block; }
 
 /* ---- right column --------------------------------------------------------- */
 
-.right { flex: 1 1 56%; min-width: 420px; display: flex; flex-direction: column; background: var(--surface-panel); overflow: hidden; }
+/* The right column is 56% of the work area until the user drags it (--right-width, set by
+   Workspace); the conversation takes the rest and, at its minimum, the column gives way. */
+.right { flex: 0 1 var(--right-width, 56%); min-width: 420px; display: flex; flex-direction: column; background: var(--surface-panel); overflow: hidden; }
 .tasks { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .task-list { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 
@@ -488,8 +493,31 @@ details.tool { display: block; }
 
 /* ---- bottom panel (git / agent output) ----------------------------------- */
 
-.bottom { flex: none; height: 252px; border-top: 1px solid var(--border); background: var(--surface-inset); display: flex; flex-direction: column; overflow: hidden; }
-.bottom.tall { height: 48%; }
+/* Git is 252px and the agent output 48% of the column until the user drags it
+   (--bottom-height, set by Workspace for whichever the panel shows); the task list keeps 160px. */
+.bottom {
+  flex: none; height: var(--bottom-height, 252px); min-height: 120px; max-height: calc(100% - 160px);
+  border-top: 1px solid var(--border); background: var(--surface-inset); display: flex; flex-direction: column; overflow: hidden;
+}
+.bottom.tall { height: var(--bottom-height, 48%); }
+
+/* ---- resize handles -------------------------------------------------------- */
+
+/* A zero-size flex child on the boundary between two panels: ::before is the grab area,
+   ::after the thin accent line shown on hover, focus and while dragging. */
+.resizer { position: relative; flex: none; z-index: 3; outline: none; touch-action: none; }
+.resizer-vertical { width: 0; cursor: col-resize; }
+.resizer-horizontal { height: 0; cursor: row-resize; }
+.resizer::before, .resizer::after { content: ""; position: absolute; }
+.resizer-vertical::before { top: 0; bottom: 0; left: -4px; width: 8px; }
+.resizer-horizontal::before { left: 0; right: 0; top: -4px; height: 8px; }
+.resizer::after { background: var(--accent); opacity: 0; transition: opacity 0.12s; pointer-events: none; }
+.resizer-vertical::after { top: 0; bottom: 0; left: -1px; width: 2px; }
+.resizer-horizontal::after { left: 0; right: 0; top: -1px; height: 2px; }
+.resizer:hover::after, .resizer:focus-visible::after, .resizer.dragging::after { opacity: 1; }
+/* While dragging, the pointer may leave the handle: keep the cursor and no text selection. */
+body.resizing-col, body.resizing-col * { cursor: col-resize !important; user-select: none; }
+body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-select: none; }
 .bottom-header {
   height: 32px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px;
   border-bottom: 1px solid var(--border-subtle); white-space: nowrap; overflow: hidden;
