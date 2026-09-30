@@ -14,7 +14,7 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{Agent, ConnectionTo};
 
 use super::config::{HarnessConfig, SystemPromptStyle};
-use super::events::{AgentError, AgentInfo, config_value};
+use super::events::{AgentError, AgentInfo, config_value, effort_option};
 
 /// Everything needed to open the session.
 pub(crate) struct StartupParams {
@@ -74,7 +74,7 @@ pub(crate) async fn open_session(
     let timeout = p.harness.startup_timeout;
     let init = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(ClientCapabilities::default())
-        .client_info(Implementation::new("yhtye", env!("CARGO_PKG_VERSION")));
+        .client_info(client_info(&p.harness));
     let init = step("initialize", timeout, cx.send_request(init).block_task()).await?;
     let caps = init.agent_capabilities;
 
@@ -123,16 +123,26 @@ pub(crate) async fn open_session(
     // after it. A model without that effort makes the start fail
     // (`core-design.md` §15.1).
     if let Some(effort) = &p.harness.effort {
-        info.config_options = set_config_option(
-            cx,
-            &info.acp_session_id,
-            &effort.config_id,
-            &effort.value,
-            timeout,
-        )
-        .await?;
+        let config_id = effort_config_id(&info.config_options, &effort.config_id);
+        info.config_options =
+            set_config_option(cx, &info.acp_session_id, &config_id, &effort.value, timeout).await?;
     }
     Ok(info)
+}
+
+/// Who Yhtye says it is in `initialize`: the harness' override, else `yhtye`.
+fn client_info(harness: &HarnessConfig) -> Implementation {
+    match &harness.client_info {
+        Some(o) => Implementation::new(o.name.clone(), o.version.clone()),
+        None => Implementation::new("yhtye", env!("CARGO_PKG_VERSION")),
+    }
+}
+
+/// The id to set the effort under: `wanted` when the agent advertises it, else
+/// the agent's only `thought_level` option (Devin names it differently), else
+/// `wanted` (the agent then refuses it and the start fails visibly).
+fn effort_config_id(options: &[SessionConfigOption], wanted: &str) -> String {
+    effort_option(options, wanted).map_or_else(|| wanted.to_string(), |o| o.id.0.to_string())
 }
 
 /// `session/set_mode`, checked against the advertised modes. Updates `info.modes`.
@@ -208,5 +218,89 @@ pub(crate) async fn set_config_option(
                 current.unwrap_or("<no such option>")
             ),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_client_protocol::schema::v1::{
+        SessionConfigOptionCategory, SessionConfigSelectOption,
+    };
+
+    use super::*;
+    use crate::acp::config::ClientInfoOverride;
+
+    fn select(
+        id: &str,
+        category: Option<SessionConfigOptionCategory>,
+        current: &str,
+    ) -> SessionConfigOption {
+        SessionConfigOption::select(
+            id.to_string(),
+            id.to_string(),
+            current.to_string(),
+            vec![SessionConfigSelectOption::new(
+                current.to_string(),
+                current.to_string(),
+            )],
+        )
+        .category(category)
+    }
+
+    #[test]
+    fn the_client_introduces_itself_as_yhtye_unless_overridden() {
+        let default = client_info(&HarnessConfig::plain("x", vec![]));
+        assert_eq!(default.name, "yhtye");
+        assert_eq!(default.version, env!("CARGO_PKG_VERSION"));
+
+        let mut harness = HarnessConfig::devin("devin");
+        assert_eq!(client_info(&harness).name, "yhtye", "devin claims no name");
+        harness.client_info = Some(ClientInfoOverride {
+            name: "other-client".into(),
+            version: "9.9.9".into(),
+        });
+        let overridden = client_info(&harness);
+        assert_eq!(
+            (overridden.name.as_str(), overridden.version.as_str()),
+            ("other-client", "9.9.9")
+        );
+    }
+
+    #[test]
+    fn effort_uses_the_advertised_id_when_it_exists() {
+        let options = [
+            select(
+                "reasoning",
+                Some(SessionConfigOptionCategory::ThoughtLevel),
+                "low",
+            ),
+            select("effort", None, "high"),
+        ];
+        assert_eq!(effort_config_id(&options, "effort"), "effort");
+    }
+
+    #[test]
+    fn effort_falls_back_to_the_only_thought_level_option() {
+        let options = [
+            select("model", Some(SessionConfigOptionCategory::Model), "m"),
+            select(
+                "reasoning",
+                Some(SessionConfigOptionCategory::ThoughtLevel),
+                "low",
+            ),
+        ];
+        assert_eq!(effort_config_id(&options, "effort"), "reasoning");
+    }
+
+    #[test]
+    fn effort_keeps_the_wanted_id_when_nothing_matches_or_it_is_ambiguous() {
+        assert_eq!(effort_config_id(&[], "effort"), "effort");
+        let two = [
+            select("a", Some(SessionConfigOptionCategory::ThoughtLevel), "x"),
+            select("b", Some(SessionConfigOptionCategory::ThoughtLevel), "y"),
+        ];
+        assert_eq!(effort_config_id(&two, "effort"), "effort");
+        let untagged = [select("reasoning", None, "low")];
+        assert_eq!(effort_config_id(&untagged, "effort"), "effort");
     }
 }

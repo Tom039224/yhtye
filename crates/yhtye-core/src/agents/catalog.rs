@@ -24,6 +24,8 @@ pub const OPENCODE: &str = "opencode";
 pub const CLAUDE_CODE: &str = "claude-code";
 /// Id of the Codex preset.
 pub const CODEX: &str = "codex";
+/// Id of the Devin preset.
+pub const DEVIN: &str = "devin";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -151,6 +153,33 @@ impl HarnessPreset {
             effort_config_id: "reasoning_effort".into(),
             model_source: ModelSource::Codex,
             requires_model: true,
+        }
+    }
+
+    /// Devin (`HarnessConfig::devin`) at `command` for every role. Devin's own
+    /// default model applies unless a choice names one (a `model` option read
+    /// over ACP, like Claude Code's), and the effort goes to its `thought_level`
+    /// option (whatever id it has, see [`crate::acp::effort_option`]). The
+    /// model listing session does no mode / model switching.
+    #[must_use]
+    pub fn devin(command: &str) -> Self {
+        let h = HarnessConfig::devin(command);
+        Self {
+            id: DEVIN.into(),
+            label: "Devin".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig {
+                mode_after_new: None,
+                ..h
+            }),
+            model_env: None,
+            model_config_env: None,
+            effort_config_id: EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
+            requires_model: false,
         }
     }
 
@@ -513,6 +542,55 @@ mod tests {
         );
         assert_eq!(p.model_config_id(), "model");
         assert!(p.probe_config().model.is_none());
+    }
+
+    #[test]
+    fn devin_preset_runs_every_role_the_same_and_selects_model_and_effort_over_acp() {
+        let p = HarnessPreset::devin("/usr/bin/devin");
+        assert_eq!((p.id.as_str(), p.label.as_str()), ("devin", "Devin"));
+        assert!(!p.requires_model);
+        assert_eq!(p.model_source, ModelSource::Acp);
+        assert_eq!(p.effort_config_id, "effort");
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        let expected = HarnessConfig::devin("/usr/bin/devin");
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            assert_eq!(p.config(role, None, None), expected);
+        }
+        let h = p.config(AgentRole::Implementer, Some("claude-opus"), Some("high"));
+        assert_eq!(
+            h.model,
+            Some(ModelSelect {
+                config_id: "model".into(),
+                value: "claude-opus".into()
+            })
+        );
+        assert_eq!(
+            h.effort,
+            Some(ModelSelect {
+                config_id: "effort".into(),
+                value: "high".into()
+            })
+        );
+        assert!(h.env.is_empty(), "the model travels as an option only");
+        assert_eq!(p.info().id, "devin");
+    }
+
+    #[test]
+    fn devin_probe_switches_neither_mode_nor_model() {
+        let probe = HarnessPreset::devin("devin").probe_config();
+        assert_eq!(
+            (probe.command.as_str(), probe.args.as_slice()),
+            ("devin", &["acp".to_string()][..])
+        );
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
     }
 
     #[test]
