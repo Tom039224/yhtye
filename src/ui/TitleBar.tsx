@@ -1,6 +1,7 @@
 import { selectedChatInfo } from "../store/project";
 import { useAppState } from "../store/useStore";
 import { placeLabel, placeOf } from "./branchTree";
+import { Icon } from "./Icon";
 
 /**
  * Wordmark and the branch pill: the branch the selected chat's worktree has
@@ -21,7 +22,7 @@ export function TitleBar() {
       <span className="spacer" />
       {branch ? (
         <span className="branch-pill" title="選択中のチャットの作業ツリーのブランチ" data-testid="head-branch">
-          <span className="dot dot-ok" />
+          <Icon name="git-branch" size={12} />
           {branch}
         </span>
       ) : null}

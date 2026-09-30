@@ -46,9 +46,12 @@ describe("usage meters", () => {
   it("show the plan, percentages and time to reset from the core", async () => {
     const { transport } = setup(report(Date.now()));
     await waitFor(() => expect(screen.getByTestId("usage-5h")).toHaveTextContent("94%"));
-    expect(screen.getByTestId("usage-5h")).toHaveTextContent("5h94%(3h 35m)");
-    expect(screen.getByTestId("usage-week")).toHaveTextContent("week40%(2d 4h)");
-    expect(screen.getByTestId("plan")).toHaveTextContent("claude max");
+    expect(screen.getByTestId("usage-5h")).toHaveTextContent("5h94%3h 35m");
+    expect(screen.getByTestId("usage-week")).toHaveTextContent("week40%2d 4h");
+    expect(screen.getByTestId("plan")).toHaveTextContent("max");
+    // The plan sits in the same group as the meters.
+    expect(screen.getByRole("group", { name: "プランと使用量" })).toContainElement(screen.getByTestId("plan"));
+    expect(screen.getByRole("group", { name: "プランと使用量" })).toContainElement(screen.getByTestId("usage-5h"));
     const fill = screen.getByTestId("usage-5h").querySelector<HTMLElement>(".meter-fill");
     expect(fill?.style.width).toBe("94%");
     expect(transport.callsOf("get_usage")[0].refresh).toBe(false);
@@ -72,6 +75,14 @@ describe("usage meters", () => {
     expect(screen.getByTestId("usage-week")).toHaveTextContent("week—");
     expect(screen.queryByTestId("plan")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /5h.*week/ }).title).toMatch(/使用量を取得できません/);
+  });
+
+  it("shows the connection as an icon, with the words in its tooltip", async () => {
+    setup(report(Date.now()));
+    const connection = await screen.findByTestId("connection");
+    await waitFor(() => expect(connection).toHaveClass("status-icon-ok"));
+    expect(connection.title).toMatch(/^接続済み/);
+    expect(connection.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   });
 
   it("formats the time to reset", () => {

@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
+import { IconButton } from "./Icon";
 
 /** Longest accepted name (the core checks the same). */
 export const MAX_SECRET_NAME = 128;
@@ -143,17 +144,8 @@ export function SecretEnvSection() {
                 </>
               ) : (
                 <>
-                  <button type="button" className="btn btn-small" aria-label={`${n} を上書き`} onClick={() => overwrite(n)}>
-                    上書き
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-small btn-danger"
-                    aria-label={`${n} を削除`}
-                    onClick={() => setConfirming(n)}
-                  >
-                    削除
-                  </button>
+                  <IconButton icon="edit" size={14} label={`${n} を上書き`} onClick={() => overwrite(n)} />
+                  <IconButton icon="trash" size={14} tone="danger" label={`${n} を削除`} onClick={() => setConfirming(n)} />
                 </>
               )}
             </li>

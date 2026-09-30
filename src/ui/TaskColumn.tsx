@@ -4,6 +4,7 @@ import type { Group, State } from "../api/generated";
 import { scopeState } from "../store/chats";
 import type { ProjectView } from "../store/project";
 import { useStore } from "../store/useStore";
+import { Icon, IconButton } from "./Icon";
 import type { Mention } from "./mentions";
 import { TaskCard } from "./TaskCard";
 import { focusGroup, groupLabel, groupProgress, liveSubagents } from "./taskInfo";
@@ -52,7 +53,9 @@ export function TaskColumn({ view, selectedTask, onSelectTask, onMention }: Prop
         {progress ? <span className="panel-meta">{progress.done}/{progress.total} 完了</span> : null}
         <span className="spacer" />
         <span className="panel-meta" title="動いているサブエージェントのセッション数">
-          subagents {state ? liveSubagents(view, state) : 0}
+          <Icon name="bot" size={14} />
+          <span className="sr-only">subagents </span>
+          {state ? liveSubagents(view, state) : 0}
         </span>
       </header>
       <div className="scroll">
@@ -108,17 +111,13 @@ function GroupBar({ group, state }: { group: Group; state: State }) {
         </span>
         <span className="spacer" />
         {cancellable ? (
-          <button type="button" className="btn btn-small" onClick={() => void store.cancelGroup(group.id)}>
-            グループを中止
-          </button>
+          <IconButton icon="stop" label="グループを中止" onClick={() => void store.cancelGroup(group.id)} />
         ) : null}
       </div>
       {group.status === "merge_blocked" ? (
         <div className="group-alert" role="alert">
           <span>base ブランチへのマージが保留されています: {group.detail ?? "理由不明"}</span>
-          <button type="button" className="btn btn-small" onClick={() => void store.retryGroupMerge(group.id)}>
-            マージを再試行
-          </button>
+          <IconButton icon="refresh" label="マージを再試行" onClick={() => void store.retryGroupMerge(group.id)} />
         </div>
       ) : null}
       {group.detail && group.status !== "merge_blocked" ? <div className="task-meta">{group.detail}</div> : null}

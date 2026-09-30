@@ -4,6 +4,7 @@ import type { AgentRole, AgentSettingsView, Candidate, RoleSettings } from "../a
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { CandidateTable } from "./CandidateTable";
+import { IconButton } from "./Icon";
 import {
   type Edit,
   type EffortsState,
@@ -117,6 +118,8 @@ export function AgentSettingsSection({ project, scope }: Props) {
     else void save(role, edit.ok);
   };
 
+  const loadingModels = Object.values(models).some((m) => m?.loading);
+
   return (
     <div className="agent-section">
       <div className="settings-toolbar">
@@ -125,17 +128,16 @@ export function AgentSettingsSection({ project, scope }: Props) {
           <b>用途メモ</b> を読んでタスクごとに行を選べます (行と完全に一致するものだけ)。変更はすぐ保存され、
           新しく起動するエージェントから有効です。
         </p>
-        <button
-          type="button"
-          className="btn btn-small"
-          disabled={!view || Object.values(models).some((m) => m?.loading)}
+        <IconButton
+          icon="refresh"
+          label="モデル一覧を再取得"
+          spin={loadingModels}
+          disabled={!view || loadingModels}
           onClick={() => {
             setEfforts({});
             view?.harnesses.forEach((h) => loadModels(h.id, true));
           }}
-        >
-          モデル一覧を再取得
-        </button>
+        />
       </div>
       {view?.harnesses.map((h) => {
         const m = models[h.id];

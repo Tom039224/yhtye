@@ -5,6 +5,7 @@ import { orchestratorKey, scopeState } from "../store/chats";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
+import { Icon } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
 import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
@@ -70,7 +71,8 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         </span>
         {chat && placeText ? (
           <span className="chip branch-chip" title={`このチャットの作業ツリー: ${chat.worktree}`} data-testid="chat-branch">
-            {place.kind === "missing" ? placeText : `⎇ ${placeText}`}
+            <Icon name={place.kind === "missing" ? "alert" : "git-branch"} size={11} />
+            {placeText}
           </span>
         ) : null}
         <span className="spacer" />
@@ -147,14 +149,27 @@ function WaitBanner({ state }: { state: State }) {
   );
 }
 
+/**
+ * The orchestrator's state, by shape as well as colour: a hollow ring not
+ * started, a filled green dot idle, a blue dot with a halo working, and the
+ * alert icon when the session needs attention. The words are the tooltip.
+ */
 function SessionBadge({ status, running }: { status: string | undefined; running: boolean }) {
-  if (!status) return <span className="badge tone-waiting" data-testid="orchestrator-status">not started</span>;
-  const label = status === "live" ? (running ? "working" : "idle") : status;
-  const tone = status === "live" ? (running ? "tone-implementing" : "tone-done") : "tone-handling";
+  const label = !status ? "not started" : status === "live" ? (running ? "working" : "idle") : status;
+  const title = `オーケストレータ: ${label}`;
+  const words = <span className="sr-only">{label}</span>;
+  if (status && status !== "live") {
+    return (
+      <span className="status-icon status-icon-bad" title={title} data-testid="orchestrator-status">
+        <Icon name="alert" size={14} />
+        {words}
+      </span>
+    );
+  }
+  const tone = !status ? "" : running ? " status-dot-working" : " status-dot-idle";
   return (
-    <span className={`badge ${tone}`} data-testid="orchestrator-status">
-      {running ? <span className="badge-dot" /> : null}
-      {label}
+    <span className={`status-dot${tone}`} title={title} data-testid="orchestrator-status">
+      {words}
     </span>
   );
 }
