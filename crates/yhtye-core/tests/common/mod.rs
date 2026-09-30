@@ -3,6 +3,7 @@
 
 pub mod chats;
 pub mod codex;
+pub mod devin;
 pub mod opencode;
 pub mod orch;
 pub mod real;
