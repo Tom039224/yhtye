@@ -782,6 +782,23 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 `CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`。`installed_presets` は `codex` が `PATH`
 にあるときだけ登録する (`CODEX_COMMAND`)。
 
+**ハーネス検出の一般化 (Devin 対応, T-6)**: 登録は「インストール済みのものだけ」に一般化した (`agents/detect.rs` / `installed.rs`)。
+検出は実行ファイルの検索だけで `--version` は実行しない: `PATH` (絶対パスの項目、実行可能な通常ファイル) → 既知の場所
+(`~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは claude-code = `npx`、
+opencode = `opencode`、codex = `codex` + `npx`、devin = `devin` (claude CLI は不要)。`detect_harnesses` が `HarnessDetection { id, label, installed,
+resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }` を返し、
+`presets_from` が installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (claude-code / codex は npx のパス、
+opencode / devin は本体。codex は `CODEX_PATH` にも `codex` を渡す。`HarnessPreset::with_command`)。**手動パス** (テーブル `harness_paths`、
+マイグレーション `0008`) は各ハーネスの主実行ファイル (claude-code は npx) だけを置き換え、保存時に「絶対パスかつ実行可能な通常ファイル」を
+検査する (`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは未インストール扱い (`override_error` に理由。検索には
+フォールバックしない)。組み込みの既定 (`default_choice`) は claude-code > opencode > devin > codex の最初のインストール済み
+(モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin = 未指定、codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。
+1 つも無くても Core は起動し、エージェント開始時に「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`)。
+**再検出**は `GetHarnesses` (設定を開いたとき) と `DetectHarnesses` (再検出ボタン。モデルのキャッシュも捨てる) で行い、
+`AgentCatalog::refresh` が登録簿と組み込みの既定を入れ替える。動いているセッションには影響しない。未登録ハーネスの行は
+オーケストレータのプロンプト・`get_status.agents`・`create_task` の検証から外す (`AgentCatalog::available` / `available_settings`)
+が、保存データと設定パネル用の `AgentSettingsView` は変えない。`CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses`。
+
 `AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
 `OrchestrationConfig::agents: Arc<AgentCatalog>` (以前の `orchestrator / implementer / reviewer` の 3 フィールドを置き換え。
 テスト用に `AgentCatalog::fixed(orch, impl, reviewer)` = 1 つだけのハーネス `default`)。
@@ -861,6 +878,10 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
   (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
 - `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。
 - `list_model_efforts{harness, model}` (7d) → `model_efforts{efforts: {harness, model, efforts: [{value, name, description?}]}}`。エラーは同上。
+- `get_harnesses` / `detect_harnesses` → `harnesses{harnesses: [HarnessDetection]}` (T-6, §15.2): 検出をやり直して登録簿を更新し、全ハーネスの状態を返す
+  (`detect_harnesses` はモデルのキャッシュも捨てる)。`detection` が無いコアは空リスト。
+- `set_harness_path{harness, path?}` (T-6) → 同じ `harnesses`。`path: null` は手動パスの削除 (自動検出に戻る)。未知のハーネスは `not_found`、
+  絶対パスの実行可能な通常ファイルでなければ `invalid_argument`。保存後に再検出し、そのハーネスのモデルのキャッシュを捨てる。
 - `list_secret_env` / `set_secret_env{name, value}` / `delete_secret_env{name}` (7e) → `secret_env{names}` (§16)。
 - **設定 UI (7d)**: アプリ全体の設定モーダル ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。API は上のとおりで、
   行の編集はすべてクライアント側で「役割の設定全体を `set_agent_settings` で置き換える」形 (同じ組の重複は UI が先に断る)。

@@ -334,6 +334,13 @@ impl ModelService {
         drop(self.efforts.lock().await);
     }
 
+    /// Forgets what was read from `harness` (its models and the efforts of its
+    /// models), so the next request asks it again: its executable changed.
+    pub async fn invalidate(&self, harness: &str) {
+        self.cache.lock().await.remove(harness);
+        self.efforts.lock().await.retain(|(h, _), _| h != harness);
+    }
+
     /// The models of `preset`: cached if fresh enough, otherwise probed.
     pub async fn get(
         &self,

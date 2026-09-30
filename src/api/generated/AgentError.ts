@@ -3,4 +3,4 @@
 /**
  * Errors surfaced by the ACP client. Messages are meant to be shown to people.
  */
-export type AgentError = { "code": "spawn", command: string, message: string, } | { "code": "startup", step: string, message: string, } | { "code": "timeout", step: string, millis: number, } | { "code": "unsupported", requested: string, available: string, } | { "code": "busy" } | { "code": "request", method: string, message: string, } | { "code": "closed" };
+export type AgentError = { "code": "spawn", command: string, message: string, } | { "code": "startup", step: string, message: string, } | { "code": "timeout", step: string, millis: number, } | { "code": "unsupported", requested: string, available: string, } | { "code": "setup", message: string, } | { "code": "busy" } | { "code": "request", method: string, message: string, } | { "code": "closed" };
