@@ -22,7 +22,7 @@ use crate::acp::schema::{
     SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect,
     SessionConfigSelectOption, SessionConfigSelectOptions,
 };
-use crate::acp::{AgentHandle, SpawnOptions};
+use crate::acp::{AgentHandle, SpawnOptions, effort_option};
 use crate::secrets::{Secrets, spawn_agent_with_secrets};
 
 /// Upper bound for starting the listing session.
@@ -116,23 +116,15 @@ fn flat_options(select: &SessionConfigSelect) -> Vec<&SessionConfigSelectOption>
 }
 
 /// The efforts listed in `options`: the select with id `config_id`, else the one
-/// of category `thought_level`. Empty when there is none. A value `default`
+/// of category `thought_level` ([`effort_option`], the rule a session start uses
+/// to apply the effort). Empty when there is none. A value `default`
 /// (Claude Code adds it for clients that predate the option) is left out: an
 /// unset effort is "not specified" in Yhtye.
 #[must_use]
 pub fn efforts_from_options(options: &[SessionConfigOption], config_id: &str) -> Vec<EffortOption> {
-    let is_select = |o: &&SessionConfigOption| matches!(o.kind, SessionConfigKind::Select(_));
-    let found = options
-        .iter()
-        .filter(is_select)
-        .find(|o| &*o.id.0 == config_id)
-        .or_else(|| {
-            options
-                .iter()
-                .filter(is_select)
-                .find(|o| o.category == Some(SessionConfigOptionCategory::ThoughtLevel))
-        });
-    let Some(SessionConfigKind::Select(select)) = found.map(|o| &o.kind) else {
+    let Some(SessionConfigKind::Select(select)) =
+        effort_option(options, config_id).map(|o| &o.kind)
+    else {
         return Vec::new();
     };
     let mut efforts: Vec<EffortOption> = Vec::new();
@@ -472,6 +464,47 @@ mod tests {
         let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
         assert_eq!(values, ["x", "y"]);
         assert_eq!(current.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn efforts_come_from_the_named_option_else_the_only_thought_level_option() {
+        let by_id = vec![SessionConfigOption::select(
+            "effort",
+            "Effort",
+            "high",
+            vec![opt("default"), opt("low"), opt("high")],
+        )];
+        let values = |efforts: Vec<EffortOption>| -> Vec<String> {
+            efforts.into_iter().map(|e| e.value).collect()
+        };
+        assert_eq!(
+            values(efforts_from_options(&by_id, "effort")),
+            ["low", "high"],
+            "`default` is left out"
+        );
+
+        let by_category = vec![
+            SessionConfigOption::select("model", "Model", "m", vec![opt("m")]),
+            SessionConfigOption::select(
+                "thinking",
+                "Thinking",
+                "low",
+                vec![opt("low"), opt("max")],
+            )
+            .category(SessionConfigOptionCategory::ThoughtLevel),
+        ];
+        assert_eq!(
+            values(efforts_from_options(&by_category, "effort")),
+            ["low", "max"]
+        );
+
+        let ambiguous = vec![
+            SessionConfigOption::select("a", "A", "x", vec![opt("x")])
+                .category(SessionConfigOptionCategory::ThoughtLevel),
+            SessionConfigOption::select("b", "B", "y", vec![opt("y")])
+                .category(SessionConfigOptionCategory::ThoughtLevel),
+        ];
+        assert!(efforts_from_options(&ambiguous, "effort").is_empty());
     }
 
     #[test]

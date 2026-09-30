@@ -11,8 +11,8 @@ mod openrouter;
 mod settings;
 
 pub use catalog::{
-    AgentCatalog, CLAUDE_CODE, CODEX, HarnessInfo, HarnessPreset, MODEL_CONFIG_ID, ModelSource,
-    OPENCODE, Resolved,
+    AgentCatalog, CLAUDE_CODE, CODEX, DEVIN, HarnessInfo, HarnessPreset, MODEL_CONFIG_ID,
+    ModelSource, OPENCODE, Resolved,
 };
 pub use codex_config::{codex_home, configured_provider, model_provider};
 pub use installed::{
