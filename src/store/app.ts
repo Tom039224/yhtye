@@ -109,7 +109,8 @@ export class AppStore {
   private gitTimer: ReturnType<typeof setTimeout> | null = null;
   private gitToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly prefs: Prefs;
+  /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
+  readonly prefs: Prefs;
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
