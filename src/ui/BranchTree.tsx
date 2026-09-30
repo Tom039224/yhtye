@@ -5,6 +5,7 @@ import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
+import { ChevronIcon } from "./SidebarIcons";
 import { buildTree, chatRing, shortAge, type WorktreeNode } from "./branchTree";
 import { NEW_CHAT_TITLE } from "./Conversation";
 import { useNow } from "./useNow";
@@ -36,7 +37,7 @@ export function BranchTree() {
   const empty = tree.worktrees.length === 0 && tree.lost.length === 0 && tree.otherBranches.length === 0;
 
   return (
-    <>
+    <div className="branches">
       <div className="section-title branches-title section-head">
         <span>BRANCHES</span>
         <button
@@ -73,7 +74,7 @@ export function BranchTree() {
           {tree.otherBranches.length > 0 ? <OtherBranches names={tree.otherBranches} /> : null}
         </ul>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -92,7 +93,7 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
   return (
     <li>
       <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
-        <span className="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span className={`caret ${open ? "" : "collapsed"}`} aria-hidden="true"><ChevronIcon /></span>
         {running ? <span className="ring ring-running" role="img" aria-label="実行中" /> : <span className={`dot ${node.isMain ? "dot-ok" : ""}`} />}
         <span className="name">{node.label}</span>
         {node.missing ? <span className="age">見つかりません</span> : null}
@@ -122,7 +123,7 @@ function OtherBranches({ names }: { names: string[] }) {
   return (
     <li>
       <button type="button" className="side-row branch-row other-branches" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <span className={`caret ${open ? "" : "collapsed"}`} aria-hidden="true"><ChevronIcon /></span>
         <span className="name side-note">他のブランチ ({names.length})</span>
       </button>
       {open ? (

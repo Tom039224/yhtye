@@ -78,6 +78,8 @@ export class FakeCore {
   log: ApiEvent[] = [];
   snapshot: Snapshot;
   info: ProjectInfo;
+  /** Other projects the core knows (listed after `info`; `open_project` finds them by path). */
+  others: ProjectInfo[] = [];
   /** Commands that should fail, by type. */
   failures = new Map<ApiCommand["type"], CommandError>();
   /** Largest page the fake returns (whatever the client asks for). */
@@ -141,9 +143,9 @@ export class FakeCore {
     if (failure) throw failure;
     switch (cmd.type) {
       case "list_projects":
-        return { type: "projects", projects: [this.info] };
+        return { type: "projects", projects: [this.info, ...this.others] };
       case "open_project":
-        return { type: "project", project: { ...this.info, open: true } };
+        return { type: "project", project: { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true } };
       case "get_snapshot":
         return { type: "snapshot", snapshot: this.snapshot };
       case "list_events": {

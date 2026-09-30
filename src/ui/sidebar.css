@@ -1,0 +1,68 @@
+/* Sidebar (loaded after App.css): the project pull-down, the projects running in
+   the background, and the BRANCHES tree with a scroll area of its own. */
+
+/* ---- project pull-down ---------------------------------------------------- */
+
+.project-picker { position: relative; padding: 0 6px; }
+.project-trigger {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border: 1px solid var(--border-card); border-radius: 6px; background: var(--surface-inset);
+  color: var(--text-primary); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.project-trigger:hover, .project-trigger[aria-expanded="true"] { border-color: var(--border-hover); background: var(--surface-hover); }
+.project-trigger:focus-visible, .project-options:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.project-trigger .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-trigger .placeholder { color: var(--text-dim); }
+.project-trigger .chevron { flex: none; color: var(--text-muted); transition: transform 120ms ease; }
+.project-trigger[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+.project-popup {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 6px; right: 6px; padding: 4px;
+  display: flex; flex-direction: column; gap: 4px; outline: none;
+  border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.project-options {
+  display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none;
+  max-height: 240px; overflow-y: auto; outline: none; border-radius: 5px;
+}
+.project-option {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px;
+  color: var(--text-muted); font-size: 12.5px; cursor: pointer;
+}
+.project-option.active { background: var(--surface-hover-strong); color: var(--text-primary); }
+.project-option[aria-selected="true"] { color: var(--text-primary); }
+.project-option[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.project-option .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-option .check { flex: none; color: var(--accent); }
+.project-popup .open-form { padding: 4px 2px 2px; border-top: 1px solid var(--border-subtle); }
+.project-popup .side-note { padding: 4px 6px; }
+
+/* ---- projects running in the background ------------------------------------ */
+
+.bg-projects { padding: 8px 6px 0; display: flex; flex-direction: column; gap: 5px; }
+.bg-caption { padding: 0 4px; font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-faint); }
+.bg-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 68px; overflow-y: auto; }
+.bg-list li { min-width: 0; max-width: 100%; }
+.bg-chip {
+  max-width: 100%; display: flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border: 1px solid var(--border-pill); border-radius: 999px; background: none;
+  color: var(--text-muted); font: 400 11px/1.3 var(--font-mono); cursor: pointer;
+}
+.bg-chip:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text-primary); }
+.bg-chip:disabled { opacity: 0.5; cursor: default; }
+.bg-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--status-done-bar); animation: ypulse 1.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .bg-dot { animation: none; } }
+
+/* ---- branches: the head stays, only the tree scrolls ------------------------ */
+
+.branches { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.branches-title { padding-top: 14px; }
+.branches .branch-tree { flex: 1 1 auto; overscroll-behavior: contain; }
+.branch-row .name, .chat-row .name { flex: 1; min-width: 0; white-space: nowrap; }
+.branch-row .caret { display: flex; width: 10px; flex: none; color: var(--text-dim); }
+.branch-row .caret.collapsed .chevron { transform: rotate(-90deg); }
+.chat-list { padding-left: 12px; }
+.new-chat { color: var(--text-faint); }
+.new-chat:hover:not(:disabled) { color: var(--accent-strong); }
