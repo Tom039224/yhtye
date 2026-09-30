@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { AgentSettingsSection, type Scope } from "./AgentSettingsSection";
+import { HarnessSettingsSection } from "./HarnessSettingsSection";
 import { SecretEnvSection } from "./SecretEnvSection";
 
 /** The sections of the settings. More are added here (each is a left-hand entry). */
 const SECTIONS = [
   { id: "agents", label: "エージェント" },
+  { id: "harnesses", label: "ハーネス" },
   { id: "secrets", label: "秘密の環境変数" },
 ] as const;
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -82,7 +84,13 @@ export function SettingsModal({ project, onClose }: Props) {
             </button>
           </header>
           <div className="settings-body">
-            {section === "agents" ? <AgentSettingsSection project={project} scope={scope} /> : <SecretEnvSection />}
+            {section === "agents" ? (
+              <AgentSettingsSection project={project} scope={scope} />
+            ) : section === "harnesses" ? (
+              <HarnessSettingsSection />
+            ) : (
+              <SecretEnvSection />
+            )}
           </div>
         </div>
       </div>

@@ -17,6 +17,7 @@ import type {
   ApiResponse,
   ChatInfo,
   GitOverview,
+  HarnessDetection,
   HarnessModels,
   ModelEfforts,
   ProjectInfo,
@@ -504,6 +505,26 @@ export class AppStore {
   async listModelEfforts(harness: string, model: string): Promise<ModelEfforts> {
     const r = await this.invoke({ type: "list_model_efforts", harness, model }, "model_efforts");
     return r.efforts;
+  }
+
+  // ---- harness detection -----------------------------------------------------
+  // The core looks for the harnesses' executables again on each of these and
+  // registers the ones found, so the agent settings offer them afterwards.
+  // Like the agent settings, failures reject for the section to show.
+
+  /** Whether each harness is installed, and where its executables are. */
+  async getHarnesses(): Promise<HarnessDetection[]> {
+    return (await this.invoke({ type: "get_harnesses" }, "harnesses")).harnesses;
+  }
+
+  /** Like `getHarnesses`, and also forgets the models read from every harness. */
+  async detectHarnesses(): Promise<HarnessDetection[]> {
+    return (await this.invoke({ type: "detect_harnesses" }, "harnesses")).harnesses;
+  }
+
+  /** Sets the path of a harness's main executable (`null`: detect it automatically). */
+  async setHarnessPath(harness: string, path: string | null): Promise<HarnessDetection[]> {
+    return (await this.invoke({ type: "set_harness_path", harness, path }, "harnesses")).harnesses;
   }
 
   // ---- secret environment variables (Stage 7e) ------------------------------
