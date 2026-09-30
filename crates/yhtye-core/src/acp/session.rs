@@ -47,6 +47,14 @@ pub(crate) enum AgentCmd {
 #[notification(method = "session/update")]
 struct RawSessionUpdate(serde_json::Value);
 
+/// Devin's vendor request asking the client for diagnostics; answered `{}`
+/// (there is nothing to report). Every other unknown request gets the
+/// "method not found" the connection answers by itself, and unknown vendor
+/// notifications are ignored (no handler, no error).
+#[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcRequest)]
+#[request(method = "_cognition.ai/request_diagnostics", response = serde_json::Value)]
+struct RequestDiagnostics(serde_json::Value);
+
 /// Whether a turn is running. Exactly one party flips it back to `false` and
 /// emits `TurnEnded` for that turn.
 #[derive(Clone)]
@@ -181,6 +189,7 @@ async fn connection(
 ) -> Result<(), agent_client_protocol::Error> {
     let update_events = events.clone();
     let permission_events = events.clone();
+    let permission_policy = params.harness.permission_policy;
     Client
         .builder()
         .name("yhtye")
@@ -195,7 +204,7 @@ async fn connection(
         )
         .on_receive_request(
             async move |req: RequestPermissionRequest, responder, _cx| {
-                let choice = choose_permission(&req.options);
+                let choice = choose_permission(&req.options, permission_policy);
                 let chosen = choice.map(|o| o.kind);
                 let outcome = outcome_for(choice);
                 let _ = permission_events.send(AgentEvent::PermissionAutoAnswered {
@@ -204,6 +213,12 @@ async fn connection(
                     chosen,
                 });
                 responder.respond(RequestPermissionResponse::new(outcome))
+            },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |_req: RequestDiagnostics, responder, _cx| {
+                responder.respond(serde_json::json!({}))
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -365,5 +380,25 @@ fn as_request_error(e: AgentError) -> AgentError {
             message: format!("timed out after {millis} ms"),
         },
         other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_client_protocol::JsonRpcMessage;
+
+    use super::*;
+
+    #[test]
+    fn the_diagnostics_request_matches_devins_vendor_method_with_any_params() {
+        assert!(RequestDiagnostics::matches_method(
+            "_cognition.ai/request_diagnostics"
+        ));
+        assert!(!RequestDiagnostics::matches_method("_cognition.ai/other"));
+        let parsed = RequestDiagnostics::parse_message(
+            "_cognition.ai/request_diagnostics",
+            &serde_json::json!({ "anything": 1 }),
+        );
+        assert!(parsed.is_ok());
     }
 }

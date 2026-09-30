@@ -3,8 +3,9 @@
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, AvailableCommandsUpdate, ConfigOptionUpdate, ContentChunk,
     CurrentModeUpdate, Implementation, PermissionOption, PermissionOptionKind, Plan,
-    SessionConfigKind, SessionConfigOption, SessionId, SessionInfoUpdate, SessionModeState,
-    SessionUpdate, StopReason, ToolCall, ToolCallUpdate, UsageUpdate,
+    SessionConfigKind, SessionConfigOption, SessionConfigOptionCategory, SessionId,
+    SessionInfoUpdate, SessionModeState, SessionUpdate, StopReason, ToolCall, ToolCallUpdate,
+    UsageUpdate,
 };
 use serde::Serialize;
 use ts_rs::TS;
@@ -81,6 +82,29 @@ pub fn config_value<'a>(options: &'a [SessionConfigOption], config_id: &str) -> 
             SessionConfigKind::Select(s) => Some(&*s.current_value.0),
             _ => None,
         })
+}
+
+/// The select option holding the effort (thought level): the one with id
+/// `config_id`, else the select of category `thought_level` when there is
+/// exactly one (an agent may name its effort option anything, e.g. Devin; with
+/// several candidates none is guessed).
+#[must_use]
+pub fn effort_option<'a>(
+    options: &'a [SessionConfigOption],
+    config_id: &str,
+) -> Option<&'a SessionConfigOption> {
+    let selects = options
+        .iter()
+        .filter(|o| matches!(o.kind, SessionConfigKind::Select(_)));
+    if let Some(named) = selects.clone().find(|o| &*o.id.0 == config_id) {
+        return Some(named);
+    }
+    let mut thought_levels =
+        selects.filter(|o| o.category == Some(SessionConfigOptionCategory::ThoughtLevel));
+    match (thought_levels.next(), thought_levels.next()) {
+        (Some(only), None) => Some(only),
+        _ => None,
+    }
 }
 
 /// A `session/update`, typed. Mirrors `SessionUpdate` of the ACP schema.
@@ -160,6 +184,10 @@ pub enum AgentError {
         requested: String,
         available: String,
     },
+    /// The agent cannot be chosen (no harness is installed, a harness has no
+    /// model): the message says what to do.
+    #[error("{message}")]
+    Setup { message: String },
     #[error("a turn is already running on this session")]
     Busy,
     #[error("agent request `{method}` failed: {message}")]

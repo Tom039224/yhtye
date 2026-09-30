@@ -4,16 +4,19 @@
 //! built-in default and an in-memory copy of the stored settings layers.
 
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::Serialize;
 use ts_rs::TS;
 
 use super::settings::{
-    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, RoleSettings, effective,
+    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, RoleSettings, effective,
 };
 use crate::acp::{AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect};
 use crate::secrets::Secrets;
+
+/// Shown when an agent is started and no harness is registered.
+pub const NO_HARNESS_MESSAGE: &str = "使えるハーネスがありません (設定 › ハーネス を確認)";
 
 /// The config id used for the model when a harness config names none.
 pub const MODEL_CONFIG_ID: &str = "model";
@@ -24,6 +27,8 @@ pub const OPENCODE: &str = "opencode";
 pub const CLAUDE_CODE: &str = "claude-code";
 /// Id of the Codex preset.
 pub const CODEX: &str = "codex";
+/// Id of the Devin preset.
+pub const DEVIN: &str = "devin";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +159,33 @@ impl HarnessPreset {
         }
     }
 
+    /// Devin (`HarnessConfig::devin`) at `command` for every role. Devin's own
+    /// default model applies unless a choice names one (a `model` option read
+    /// over ACP, like Claude Code's), and the effort goes to its `thought_level`
+    /// option (whatever id it has, see [`crate::acp::effort_option`]). The
+    /// model listing session does no mode / model switching.
+    #[must_use]
+    pub fn devin(command: &str) -> Self {
+        let h = HarnessConfig::devin(command);
+        Self {
+            id: DEVIN.into(),
+            label: "Devin".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig {
+                mode_after_new: None,
+                ..h
+            }),
+            model_env: None,
+            model_config_env: None,
+            effort_config_id: EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
+            requires_model: false,
+        }
+    }
+
     /// A harness with the given per-role configs (tests, fake agents). The
     /// investigator uses the implementer config.
     #[must_use]
@@ -177,6 +209,24 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
         }
+    }
+
+    /// Runs `command` (an absolute path found on this machine) instead of the
+    /// one the configs name, for every role and the model listing session.
+    #[must_use]
+    pub fn with_command(mut self, command: &str) -> Self {
+        for h in [
+            &mut self.orchestrator,
+            &mut self.implementer,
+            &mut self.investigator,
+            &mut self.reviewer,
+        ]
+        .into_iter()
+        .chain(self.probe.as_mut())
+        {
+            h.command = command.to_string();
+        }
+        self
     }
 
     #[must_use]
@@ -288,12 +338,21 @@ struct Layers {
     projects: HashMap<String, AgentSettingsLayer>,
 }
 
-/// Registered harnesses, the built-in default and the stored settings (a copy
-/// kept in sync by [`crate::runtime::Core`]). Shared by every project.
+/// The harnesses that are registered and what a role without settings runs;
+/// replaced as a whole when the installed harnesses are detected again.
 #[derive(Debug)]
-pub struct AgentCatalog {
+struct Registry {
     presets: Vec<HarnessPreset>,
     builtin: AgentChoice,
+}
+
+/// Registered harnesses, the built-in default and the stored settings (a copy
+/// kept in sync by [`crate::runtime::Core`]). Shared by every project. The
+/// registered harnesses can change while the app runs ([`AgentCatalog::refresh`]);
+/// sessions already running are not affected.
+#[derive(Debug)]
+pub struct AgentCatalog {
+    registry: RwLock<Registry>,
     layers: RwLock<Layers>,
     /// The secret environment variables every agent process gets (Stage 7e).
     secrets: Arc<Secrets>,
@@ -304,8 +363,7 @@ impl AgentCatalog {
     #[must_use]
     pub fn new(presets: Vec<HarnessPreset>, builtin: AgentChoice) -> Self {
         Self {
-            presets,
-            builtin,
+            registry: RwLock::new(Registry { presets, builtin }),
             layers: RwLock::new(Layers::default()),
             secrets: Arc::new(Secrets::none()),
         }
@@ -335,24 +393,38 @@ impl AgentCatalog {
         Self::new(vec![preset], AgentChoice::new("default", None))
     }
 
+    /// Replaces the registered harnesses and the built-in default (after the
+    /// installed harnesses were detected again).
+    pub fn refresh(&self, presets: Vec<HarnessPreset>, builtin: AgentChoice) {
+        *self.registry_mut() = Registry { presets, builtin };
+    }
+
     #[must_use]
-    pub fn builtin(&self) -> &AgentChoice {
-        &self.builtin
+    pub fn builtin(&self) -> AgentChoice {
+        self.registry().builtin.clone()
     }
 
     #[must_use]
     pub fn harnesses(&self) -> Vec<HarnessInfo> {
-        self.presets.iter().map(HarnessPreset::info).collect()
+        self.registry()
+            .presets
+            .iter()
+            .map(HarnessPreset::info)
+            .collect()
     }
 
     #[must_use]
-    pub fn harness_ids(&self) -> Vec<&str> {
-        self.presets.iter().map(|p| p.id.as_str()).collect()
+    pub fn harness_ids(&self) -> Vec<String> {
+        self.registry()
+            .presets
+            .iter()
+            .map(|p| p.id.clone())
+            .collect()
     }
 
     #[must_use]
-    pub fn preset(&self, id: &str) -> Option<&HarnessPreset> {
-        self.presets.iter().find(|p| p.id == id)
+    pub fn preset(&self, id: &str) -> Option<HarnessPreset> {
+        self.registry().presets.iter().find(|p| p.id == id).cloned()
     }
 
     /// The global layer and, for `project`, its layer.
@@ -371,10 +443,53 @@ impl AgentCatalog {
     pub fn effective(&self, project: Option<&str>) -> AgentSettings {
         let l = self.read();
         effective(
-            &self.builtin,
+            &self.builtin(),
             &l.global,
             project.and_then(|id| l.projects.get(id)),
         )
+    }
+
+    /// [`AgentCatalog::effective`] as far as the registered harnesses go
+    /// ([`AgentCatalog::available`], per role): what the orchestrator may choose
+    /// from. The stored settings are not changed.
+    #[must_use]
+    pub fn available_settings(&self, project: Option<&str>) -> AgentSettings {
+        let s = self.effective(project);
+        AgentSettings {
+            orchestrator: self.available(&s.orchestrator),
+            implementer: self.available(&s.implementer),
+            investigator: self.available(&s.investigator),
+            reviewer: self.available(&s.reviewer),
+        }
+    }
+
+    /// `settings` without the rows of harnesses that are not registered. When
+    /// the default is one of them, the built-in default takes its place if it is
+    /// still a row, else the first row left; with no row left, only the built-in
+    /// default remains.
+    #[must_use]
+    pub fn available(&self, settings: &RoleSettings) -> RoleSettings {
+        let reg = self.registry();
+        let candidates: Vec<Candidate> = settings
+            .candidates
+            .iter()
+            .filter(|c| reg.presets.iter().any(|p| p.id == c.harness))
+            .cloned()
+            .collect();
+        let has = |choice: &AgentChoice| candidates.iter().any(|c| &c.choice() == choice);
+        let default = if has(&settings.default) {
+            settings.default.clone()
+        } else if has(&reg.builtin) {
+            reg.builtin.clone()
+        } else if let Some(first) = candidates.first() {
+            first.choice()
+        } else {
+            return RoleSettings::only(reg.builtin.clone());
+        };
+        RoleSettings {
+            candidates,
+            default,
+        }
     }
 
     /// Replaces the in-memory copy of one role of a layer (after it is stored).
@@ -394,7 +509,8 @@ impl AgentCatalog {
     /// ([`RoleSettings::validate`]) and that every choice of a harness that
     /// [requires a model](HarnessPreset::requires_model) names one.
     pub fn validate(&self, settings: &RoleSettings) -> Result<RoleSettings, String> {
-        let valid = settings.validate(&self.harness_ids())?;
+        let ids = self.harness_ids();
+        let valid = settings.validate(&ids.iter().map(String::as_str).collect::<Vec<_>>())?;
         if let Some(c) = valid.candidates.iter().find(|c| {
             c.model.is_none() && self.preset(&c.harness).is_some_and(|p| p.requires_model)
         }) {
@@ -407,8 +523,37 @@ impl AgentCatalog {
     /// override of the task) if its harness is registered, else the role's
     /// default in effect now, else the built-in default. A choice that was
     /// skipped because its harness is not registered (any more) is reported
-    /// in [`Resolved::replaced`].
+    /// in [`Resolved::replaced`]. Fails with [`AgentError::Setup`] when no
+    /// harness is registered, or the choice is of a harness that needs a model
+    /// and names none (Codex as the built-in default).
     pub fn resolve(
+        &self,
+        project: &str,
+        role: AgentRole,
+        over: Option<&AgentChoice>,
+    ) -> Result<Resolved, AgentError> {
+        if self.registry().presets.is_empty() {
+            return Err(AgentError::Setup {
+                message: NO_HARNESS_MESSAGE.into(),
+            });
+        }
+        let resolved = self.resolve_registered(project, role, over)?;
+        if resolved.choice.model.is_none()
+            && self
+                .preset(&resolved.choice.harness)
+                .is_some_and(|p| p.requires_model)
+        {
+            return Err(AgentError::Setup {
+                message: format!(
+                    "{} にはモデルの指定が必要です (設定 › ハーネス でモデルを選んでください)",
+                    resolved.choice.harness
+                ),
+            });
+        }
+        Ok(resolved)
+    }
+
+    fn resolve_registered(
         &self,
         project: &str,
         role: AgentRole,
@@ -447,14 +592,15 @@ impl AgentCatalog {
             role.as_str()
         );
         let replaced = replaced.or(Some(default));
-        self.launch_config(role, &self.builtin)
+        let builtin = self.builtin();
+        self.launch_config(role, &builtin)
             .map(|harness| Resolved {
-                choice: self.builtin.clone(),
+                choice: builtin.clone(),
                 harness,
                 replaced,
             })
             .ok_or_else(|| AgentError::Unsupported {
-                requested: format!("harness {}", self.builtin.harness),
+                requested: format!("harness {}", builtin.harness),
                 available: self.harness_ids().join(", "),
             })
     }
@@ -466,8 +612,18 @@ impl AgentCatalog {
             .map(|p| p.config(role, choice.model.as_deref(), choice.effort.as_deref()))
     }
 
-    fn read(&self) -> std::sync::RwLockReadGuard<'_, Layers> {
+    fn read(&self) -> RwLockReadGuard<'_, Layers> {
         self.layers.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn registry(&self) -> RwLockReadGuard<'_, Registry> {
+        self.registry.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn registry_mut(&self) -> RwLockWriteGuard<'_, Registry> {
+        self.registry
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -513,6 +669,55 @@ mod tests {
         );
         assert_eq!(p.model_config_id(), "model");
         assert!(p.probe_config().model.is_none());
+    }
+
+    #[test]
+    fn devin_preset_runs_every_role_the_same_and_selects_model_and_effort_over_acp() {
+        let p = HarnessPreset::devin("/usr/bin/devin");
+        assert_eq!((p.id.as_str(), p.label.as_str()), ("devin", "Devin"));
+        assert!(!p.requires_model);
+        assert_eq!(p.model_source, ModelSource::Acp);
+        assert_eq!(p.effort_config_id, "effort");
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        let expected = HarnessConfig::devin("/usr/bin/devin");
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            assert_eq!(p.config(role, None, None), expected);
+        }
+        let h = p.config(AgentRole::Implementer, Some("claude-opus"), Some("high"));
+        assert_eq!(
+            h.model,
+            Some(ModelSelect {
+                config_id: "model".into(),
+                value: "claude-opus".into()
+            })
+        );
+        assert_eq!(
+            h.effort,
+            Some(ModelSelect {
+                config_id: "effort".into(),
+                value: "high".into()
+            })
+        );
+        assert!(h.env.is_empty(), "the model travels as an option only");
+        assert_eq!(p.info().id, "devin");
+    }
+
+    #[test]
+    fn devin_probe_switches_neither_mode_nor_model() {
+        let probe = HarnessPreset::devin("devin").probe_config();
+        assert_eq!(
+            (probe.command.as_str(), probe.args.as_slice()),
+            ("devin", &["acp".to_string()][..])
+        );
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
     }
 
     #[test]
@@ -586,8 +791,150 @@ mod tests {
             .expect("builtin");
         assert_eq!(r.choice, AgentChoice::new("claude-code", Some("haiku")));
         assert_eq!(r.replaced, Some(AgentChoice::new("gone", None)));
-        let broken = AgentCatalog::new(vec![], AgentChoice::new("none", None));
-        assert!(broken.resolve("P", AgentRole::Implementer, None).is_err());
+    }
+
+    #[test]
+    fn without_a_registered_harness_starting_an_agent_says_what_to_check() {
+        let broken = AgentCatalog::new(vec![], AgentChoice::new("claude-code", Some("haiku")));
+        let e = broken
+            .resolve("P", AgentRole::Implementer, None)
+            .expect_err("nothing to run");
+        assert_eq!(
+            e,
+            AgentError::Setup {
+                message: NO_HARNESS_MESSAGE.into()
+            }
+        );
+        assert_eq!(
+            e.to_string(),
+            "使えるハーネスがありません (設定 › ハーネス を確認)"
+        );
+    }
+
+    #[test]
+    fn a_builtin_default_that_needs_a_model_asks_for_one() {
+        let c = AgentCatalog::new(
+            vec![HarnessPreset::codex(Some("/c/codex"))],
+            AgentChoice::new("codex", None),
+        );
+        let e = c
+            .resolve("P", AgentRole::Orchestrator, None)
+            .expect_err("codex has no default model");
+        let AgentError::Setup { message } = e else {
+            panic!("{e:?}");
+        };
+        assert!(
+            message.contains("codex") && message.contains("設定"),
+            "{message}"
+        );
+        // Once the settings name a model it runs.
+        c.set(
+            None,
+            AgentRole::Orchestrator,
+            Some(RoleSettings::only(AgentChoice::new("codex", Some("gpt-x")))),
+        );
+        let r = c
+            .resolve("P", AgentRole::Orchestrator, None)
+            .expect("named");
+        assert_eq!(r.choice.model.as_deref(), Some("gpt-x"));
+    }
+
+    #[test]
+    fn refresh_replaces_the_registered_harnesses_and_the_builtin_default() {
+        let c = catalog();
+        assert_eq!(c.harness_ids(), ["claude-code", "other"]);
+        assert!(c.preset("other").is_some());
+        let devin = AgentChoice::new("devin", None);
+        c.refresh(vec![HarnessPreset::devin("/d/devin")], devin.clone());
+        assert_eq!(c.harness_ids(), ["devin"]);
+        assert!(c.preset("other").is_none(), "gone");
+        assert_eq!(c.builtin(), devin);
+        assert_eq!(c.harnesses()[0].label, "Devin");
+        let r = c.resolve("P", AgentRole::Reviewer, None).expect("builtin");
+        assert_eq!((r.choice, r.harness.command.as_str()), (devin, "/d/devin"));
+        assert!(
+            c.launch_config(AgentRole::Reviewer, &AgentChoice::new("other", None))
+                .is_none()
+        );
+        let s = RoleSettings::only(AgentChoice::new("other", None));
+        assert!(c.validate(&s).is_err(), "no longer a known harness");
+    }
+
+    #[test]
+    fn a_preset_can_run_a_command_found_elsewhere() {
+        let p = HarnessPreset::claude_code("haiku").with_command("/n/npx");
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            assert_eq!(p.config(role, None, None).command, "/n/npx");
+        }
+        assert_eq!(p.probe_config().command, "/n/npx");
+        let expected = HarnessConfig {
+            command: "/n/npx".into(),
+            ..HarnessConfig::claude_code("haiku")
+        };
+        assert_eq!(p.config(AgentRole::Reviewer, None, None), expected);
+        let fixed = HarnessPreset::fixed(
+            "x",
+            HarnessConfig::plain("o", vec![]),
+            HarnessConfig::plain("i", vec![]),
+            HarnessConfig::plain("r", vec![]),
+        )
+        .with_command("/x");
+        assert_eq!(
+            fixed.probe_config().command,
+            "/x",
+            "no probe: the implementer's"
+        );
+    }
+
+    #[test]
+    fn available_settings_leave_out_rows_of_unregistered_harnesses() {
+        let c = catalog();
+        let cc = AgentChoice::new("claude-code", Some("haiku"));
+        let gone = AgentChoice::new("gone", Some("x"));
+        let other = AgentChoice::new("other", None);
+        let both = |default: &AgentChoice| RoleSettings {
+            candidates: vec![
+                Candidate::from(gone.clone()).with_note("cheap"),
+                Candidate::from(cc.clone()),
+                Candidate::from(other.clone()),
+            ],
+            default: default.clone(),
+        };
+        // The default survives.
+        let a = c.available(&both(&other));
+        assert_eq!(a.default, other);
+        assert_eq!(
+            a.candidates
+                .iter()
+                .map(Candidate::choice)
+                .collect::<Vec<_>>(),
+            [cc.clone(), other.clone()]
+        );
+        // The default is gone: the builtin default if it is still a row.
+        assert_eq!(c.available(&both(&gone)).default, cc);
+        // ... else the first row left.
+        let rows = RoleSettings {
+            candidates: vec![gone.clone().into(), other.clone().into()],
+            default: gone.clone(),
+        };
+        let a = c.available(&rows);
+        assert_eq!((a.default, a.candidates.len()), (other.clone(), 1));
+        // Every row gone: only the builtin default.
+        let a = c.available(&RoleSettings::only(gone.clone()));
+        assert_eq!(a, RoleSettings::only(cc.clone()));
+        // The stored settings are untouched.
+        c.set(None, AgentRole::Implementer, Some(both(&gone)));
+        assert_eq!(c.effective(None).implementer, both(&gone));
+        assert_eq!(c.available_settings(None).implementer.candidates.len(), 2);
+        assert_eq!(
+            c.available_settings(None).orchestrator,
+            RoleSettings::only(cc)
+        );
     }
 
     #[test]

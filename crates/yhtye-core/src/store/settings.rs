@@ -1,6 +1,8 @@
 //! The `agent_settings` table (`core-design.md` §15.3): one row per layer
 //! (global or a project) and role that does not inherit.
 
+use std::collections::HashMap;
+
 use sqlx::SqlitePool;
 
 use super::StoreError;
@@ -98,5 +100,45 @@ pub(super) async fn remove_secret_name(pool: &SqlitePool, name: &str) -> Result<
         .bind(name)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// The manual executable paths, by harness id (the `harness_paths` table).
+pub(super) async fn harness_paths(
+    pool: &SqlitePool,
+) -> Result<HashMap<String, String>, StoreError> {
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT harness, path FROM harness_paths")
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Stores the manual path of `harness`; `None` removes it (detect automatically).
+pub(super) async fn set_harness_path(
+    pool: &SqlitePool,
+    harness: &str,
+    path: Option<&str>,
+    now_ms: u64,
+) -> Result<(), StoreError> {
+    match path {
+        Some(path) => {
+            sqlx::query(
+                "INSERT INTO harness_paths (harness, path, updated_ms) VALUES (?, ?, ?) \
+                 ON CONFLICT (harness) DO UPDATE SET path = excluded.path, \
+                 updated_ms = excluded.updated_ms",
+            )
+            .bind(harness)
+            .bind(path)
+            .bind(int(now_ms)?)
+            .execute(pool)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM harness_paths WHERE harness = ?")
+                .bind(harness)
+                .execute(pool)
+                .await?;
+        }
+    }
     Ok(())
 }

@@ -4,6 +4,10 @@
 //! stream. The Tauri command and the WebSocket bridge (Stage 5) only forward
 //! `command` / `subscribe` to it.
 
+mod harnesses;
+
+pub use harnesses::DetectionConfig;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -17,7 +21,6 @@ use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserAc
 use crate::acp::HarnessConfig;
 use crate::agents::{
     AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelEfforts, ModelService, RoleSettings,
-    installed_presets,
 };
 use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
@@ -48,10 +51,15 @@ const USER_CANCEL_REASON: &str = "cancelled by the user";
 pub struct CoreConfig {
     /// Database (`yhtye.sqlite3`) and task worktrees (`worktrees/`).
     pub data_dir: PathBuf,
-    /// Registered harnesses (`core-design.md` §15.2).
+    /// Registered harnesses (`core-design.md` §15.2). Ignored when `detection`
+    /// is set: the installed ones are registered instead.
     pub harnesses: Vec<HarnessPreset>,
-    /// Harness × model of every role that has no settings.
+    /// Harness × model of every role that has no settings. Ignored when
+    /// `detection` is set.
     pub default_agent: AgentChoice,
+    /// Finds the installed harnesses at start and on `GetHarnesses` /
+    /// `DetectHarnesses` / `SetHarnessPath`; `None` keeps `harnesses` as they are.
+    pub detection: Option<DetectionConfig>,
     /// Where each project's MCP server listens (`127.0.0.1:0`).
     pub mcp_bind: SocketAddr,
     pub domain: DomainConfig,
@@ -73,6 +81,7 @@ impl CoreConfig {
             data_dir: data_dir.into(),
             default_agent: AgentChoice::new(preset.id.clone(), Some(model)),
             harnesses: vec![preset],
+            detection: None,
             mcp_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
@@ -80,14 +89,14 @@ impl CoreConfig {
         }
     }
 
-    /// The app's configuration (Tauri and the dev bridge, Stage 7c-2): like
-    /// [`CoreConfig::claude_code`], plus every other installed harness
-    /// ([`installed_presets`]: OpenCode when `opencode` is on `PATH`). Every
-    /// role still defaults to Claude Code with `model`.
+    /// The app's configuration (Tauri and the dev bridge): the harnesses that
+    /// are installed on this machine are registered (found again when the
+    /// settings are opened), Claude Code with `model`. A role without settings
+    /// runs the first of them ([`crate::agents::default_choice`]).
     #[must_use]
     pub fn installed(data_dir: impl Into<PathBuf>, model: &str) -> Self {
         let mut cfg = Self::claude_code(data_dir, model);
-        cfg.harnesses = installed_presets(model, |k| std::env::var_os(k));
+        cfg.detection = Some(DetectionConfig::from_process(model));
         cfg
     }
 }
@@ -104,6 +113,8 @@ struct Inner {
     open: Mutex<HashMap<String, Arc<Orchestration>>>,
     /// Serializes `OpenProject` (starting an orchestrator takes a while).
     opening: tokio::sync::Mutex<()>,
+    /// Serializes the detections of the installed harnesses.
+    detecting: tokio::sync::Mutex<()>,
     events: broadcast::Sender<ApiEvent>,
     usage: UsageService,
     agents: Arc<AgentCatalog>,
@@ -122,12 +133,22 @@ impl Core {
             cfg.secret_backend.clone(),
             store.secret_names().await?,
         ));
-        let usage = UsageService::new(cfg.usage.clone(), cfg.data_dir.join(USAGE_PROBE_DIR))
+        let (presets, builtin, usage_probe) = match &cfg.detection {
+            Some(detection) => {
+                let found = detection.detect(&store.harness_paths().await?);
+                found.log();
+                let probe = cfg.usage.clone().map(|u| found.with_found_npx(u));
+                (found.presets, found.builtin, probe)
+            }
+            None => (
+                cfg.harnesses.clone(),
+                cfg.default_agent.clone(),
+                cfg.usage.clone(),
+            ),
+        };
+        let usage = UsageService::new(usage_probe, cfg.data_dir.join(USAGE_PROBE_DIR))
             .with_secrets(secrets.clone());
-        let agents = Arc::new(
-            AgentCatalog::new(cfg.harnesses.clone(), cfg.default_agent.clone())
-                .with_secrets(secrets.clone()),
-        );
+        let agents = Arc::new(AgentCatalog::new(presets, builtin).with_secrets(secrets.clone()));
         for row in store.agent_settings().await? {
             agents.set(row.project.as_deref(), row.role, Some(row.settings));
         }
@@ -138,6 +159,7 @@ impl Core {
                 store,
                 open: Mutex::new(HashMap::new()),
                 opening: tokio::sync::Mutex::new(()),
+                detecting: tokio::sync::Mutex::new(()),
                 events,
                 usage,
                 agents,
@@ -288,7 +310,7 @@ impl Core {
                 let models = self
                     .inner
                     .models
-                    .get(preset, refresh.unwrap_or(false))
+                    .get(&preset, refresh.unwrap_or(false))
                     .await
                     .map_err(|e| ApiError::unavailable(format!("models of {harness}: {e}")))?;
                 Ok(ApiResponse::HarnessModels { models })
@@ -302,7 +324,7 @@ impl Core {
                 let efforts = self
                     .inner
                     .models
-                    .get_efforts(preset, &model)
+                    .get_efforts(&preset, &model)
                     .await
                     .map_err(|e| {
                         ApiError::unavailable(format!("efforts of {harness}/{model}: {e}"))
@@ -314,6 +336,11 @@ impl Core {
                         efforts,
                     },
                 })
+            }
+            ApiCommand::GetHarnesses => self.get_harnesses().await,
+            ApiCommand::DetectHarnesses => self.detect_harnesses().await,
+            ApiCommand::SetHarnessPath { harness, path } => {
+                self.set_harness_path(harness, path).await
             }
             ApiCommand::ListSecretEnv => Ok(ApiResponse::SecretEnv {
                 names: self.inner.secrets.names(),
@@ -374,7 +401,7 @@ impl Core {
         let (global, project_layer) = agents.layers(project.as_deref());
         Ok(AgentSettingsView {
             harnesses: agents.harnesses(),
-            builtin: agents.builtin().clone(),
+            builtin: agents.builtin(),
             global,
             effective: agents.effective(project.as_deref()),
             project,
