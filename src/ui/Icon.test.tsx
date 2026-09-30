@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { Icon, IconButton } from "./Icon";
+import { Icon, ICON_NAMES, IconButton } from "./Icon";
 
 describe("Icon", () => {
   it("is hidden from assistive tech and sized in px", () => {
@@ -13,6 +13,25 @@ describe("Icon", () => {
     expect(svg).toHaveAttribute("aria-hidden", "true");
     expect(svg).toHaveAttribute("width", "20");
     expect(svg).toHaveAttribute("stroke", "currentColor");
+  });
+});
+
+describe("the icon set", () => {
+  it("draws every glyph on the shared 24px grid with the same stroke", () => {
+    expect(ICON_NAMES.length).toBeGreaterThan(40);
+    for (const name of ICON_NAMES) {
+      const { container, unmount } = render(<Icon name={name} />);
+      const svg = container.querySelector("svg");
+      expect(svg, name).toHaveAttribute("viewBox", "0 0 24 24");
+      expect(svg, name).toHaveAttribute("stroke-width", "1.75");
+      expect(svg?.querySelector("path, circle, rect"), name).not.toBeNull();
+      unmount();
+    }
+  });
+
+  it("turns only when asked to", () => {
+    const { container } = render(<Icon name="loader" spin />);
+    expect(container.querySelector("svg")).toHaveClass("icon-spin");
   });
 });
 

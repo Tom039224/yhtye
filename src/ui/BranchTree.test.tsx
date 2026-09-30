@@ -285,7 +285,7 @@ describe("a project without chats", () => {
   it("shows the hint instead of a conversation and does not start anything", async () => {
     const { store, transport } = setup({ empty: true });
     await open(store);
-    expect(screen.getByTestId("no-chat")).toHaveTextContent("BRANCHES の「+ 新しいチャット」から始めます");
+    expect(screen.getByTestId("no-chat")).toHaveTextContent("サイドバーの「新しいチャット」から始めます");
     expect(screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" })).toBeDisabled();
     expect(transport.callsOf("create_chat")).toHaveLength(0);
     // The title bar falls back to the main worktree's branch.

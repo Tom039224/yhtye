@@ -1,5 +1,5 @@
 import { useAppState, useStore } from "../store/useStore";
-import { IconButton } from "./Icon";
+import { Icon, IconButton } from "./Icon";
 
 /** A lost connection and user-visible errors, under the title bar. Never silent. */
 export function ConnectionBanner() {
@@ -10,7 +10,8 @@ export function ConnectionBanner() {
     <div className="banners">
       {connection.state === "closed" ? (
         <div className="alert" role="status" data-testid="connection-lost">
-          <span>
+          <Icon name="plug-off" size={14} />
+          <span className="alert-text">
             コアとの接続が切れました: {connection.reason}
             {connection.retryInMs !== null ? ` · ${Math.round(connection.retryInMs / 100) / 10} 秒後に再接続` : ""}
           </span>
@@ -18,7 +19,8 @@ export function ConnectionBanner() {
       ) : null}
       {errors.map((e) => (
         <div key={e.id} className="alert" role="alert">
-          <span>{e.message}</span>
+          <Icon name="alert" size={14} />
+          <span className="alert-text">{e.message}</span>
           <IconButton icon="x" size={14} label="閉じる" onClick={() => store.dismissError(e.id)} />
         </div>
       ))}

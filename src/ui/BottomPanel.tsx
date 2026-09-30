@@ -50,9 +50,15 @@ function Tabs({
 }) {
   return (
     <>
-      <button type="button" className={`tab ${tab === "git" ? "active" : ""}`} onClick={() => onTab("git")}>
-        <Icon name="git-branch" size={13} />
-        git
+      <button
+        type="button"
+        className={`tab ${tab === "git" ? "active" : ""}`}
+        aria-label="git"
+        aria-pressed={tab === "git"}
+        title="git のグラフ"
+        onClick={() => onTab("git")}
+      >
+        <Icon name="git-branch" size={14} />
       </button>
       {task ? (
         <>
@@ -60,10 +66,11 @@ function Tabs({
             type="button"
             className={`tab ${tab === "output" ? "active" : ""}`}
             aria-label={`${task} の出力`}
+            aria-pressed={tab === "output"}
             title={`${task} のエージェントの出力`}
             onClick={() => onTab("output")}
           >
-            <Icon name="terminal" size={13} />
+            <Icon name="terminal" size={14} />
             {task}
           </button>
           <IconButton icon="x" size={14} label="出力を閉じる" onClick={onClose} />

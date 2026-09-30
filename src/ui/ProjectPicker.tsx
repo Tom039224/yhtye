@@ -2,8 +2,8 @@ import { type FocusEvent, type FormEvent, type KeyboardEvent, useEffect, useId, 
 
 import type { ProjectInfo } from "../api/generated";
 import { useAppState, useStore } from "../store/useStore";
+import { Icon, IconButton } from "./Icon";
 import { projectRing, RING_LABEL } from "./projectActivity";
-import { CheckIcon, ChevronIcon } from "./SidebarIcons";
 
 /**
  * The project on screen as a pull-down: a listbox of the known projects
@@ -118,7 +118,7 @@ export function ProjectPicker() {
       >
         {ring ? <span className={`ring ring-${ring}`} data-testid="current-ring" /> : null}
         <span className={`name ${current ? "" : "placeholder"}`}>{label}</span>
-        <ChevronIcon />
+        <Icon name="chevron-down" size={14} className="chevron" />
       </button>
       {open ? (
         <div className="project-popup" id={popupId} tabIndex={-1} onKeyDown={onPopupKeyDown}>
@@ -150,7 +150,7 @@ export function ProjectPicker() {
                   >
                     <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
                     <span className="name">{p.name}</span>
-                    {p.id === currentId ? <CheckIcon /> : null}
+                    {p.id === currentId ? <Icon name="check" size={14} className="check" /> : null}
                   </li>
                 );
               })}
@@ -165,9 +165,15 @@ export function ProjectPicker() {
               onChange={(e) => setPath(e.target.value)}
               disabled={blocked}
             />
-            <button type="submit" className="btn btn-small" disabled={blocked || !path.trim()}>
-              {opening ? "…" : "開く"}
-            </button>
+            <IconButton
+              type="submit"
+              icon={opening ? "loader" : "arrow-right"}
+              spin={opening}
+              size={14}
+              label="開く"
+              title="リポジトリを開く"
+              disabled={blocked || !path.trim()}
+            />
           </form>
         </div>
       ) : null}

@@ -1,12 +1,10 @@
 /*
  * Icons and icon-only controls (src/ui/Icon.tsx). Values come from
- * styles/tokens.css. The class names here are their own, apart from the
- * older `.icon-btn` of App.css.
+ * styles/tokens.css.
  */
 
 .icon { flex: none; display: inline-block; vertical-align: middle; }
 .chip .icon { margin-right: 4px; vertical-align: -1px; }
-.panel-meta .icon { margin-right: 4px; vertical-align: -3px; }
 .meter-reset .icon { margin-right: 3px; vertical-align: -1px; }
 .icon-spin { animation: yspin 1.4s linear infinite; }
 
@@ -43,3 +41,9 @@
 .status-icon-ok { color: var(--status-done-bar); }
 .status-icon-busy { color: var(--status-implementing-bar); }
 .status-icon-bad { color: var(--status-handling-bar); }
+
+/* A state as a small coloured square holding one icon (task / group status); its colours are the .tone-* / .group-status-* classes of App.css. */
+.status-chip-active .icon { animation: ybreathe 1.8s ease-in-out infinite; }
+.icon-button-outline { border: 1px solid var(--border-card); width: 28px; height: 28px; }
+.icon-button-outline:hover:not(:disabled) { border-color: var(--border-hover); }
+.graph-more { margin: 0; padding: 4px 0 0; text-align: center; color: var(--text-faintest); }
