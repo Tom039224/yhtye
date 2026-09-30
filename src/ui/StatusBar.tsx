@@ -1,49 +1,30 @@
 import type { UsageReport, UsageWindow } from "../api/generated";
 import type { UsageView } from "../store/app";
 import { useAppState, useStore } from "../store/useStore";
-import { Icon, type IconName } from "./Icon";
+import { Icon } from "./Icon";
 import { useNow } from "./useNow";
 
-/** One glyph per connection state, so the state does not rest on colour alone. */
-const CONNECTION_ICON: Record<"open" | "connecting" | "closed", IconName> = {
-  open: "plug",
-  connecting: "refresh",
-  closed: "plug-off",
-};
-
 /**
- * The connection to the core as an icon on the left; on the right the plan
- * name and the design's usage meters as one group (§3.7). Usage comes from the
- * harness through the core (`get_usage`, Stage 6b); without a report the meters
- * stay empty ("—"), never with made-up values. Clicking the meters asks the
- * harness again.
+ * The plan name and the design's usage meters as one group on the right (§3.7);
+ * the connection to the core is shown by the sidebar's host footer, not here.
+ * Usage comes from the harness through the core (`get_usage`, Stage 6b);
+ * without a report the meters stay empty ("—"), never with made-up values.
+ * Clicking the meters asks the harness again.
  */
 export function StatusBar() {
   const connection = useAppState((s) => s.connection);
-  const transport = useAppState((s) => s.transport);
   const usage = useAppState((s) => s.usage);
   const store = useStore();
   const now = useNow(30_000);
-  const text =
-    connection.state === "open"
-      ? `接続済み · ${transport.target}`
-      : connection.state === "connecting"
-        ? `接続中… · ${transport.target}`
-        : `切断: ${connection.reason}${connection.retryInMs !== null ? ` · ${Math.round(connection.retryInMs / 100) / 10} 秒後に再接続` : ""}`;
-  const tone = connection.state === "open" ? "ok" : connection.state === "connecting" ? "busy" : "bad";
   const report = usage.report;
   return (
     <footer className="statusbar">
-      <span className={`status-icon status-icon-${tone}`} role="status" title={text} data-testid="connection">
-        <Icon name={CONNECTION_ICON[connection.state]} size={14} spin={connection.state === "connecting"} />
-        <span className="sr-only">{text}</span>
-      </span>
       <span className="spacer" />
       <div className="usage-group" role="group" aria-label="プランと使用量">
         {report?.plan ? (
           <>
-            <span className="plan" data-testid="plan" title={`Claude ${report.plan} プラン`}>
-              {report.plan}
+            <span className="plan" data-testid="plan" title={`${planLabel(report.plan)} プラン`}>
+              {planLabel(report.plan)}
             </span>
             <span className="meter-sep" />
           </>
@@ -62,6 +43,15 @@ export function StatusBar() {
       </div>
     </footer>
   );
+}
+
+/** The harness's plan name ("max") as the subscription it is: "Claude Max". */
+export function planLabel(plan: string): string {
+  const name = plan
+    .trim()
+    .replace(/^claude\s+/i, "")
+    .replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  return `Claude ${name}`;
 }
 
 function pick(report: UsageReport | null, kind: UsageWindow["kind"]): UsageWindow | null {

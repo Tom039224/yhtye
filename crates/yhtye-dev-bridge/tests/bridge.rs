@@ -199,6 +199,19 @@ async fn the_api_round_trips_over_the_websocket() {
     );
     send(&mut ws, "garbage".into()).await; // ignored: nothing to reply to
 
+    // A ping is answered with the host name, before any project is open.
+    send(
+        &mut ws,
+        json!({"id": 20, "cmd": {"type": "ping"}}).to_string(),
+    )
+    .await;
+    let pong = reply(&mut ws, 20, &mut events).await;
+    assert_eq!(pong["ok"]["type"], "pong", "{pong}");
+    assert!(
+        pong["ok"]["host"].as_str().is_some_and(|h| !h.is_empty()),
+        "{pong}"
+    );
+
     // Open, then two requests in flight at once, each answered under its id.
     let path = repo.display().to_string();
     let cmd = json!({"id": 3, "cmd": {"type": "open_project", "path": path}});
@@ -231,6 +244,31 @@ async fn the_api_round_trips_over_the_websocket() {
     send(&mut ws, cmd.to_string()).await;
     let created = reply(&mut ws, 7, &mut events).await;
     assert_eq!(created["ok"]["chat"]["id"], "C-1", "{created}");
+    // Rename and delete a second chat.
+    let cmd =
+        json!({"id": 8, "cmd": {"type": "create_chat", "project": project, "branch": "main"}});
+    send(&mut ws, cmd.to_string()).await;
+    assert_eq!(
+        reply(&mut ws, 8, &mut events).await["ok"]["chat"]["id"],
+        "C-2"
+    );
+    let cmd = json!({"id": 9, "cmd": {"type": "rename_chat", "project": project,
+        "chat": "C-2", "title": "Scratch"}});
+    send(&mut ws, cmd.to_string()).await;
+    let renamed = reply(&mut ws, 9, &mut events).await;
+    assert_eq!(renamed["ok"]["chat"]["title"], "Scratch", "{renamed}");
+    let cmd = json!({"id": 10, "cmd": {"type": "delete_chat", "project": project, "chat": "C-2"}});
+    send(&mut ws, cmd.to_string()).await;
+    assert_eq!(
+        reply(&mut ws, 10, &mut events).await["ok"]["type"],
+        "accepted"
+    );
+    let cmd = json!({"id": 11, "cmd": {"type": "delete_chat", "project": project, "chat": "C-2"}});
+    send(&mut ws, cmd.to_string()).await;
+    assert_eq!(
+        reply(&mut ws, 11, &mut events).await["err"]["code"],
+        "not_found"
+    );
     let msg = json!({"id": 6, "cmd": {"type": "send_user_message", "project": project,
         "chat": "C-1", "text": "hello"}});
     send(&mut ws, msg.to_string()).await;

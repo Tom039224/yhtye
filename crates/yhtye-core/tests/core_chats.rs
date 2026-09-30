@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use yhtye_core::agents::{AgentChoice, HarnessPreset};
 use yhtye_core::api::{ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse};
+use yhtye_core::domain::DomainEvent;
 use yhtye_core::runtime::{Core, CoreConfig};
 use yhtye_core::store::ChatInfo;
 
@@ -393,5 +394,202 @@ async fn a_project_whose_only_chat_ended_on_its_own_is_not_reopened() {
         core.resume_unfinished().await.is_empty(),
         "nothing was left to continue"
     );
+    core.shutdown().await;
+}
+
+fn rename(project: &str, chat: &str, title: &str) -> ApiCommand {
+    ApiCommand::RenameChat {
+        project: project.into(),
+        chat: chat.into(),
+        title: title.into(),
+    }
+}
+
+fn delete(project: &str, chat: &str) -> ApiCommand {
+    ApiCommand::DeleteChat {
+        project: project.into(),
+        chat: chat.into(),
+    }
+}
+
+#[tokio::test]
+async fn a_chat_can_be_renamed_and_the_name_survives_a_restart() {
+    let r = TempRepo::new();
+    r.git(&["branch", "topic"]);
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    create_chat(&core, &project, "main").await;
+    create_chat(&core, &project, "topic").await;
+
+    let ApiResponse::Chat { chat } = run(&core, rename(&project, "C-2", "  My\ntopic  ")).await
+    else {
+        panic!("a chat");
+    };
+    assert_eq!(
+        (chat.id.as_str(), chat.title.as_deref()),
+        ("C-2", Some("My topic"))
+    );
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Domain { event: DomainEvent::ChatTitled { chat, title } }
+            if chat == "C-2" && title == "My topic")
+    })
+    .await;
+
+    // The first message does not replace the user's title.
+    run(&core, send(&project, "C-2", "hello there")).await;
+    until(&mut rx, said("orchestrator:C-2", "hi")).await;
+    let titles: Vec<Option<String>> = list_chats(&core, &project)
+        .await
+        .into_iter()
+        .map(|c| c.title)
+        .collect();
+    assert_eq!(titles, [Some("My topic".to_string()), None]);
+
+    let empty = rename(&project, "C-1", "  ");
+    assert_eq!(code(&core, empty).await, ApiErrorCode::InvalidArgument);
+    let unknown = rename(&project, "C-9", "x");
+    assert_eq!(code(&core, unknown).await, ApiErrorCode::NotFound);
+    core.shutdown().await;
+
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let chats = list_chats(&core, &project).await;
+    assert_eq!(chats[0].title.as_deref(), Some("My topic"));
+    assert_eq!(
+        code(&core, rename(&project, "C-1", "x")).await,
+        ApiErrorCode::NotFound,
+        "the project is not open"
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_chat_is_deleted_with_its_idle_orchestrator_and_stays_gone() {
+    let r = TempRepo::new();
+    r.git(&["branch", "topic"]);
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    create_chat(&core, &project, "main").await;
+    let topic = create_chat(&core, &project, "topic").await;
+    run(&core, send(&project, "C-1", "hello")).await;
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+
+    assert!(matches!(
+        run(&core, delete(&project, "C-1")).await,
+        ApiResponse::Accepted
+    ));
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Domain { event: DomainEvent::ChatDeleted { chat } }
+            if chat == "C-1")
+    })
+    .await;
+    // Its idle process is stopped with it.
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::SessionStopped { session, .. }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    let ids: Vec<String> = list_chats(&core, &project)
+        .await
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, ["C-2"]);
+    assert_eq!(
+        code(&core, send(&project, "C-1", "hi")).await,
+        ApiErrorCode::NotFound
+    );
+    assert_eq!(
+        code(&core, delete(&project, "C-1")).await,
+        ApiErrorCode::NotFound
+    );
+    assert!(
+        Path::new(&topic.worktree).is_dir(),
+        "worktrees are not touched"
+    );
+    // Ids are not reused.
+    assert_eq!(create_chat(&core, &project, "main").await.id, "C-3");
+    core.shutdown().await;
+
+    // It stays gone after a restart: no chat, no stored session, nothing to resume.
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let ids: Vec<String> = list_chats(&core, &project)
+        .await
+        .into_iter()
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(ids, ["C-3", "C-2"]);
+    open(&core, &r).await;
+    let ApiResponse::Snapshot { snapshot } = run(
+        &core,
+        ApiCommand::GetSnapshot {
+            project: project.clone(),
+        },
+    )
+    .await
+    else {
+        panic!("a snapshot");
+    };
+    assert!(
+        snapshot
+            .sessions
+            .iter()
+            .all(|s| s.session_key != "orchestrator:C-1"),
+        "{:?}",
+        snapshot.sessions
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_chat_whose_orchestrator_is_working_is_not_deleted() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [{"match": "work", "actions": ["wait_cancel"]}]});
+    let core = Core::start(core_config(&r, script)).await.expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    create_chat(&core, &project, "main").await;
+    run(&core, send(&project, "C-1", "work")).await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { .. })
+    })
+    .await;
+
+    assert_eq!(
+        code(&core, delete(&project, "C-1")).await,
+        ApiErrorCode::InvalidState
+    );
+    assert_eq!(list_chats(&core, &project).await.len(), 1);
+
+    // Once the turn is cancelled the chat can go.
+    run(
+        &core,
+        ApiCommand::CancelOrchestratorTurn {
+            project: project.clone(),
+            chat: "C-1".into(),
+        },
+    )
+    .await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    run(&core, delete(&project, "C-1")).await;
+    assert!(list_chats(&core, &project).await.is_empty());
     core.shutdown().await;
 }

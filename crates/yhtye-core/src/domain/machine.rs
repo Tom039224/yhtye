@@ -95,6 +95,8 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
     let mut tx = Tx::new(state.clone());
     match cmd {
         DomainCommand::CreateChat { worktree } => tx.create_chat(worktree)?,
+        DomainCommand::RenameChat { chat, title } => tx.rename_chat(&chat, &title)?,
+        DomainCommand::DeleteChat { chat } => tx.delete_chat(&chat)?,
         DomainCommand::CreateGroup {
             chat,
             args,

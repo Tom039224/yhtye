@@ -18,6 +18,8 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
+# The host name shown in the sidebar footer (`ApiCommand::Ping`).
+gethostname = "1"
 tempfile = "3"
 # MCP: pin the minor version (API changes quickly; see docs/architecture/core-design.md §4)
 rmcp = { version = "~3.4.0", default-features = false }

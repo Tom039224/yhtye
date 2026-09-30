@@ -23,6 +23,15 @@ describe("chat list folding", () => {
   });
 });
 
+describe("chat deletion", () => {
+  it("drops a deleted chat from the list, once", () => {
+    const deleted = ev(9, { type: "domain", event: { type: "chat_deleted", chat: "C-2" } });
+    const list = applyChatEvent(CHAT_INFOS, deleted);
+    expect(list.map((c) => c.id)).toEqual(["C-1"]);
+    expect(applyChatEvent(list, deleted)).toEqual(list);
+  });
+});
+
 describe("chat selection and scoping", () => {
   it("picks the remembered chat if it exists, else the most recently used", () => {
     expect(initialChat(CHAT_INFOS, null)).toBe("C-2");
