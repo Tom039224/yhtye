@@ -11,6 +11,7 @@ import {
   modelText,
   sameChoice,
 } from "./agentSettings";
+import { Icon, IconButton } from "./Icon";
 import { ModelPicker } from "./ModelPicker";
 
 interface TableProps {
@@ -38,12 +39,15 @@ export function CandidateTable(p: TableProps) {
       <thead>
         <tr>
           <th scope="col" className="col-default" title="既定">
-            ★
+            <Icon name="star" size={13} />
+            <span className="sr-only">既定</span>
           </th>
           <th scope="col">ハーネス</th>
           <th scope="col">モデル</th>
           <th scope="col">effort</th>
-          <th scope="col">用途メモ (オーケストレータが選ぶ手がかり)</th>
+          <th scope="col" title="オーケストレータが行を選ぶ手がかり">
+            用途メモ
+          </th>
           <th scope="col" className="col-remove">
             <span className="sr-only">削除</span>
           </th>
@@ -112,7 +116,12 @@ function CandidateRow({
             </option>
           ))}
         </select>
-        {missing ? <span className="agent-warn-tag">見つかりません</span> : null}
+        {missing ? (
+          <span className="agent-warn-tag" title="見つかりません (インストールされていない)">
+            <Icon name="alert" size={13} />
+            <span className="sr-only">見つかりません</span>
+          </span>
+        ) : null}
       </td>
       <td>
         <ModelCell label={`${label} 候補${n} のモデル`} row={row} listed={listed} disabled={locked || missing} onChange={changeModel} />
@@ -142,16 +151,14 @@ function CandidateRow({
         />
       </td>
       <td className="col-remove">
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={`${label} 候補${n} を削除`}
+        <IconButton
+          icon="trash"
+          size={14}
+          label={`${label} 候補${n} を削除`}
           title={only ? "候補は 1 行以上必要です" : "この行を削除"}
           disabled={locked || only}
           onClick={() => onRemove(index)}
-        >
-          ×
-        </button>
+        />
       </td>
     </tr>
   );

@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useState } from "react";
 
+import { Icon, IconButton } from "./Icon";
 import type { Mention } from "./mentions";
 
 interface Props {
@@ -18,8 +19,8 @@ interface Props {
 }
 
 /**
- * The design's composer (§3.4): text, then a row of mention chips, the mode
- * pill and "⏎ 送信". Enter sends, Shift+Enter inserts a newline (IME
+ * The design's composer (§3.4): text, then a row of mention chips and the send
+ * button. Enter sends, Shift+Enter inserts a newline (IME
  * composition is left alone). During an orchestrator turn messages are still
  * accepted: they wait in its inbox and are delivered when the turn ends.
  */
@@ -49,11 +50,7 @@ export function Composer({
     void send();
   };
 
-  const hint =
-    disabledReason ??
-    (starting
-      ? "オーケストレータを起動中…"
-      : turnRunning ? "オーケストレータが作業中です。送ったメッセージは待機し、ターンが終わると届きます。" : null);
+  const hint = disabledReason ?? (starting ? "起動中…" : turnRunning ? "作業中 · 送信分はターン終了後に届きます" : null);
 
   return (
     <div className="composer-wrap">
@@ -77,26 +74,31 @@ export function Composer({
               aria-label={`${m.task} の引用を外す`}
               onClick={() => onRemoveMention(m.task)}
             >
-              <span className="at">@</span>
+              <Icon name="at" size={12} className="at" />
               <span className="label">
                 {m.task} {m.title}
               </span>
-              <span className="x">×</span>
+              <Icon name="x" size={10} className="x" />
             </button>
           ))}
-          <span className="mode-pill" title="依頼はオーケストレータが受けて配る (他のモードは未定義)">
-            orchestrate
-          </span>
           <span className="spacer" />
           {turnRunning ? (
-            <button type="button" className="btn btn-small btn-danger" onClick={onCancel} disabled={disabled}>
-              ターンを中止
-            </button>
+            <IconButton icon="stop" tone="danger" label="ターンを中止" onClick={onCancel} disabled={disabled} />
           ) : null}
-          <button type="button" className="send" onClick={() => void send()} disabled={!canSend} title="Enter で送信 · Shift+Enter で改行">
-            {sending ? "送信中…" : "⏎ 送信"}
-          </button>
-          {hint ? <span className={`composer-hint ${disabledReason ? "error-text" : ""}`}>{hint}</span> : null}
+          <IconButton
+            icon="send"
+            tone="primary"
+            label={sending ? "送信中…" : "送信"}
+            title="送信 (Enter) · 改行は Shift+Enter"
+            onClick={() => void send()}
+            disabled={!canSend}
+          />
+          {hint ? (
+            <span className={`composer-hint ${disabledReason ? "error-text" : ""}`} role="status">
+              <Icon name={disabledReason ? "alert" : starting ? "loader" : "clock"} size={12} spin={!disabledReason && starting} />
+              {hint}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

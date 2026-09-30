@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAppState, useStore } from "./store/useStore";
 import { ConnectionBanner } from "./ui/ConnectionBanner";
+import { EmptyState } from "./ui/EmptyState";
 import { IconRail, type View } from "./ui/IconRail";
 import { RunsView } from "./ui/RunsView";
 import { SettingsModal } from "./ui/SettingsModal";
@@ -48,7 +49,7 @@ function App() {
               <Workspace key={project.info.id} view={project} />
             ) : (
               <div className="main-empty">
-                <p className="empty">プロジェクト (git リポジトリ) を開いてください。</p>
+                <EmptyState icon="folder" text="プロジェクト (git リポジトリ) を開いてください。" />
               </div>
             )}
           </>

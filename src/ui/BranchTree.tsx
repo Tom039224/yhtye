@@ -7,6 +7,7 @@ import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
 import { buildTree, chatRing, shortAge, type WorktreeNode } from "./branchTree";
 import { NEW_CHAT_TITLE } from "./Conversation";
+import { Icon, IconButton } from "./Icon";
 import { useNow } from "./useNow";
 
 function selectOverview(s: AppState): GitOverview | null {
@@ -16,8 +17,8 @@ function selectOverview(s: AppState): GitOverview | null {
 /**
  * BRANCHES (orchestrator-desktop §9, Stage 8e): the worktrees as a collapsible
  * tree, each named by the branch it has checked out now, with its chats and
- * "+ 新しいチャット"; chats whose worktree is gone; the other local branches;
- * "+" opens the new-branch form.
+ * a button for a new chat; chats whose worktree is gone; the other local
+ * branches; "+" opens the new-branch form.
  */
 export function BranchTree() {
   const store = useStore();
@@ -26,7 +27,7 @@ export function BranchTree() {
   const gitError = useAppState((s) => (s.git && s.project && s.git.project === s.project.info.id ? s.git.error : null));
   const [formOpen, setFormOpen] = useState(false);
   // Explicit open / close per worktree; the default is "open if it has chats or
-  // is the main clone" (so + 新しいチャット is visible in an empty project).
+  // is the main clone" (so its chats are visible in an empty project).
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const now = useNow(30_000);
   const ready = view?.phase === "ready" || view?.state != null;
@@ -36,20 +37,19 @@ export function BranchTree() {
   const empty = tree.worktrees.length === 0 && tree.lost.length === 0 && tree.otherBranches.length === 0;
 
   return (
-    <>
+    <div className="branches">
       <div className="section-title branches-title section-head">
-        <span>BRANCHES</span>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label="新しいブランチ"
-          title="新しいブランチ"
+        <span className="section-icon" title="ブランチ">
+          <Icon name="git-branch" size={14} />
+        </span>
+        <IconButton
+          icon="plus"
+          size={14}
+          label="新しいブランチ"
           aria-expanded={formOpen}
           disabled={!view || !ready}
           onClick={() => setFormOpen((o) => !o)}
-        >
-          +
-        </button>
+        />
       </div>
       {formOpen && view ? <NewBranchForm overview={overview} onClose={() => setFormOpen(false)} /> : null}
       {!view ? <p className="side-note">プロジェクトを開くと表示します。</p> : null}
@@ -62,7 +62,10 @@ export function BranchTree() {
           ))}
           {tree.lost.length > 0 ? (
             <li className="deleted-branches">
-              <div className="side-note">(見つからない作業ツリー)</div>
+              <div className="side-note lost-title" title="見つからない作業ツリーのチャット">
+                <Icon name="alert" size={12} />
+                <span className="sr-only">(見つからない作業ツリー)</span>
+              </div>
               <ul className="chat-list">
                 {tree.lost.map((c) => (
                   <ChatRow key={c.id} chat={c} now={now} showPlace />
@@ -73,7 +76,7 @@ export function BranchTree() {
           {tree.otherBranches.length > 0 ? <OtherBranches names={tree.otherBranches} /> : null}
         </ul>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -91,24 +94,27 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
   const where = node.isMain ? `${node.path} · メインクローン` : node.path;
   return (
     <li>
-      <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
-        <span className="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
-        {running ? <span className="ring ring-running" role="img" aria-label="実行中" /> : <span className={`dot ${node.isMain ? "dot-ok" : ""}`} />}
-        <span className="name">{node.label}</span>
-        {node.missing ? <span className="age">見つかりません</span> : null}
-      </button>
+      <div className="wt-head">
+        <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
+          <Icon name="chevron-down" size={12} className={`caret ${open ? "" : "collapsed"}`} />
+          {running ? <span className="ring ring-running" role="img" aria-label="実行中" /> : <span className={`dot ${node.isMain ? "dot-ok" : ""}`} />}
+          <span className="name">{node.label}</span>
+          {node.missing ? (
+            <span className="age" title="作業ツリーが見つかりません">
+              <Icon name="alert" size={12} />
+              <span className="sr-only">見つかりません</span>
+            </span>
+          ) : null}
+        </button>
+        {node.missing ? null : (
+          <IconButton icon="message-plus" size={14} className="row-action" label={`${node.label} の新しいチャット`} onClick={onNewChat} />
+        )}
+      </div>
       {open ? (
         <ul className="chat-list" aria-label={`chats of ${node.label}`}>
           {node.chats.map((c) => (
             <ChatRow key={c.id} chat={c} now={now} />
           ))}
-          {node.missing ? null : (
-            <li>
-              <button type="button" className="side-row new-chat" onClick={onNewChat} aria-label={`${node.label} の新しいチャット`}>
-                + 新しいチャット
-              </button>
-            </li>
-          )}
         </ul>
       ) : null}
     </li>
@@ -121,16 +127,25 @@ function OtherBranches({ names }: { names: string[] }) {
   const [open, setOpen] = useState(false);
   return (
     <li>
-      <button type="button" className="side-row branch-row other-branches" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
-        <span className="name side-note">他のブランチ ({names.length})</span>
+      <button
+        type="button"
+        className="side-row branch-row other-branches"
+        aria-expanded={open}
+        aria-label={`他のブランチ (${names.length})`}
+        title="作業ツリーのない他のブランチ"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name="chevron-down" size={12} className={`caret ${open ? "" : "collapsed"}`} />
+        <Icon name="git-branch" size={13} />
+        <span className="name">{names.length}</span>
       </button>
       {open ? (
         <ul className="chat-list" aria-label="other branches">
           {names.map((n) => (
             <li key={n}>
               <button type="button" className="side-row new-chat" title={`${n} の作業ツリーを作ってチャットを始める`} onClick={() => void store.createChat({ branch: n })} aria-label={`${n} の新しいチャット`}>
-                + {n}
+                <Icon name="message-plus" size={13} />
+                <span className="name">{n}</span>
               </button>
             </li>
           ))}
@@ -211,9 +226,7 @@ function NewBranchForm({ overview, onClose }: { overview: GitOverview | null; on
           </option>
         ))}
       </select>
-      <button type="submit" className="btn btn-small" disabled={busy || !name.trim()}>
-        {busy ? "…" : "作成"}
-      </button>
+      <IconButton type="submit" icon={busy ? "loader" : "check"} spin={busy} size={14} label="作成" disabled={busy || !name.trim()} />
       {error ? (
         <p className="form-error" role="alert">
           {error}

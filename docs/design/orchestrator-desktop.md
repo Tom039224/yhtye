@@ -368,6 +368,13 @@ Stage 6a でこのレイアウトを `src/ui/` に適用した。**画面の要�
 | 1180px 未満 | ルートの `min-width:1180px` のまま (横スクロール) |
 | `prefers-reduced-motion` | アニメーションを止める (`tokens.md`) |
 
+**アイコン化 (Stage 8 のあとの UI 整理)**: 上の表の文言のうち、意味が明確なものはアイコンに置き換えた。
+言葉はツールチップ (`title`) と `aria-label` / 視覚的に隠した文字に残してある。対応する要素は
+`ステータスバッジ` → 状態のアイコンチップ (実装中 `code`・レビュー中 `eye`・対処中 `alert`・完了 `check`・待機 `hourglass`・中止 `ban`)、
+`Step 列` → `code` / `eye` / `flag` / `check` の一列、`YOU` / `ORCHESTRATOR` → 余白のアイコン (`user` / `bot`、時刻はホバー)、
+`GROUP TASK` → `layers`、`+ 新しいチャット` → 作業ツリー行の `message-plus`、`BRANCHES` / `PROJECT` / `動作中` の見出し → アイコン、
+`x/y 完了 · n 件 対処中` → `check x/y` と `alert n`。アイコンの一覧と色は [`tokens.md`](tokens.md) の「アイコン」。
+
 **6b で実装**: 使用量・quota メーターとプラン名、本文の Markdown 描画 (スクリーンショット [`docs/e2e/stage6b/`](../e2e/stage6b/))。
 **Stage 7a の決定**: 「対処の内容を見る」「差分を見る」は出さない。runs (履歴) ビューは**保留** (空表示のまま)。
 デザインに無い要素の追加 (リポジトリを開く欄・グループ行・Step 列・エージェント出力タブ・接続断の帯) はユーザー確認済み。
