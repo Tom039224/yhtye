@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { AgentSettingsSection, type Scope } from "./AgentSettingsSection";
+import { IconButton } from "./Icon";
 import { SecretEnvSection } from "./SecretEnvSection";
 
 /** The sections of the settings. More are added here (each is a left-hand entry). */
@@ -77,9 +78,7 @@ export function SettingsModal({ project, onClose }: Props) {
             </div>
             ) : null}
             <span className="spacer" />
-            <button type="button" className="icon-btn" aria-label="閉じる" title="閉じる (Esc)" onClick={onClose}>
-              ×
-            </button>
+            <IconButton icon="x" label="閉じる" title="閉じる (Esc)" onClick={onClose} />
           </header>
           <div className="settings-body">
             {section === "agents" ? <AgentSettingsSection project={project} scope={scope} /> : <SecretEnvSection />}

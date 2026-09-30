@@ -144,6 +144,7 @@ describe("design layout", () => {
     const output = screen.getByRole("region", { name: "agent output" });
     expect(within(output).getByText(/^Looks good\./)).toBeInTheDocument();
     expect(within(output).getByLabelText("step results")).toHaveTextContent("implement result:");
+    expect(screen.getByRole("button", { name: "T-1 の出力" })).toBeInTheDocument();
     await user.click(within(output).getByRole("button", { name: "出力を閉じる" }));
     expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
   });

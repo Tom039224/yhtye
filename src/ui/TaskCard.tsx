@@ -1,6 +1,7 @@
 import type { State, StepStatus, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
 import { useStore } from "../store/useStore";
+import { IconButton } from "./Icon";
 import { HELP_LABEL, isTerminal, TONE_LABEL, taskTone } from "./labels";
 import {
   formatElapsed,
@@ -27,7 +28,7 @@ const STEP_MARK: Record<StepStatus, string> = { done: "✓", running: "●", pen
 
 /**
  * A task card (design §3.5): status badge, id, title (click: agent output),
- * `@` (quote into the composer) and ■ (cancel the task; not on finished
+ * icon buttons to quote it into the composer and to cancel it (not on finished
  * tasks), a progress bar while an agent works, the open help as the handling
  * note, the agent's latest activity, the steps, and the agent / elapsed time.
  */
@@ -53,19 +54,14 @@ export function TaskCard({ task, state, view, now, selected, onSelect, onMention
         </button>
         <span className="spacer" />
         <div className="task-actions">
-          <button type="button" className="icon-btn" title="オーケストレータへ引用" aria-label={`${task.id} をオーケストレータへ引用`} onClick={onMention}>
-            @
-          </button>
+          <IconButton icon="at" title="オーケストレータへ引用" label={`${task.id} をオーケストレータへ引用`} onClick={onMention} />
           {!isTerminal(task) ? (
-            <button
-              type="button"
-              className="icon-btn"
+            <IconButton
+              icon="stop"
               title="エージェントを停止 (タスクを中止)"
-              aria-label={`${task.id} を中止`}
+              label={`${task.id} を中止`}
               onClick={() => void store.cancelTask(task.id)}
-            >
-              <span className="stop-square" />
-            </button>
+            />
           ) : null}
         </div>
       </div>

@@ -116,6 +116,7 @@ describe("App", () => {
     });
     expect(screen.getByText(/待機中/)).toBeInTheDocument();
     expect(screen.getByTestId("orchestrator-status")).toHaveTextContent("working");
+    expect(screen.getByTestId("orchestrator-status")).toHaveClass("status-dot-working");
     act(() => {
       transport.emit({ ...chunk(LAST + 2, ORCHESTRATOR, "Work"), seq: LAST + 2 });
       transport.emit({ ...chunk(LAST + 2, ORCHESTRATOR, "ing on it"), seq: LAST + 2 });

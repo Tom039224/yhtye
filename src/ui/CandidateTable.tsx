@@ -11,6 +11,7 @@ import {
   modelText,
   sameChoice,
 } from "./agentSettings";
+import { IconButton } from "./Icon";
 import { ModelPicker } from "./ModelPicker";
 
 interface TableProps {
@@ -142,16 +143,14 @@ function CandidateRow({
         />
       </td>
       <td className="col-remove">
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={`${label} 候補${n} を削除`}
+        <IconButton
+          icon="trash"
+          size={14}
+          label={`${label} 候補${n} を削除`}
           title={only ? "候補は 1 行以上必要です" : "この行を削除"}
           disabled={locked || only}
           onClick={() => onRemove(index)}
-        >
-          ×
-        </button>
+        />
       </td>
     </tr>
   );

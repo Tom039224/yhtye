@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { ProjectView } from "../store/project";
 import { AgentOutput } from "./AgentOutput";
 import { GitPanel } from "./GitPanel";
+import { Icon, IconButton } from "./Icon";
 
 interface Props {
   view: ProjectView;
@@ -50,16 +51,22 @@ function Tabs({
   return (
     <>
       <button type="button" className={`tab ${tab === "git" ? "active" : ""}`} onClick={() => onTab("git")}>
+        <Icon name="git-branch" size={13} />
         git
       </button>
       {task ? (
         <>
-          <button type="button" className={`tab ${tab === "output" ? "active" : ""}`} onClick={() => onTab("output")}>
-            {task} output
+          <button
+            type="button"
+            className={`tab ${tab === "output" ? "active" : ""}`}
+            aria-label={`${task} の出力`}
+            title={`${task} のエージェントの出力`}
+            onClick={() => onTab("output")}
+          >
+            <Icon name="terminal" size={13} />
+            {task}
           </button>
-          <button type="button" className="tab" aria-label="出力を閉じる" title="出力を閉じる" onClick={onClose}>
-            ×
-          </button>
+          <IconButton icon="x" size={14} label="出力を閉じる" onClick={onClose} />
         </>
       ) : null}
     </>

@@ -6,6 +6,7 @@ import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { placeOf } from "./branchTree";
 import { type Graph, layoutGraph } from "./gitGraph";
+import { Icon, IconButton } from "./Icon";
 import { type Tone, TONE_LABEL, taskTone } from "./labels";
 import { focusGroup } from "./taskInfo";
 
@@ -92,10 +93,13 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
           {group ? `${group.group_branch} ← ${group.base_branch}` : (chatBranch ?? overview?.head ?? "")}
         </span>
         <span className="spacer" />
-        {git?.error ? <span className="bottom-meta error-text" title={git.error}>読み込み失敗</span> : null}
-        <button type="button" className="tab" title="git を読み直す" onClick={() => void store.refreshGit()} disabled={git?.loading}>
-          {git?.loading ? "…" : "graph ↻"}
-        </button>
+        {git?.error ? (
+          <span className="bottom-meta error-text" title={`git を読み込めませんでした: ${git.error}`}>
+            <Icon name="alert" size={14} />
+            <span className="sr-only">読み込み失敗</span>
+          </span>
+        ) : null}
+        <IconButton icon="refresh" label="git を読み直す" spin={git?.loading} onClick={() => void store.refreshGit()} disabled={git?.loading} />
       </header>
       <div className="scroll">
         {!overview ? (

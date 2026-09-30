@@ -73,9 +73,7 @@ button:disabled { cursor: default; }
 .rail-button {
   position: relative; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none;
   display: flex; align-items: center; justify-content: center; color: var(--text-dim);
-  font: 600 11px/1 var(--font-mono); letter-spacing: -0.04em;
 }
-.rail-button.runs { font: 500 13px/1 var(--font-mono); letter-spacing: 0; }
 .rail-button:hover { background: var(--surface-hover); color: var(--text-tertiary); }
 .rail-button.active { background: var(--surface-chip); color: var(--accent); }
 .rail-button.active::before {
@@ -83,25 +81,29 @@ button:disabled { cursor: default; }
 }
 
 .statusbar {
-  height: 24px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 12px;
+  height: 24px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px;
   background: var(--surface-chrome); border-top: 1px solid var(--border);
   font: 400 10.5px/1 var(--font-mono); color: var(--text-dim);
 }
-.statusbar .connection { display: flex; align-items: center; gap: 6px; color: var(--text-muted); white-space: nowrap; }
-.meter { display: flex; align-items: center; gap: 7px; }
-.meter-label { color: var(--text-muted); }
-.meter-bar { width: 46px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.meter-value { color: var(--text-secondary); }
-.meter-fill { display: block; height: 100%; border-radius: 2px; }
-.meter-reset { color: var(--text-dim); }
-.statusbar .plan { color: var(--text-muted); white-space: nowrap; }
+/* The plan and both usage meters read as one group: one outline, hairline dividers. */
+.usage-group {
+  display: flex; align-items: center; gap: 10px; height: 18px; padding: 0 9px;
+  border: 1px solid var(--border-pill); border-radius: 5px;
+}
+.statusbar .plan { color: var(--text-secondary); font-weight: 500; text-transform: capitalize; white-space: nowrap; }
 .statusbar .usage {
-  display: flex; align-items: center; gap: 12px; padding: 0 4px; height: 20px;
-  background: none; border: 0; border-radius: 4px; font: inherit; color: inherit; cursor: pointer;
+  display: flex; align-items: center; gap: 10px; height: 16px; margin: 0 -4px; padding: 0 4px;
+  background: none; border: 0; border-radius: 3px; font: inherit; color: inherit; cursor: pointer;
 }
 .statusbar .usage:hover:not(:disabled) { background: var(--surface-hover); }
 .statusbar .usage:disabled { cursor: default; }
-.meter-sep { width: 1px; height: 12px; background: var(--border); }
+.meter { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.meter-label { color: var(--text-muted); }
+.meter-bar { width: 40px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.meter-value { color: var(--text-secondary); }
+.meter-fill { display: block; height: 100%; border-radius: 2px; }
+.meter-reset { color: var(--text-faint); }
+.meter-sep { width: 1px; height: 10px; background: var(--border); }
 
 .banners { flex: none; }
 .alert {
@@ -131,7 +133,6 @@ button:disabled { cursor: default; }
   font: 500 12.5px/1 var(--font-mono); color: var(--text-muted);
 }
 .icon-btn:hover { background: var(--surface-hover-strong); color: var(--accent-strong); }
-.stop-square { width: 8px; height: 8px; border-radius: 1.5px; background: var(--text-muted); }
 .linklike { background: none; border: 0; padding: 0; text-align: left; }
 
 /* ---- sidebar -------------------------------------------------------------- */
@@ -256,18 +257,8 @@ button:disabled { cursor: default; }
 .mention .at { color: var(--accent); }
 .mention .x { color: var(--text-dim); }
 .mention .label { overflow: hidden; text-overflow: ellipsis; }
-.mode-pill {
-  padding: 2px 7px; border-radius: 4px; background: var(--surface-chip-dim);
-  font: 400 10.5px/1.5 var(--font-mono); color: var(--text-muted); flex: none; white-space: nowrap;
-}
-.send {
-  border: 0; background: none; padding: 0; font: 400 10.5px/1 var(--font-mono); color: var(--text-dim); white-space: nowrap;
-}
-.send:hover:not(:disabled) { color: var(--accent-hover); }
-.send:disabled { opacity: 0.5; }
 .composer-hint { width: 100%; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim); }
 /* ---- settings (Stage 7d): an app-wide large modal ------------------------- */
-.rail-button.settings { font-size: 15px; letter-spacing: 0; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
@@ -419,8 +410,7 @@ button:disabled { cursor: default; }
 .task-card-handling .task-title { color: var(--status-handling-card-title); }
 .task-card-handling .task-id, .task-card-handling .task-log { color: var(--status-handling-card-meta); }
 .task-card-handling .task-meta { color: var(--status-handling-card-meta-strong); }
-.task-card-handling .icon-btn { color: var(--status-handling-card-icon); }
-.task-card-handling .stop-square { background: var(--status-handling-card-icon); }
+.task-card-handling .icon-button { color: var(--status-handling-card-icon); }
 .task-actions { display: flex; align-items: center; gap: 3px; flex: none; }
 .progress { position: relative; height: 2px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; }
@@ -448,6 +438,7 @@ button:disabled { cursor: default; }
   border-bottom: 1px solid var(--border-subtle); white-space: nowrap; overflow: hidden;
 }
 .tab {
+  display: inline-flex; align-items: center; gap: 5px;
   border: 0; background: none; padding: 0; font: 500 11.5px/1 var(--font-mono); color: var(--text-dim);
 }
 .tab:hover { color: var(--text-tertiary); }
