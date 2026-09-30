@@ -26,6 +26,9 @@ export function upsertChat(chats: ChatInfo[], chat: ChatInfo): ChatInfo[] {
   return chats.some((c) => c.id === chat.id) ? chats : [...chats, chat];
 }
 
+/** Longest title the user can give a chat (`MAX_RENAMED_TITLE_CHARS` of the core). */
+export const MAX_CHAT_TITLE_CHARS = 80;
+
 /** Folds the durable events that change the chat list (`ts_ms` gives the times). */
 export function applyChatEvent(chats: ChatInfo[], ev: ApiEvent): ChatInfo[] {
   const body = ev.body;
@@ -42,6 +45,7 @@ export function applyChatEvent(chats: ChatInfo[], ev: ApiEvent): ChatInfo[] {
   if (event.type === "chat_titled") {
     return chats.map((c) => (c.id === event.chat ? { ...c, title: event.title } : c));
   }
+  if (event.type === "chat_deleted") return chats.filter((c) => c.id !== event.chat);
   return chats;
 }
 

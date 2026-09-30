@@ -45,6 +45,9 @@ async function open(store: AppStore) {
 }
 
 const tree = () => screen.getByRole("list", { name: "branches" });
+/** The button of a chat's row (its "⋯" menu button is named after the chat too). */
+const chatButton = (title: RegExp) =>
+  within(tree()).getByRole("button", { name: (name) => !name.endsWith("の操作") && title.test(name) });
 const conversation = () => screen.getByRole("region", { name: "orchestrator" });
 const tasks = () => screen.getByRole("region", { name: "tasks" });
 
@@ -60,8 +63,8 @@ describe("BRANCHES tree", () => {
     expect(rows.some((r) => r.includes("Add feature x"))).toBe(true);
     expect(rows.some((r) => r.includes("Refactor checkout"))).toBe(true);
     // The chat's age is shown (3m / 5h).
-    expect(within(tree()).getByRole("button", { name: /Add feature x/ })).toHaveTextContent("3m");
-    expect(within(tree()).getByRole("button", { name: /Refactor checkout/ })).toHaveTextContent("5h");
+    expect(chatButton(/Add feature x/)).toHaveTextContent("3m");
+    expect(chatButton(/Refactor checkout/)).toHaveTextContent("5h");
   });
 
   it("collapses and expands a worktree without selecting its chat", async () => {
@@ -73,7 +76,7 @@ describe("BRANCHES tree", () => {
     expect(within(tree()).queryByRole("button", { name: /Refactor checkout/ })).not.toBeInTheDocument();
     expect(screen.getByTestId("chat-title")).toHaveTextContent("Add feature x");
     await user.click(main);
-    expect(within(tree()).getByRole("button", { name: /Refactor checkout/ })).toBeInTheDocument();
+    expect(chatButton(/Refactor checkout/)).toBeInTheDocument();
   });
 
   it("shows chats of a worktree git no longer lists under a not-found heading, readable but not sendable", async () => {
@@ -81,7 +84,7 @@ describe("BRANCHES tree", () => {
     core.git = { ...CHAT_GIT, worktrees: CHAT_GIT.worktrees.filter((w) => w.path !== FEAT_WT) };
     await open(store);
     expect(within(tree()).getByText("(見つからない作業ツリー)")).toBeInTheDocument();
-    await user.click(within(tree()).getByRole("button", { name: /Add feature x/ }));
+    await user.click(chatButton(/Add feature x/));
     expect(screen.getByTestId("chat-branch")).toHaveTextContent("作業ツリーが見つかりません");
     expect(screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" })).toBeDisabled();
     expect(within(conversation()).getByText(/見つからないため送信できません/)).toBeInTheDocument();
@@ -105,7 +108,7 @@ describe("BRANCHES tree", () => {
     expect(within(tree()).getByRole("button", { name: "feat/renamed の新しいチャット" })).toBeInTheDocument();
     expect(within(tree()).queryByRole("button", { name: "feat/x の新しいチャット" })).not.toBeInTheDocument();
     // The chat stays with its worktree; nothing is said in the conversation.
-    expect(within(tree()).getByRole("button", { name: /Add feature x/ })).toBeInTheDocument();
+    expect(chatButton(/Add feature x/)).toBeInTheDocument();
     expect(within(conversation()).queryByText(/ブランチ名が/)).not.toBeInTheDocument();
     expect(within(tree()).queryByText("(見つからない作業ツリー)")).not.toBeInTheDocument();
   });
@@ -168,7 +171,7 @@ describe("selecting a chat", () => {
     expect(within(tasks()).getByRole("article", { name: "task T-2" })).toBeInTheDocument();
     expect(within(tasks()).queryByRole("article", { name: "task T-1" })).not.toBeInTheDocument();
 
-    await user.click(within(tree()).getByRole("button", { name: /Refactor checkout/ }));
+    await user.click(chatButton(/Refactor checkout/));
     expect(screen.getByTestId("chat-title")).toHaveTextContent("Refactor checkout");
     expect(screen.getByTestId("head-branch")).toHaveTextContent("main");
     expect(within(conversation()).getByText("Reply about checkout")).toBeInTheDocument();
@@ -184,7 +187,7 @@ describe("selecting a chat", () => {
     await open(store);
     const box = () => screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
     await user.type(box(), "draft for feat/x");
-    await user.click(within(tree()).getByRole("button", { name: /Refactor checkout/ }));
+    await user.click(chatButton(/Refactor checkout/));
     expect(box()).toHaveValue("");
     await user.type(box(), "{Enter}");
     expect(transport.callsOf("send_user_message")).toHaveLength(0);
@@ -193,7 +196,7 @@ describe("selecting a chat", () => {
   it("sends to the selected chat and remembers the choice for the project", async () => {
     const { store, user, transport, prefs } = setup();
     await open(store);
-    await user.click(within(tree()).getByRole("button", { name: /Refactor checkout/ }));
+    await user.click(chatButton(/Refactor checkout/));
     await user.type(screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" }), "ship it{Enter}");
     await waitFor(() => expect(transport.callsOf("send_user_message")).toHaveLength(1));
     expect(transport.callsOf("send_user_message")[0]).toMatchObject({ chat: "C-1", text: "ship it" });
@@ -211,7 +214,7 @@ describe("selecting a chat", () => {
         }),
       ),
     );
-    const row = within(tree()).getByRole("button", { name: /Refactor checkout/ });
+    const row = chatButton(/Refactor checkout/);
     expect(within(row).getByRole("img", { name: "未読の通知" })).toBeInTheDocument();
     await user.click(row);
     expect(within(row).queryByRole("img", { name: "未読の通知" })).not.toBeInTheDocument();

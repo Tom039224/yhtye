@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ReactNode, Ref } from "react";
 
 import "./icon.css";
 
@@ -88,6 +88,13 @@ const GLYPHS = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  more: (
+    <>
+      <circle cx="5.5" cy="12" r="1" />
+      <circle cx="12" cy="12" r="1" />
+      <circle cx="18.5" cy="12" r="1" />
+    </>
+  ),
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   "chevron-down": <path d="M6.5 9.5l5.5 5.5 5.5-5.5" />,
   "chevrons-up": <path d="M7 11l5-5 5 5M7 18l5-5 5 5" />,
@@ -204,6 +211,8 @@ interface IconButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   /** `primary` is the filled call to action, `danger` a destructive one. */
   tone?: "default" | "primary" | "danger";
   spin?: boolean;
+  /** The button element, for moving focus to it. */
+  ref?: Ref<HTMLButtonElement>;
 }
 
 /** An icon-only button. The label is required, so it always has an aria-label and a tooltip. */
@@ -216,11 +225,12 @@ export function IconButton({
   spin,
   className,
   type = "button",
+  ref,
   ...rest
 }: IconButtonProps) {
   const classes = ["icon-button", tone === "default" ? "" : `icon-button-${tone}`, className ?? ""].filter(Boolean);
   return (
-    <button type={type} className={classes.join(" ")} aria-label={label} title={title ?? label} {...rest}>
+    <button ref={ref} type={type} className={classes.join(" ")} aria-label={label} title={title ?? label} {...rest}>
       <Icon name={icon} size={size} spin={spin} />
     </button>
   );

@@ -115,3 +115,16 @@ export function shortAge(nowMs: number, ms: number): string {
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)}h`;
   return `${Math.floor(minutes / (60 * 24))}d`;
 }
+
+/**
+ * Why a chat cannot be deleted now (`null`: it can). The core decides in the
+ * end; this tells the user before asking: its orchestrator is working, or one
+ * of its groups is not finished (`active`, `finishing`, `merge_blocked`).
+ */
+export function deleteBlocker(view: ProjectView, chat: string): string | null {
+  if (chatRing(view, chat) === "running") {
+    return "実行中のため削除できません。先に停止してください。";
+  }
+  const open = view.state?.groups.find((g) => g.chat === chat && g.status !== "done" && g.status !== "cancelled");
+  return open ? `グループ ${open.id} が終わっていないため削除できません。完了または中止してください。` : null;
+}

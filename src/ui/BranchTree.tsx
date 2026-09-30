@@ -1,12 +1,12 @@
 import { type FormEvent, type KeyboardEvent, useState } from "react";
 
-import type { ChatInfo, GitOverview } from "../api/generated";
+import type { GitOverview } from "../api/generated";
 import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
-import { buildTree, chatRing, shortAge, type WorktreeNode } from "./branchTree";
-import { NEW_CHAT_TITLE } from "./Conversation";
+import { buildTree, chatRing, type WorktreeNode } from "./branchTree";
+import { ChatRow } from "./ChatRow";
 import { Icon, IconButton } from "./Icon";
 import { useNow } from "./useNow";
 
@@ -39,8 +39,9 @@ export function BranchTree() {
   return (
     <div className="branches">
       <div className="section-title branches-title section-head">
-        <span className="section-icon" title="ブランチ">
-          <Icon name="git-branch" size={14} />
+        <span className="side-label">
+          <Icon name="git-branch" size={13} />
+          Branch
         </span>
         <IconButton
           icon="plus"
@@ -151,31 +152,6 @@ function OtherBranches({ names }: { names: string[] }) {
           ))}
         </ul>
       ) : null}
-    </li>
-  );
-}
-
-function ChatRow({ chat, now, showPlace = false }: { chat: ChatInfo; now: number; showPlace?: boolean }) {
-  const store = useStore();
-  const view = useAppState((s) => s.project);
-  if (!view) return null;
-  const selected = view.selectedChat === chat.id;
-  const ring = chatRing(view, chat.id);
-  const title = chat.title ?? NEW_CHAT_TITLE;
-  return (
-    <li>
-      <button
-        type="button"
-        className={`side-row chat-row ${selected ? "current" : ""}`}
-        aria-current={selected ? "true" : undefined}
-        title={showPlace ? `${title} · ${chat.worktree}` : title}
-        onClick={() => store.selectChat(chat.id)}
-      >
-        <span className={`ring ring-${ring}`} data-testid={`chat-ring-${chat.id}`} />
-        <span className="name">{title}</span>
-        {view.unread[chat.id] ? <span className="unread-dot" role="img" aria-label="未読の通知" /> : null}
-        <span className="age">{shortAge(now, chat.last_used_ms)}</span>
-      </button>
     </li>
   );
 }

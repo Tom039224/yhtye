@@ -42,6 +42,15 @@ pub(super) struct Orchestrators {
     failed: HashMap<String, u64>,
 }
 
+impl Orchestrators {
+    /// Drops what is remembered about a deleted chat.
+    fn forget(&mut self, chat: &str) {
+        self.pending.remove(&orchestrator_session(chat));
+        self.cut_off.remove(chat);
+        self.failed.remove(chat);
+    }
+}
+
 /// Where and how an orchestrator is started.
 pub(super) struct StartPlan {
     cwd: PathBuf,
@@ -66,6 +75,45 @@ impl Driver {
             Some(Err(e)) => Err(e),
             _ => Ok(()),
         }
+    }
+
+    /// The user's title for `chat` (`ChatTitled`).
+    pub(super) async fn rename_chat(
+        &mut self,
+        chat: String,
+        title: String,
+    ) -> Result<(), ToolError> {
+        match self
+            .execute(DomainCommand::RenameChat { chat, title })
+            .await
+        {
+            Some(Err(e)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+
+    /// Deletes `chat`. Refused while its orchestrator is working (the user
+    /// cancels the turn first; a delete never cuts one off) or a group of the
+    /// chat is not finished; an idle orchestrator process is stopped once the
+    /// chat is gone.
+    pub(super) async fn delete_chat(&mut self, chat: String) -> Result<(), ToolError> {
+        let key = orchestrator_session(&chat);
+        let working = self.sessions.is_starting(&key)
+            || (self.sessions.is_live(&key) && !self.sessions.is_idle(&key));
+        if working && self.state.chat(&chat).is_some() {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is working; stop its turn before deleting the chat"
+            )));
+        }
+        if let Some(Err(e)) = self
+            .execute(DomainCommand::DeleteChat { chat: chat.clone() })
+            .await
+        {
+            return Err(e);
+        }
+        self.sessions.stop(&key);
+        self.orchestrators.forget(&chat);
+        Ok(())
     }
 
     /// The worktree of `chat` if its directory still exists: `not_found` for

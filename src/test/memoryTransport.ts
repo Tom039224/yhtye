@@ -104,6 +104,8 @@ export class FakeCore {
   secretError: string | null = null;
   /** Makes `create_branch` fail (an invalid or existing name). */
   branchError: CommandError | null = null;
+  /** The host name `ping` answers with. */
+  host = "test-host";
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -142,6 +144,8 @@ export class FakeCore {
     const failure = this.failures.get(cmd.type);
     if (failure) throw failure;
     switch (cmd.type) {
+      case "ping":
+        return { type: "pong", host: this.host };
       case "list_projects":
         return { type: "projects", projects: [this.info, ...this.others] };
       case "open_project":
@@ -158,6 +162,16 @@ export class FakeCore {
         return { type: "git_overview", git: this.git };
       case "create_chat":
         return { type: "chat", chat: this.newChat(cmd.worktree ?? this.worktreeOf(cmd.branch ?? "")) };
+      case "rename_chat": {
+        const chat = this.snapshot.chats.find((c) => c.id === cmd.chat);
+        if (!chat) throw new CommandError("not_found", `no chat ${cmd.chat}`);
+        const title = cmd.title.trim().replace(/\s+/g, " ");
+        if (!title) throw new CommandError("invalid_argument", "the title must not be empty");
+        return { type: "chat", chat: { ...chat, title } };
+      }
+      case "delete_chat":
+        if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
+        return { type: "accepted" };
       case "create_branch":
         if (this.branchError) throw this.branchError;
         this.git = { ...this.git, branches: [...this.git.branches, { name: cmd.name, sha: "n".repeat(40) }] };
