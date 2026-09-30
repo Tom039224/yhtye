@@ -14,7 +14,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use super::agent_args::{agents_status, choose_agents};
-use super::chats::Orchestrators;
+use super::chats::{ChatTarget, Orchestrators};
 use super::emitter::{Emitter, Publisher};
 use super::orchestration::OrchestrationConfig;
 use super::port::ToolRequest;
@@ -42,8 +42,8 @@ pub(super) enum Cmd {
     UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
     /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
-    /// A new chat on an existing branch.
-    CreateChat(String, oneshot::Sender<Result<Chat, ToolError>>),
+    /// A new chat in a worktree (given, or the branch's).
+    CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// A new branch (name, start point) and its first chat.
     CreateBranch(
         String,
@@ -240,8 +240,8 @@ impl Driver {
                 };
                 let _ = tx.send(reply);
             }
-            Some(Cmd::CreateChat(branch, tx)) => {
-                let _ = tx.send(self.create_chat(branch).await);
+            Some(Cmd::CreateChat(target, tx)) => {
+                let _ = tx.send(self.create_chat(target).await);
             }
             Some(Cmd::CreateBranch(name, from, tx)) => {
                 let _ = tx.send(self.create_branch(name, from).await);
@@ -251,11 +251,6 @@ impl Driver {
                 let _ = tx.send(reply);
             }
             Some(Cmd::RetryGroupMerge(group, tx)) => {
-                if let Some(chat) = self.state.chat_of_group(&group).map(str::to_string)
-                    && let Err(e) = self.follow_branch(&chat).await
-                {
-                    tracing::debug!("{e}");
-                }
                 let reply = self
                     .execute(DomainCommand::RetryGroupMerge { group })
                     .await
@@ -347,12 +342,16 @@ impl Driver {
                 let chat = binding.chat.clone().ok_or_else(|| {
                     ToolError::forbidden("create_group needs an orchestrator chat")
                 })?;
-                self.follow_branch(&chat).await?;
-                self.realign_orchestrator(&chat).await;
+                let base_branch = self.checked_out_branch(&chat).await?;
                 let taken = self.git.highest_group_number().await.map_err(|e| {
                     ToolError::internal(format!("could not list the group numbers in git: {e}"))
                 })?;
-                DomainCommand::CreateGroup { chat, args, taken }
+                DomainCommand::CreateGroup {
+                    chat,
+                    args,
+                    base_branch,
+                    taken,
+                }
             }
             ToolCall::CreateTask(args) => {
                 let args =
@@ -363,11 +362,8 @@ impl Driver {
                 }
             }
             ToolCall::FinishGroup(args) => {
-                // The merge goes to the chat's branch: follow a rename first.
-                if let Some(chat) = &binding.chat
-                    && let Err(e) = self.follow_branch(chat).await
-                {
-                    tracing::debug!("{e}");
+                if let (Some(into), Some(chat)) = (&args.into, &binding.chat) {
+                    self.check_into(chat, into).await?;
                 }
                 DomainCommand::Tool {
                     binding,

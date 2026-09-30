@@ -1,6 +1,7 @@
-// The BRANCHES tree and the chat-aware panels (Stage 8b, orchestrator-desktop §9).
+// The BRANCHES tree of worktrees and the chat-aware panels (Stage 8b / 8e,
+// orchestrator-desktop §9).
 
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -9,9 +10,9 @@ import { CommandError } from "../api/transport";
 import { AppStore, chatPrefKey } from "../store/app";
 import { memoryPrefs, type Prefs } from "../store/prefs";
 import { StoreContext } from "../store/useStore";
-import { CHAT_GIT, CHAT_LOG, chatSnapshot } from "../test/chats";
+import { CHAT_GIT, CHAT_LOG, chatSnapshot, FEAT_WT, MAIN_WT } from "../test/chats";
 import { orchestratorKey } from "../store/chats";
-import { ev, prompted } from "../test/events";
+import { ev, prompted, turnEnded } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 
@@ -48,7 +49,7 @@ const conversation = () => screen.getByRole("region", { name: "orchestrator" });
 const tasks = () => screen.getByRole("region", { name: "tasks" });
 
 describe("BRANCHES tree", () => {
-  it("lists local branches with their chats newest first and hides Yhtye's internal branches", async () => {
+  it("lists the worktrees by their branch with their chats newest first and hides Yhtye's internal ones", async () => {
     const { store } = setup();
     await open(store);
     const names = within(tree()).getAllByRole("button", { expanded: true }).map((b) => b.textContent);
@@ -63,7 +64,7 @@ describe("BRANCHES tree", () => {
     expect(within(tree()).getByRole("button", { name: /Refactor checkout/ })).toHaveTextContent("5h");
   });
 
-  it("collapses and expands a branch without selecting its chat", async () => {
+  it("collapses and expands a worktree without selecting its chat", async () => {
     const { store, user } = setup();
     await open(store);
     const main = within(tree()).getByRole("button", { name: "main" });
@@ -75,37 +76,61 @@ describe("BRANCHES tree", () => {
     expect(within(tree()).getByRole("button", { name: /Refactor checkout/ })).toBeInTheDocument();
   });
 
-  it("shows chats of a branch git no longer has under a deleted-branches heading", async () => {
+  it("shows chats of a worktree git no longer lists under a not-found heading, readable but not sendable", async () => {
     const { store, core, user } = setup();
-    core.git = { ...CHAT_GIT, branches: CHAT_GIT.branches.filter((b) => b.name !== "feat/x") };
+    core.git = { ...CHAT_GIT, worktrees: CHAT_GIT.worktrees.filter((w) => w.path !== FEAT_WT) };
     await open(store);
-    expect(within(tree()).getByText("(削除されたブランチ)")).toBeInTheDocument();
+    expect(within(tree()).getByText("(見つからない作業ツリー)")).toBeInTheDocument();
     await user.click(within(tree()).getByRole("button", { name: /Add feature x/ }));
-    expect(screen.getByTestId("chat-branch")).toHaveTextContent("削除済み");
+    expect(screen.getByTestId("chat-branch")).toHaveTextContent("作業ツリーが見つかりません");
     expect(screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" })).toBeDisabled();
-    expect(within(conversation()).getByText(/存在しないため送信できません/)).toBeInTheDocument();
+    expect(within(conversation()).getByText(/見つからないため送信できません/)).toBeInTheDocument();
     // The history is still readable.
     expect(within(conversation()).getByText("Reply about feature")).toBeInTheDocument();
   });
 
-  it("moves a chat under its renamed branch, updates the header and notes it in the conversation", async () => {
-    const { store, core, transport } = setup();
+  it("names a worktree by what it has checked out now: a rename outside Yhtye shows up on focus", async () => {
+    const { store, core } = setup();
     await open(store);
     expect(screen.getByTestId("chat-branch")).toHaveTextContent("feat/x");
-    // git has the new name by the time the tree re-reads it.
-    core.git = { ...CHAT_GIT, branches: CHAT_GIT.branches.map((b) => (b.name === "feat/x" ? { ...b, name: "feat/renamed" } : b)) };
-    act(() =>
-      transport.emit(
-        ev(5, { type: "domain", event: { type: "chat_branch_changed", chat: "C-2", from: "feat/x", to: "feat/renamed" } }),
-      ),
-    );
-    expect(screen.getByTestId("chat-branch")).toHaveTextContent("feat/renamed");
+    const renamed = (w: (typeof CHAT_GIT.worktrees)[number]) => (w.path === FEAT_WT ? { ...w, branch: "feat/renamed" } : w);
+    core.git = {
+      ...CHAT_GIT,
+      branches: CHAT_GIT.branches.map((b) => (b.name === "feat/x" ? { ...b, name: "feat/renamed" } : b)),
+      worktrees: CHAT_GIT.worktrees.map(renamed),
+    };
+    fireEvent.focus(window);
+    await waitFor(() => expect(screen.getByTestId("chat-branch")).toHaveTextContent("feat/renamed"));
     expect(screen.getByTestId("head-branch")).toHaveTextContent("feat/renamed");
-    expect(within(conversation()).getByText("ブランチ名が feat/x → feat/renamed に変わりました")).toBeInTheDocument();
-    await waitFor(() => expect(within(tree()).getByRole("button", { name: "feat/renamed の新しいチャット" })).toBeInTheDocument());
+    expect(within(tree()).getByRole("button", { name: "feat/renamed の新しいチャット" })).toBeInTheDocument();
     expect(within(tree()).queryByRole("button", { name: "feat/x の新しいチャット" })).not.toBeInTheDocument();
+    // The chat stays with its worktree; nothing is said in the conversation.
     expect(within(tree()).getByRole("button", { name: /Add feature x/ })).toBeInTheDocument();
-    expect(within(tree()).queryByText("(削除されたブランチ)")).not.toBeInTheDocument();
+    expect(within(conversation()).queryByText(/ブランチ名が/)).not.toBeInTheDocument();
+    expect(within(tree()).queryByText("(見つからない作業ツリー)")).not.toBeInTheDocument();
+  });
+
+  it("re-reads git when an orchestrator's turn ends and shows a detached worktree by its commit", async () => {
+    const { store, core, transport } = setup();
+    await open(store);
+    const reads = transport.callsOf("get_git_overview").length;
+    const detached = (w: (typeof CHAT_GIT.worktrees)[number]) => (w.path === FEAT_WT ? { ...w, branch: null, head_sha: "abcdef1234" } : w);
+    core.git = { ...CHAT_GIT, worktrees: CHAT_GIT.worktrees.map(detached) };
+    act(() => transport.emit({ ...turnEnded(4, orchestratorKey("C-2")), live: true }));
+    await waitFor(() => expect(transport.callsOf("get_git_overview").length).toBeGreaterThan(reads));
+    await waitFor(() => expect(screen.getByTestId("chat-branch")).toHaveTextContent("detached @abcdef1"));
+    expect(within(tree()).getByRole("button", { name: "detached @abcdef1 の新しいチャット" })).toBeInTheDocument();
+  });
+
+  it("lists branches checked out nowhere under 他のブランチ and starts a chat there", async () => {
+    const { store, core, user, transport } = setup();
+    core.git = { ...CHAT_GIT, branches: [...CHAT_GIT.branches, { name: "old", sha: "o".repeat(40) }] };
+    await open(store);
+    const other = within(tree()).getByRole("button", { name: /他のブランチ \(1\)/ });
+    expect(other).toHaveAttribute("aria-expanded", "false");
+    await user.click(other);
+    await user.click(within(tree()).getByRole("button", { name: "old の新しいチャット" }));
+    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "old" }]);
   });
 
   it("marks the main worktree's branch and a running chat", async () => {
@@ -194,11 +219,11 @@ describe("selecting a chat", () => {
 });
 
 describe("creating chats and branches", () => {
-  it("creates a chat on a branch from its row and selects it", async () => {
+  it("creates a chat in a worktree from its row and selects it", async () => {
     const { store, user, transport } = setup();
     await open(store);
     await user.click(within(tree()).getByRole("button", { name: "main の新しいチャット" }));
-    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "main" }]);
+    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", worktree: MAIN_WT }]);
     await waitFor(() => expect(screen.getByTestId("head-branch")).toHaveTextContent("main"));
     expect(screen.getByTestId("chat-title")).toHaveTextContent("新しいチャット");
     expect(screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" })).toBeEnabled();
@@ -268,21 +293,21 @@ describe("a project without chats", () => {
     expect(within(tasks()).getByText(/チャットを選ぶと/)).toBeInTheDocument();
   });
 
-  it("expands the branch checked out in the main clone by default so + 新しいチャット is visible", async () => {
+  it("expands the main clone by default so + 新しいチャット is visible", async () => {
     const { store, user, transport } = setup({ empty: true });
     await open(store);
     expect(within(tree()).getByRole("button", { name: "main" })).toHaveAttribute("aria-expanded", "true");
     expect(within(tree()).getByRole("button", { name: "feat/x" })).toHaveAttribute("aria-expanded", "false");
     await user.click(within(tree()).getByRole("button", { name: "main の新しいチャット" }));
-    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "main" }]);
+    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", worktree: MAIN_WT }]);
   });
 
-  it("offers + 新しいチャット under each branch", async () => {
+  it("offers + 新しいチャット under each worktree", async () => {
     const { store, user, transport } = setup({ empty: true });
     await open(store);
     await user.click(within(tree()).getByRole("button", { name: "feat/x" }));
     await user.click(within(tree()).getByRole("button", { name: "feat/x の新しいチャット" }));
-    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "feat/x" }]);
+    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", worktree: FEAT_WT }]);
     await waitFor(() => expect(screen.getByTestId("chat-title")).toHaveTextContent("新しいチャット"));
   });
 });

@@ -2,6 +2,8 @@
 //! times the store derives from the event log in the same transaction
 //! (`created_ms` from `chat_created`, `last_used_ms` from the chat's `prompted`).
 
+use std::path::PathBuf;
+
 use serde::Serialize;
 use sqlx::{FromRow, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use ts_rs::TS;
@@ -11,11 +13,13 @@ use super::codec::{int, uint};
 use crate::api::{ApiEvent, ApiEventBody};
 use crate::domain::{Chat, DomainEvent, chat_of_session};
 
-/// A chat as the UI lists it (`Snapshot.chats`, `list_chats`).
+/// A chat as the UI lists it (`Snapshot.chats`, `list_chats`). Its branch is
+/// not stored: the UI reads what the worktree has checked out (Stage 8e).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 pub struct ChatInfo {
     pub id: String,
-    pub branch: String,
+    /// The chat's worktree, as `git worktree list` shows it.
+    pub worktree: String,
     pub title: Option<String>,
     pub created_ms: u64,
     /// When the chat's orchestrator was last prompted (its creation until then).
@@ -25,7 +29,7 @@ pub struct ChatInfo {
 #[derive(FromRow)]
 struct Row {
     id: String,
-    branch: String,
+    worktree: String,
     title: Option<String>,
     created_ms: i64,
     last_used_ms: i64,
@@ -34,7 +38,7 @@ struct Row {
 /// The chats of `project`, most recently used first.
 pub(super) async fn list(pool: &SqlitePool, project: &str) -> Result<Vec<ChatInfo>, StoreError> {
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT id, branch, title, created_ms, last_used_ms FROM chats \
+        "SELECT id, worktree, title, created_ms, last_used_ms FROM chats \
          WHERE project_id = ? ORDER BY last_used_ms DESC, ord DESC",
     )
     .bind(project)
@@ -44,7 +48,7 @@ pub(super) async fn list(pool: &SqlitePool, project: &str) -> Result<Vec<ChatInf
         .map(|r| {
             Ok(ChatInfo {
                 id: r.id,
-                branch: r.branch,
+                worktree: r.worktree,
                 title: r.title,
                 created_ms: uint(r.created_ms)?,
                 last_used_ms: uint(r.last_used_ms)?,
@@ -59,13 +63,17 @@ pub(super) async fn load(
     project: &str,
 ) -> Result<Vec<Chat>, StoreError> {
     let rows: Vec<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, branch, title FROM chats WHERE project_id = ? ORDER BY ord")
+        sqlx::query_as("SELECT id, worktree, title FROM chats WHERE project_id = ? ORDER BY ord")
             .bind(project)
             .fetch_all(&mut *conn)
             .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, branch, title)| Chat { id, branch, title })
+        .map(|(id, worktree, title)| Chat {
+            id,
+            worktree: PathBuf::from(worktree),
+            title,
+        })
         .collect())
 }
 
@@ -84,14 +92,14 @@ pub(super) async fn write(
             continue;
         }
         sqlx::query(
-            "INSERT INTO chats (project_id, id, ord, branch, title, created_ms, last_used_ms) \
+            "INSERT INTO chats (project_id, id, ord, worktree, title, created_ms, last_used_ms) \
              VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (project_id, id) DO UPDATE SET \
-             branch = excluded.branch, title = excluded.title",
+             worktree = excluded.worktree, title = excluded.title",
         )
         .bind(project)
         .bind(&c.id)
         .bind(int(ord)?)
-        .bind(&c.branch)
+        .bind(c.worktree.to_string_lossy().into_owned())
         .bind(&c.title)
         .bind(now)
         .bind(now)
@@ -112,14 +120,14 @@ pub(super) async fn apply(
             event: DomainEvent::ChatCreated { chat },
         } => {
             sqlx::query(
-                "INSERT INTO chats (project_id, id, ord, branch, title, created_ms, last_used_ms) \
+                "INSERT INTO chats (project_id, id, ord, worktree, title, created_ms, last_used_ms) \
                  VALUES (?, ?, (SELECT COUNT(*) FROM chats WHERE project_id = ?), ?, ?, ?, ?) \
                  ON CONFLICT (project_id, id) DO NOTHING",
             )
             .bind(project)
             .bind(&chat.id)
             .bind(project)
-            .bind(&chat.branch)
+            .bind(chat.worktree.to_string_lossy().into_owned())
             .bind(&chat.title)
             .bind(ts)
             .bind(ts)

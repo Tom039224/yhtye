@@ -30,15 +30,15 @@ pub enum DomainEvent {
         chat: String,
         title: String,
     },
-    /// The chat's branch was renamed (Stage 8d, `orchestration-model.md` §6.1): the
-    /// chat and its unfinished groups follow it.
-    ChatBranchChanged {
-        chat: String,
-        from: String,
-        to: String,
-    },
     GroupCreated {
         group: Group,
+    },
+    /// `finish_group` with `into` (Stage 8e): the group now merges into `to`,
+    /// the branch its chat's worktree has checked out.
+    GroupBaseChanged {
+        group: String,
+        from: String,
+        to: String,
     },
     GroupFinishing {
         group: String,
@@ -140,6 +140,7 @@ impl State {
     pub fn apply(&mut self, event: &DomainEvent) {
         match event {
             DomainEvent::GroupCreated { .. }
+            | DomainEvent::GroupBaseChanged { .. }
             | DomainEvent::GroupFinishing { .. }
             | DomainEvent::GroupFinishReminded { .. }
             | DomainEvent::GroupMergeFinished { .. }
@@ -164,27 +165,11 @@ impl State {
                     c.title = Some(title.clone());
                 }
             }
-            DomainEvent::ChatBranchChanged { chat, to, .. } => self.follow_rename(chat, to),
             DomainEvent::TaskCreated { task } => {
                 self.counters.tasks += 1;
                 self.tasks.push(task.clone());
             }
             _ => self.apply_task(event),
-        }
-    }
-
-    /// `chat` now works on `to`, and so do its groups that are not finished (their
-    /// merge target is the chat's branch).
-    fn follow_rename(&mut self, chat: &str, to: &str) {
-        let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) else {
-            return;
-        };
-        c.branch = to.to_string();
-        let unfinished = |g: &&mut Group| {
-            g.chat == chat && !matches!(g.status, GroupStatus::Done | GroupStatus::Cancelled)
-        };
-        for g in self.groups.iter_mut().filter(unfinished) {
-            g.base_branch = to.to_string();
         }
     }
 
@@ -197,6 +182,11 @@ impl State {
                     n.max(self.counters.groups + 1)
                 });
                 self.groups.push(group.clone());
+            }
+            DomainEvent::GroupBaseChanged { group, to, .. } => {
+                if let Some(g) = self.group_mut(group) {
+                    g.base_branch = to.clone();
+                }
             }
             DomainEvent::GroupFinishing { group, summary } => {
                 if let Some(g) = self.group_mut(group) {

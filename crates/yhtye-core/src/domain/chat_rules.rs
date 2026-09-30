@@ -1,6 +1,8 @@
 //! Chats (`orchestration-model.md` §2.0, Stage 8): creating one and the user's
 //! messages to its orchestrator.
 
+use std::path::PathBuf;
+
 use serde_json::json;
 
 use super::event::DomainEvent;
@@ -31,36 +33,18 @@ pub fn chat_of_session(session: &str) -> Option<&str> {
 }
 
 impl Tx {
-    pub(super) fn create_chat(&mut self, branch: &str) -> Result<(), ToolError> {
-        check_target_branch(branch)?;
+    pub(super) fn create_chat(&mut self, worktree: PathBuf) -> Result<(), ToolError> {
+        if worktree.as_os_str().is_empty() {
+            return Err(ToolError::invalid_argument("a chat needs a worktree"));
+        }
         let id = format!("C-{}", self.state.counters.chats + 1);
         let chat = Chat {
             id,
-            branch: branch.to_string(),
+            worktree,
             title: None,
         };
         self.reply(Ok(json!({ "chat": chat })));
         self.emit(DomainEvent::ChatCreated { chat });
-        Ok(())
-    }
-
-    /// The branch of `chat` was renamed to `to`: the chat and its unfinished
-    /// groups follow (a rename to the same name changes nothing).
-    pub(super) fn chat_branch_changed(&mut self, chat: &str, to: &str) -> Result<(), ToolError> {
-        let from = self
-            .state
-            .chat(chat)
-            .ok_or_else(|| ToolError::not_found(format!("no chat {chat}")))?
-            .branch
-            .clone();
-        check_target_branch(to)?;
-        if from != to {
-            self.emit(DomainEvent::ChatBranchChanged {
-                chat: chat.to_string(),
-                from,
-                to: to.to_string(),
-            });
-        }
         Ok(())
     }
 
@@ -84,7 +68,8 @@ impl Tx {
     }
 }
 
-/// A chat's branch must be named and not one of Yhtye's internal branches.
+/// A branch a chat works on (or a group merges into) must be named and not
+/// one of Yhtye's internal branches.
 pub fn check_target_branch(branch: &str) -> Result<(), ToolError> {
     non_empty("branch", branch)?;
     if branch.starts_with(INTERNAL_BRANCH_PREFIX) {

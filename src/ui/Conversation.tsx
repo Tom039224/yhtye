@@ -1,12 +1,12 @@
 import { useMemo, useRef } from "react";
 
-import type { State } from "../api/generated";
-import type { AppState } from "../store/app";
+import type { ChatInfo, GitOverview, State } from "../api/generated";
 import { orchestratorKey, scopeState } from "../store/chats";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
 import { withMentions, type Mention } from "./mentions";
+import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
 import { useAutoScroll } from "./useAutoScroll";
@@ -21,10 +21,9 @@ interface Props {
 export const NEW_CHAT_TITLE = "新しいチャット";
 const NO_CHAT_HINT = "BRANCHES の「+ 新しいチャット」から始めます";
 
-/** The chat's branch is gone (git is read; unknown while it has not been). */
-function isBranchMissing(s: AppState, view: ProjectView, branch: string | undefined): boolean {
-  const git = s.git?.project === view.info.id ? s.git.overview : null;
-  return Boolean(branch && git && !git.branches.some((b) => b.name === branch));
+/** Where the chat's worktree is now (its branch, detached, gone; unknown until git is read). */
+function chatPlace(overview: GitOverview | null, chat: ChatInfo | null): Place {
+  return chat ? placeOf(chat, overview) : { kind: "unknown" };
 }
 
 export function Conversation({ view, mentions, onRemoveMention, onClearMentions }: Props) {
@@ -38,7 +37,9 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const scoped = useMemo(() => (view.state ? scopeState(view.state, chat?.id ?? null) : null), [view.state, chat?.id]);
   const queued = useMemo(() => new Set((scoped?.inbox ?? []).map((e) => e.id)), [scoped]);
   const session = orchestratorSession(view, chat?.id ?? null);
-  const branchMissing = useAppState((s) => isBranchMissing(s, view, chat?.branch));
+  const overview = useAppState((s) => (s.git?.project === view.info.id ? s.git.overview : null));
+  const place = chatPlace(overview, chat);
+  const placeText = placeLabel(place);
   const scroller = useRef<HTMLDivElement>(null);
   useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, chat?.id);
 
@@ -51,8 +52,8 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         ? "読み込み中…"
         : view.phase === "error"
           ? "プロジェクトを読み込めませんでした"
-          : branchMissing
-            ? `ブランチ「${chat.branch}」が存在しないため送信できません (履歴は読めます)`
+          : place.kind === "missing"
+            ? `作業ツリー「${chat.worktree}」が見つからないため送信できません (履歴は読めます)`
             : null;
 
   const send = async (text: string) => {
@@ -67,10 +68,9 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         <span className="panel-title" data-testid="chat-title" title={chat?.title ?? undefined}>
           {chat ? (chat.title ?? NEW_CHAT_TITLE) : "orchestrator"}
         </span>
-        {chat ? (
-          <span className="chip branch-chip" title="このチャットの作業対象ブランチ" data-testid="chat-branch">
-            ⎇ {chat.branch}
-            {branchMissing ? " · 削除済み" : ""}
+        {chat && placeText ? (
+          <span className="chip branch-chip" title={`このチャットの作業ツリー: ${chat.worktree}`} data-testid="chat-branch">
+            {place.kind === "missing" ? placeText : `⎇ ${placeText}`}
           </span>
         ) : null}
         <span className="spacer" />

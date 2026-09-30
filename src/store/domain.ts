@@ -56,6 +56,9 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
         counters: { ...state.counters, groups: state.counters.groups + 1 },
         groups: [...state.groups, event.group],
       };
+    case "group_base_changed":
+      // `finish_group` with `into` (Stage 8e): the group merges into another branch.
+      return mapGroup(state, event.group, (g) => ({ ...g, base_branch: event.to }));
     case "group_finishing":
       return mapGroup(state, event.group, (g) => ({
         ...g,
@@ -110,8 +113,6 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
       };
     case "chat_titled":
       return { ...state, chats: state.chats.map((c) => (c.id === event.chat ? { ...c, title: event.title } : c)) };
-    case "chat_branch_changed":
-      return followBranchRename(state, event.chat, event.to);
     case "task_created":
       return {
         ...state,
@@ -123,22 +124,12 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
   }
 }
 
-/** A renamed branch: the chat, and its groups that are not finished (their merge target), follow it. */
-function followBranchRename(state: State, chat: string, to: string): State {
-  return {
-    ...state,
-    chats: state.chats.map((c) => (c.id === chat ? { ...c, branch: to } : c)),
-    groups: state.groups.map((g) =>
-      g.chat === chat && g.status !== "done" && g.status !== "cancelled" ? { ...g, base_branch: to } : g,
-    ),
-  };
-}
-
 type TaskEvent = Exclude<
   DomainEvent,
   {
     type:
       | "group_created"
+      | "group_base_changed"
       | "group_finishing"
       | "group_finish_reminded"
       | "group_merge_finished"
@@ -151,7 +142,6 @@ type TaskEvent = Exclude<
       | "inbox_delivered"
       | "chat_created"
       | "chat_titled"
-      | "chat_branch_changed"
       | "task_created";
   }
 >;

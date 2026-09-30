@@ -45,12 +45,12 @@ fn rich_state() -> State {
     let mut s = State::new("P-1", DomainConfig::default());
     s.chats.push(Chat {
         id: "C-1".into(),
-        branch: "main".into(),
+        worktree: "/repo".into(),
         title: Some("first chat".into()),
     });
     s.chats.push(Chat {
         id: "C-2".into(),
-        branch: "feature/x".into(),
+        worktree: "/data/worktrees/P-1/branches/feature-x".into(),
         title: None,
     });
     s.groups.push(Group {
@@ -159,7 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 6);
+    assert_eq!(applied, 7);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -192,7 +192,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 6);
+    assert_eq!(applied, 7);
 }
 
 #[tokio::test]
@@ -536,7 +536,7 @@ async fn chats_keep_their_times_from_the_event_log() {
     let created = |seq, id: &str| {
         let chat = Chat {
             id: id.into(),
-            branch: "main".into(),
+            worktree: "/repo".into(),
             title: None,
         };
         event(
@@ -612,28 +612,38 @@ async fn sessions_record_the_directory_they_started_in() {
 }
 
 #[tokio::test]
-async fn a_branch_rename_is_stored_for_the_chat_and_its_groups() {
+async fn chats_are_stored_with_their_worktree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = stored_rich(dir.path()).await;
+    let listed = store.chats("P-1").await.expect("chats");
+    let worktree_of = |id: &str| {
+        listed
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.worktree.clone())
+    };
+    assert_eq!(worktree_of("C-1").as_deref(), Some("/repo"));
+    assert_eq!(
+        worktree_of("C-2").as_deref(),
+        Some("/data/worktrees/P-1/branches/feature-x")
+    );
+}
+
+#[tokio::test]
+async fn a_changed_base_branch_is_stored_for_the_group() {
     let dir = tempfile::tempdir().expect("tempdir");
     let (store, rich) = stored_rich(dir.path()).await;
-    let rename = DomainEvent::ChatBranchChanged {
-        chat: "C-1".into(),
+    let moved = DomainEvent::GroupBaseChanged {
+        group: "G-1".into(),
         from: "main".into(),
         to: "trunk".into(),
     };
-    let mut renamed = rich.clone();
-    renamed.apply(&rename);
-    let events = [event(2, ApiEventBody::Domain { event: rename })];
-    store
-        .commit(&events, &rich, &renamed)
-        .await
-        .expect("commit");
+    let mut after = rich.clone();
+    after.apply(&moved);
+    let events = [event(2, ApiEventBody::Domain { event: moved })];
+    store.commit(&events, &rich, &after).await.expect("commit");
 
     let loaded = store.load_state("P-1").await.expect("load").expect("state");
-    assert_eq!(loaded, renamed);
-    assert_eq!(loaded.chat("C-1").expect("C-1").branch, "trunk");
+    assert_eq!(loaded, after);
     assert_eq!(loaded.group("G-1").expect("G-1").base_branch, "trunk");
-    let listed = store.chats("P-1").await.expect("chats");
-    let branch_of = |id: &str| listed.iter().find(|c| c.id == id).map(|c| c.branch.clone());
-    assert_eq!(branch_of("C-1").as_deref(), Some("trunk"));
-    assert_eq!(branch_of("C-2").as_deref(), Some("feature/x"));
 }

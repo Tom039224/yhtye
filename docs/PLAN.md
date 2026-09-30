@@ -35,6 +35,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](design/)。
 | 8b | チャットとブランチ: フロントエンド (ストア + BRANCHES ツリー + 会話ヘッダ + vitest) | **完了** (結果メモは Stage 8b の節) |
 | 8c | チャットとブランチ: 実機 E2E (Claude Code Haiku、スクリーンショット) | **完了** (結果メモは Stage 8c の節) |
 | 8d | 書けるオーケストレータ・ブランチ改名の追跡・作業ツリーの取り直し | **完了** (結果メモは Stage 8d の節) |
+| 8e | チャットを作業ツリーに紐づける (ブランチ名は表示用、確認はマージ直前に 1 回。8d の改名追跡・cwd の取り直しを撤去) | **実装済み・未コミット** (結果メモは Stage 8e の節) |
 
 ## 再開の仕方
 
@@ -1146,6 +1147,8 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 
 ### Stage 8d — 書けるオーケストレータ・ブランチ改名の追跡・作業ツリーの取り直し (ユーザー決定済みの仕様)
 
+> **Stage 8e で B (改名の追跡) と C (作業ツリーの取り直し) と D の通知行は撤去した** (チャットは作業ツリーに紐づき、ブランチ名は表示用)。A (書けるオーケストレータ) は残っている。
+
 ユーザー決定 (再検討しない):
 - **A. オーケストレータの「読み取り専用」(orchestration-model §8.1) を取りやめる。** Claude Code のオーケストレータにも組み込みツールをすべて渡す
   (`tools = ["Read","Glob","Grep"]` の制限 = `ORCHESTRATOR_BUILTIN_TOOLS` / `HarnessConfig::claude_code_orchestrator` を削除)。`orchestrator_read_only` (preset・`HarnessInfo`) と
@@ -1180,6 +1183,71 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 確認したこと: `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` / `pnpm tsc --noEmit` / `pnpm test` (136 件) / `pnpm build`、すべて通過。
 - 制限・メモ: 改名の追跡は「そのチャットのセッションを一度でも起動した」(cwd が記録されている) ことが前提 (起動前に改名されたチャットは削除扱い)。`create_group` 時の取り直しは、ターン中なのでセッションを止めるのはターン終了後 (idle のまま stop し、次の配達で遅延起動)。取り直しで止めた古いセッションの `session_stopped` は、同じキーで新しいセッションが起動するため出ない (UI は新しい `session_started` を見る)。
 
+### Stage 8e — チャットを作業ツリーに紐づける (ユーザー決定済みの仕様、8d のブランチ追跡を置き換える)
+
+理由 (ユーザー判断): 8d のブランチ追跡は守りすぎ。**ブランチ名は表示用**であり、コマンドの結果 (`git branch -m`・checkout) に即座に反応して
+チャットとブランチの紐づけを書き換えるのは安全でない。**確認はマージの直前に 1 回**だけ行い、想定外のことは**オーケストレータに返す** (ユーザーではない)。
+
+ユーザー決定 (再検討しない):
+1. **チャットはブランチではなく作業ツリーに紐づく** (Orca と同じく作業ツリーが仕事の単位。ブランチ名は表示のために読むだけ)。「ブランチ X の新しいチャット」は
+   X の作業ツリーを解決して (既存のチェックアウト = メインクローンを含む、無ければ Yhtye が `<data_dir>/worktrees/<project>/branches/<sanitized>` を作る。従来どおり)
+   **その作業ツリーのパス**にチャットを紐づける。オーケストレータの cwd は常にその作業ツリー (動かないので cwd の取り直しは無い)。
+2. **ブランチ名は表示だけ**: サイドバー・会話ヘッダ・ピルは表示のたびに作業ツリーの今の HEAD を読む。改名・checkout はそのまま表示に出る。
+   サイドバーのツリーは「作業ツリー (表示名 = 今のブランチ、または `detached @sha` / 見つからない状態) → チャット」。作業ツリーごとに「+ 新しいチャット」、
+   「+ 新しいブランチ」は残す (ブランチ + Yhtye の作業ツリー + 最初のチャット)。作業ツリーのディレクトリが消えたチャットは読めるが、送信は分かりやすいメッセージで拒否。
+3. **グループ**: base_branch = `create_group` の時点の作業ツリーの HEAD のブランチ (記録して、グループ・タスクのブランチ作成と表示に使う)。detached HEAD なら `create_group` を拒否。
+   open なグループの上限は**作業ツリーに 1 つ**。
+4. **マージ**: マージの直前に、チャットの作業ツリーが今どのブランチかを確かめる。グループが記録した base_branch と同じ (かつ従来どおり clean) ならマージ。
+   **それ以外 (改名された・別のブランチに切り替わった・detached・base が消えた・作業ツリーが無い) はマージせず**、グループは `merge_blocked` にして
+   **状況をオーケストレータに返す** (例「base は X でしたが、作業ツリーは今 Y です / detached です」。ユーザーにではない)。
+   オーケストレータが決める: 作業ツリーを直して (全ツールを持つ) `finish_group` をもう一度呼ぶか、今のブランチを受け入れて `finish_group` の新しい任意引数
+   `into: "<branch>"` で呼ぶ (その時点の作業ツリーのブランチと一致すること。グループの base_branch を更新してからマージ)。**新しい MCP ツールは足さない** (`finish_group` を拡張するだけ)。
+   Yhtye による自動完了 (催促後の代行) と `RetryGroupMerge` も同じ確認をする。
+5. **8d から削除**: 改名の検出 (`follow.rs` の改名ロジック、reflog の `was_renamed`、`ChatBranchChanged` / `chat_branch_changed` イベントと UI の通知行)、
+   cwd の取り直し (`realign_orchestrator` / `stale_cwd`)、保存された識別子としての `chat.branch`。**8d の残りは残す**: オーケストレータは組み込みツールをすべて持ち、
+   検証のいらない小さな変更は自分でしてすぐコミットする。`prompts/orchestrator.md`: 「Yhtye が改名に追従する」を削り、マージの前に Yhtye が作業ツリーのブランチを確かめ、
+   食い違いはオーケストレータに返すこと・その対処 (直す / `finish_group` の `into`) を書く。改名・checkout の禁止は書かない (「作業ツリーを clean に保つ・グループは今いるブランチにマージされる」だけ)。
+6. 既存データ: 1a0e566 は未リリース。新しいマイグレーションで破棄してよい (0006 と同じ) か、きれいに移行するかを決めて記録する。
+
+設計: [`orchestration-model.md`](architecture/orchestration-model.md) §2.0 / §2.1 / §5 / §6 / §6.1 / §8.1 / §10、[`core-design.md`](architecture/core-design.md) §17.8、
+[`mcp-tools.md`](architecture/mcp-tools.md) (`create_group` / `finish_group`)、[`orchestrator-desktop.md`](design/orchestrator-desktop.md) §9。
+
+実装で決めたこと (詳細は core-design §17.8):
+- **既存データは破棄** (`0007_chat_worktrees.sql`、0006 と同じ扱い)。8d までのイベントログには `chat_created { chat: { branch } }` や `chat_branch_changed` があり、
+  移行すると過去のイベントを読めなくなる (または型に互換用の欄を残すことになる) ため。
+- `finish_group` の食い違いの返し方: オーケストレータ自身の `finish_group` は**ツールの応答** (`merge.ok = false` + 状況と対処の説明) で返す (同じターンで対処できる。
+  受信箱にも積むと、直した後に古い知らせが届いてしまう)。`finish_group` 以外で走ったマージ (催促後の代行・`RetryGroupMerge`) は従来どおり受信箱の `merge_result`。
+- `finish_group` は `merge_blocked` のグループにも使える (同じ確認でマージをやり直す)。ユーザーの「マージを再試行」も残す (同じ確認をやり直し、結果はオーケストレータへ `merge_result`)。
+  dirty・コンフリクトなどユーザーが直すこともある状態に意味があるため。
+- 作業ツリーを持たないローカルブランチは、ツリーの末尾の折りたたみ「他のブランチ」に並べ、そこから「+ 新しいチャット」で Yhtye の作業ツリーを作れる (決定 1 の「無ければ作る」の入口)。
+
+**結果メモ (Stage 8e、実施済み・未コミット)**:
+- ドメイン: `Chat { id, worktree, title }` (`branch` を削除)、`CreateChat { worktree }`、`CreateGroup { .., base_branch }` (runtime が作業ツリーの HEAD から読む。detached・`yhtye/*` は `invalid_state`)、
+  open 上限は作業ツリーごと (`State::open_group_in`)、`GitOp::MergeGroup.worktree`、`finish_group` は `merge_blocked` も受け付け `into` で `group_base_changed`。
+  `start_merge` / `check_worktree_free` に共通化 (`finish_group`・`RetryGroupMerge`・Yhtye の代行)。`ChatBranchChanged` (コマンド・イベント)・`open_group_on` を削除。
+- git: `merge_group` はチャットの作業ツリーで、直前に `base_mismatch` (無い・detached・別ブランチ → `Blocked`、オーケストレータ向けの英語の説明と `into` の案内)。
+  `resolve_branch_worktree` / `create_branch` は `git worktree list` の表記のパスを返す。`find_worktree` を追加、`was_renamed` を削除。`GitOverview.worktrees` を追加。
+- runtime: `follow.rs` を削除 (`follow_branch` / `realign_orchestrator` / `stale_cwd`)。`create_chat` は `ChatTarget::{Branch, Worktree}` (作成時にだけブランチ → 作業ツリーを解決)、送信・起動は作業ツリーが無ければ拒否、
+  `create_group` は `checked_out_branch`、`finish_group{into}` は `check_into` (今のブランチと違えば `invalid_argument`)。API `create_chat { branch?, worktree? }`。
+- store: `0007_chat_worktrees.sql` (0006 と同じ範囲の破棄 + `chats.worktree`)。0001-0006 に行を入れた DB に当て、プロジェクトが残りチャット・カウンタが消えることを sqlite3 で確認。
+- フロント: ツリーは作業ツリー → チャット (`ui/branchTree.ts` の `buildTree` / `placeOf`)、表示名は今のブランチ / `detached @sha`、「(見つからない作業ツリー)」、折りたたみの「他のブランチ」、
+  会話ヘッダ・ピル・git パネルの見出しも作業ツリーの今のブランチ。git の読み直しにウィンドウのフォーカスとオーケストレータのターン終了を追加。`chat_branch_changed` の畳み込み・通知行を削除、`group_base_changed` を追加。
+  `pnpm gen:types`・`pnpm record:fixtures` (チャットの `worktree` が録音時の一時パス。`FakeCore` はチャット `C-1` の作業ツリーをメインクローンとして扱う)。
+- プロンプト: 「Yhtye が改名に追従する」「checkout しない」を削除。マージ直前の確認・食い違いの返し方と対処 (直して `finish_group` / `into`) を追加。
+- テスト: ドメイン (`domain/tests/chats.rs`: 作成時の base の記録・detached は拒否・作業ツリーごとの上限・`into`・`merge_blocked` からの `finish_group` と上限・代行 / 再試行は `merge_result`)、store、
+  `tests/git_branches.rs` (チャットの作業ツリーでのマージ・改名 / 別ブランチ / detached / 作業ツリー消失でマージしない・一覧の表記のパス・`find_worktree`・`GitOverview.worktrees`)、`tests/git_cli.rs`、
+  新規 `tests/orchestration_fake_worktree.rs` (6 件、`orchestration_fake_follow.rs` を置き換え: 改名は表示だけ → `finish_group` は応答で返る → `into` の検査 → 改名後のブランチへマージ / メインクローンの checkout → 同じ / detached → 戻せばマージ /
+  代行の `finish_group` は受信箱の `merge_result` / detached の作業ツリーでは `create_group` 不可 / 終了したプロセスは同じ作業ツリーで `session/load`)、`orchestration_fake_chats.rs` (作業ツリーの消えたチャット、作成時に作業ツリーができる)、`core_chats.rs` (作業ツリー指定の作成とエラー)、vitest (ツリー・表示名・フォーカス / ターン終了での読み直し・detached・見つからない作業ツリー・他のブランチ)。
+- 実機 (Claude Code **Haiku**、`-- --ignored --test-threads=1`): `orchestration_claude_real` (4)・`_git` (3)・`_restart` (1)・`_chats` (1)・`agent_selection_claude` (1) すべて通過。
+  `real_chat_follows_a_renamed_branch_...` は `real_orchestrator_merges_into_a_branch_renamed_mid_flow_with_finish_group_into` に置き換え。最初の版は改名を `group_created` の直後に行い、group ブランチの作成前に base が消えて `create_group` が失敗した (テストの待ち方。
+  Haiku は作り直して新しいブランチへマージした) ので、タスクの Step 開始後に改名するよう直した。2 回目は Haiku が自分で `git` を見て最初から `into` を付けたため「先に食い違いが返る」を必須にできず、
+  必須は「`into=renamed` の `finish_group` が成功し `renamed` にマージ」に緩めた (食い違いの返却は偽エージェントのテストで確認)。3 回目 (最終) は食い違いが返ってから `into` でマージ (`mismatch returned first: true`)。
+- ブラウザ (`pnpm dev:browser --data-dir <一時>`、LLM は使わない): メインクローン `main` と既存の作業ツリー `feature/x` がツリーに出て、`old-topic` は「他のブランチ」。両方にチャットを作成 → 外部で `git branch -m feature/x feature/renamed` →
+  フォーカスで表示名・会話ヘッダ・ピル・git の見出しが `feature/renamed` に (チャットはそのまま) → 作業ツリーを外部で削除 → チャットは「(見つからない作業ツリー)」、送信不可。スクリーンショット [`docs/e2e/stage8e/`](e2e/stage8e/) (1-3)。起動したブリッジ・Vite は停止済み。
+- 確認: `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` / `pnpm check:types` / `pnpm tsc --noEmit` / `pnpm test` (138 件) / `pnpm build`、すべて通過。
+- 既知の制限: `create_group` の base を読んでから group ブランチを作るまでの間に改名されると `create_group` が失敗する (エラーがオーケストレータに返り、作り直せる)。OpenCode 向けの cwd 比較 (`session/load` するか) は、作業ツリーが動かないので通常は常に一致 (比較は残した)。
+  作業ツリーは複数のチャット (とユーザー) で共有されうるので、`merge_group` の確認と `git merge` は不可分ではない: 間でブランチを切り替えられるとマージは別のブランチに入る。このため確認の時点の `refs/heads/<base>` の commit を記録し、「取り込み済み」の判定は `HEAD` ではなくその commit で行い、マージ後に `HEAD` が `refs/heads/<base>` のままで `HEAD^1` が記録した commit であることを確かめる。違えば `Blocked` で実際に入った先 (ブランチ・detached) を返す (元に戻す操作はしない。ユーザーのブランチに入ったものはユーザーが判断する)。切り替えそのものは防げない (ロックはしない)。`tests/git_branches.rs` で確認の直後に切り替えるテストフック (`GitCli::before_group_merge`) を使って検証。
+
 ### Stage 8 の未決事項
 
 設計中に見つかった、上の決定では決まらないこと (既定の案を括弧で示す。ユーザー確認後に決定へ移す):
@@ -1193,3 +1261,4 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - 起動失敗時の自動再試行 (案: しない。次の送信・項目・アプリ起動のときだけ)。
 - タイトルバーのブランチピル (案: 選択中のチャットのブランチ)。
 - ~~ブランチが外部で削除・改名されたチャット (案: 履歴は読めるが送信不可。改名の追跡はしない)~~ → 削除は従来どおり。**改名は Stage 8d で追跡する**。
+  → **Stage 8e で置き換え**: チャットは作業ツリーに紐づき、ブランチ名は表示だけ。改名・削除は表示に出るだけで、確認はグループのマージの直前 (食い違いはオーケストレータへ)。作業ツリーが消えたチャットは送信不可。

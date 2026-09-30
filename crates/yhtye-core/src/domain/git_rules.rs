@@ -145,20 +145,53 @@ impl Tx {
                 g.status.as_str()
             )));
         }
-        if let Some(open) = self.state.open_group_on(&g.base_branch) {
-            return Err(ToolError::conflict(format!(
-                "group {} is {}; retry after it is done",
-                open.id,
-                open.status.as_str()
-            )));
+        self.check_worktree_free(group)?;
+        let summary = g.finish_summary.clone().unwrap_or_default();
+        self.start_merge(group, summary, MergeTrigger::UserRetry)
+    }
+
+    /// A `merge_blocked` group may merge again only while no other group is
+    /// open in its chat's worktree (the open-group limit, Stage 8e).
+    pub(super) fn check_worktree_free(&self, group: &str) -> Result<(), ToolError> {
+        let open = self
+            .state
+            .worktree_of_group(group)
+            .and_then(|w| self.state.open_group_in(w))
+            .filter(|o| o.id != group);
+        match open {
+            Some(o) => Err(ToolError::conflict(format!(
+                "group {} is {} in the same worktree; merge again after it is done",
+                o.id,
+                o.status.as_str()
+            ))),
+            None => Ok(()),
         }
+    }
+
+    /// `group` becomes `finishing` and its branch is merged into its base
+    /// branch in its chat's worktree (the git side checks first that the
+    /// worktree still has the base branch checked out, Stage 8e).
+    pub(super) fn start_merge(
+        &mut self,
+        group: &str,
+        summary: String,
+        trigger: MergeTrigger,
+    ) -> Result<(), ToolError> {
+        let g = self
+            .state
+            .group(group)
+            .ok_or_else(|| ToolError::not_found(format!("no group {group}")))?;
+        let worktree = self
+            .state
+            .worktree_of_group(group)
+            .ok_or_else(|| ToolError::internal(format!("group {group} has no chat")))?;
         let op = GitOp::MergeGroup {
             group: g.id.clone(),
+            worktree: worktree.to_path_buf(),
             group_branch: g.group_branch.clone(),
             base_branch: g.base_branch.clone(),
-            trigger: MergeTrigger::UserRetry,
+            trigger,
         };
-        let summary = g.finish_summary.clone().unwrap_or_default();
         self.emit(DomainEvent::GroupFinishing {
             group: group.to_string(),
             summary,

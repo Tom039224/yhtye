@@ -221,11 +221,14 @@ async fn real_orchestrator_can_make_and_commit_a_small_change_itself() {
     shutdown_and_check(orch, &events).await;
 }
 
-/// Stage 8d: the test renames the chat's branch behind Yhtye's back. The chat
-/// follows it, and the next group is merged into the renamed branch.
+/// Stage 8e: the test renames the chat's branch behind Yhtye's back while a
+/// group runs. Nothing follows the rename (the group keeps its base branch);
+/// the orchestrator completes the merge into the new name with
+/// `finish_group` `into` (after Yhtye returned the mismatch, or having seen
+/// the rename itself).
 #[tokio::test]
 #[ignore = "real Claude Code (Haiku)"]
-async fn real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it() {
+async fn real_orchestrator_merges_into_a_branch_renamed_mid_flow_with_finish_group_into() {
     let r = TempRepo::new();
     r.git(&["branch", "feature"]);
     let (orch, mut rx) = Orchestration::start(real_git_config(&r))
@@ -233,44 +236,62 @@ async fn real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it() 
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
     let chat = orch.create_chat("feature").await.expect("chat").id;
-    orch.send_user_message(&chat, "Reply with the single word OK. Do not use any tool.")
-        .await
-        .expect("send");
-    until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
-
-    r.git(&["branch", "-m", "feature", "renamed"]);
     orch.send_user_message(
         &chat,
         "Create one group with one code task (steps: implement only) that appends the line \
-         `renamed ok` to README.md. When the group settles, call finish_group.",
+         `renamed ok` to README.md. When the group settles, call finish_group. If the branch \
+         gets renamed in the meantime, keep the new name and merge the group there.",
     )
     .await
     .expect("send");
-    let merged = |e: &ApiEvent| {
+    // Once the task works (the group branch exists), not between reading the
+    // base branch and creating the group branch from it.
+    let working = |e: &ApiEvent| {
         matches!(
             &e.body,
             ApiEventBody::Domain {
-                event: DomainEvent::GroupMergeFinished { .. }
+                event: DomainEvent::StepStarted { .. }
             }
         )
     };
-    until(&mut rx, &mut events, REAL_TIMEOUT, merged).await;
+    until(&mut rx, &mut events, REAL_TIMEOUT, working).await;
+    r.git(&["branch", "-m", "feature", "renamed"]);
+
+    let merged = |ok: bool| {
+        move |e: &ApiEvent| {
+            matches!(&e.body, ApiEventBody::Domain {
+                event: DomainEvent::GroupMergeFinished { ok: o, .. }
+            } if *o == ok)
+        }
+    };
+    // Haiku may be told by Yhtye (a blocked finish_group) or notice the rename
+    // itself first (it reads git before finishing); either way it must merge
+    // with `into`. The returned mismatch itself is covered by the fake tests.
+    until(&mut rx, &mut events, REAL_TIMEOUT, merged(true)).await;
+    eprintln!(
+        "mismatch returned first: {}",
+        events.iter().any(merged(false))
+    );
     until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     log_run(&events);
     assert_haiku(&events);
 
-    let changed: Vec<_> = events
-        .iter()
-        .filter_map(|e| match &e.body {
-            ApiEventBody::Domain {
-                event: DomainEvent::ChatBranchChanged { chat, from, to },
-            } => Some((chat.as_str(), from.as_str(), to.as_str())),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(changed, [(chat.as_str(), "feature", "renamed")]);
+    let finishes: Vec<(String, bool)> = tool_records(&events, "finish_group");
+    eprintln!("finish_group calls (args, ok): {finishes:#?}");
+    assert!(
+        finishes
+            .iter()
+            .any(|(args, ok)| *ok && args.contains("\"into\":\"renamed\"")),
+        "finish_group with into=renamed: {finishes:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(&e.body, ApiEventBody::Domain {
+        event: DomainEvent::GroupBaseChanged { from, to, .. }
+    } if from == "feature" && to == "renamed"))
+    );
     let snap = orch.snapshot().await.expect("snapshot");
-    assert_eq!(snap.state.chat(&chat).expect("chat").branch, "renamed");
     let group = snap.state.group("G-1").expect("group G-1");
     assert_eq!(group.base_branch, "renamed");
     assert_eq!(group.status, GroupStatus::Done, "{:?}", group.detail);
@@ -281,4 +302,17 @@ async fn real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it() 
     );
     assert_eq!(r.git(&["branch", "--show-current"]).trim(), "main");
     shutdown_and_check(orch, &events).await;
+}
+
+/// `(args as JSON, succeeded)` of every call of `tool`.
+fn tool_records(events: &[ApiEvent], tool: &str) -> Vec<(String, bool)> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::ToolCalled { record } if record.tool == tool => {
+                Some((record.args.to_string(), record.result.is_ok()))
+            }
+            _ => None,
+        })
+        .collect()
 }

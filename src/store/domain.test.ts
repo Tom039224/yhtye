@@ -137,29 +137,19 @@ describe("constructed domain events", () => {
     expect(s.groups[0].finish_nudges).toBe(2);
   });
 
-  it("follows a renamed branch: the chat and its unfinished groups, not finished ones", () => {
-    const group = (id: string, chat: string, status: "active" | "merge_blocked" | "done" | "cancelled", base: string) => ({
-      id, chat, title: "g", summary: null, base_branch: base, group_branch: `yhtye/${id}`,
-      status, finish_summary: null, detail: null, finish_nudges: 0,
+  it("keeps chats bound to their worktree and moves only the group finish_group{into} names", () => {
+    const group = (id: string) => ({
+      id, chat: "C-1", title: "g", summary: null, base_branch: "feature", group_branch: `yhtye/${id}`,
+      status: "merge_blocked" as const, finish_summary: null, detail: null, finish_nudges: 0,
     });
-    let s = applyDomainEvent(base, { type: "chat_created", chat: { id: "C-1", branch: "feature", title: null } });
-    s = applyDomainEvent(s, { type: "chat_created", chat: { id: "C-2", branch: "feature", title: null } });
-    for (const g of [
-      group("G-1", "C-1", "done", "feature"),
-      group("G-2", "C-1", "merge_blocked", "feature"),
-      group("G-3", "C-1", "active", "feature"),
-      group("G-4", "C-2", "active", "feature"),
-    ]) {
-      s = applyDomainEvent(s, { type: "group_created", group: g });
-    }
-    s = s.groups.reduce((acc, g) => (g.id === "G-1" ? applyDomainEvent(acc, { type: "group_cancelled", group: "G-1", reason: "x" }) : acc), s);
-    s = applyDomainEvent(s, { type: "chat_branch_changed", chat: "C-1", from: "feature", to: "renamed" });
-    expect(s.chats.map((c) => [c.id, c.branch])).toEqual([["C-1", "renamed"], ["C-2", "feature"]]);
+    let s = applyDomainEvent(base, { type: "chat_created", chat: { id: "C-1", worktree: "/wt/feature", title: null } });
+    s = applyDomainEvent(s, { type: "group_created", group: group("G-1") });
+    s = applyDomainEvent(s, { type: "group_created", group: group("G-2") });
+    s = applyDomainEvent(s, { type: "group_base_changed", group: "G-2", from: "feature", to: "renamed" });
+    expect(s.chats).toEqual([{ id: "C-1", worktree: "/wt/feature", title: null }]);
     expect(s.groups.map((g) => [g.id, g.base_branch])).toEqual([
-      ["G-1", "feature"], // cancelled: keeps what it was
+      ["G-1", "feature"],
       ["G-2", "renamed"],
-      ["G-3", "renamed"],
-      ["G-4", "feature"], // another chat's
     ]);
   });
 

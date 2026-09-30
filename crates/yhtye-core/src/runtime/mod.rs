@@ -7,13 +7,13 @@ mod chats;
 mod core;
 mod driver;
 mod emitter;
-mod follow;
 mod launch;
 mod orchestration;
 mod port;
 mod sessions;
 mod transcript;
 
+pub use chats::ChatTarget;
 pub use core::{Core, CoreConfig};
 pub use driver::USER_SESSION;
 pub use orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};

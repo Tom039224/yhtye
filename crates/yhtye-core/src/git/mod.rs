@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 pub use cli::{GitCli, worktree_root};
-pub use graph::{GitBranch, GitCommit, GitOverview, MAX_GRAPH_COMMITS, list_branches, overview};
+pub use graph::{
+    GitBranch, GitCommit, GitOverview, GitWorktree, MAX_GRAPH_COMMITS, list_branches, overview,
+};
 
 use crate::domain::{GitOp, GitResult};
 
@@ -25,10 +27,10 @@ pub async fn show_toplevel(dir: &Path) -> Result<Option<PathBuf>, String> {
     Ok((out.ok && !top.is_empty()).then(|| PathBuf::from(top)))
 }
 
-/// Why a chat's branch has no worktree.
+/// Why a branch has no worktree for a new chat.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum BranchWorktreeError {
-    /// The branch was deleted or renamed.
+    /// The branch does not exist.
     #[error("branch {0} does not exist")]
     BranchMissing(String),
     #[error("{0}")]
@@ -61,24 +63,19 @@ pub trait GitService: Send + Sync + 'static {
     async fn branch_exists(&self, branch: &str) -> Result<bool, String>;
 
     /// The branch checked out in the worktree `dir` (`None`: detached HEAD, or
-    /// `dir` is gone). Used to see that a chat's branch was renamed: `git branch -m`
-    /// moves HEAD of the worktree that has the branch.
-    async fn worktree_branch(&self, dir: &Path) -> Result<Option<String>, String> {
-        let _ = dir;
-        Ok(None)
+    /// `dir` is gone). A chat's branch is read here when a group is created and
+    /// for `finish_group`'s `into` (Stage 8e).
+    async fn worktree_branch(&self, dir: &Path) -> Result<Option<String>, String>;
+
+    /// `dir` as `git worktree list` shows it, if it is an existing worktree of
+    /// the repository (`None`: not registered, or its directory is gone).
+    async fn find_worktree(&self, dir: &Path) -> Result<Option<PathBuf>, String> {
+        Ok(Some(dir.to_path_buf()))
     }
 
-    /// Whether the reflog of branch `to` records that it was renamed from `from`
-    /// (`git branch -m`). Positive evidence only: no reflog, or none that says so,
-    /// is `false` (a deleted branch leaves nothing behind).
-    async fn was_renamed(&self, from: &str, to: &str) -> Result<bool, String> {
-        let _ = (from, to);
-        Ok(false)
-    }
-
-    /// The worktree where `branch` is checked out, creating one under
-    /// `<worktree root>/branches/` if it is checked out nowhere (§17.4). Never
-    /// changes what any worktree has checked out.
+    /// The worktree where `branch` is checked out (as `git worktree list` shows
+    /// it), creating one under `<worktree root>/branches/` if it is checked out
+    /// nowhere (§17.4). Never changes what any worktree has checked out.
     async fn resolve_branch_worktree(&self, branch: &str) -> Result<PathBuf, BranchWorktreeError>;
 
     /// Creates branch `name` at `from` (default: the main worktree's HEAD) in a
@@ -106,7 +103,8 @@ pub trait GitService: Send + Sync + 'static {
     /// Runs `op`. Expected outcomes (conflicts, dirty trees) are results, not errors:
     /// `CreateGroupBranch` / `RemoveWorkspace` → `Done`; `PrepareWorkspace` →
     /// `Workspace`; `FinishTask` → `Merged` / `Conflict` / `Dirty`;
-    /// `MergeGroup` → `Merged` / `Blocked`; anything else going wrong → `Failed`.
+    /// `MergeGroup` → `Merged` / `Blocked` (also when the worktree is not on the
+    /// base branch any more, Stage 8e); anything else going wrong → `Failed`.
     async fn run(&self, op: &GitOp) -> GitResult;
 
     /// `git status` and the diff of `workdir` since its branch forked from
@@ -147,6 +145,10 @@ impl GitService for NoopGit {
 
     async fn branch_exists(&self, _branch: &str) -> Result<bool, String> {
         Ok(true)
+    }
+
+    async fn worktree_branch(&self, _dir: &Path) -> Result<Option<String>, String> {
+        Ok(self.base_branch.clone())
     }
 
     async fn resolve_branch_worktree(&self, _branch: &str) -> Result<PathBuf, BranchWorktreeError> {
@@ -203,6 +205,7 @@ mod tests {
         let merged = git
             .run(&GitOp::MergeGroup {
                 group: "G-1".into(),
+                worktree: "/tmp/p".into(),
                 group_branch: "yhtye/G-1".into(),
                 base_branch: "main".into(),
                 trigger: crate::domain::MergeTrigger::FinishGroup,

@@ -83,7 +83,14 @@ export class FakeCore {
   /** Largest page the fake returns (whatever the client asks for). */
   pageCap = Number.MAX_SAFE_INTEGER;
   /** Served for `get_git_overview`. */
-  git: GitOverview = { head: "main", head_sha: null, branches: [{ name: "main", sha: "m".repeat(40) }], commits: [], truncated: false };
+  git: GitOverview = {
+    head: "main",
+    head_sha: null,
+    branches: [{ name: "main", sha: "m".repeat(40) }],
+    worktrees: [{ path: "/repo", branch: "main", head_sha: "m".repeat(40), is_main: true, missing: false }],
+    commits: [],
+    truncated: false,
+  };
   /** Served for `get_usage` (`null`: the core reports it unavailable). */
   usage: UsageReport | null = null;
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
@@ -101,6 +108,10 @@ export class FakeCore {
   constructor(info: ProjectInfo, snapshot: Snapshot) {
     this.info = info;
     this.snapshot = snapshot;
+    // Recordings bind their chat to the temporary repository they ran in: that
+    // is the main clone here, so the chat's worktree exists.
+    const recorded = snapshot.chats.find((c) => c.id === "C-1")?.worktree;
+    if (recorded) this.git = { ...this.git, worktrees: [{ ...this.git.worktrees[0], path: recorded }] };
   }
 
   attach(t: MemoryTransport): void {
@@ -110,9 +121,19 @@ export class FakeCore {
     };
   }
 
-  private newChat(branch: string): ChatInfo {
+  private newChat(worktree: string): ChatInfo {
     const n = this.snapshot.chats.length + 1;
-    return { id: `C-${n}`, branch, title: null, created_ms: 1, last_used_ms: 1 };
+    return { id: `C-${n}`, worktree, title: null, created_ms: 1, last_used_ms: 1 };
+  }
+
+  /** The worktree of `branch`: where it is checked out, else a new "Yhtye" one. */
+  private worktreeOf(branch: string): string {
+    const found = this.git.worktrees.find((w) => w.branch === branch);
+    if (found) return found.path;
+    const path = `/data/worktrees/repo/branches/${branch.replace(/\//g, "-")}`;
+    const w = { path, branch, head_sha: "n".repeat(40), is_main: false, missing: false };
+    this.git = { ...this.git, worktrees: [...this.git.worktrees, w] };
+    return path;
   }
 
   handle(cmd: ApiCommand): ApiResponse {
@@ -134,11 +155,11 @@ export class FakeCore {
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
       case "create_chat":
-        return { type: "chat", chat: this.newChat(cmd.branch) };
+        return { type: "chat", chat: this.newChat(cmd.worktree ?? this.worktreeOf(cmd.branch ?? "")) };
       case "create_branch":
         if (this.branchError) throw this.branchError;
         this.git = { ...this.git, branches: [...this.git.branches, { name: cmd.name, sha: "n".repeat(40) }] };
-        return { type: "chat", chat: this.newChat(cmd.name) };
+        return { type: "chat", chat: this.newChat(this.worktreeOf(cmd.name)) };
       case "get_usage":
         if (!this.usage) throw new CommandError("unavailable", "usage: no harness is configured to report usage");
         return { type: "usage", usage: this.usage };

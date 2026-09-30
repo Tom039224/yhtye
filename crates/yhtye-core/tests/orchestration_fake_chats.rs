@@ -1,7 +1,7 @@
-//! Chats and branches with fake agents (`core-design.md` §17): lazy start in the
-//! worktree of the chat's branch, several orchestrators at once, the open-group
-//! limit per branch, an orchestrator whose process ended, resuming past chats,
-//! and which chats a restart restores.
+//! Chats with fake agents (`core-design.md` §17, §17.8): lazy start in the
+//! chat's worktree (resolved from a branch when the chat is made), several
+//! orchestrators at once, the open-group limit per worktree, an orchestrator
+//! whose process ended, resuming past chats, and which chats a restart restores.
 
 mod common;
 
@@ -23,7 +23,7 @@ use yhtye_core::git::worktree_root;
 use yhtye_core::runtime::Orchestration;
 
 #[tokio::test]
-async fn an_orchestrator_starts_lazily_in_the_worktree_of_its_chats_branch() {
+async fn an_orchestrator_starts_lazily_in_its_chats_worktree() {
     let r = TempRepo::new();
     r.git(&["branch", "feature"]);
     let script = json!({"turns": [{"actions": [
@@ -38,10 +38,10 @@ async fn an_orchestrator_starts_lazily_in_the_worktree_of_its_chats_branch() {
         started_sessions(&events).is_empty(),
         "creating chats starts nothing"
     );
-    assert!(r.extra_worktrees().is_empty(), "and creates no worktree");
-
-    // `feature` is checked out nowhere: Yhtye makes a worktree for it, and the
-    // orchestrator runs there. Nothing is switched in the main clone.
+    // `feature` is checked out nowhere: the chat is bound to a worktree Yhtye
+    // made for it right away (Stage 8e), and its orchestrator runs there.
+    // Nothing is switched in the main clone.
+    assert_eq!(r.extra_worktrees().len(), 1, "the worktree of feature");
     say(&orch, &feature, "hello").await;
     wait(&mut rx, &mut events, said("orchestrator:C-2", "ready")).await;
     let wt = canonical(&branch_worktree(&r, "feature"));
@@ -179,7 +179,7 @@ async fn two_chats_on_different_branches_run_groups_at_once_and_merge_into_their
 }
 
 #[tokio::test]
-async fn a_second_open_group_on_the_same_branch_is_rejected_and_other_chats_are_out_of_reach() {
+async fn a_second_open_group_in_the_same_worktree_is_rejected_and_other_chats_are_out_of_reach() {
     let r = TempRepo::new();
     let orch_script = json!({"turns": [
         {"match": "first", "actions": [
@@ -398,36 +398,6 @@ async fn a_chat_whose_stored_session_cannot_be_loaded_gets_a_new_one_and_a_summa
 }
 
 #[tokio::test]
-async fn a_stored_session_from_another_directory_is_not_loaded() {
-    let r = TempRepo::new();
-    r.git(&["branch", "feature"]);
-    let script = json!({"turns": [{"actions": [{"message": "ready"}]}]});
-    let cfg = || repo_config(&r, script.clone(), none());
-    let (orch, mut rx, mut events) = start(cfg()).await;
-    let chat = new_chat(&orch, "feature").await;
-    say(&orch, &chat, "one").await;
-    wait(&mut rx, &mut events, said("orchestrator:C-1", "ready")).await;
-    shutdown_and_check(orch, &events).await;
-
-    // The user moves the branch to a worktree of their own.
-    let managed = branch_worktree(&r, "feature");
-    r.git(&["worktree", "remove", "--force", &managed.to_string_lossy()]);
-    let own = r.data.join("my-feature");
-    r.git(&["worktree", "add", "-q", &own.to_string_lossy(), "feature"]);
-
-    let (orch, mut rx, mut events) = start(cfg()).await;
-    say(&orch, "C-1", "two").await;
-    wait(&mut rx, &mut events, said("orchestrator:C-1", "ready")).await;
-    let starts = started(&events, "orchestrator:C-1");
-    let start = starts.last().expect("started");
-    assert!(!start.1, "not loaded: OpenCode needs the same directory");
-    assert_eq!(cwd_of(&events, "orchestrator:C-1"), canonical(&own));
-    let prompts = prompts_to(&events, "orchestrator:C-1");
-    assert!(prompts[0].contains("could not be restored"), "{prompts:?}");
-    shutdown_and_check(orch, &events).await;
-}
-
-#[tokio::test]
 async fn a_restart_also_brings_back_a_chat_with_an_open_group_whose_orchestrator_had_stopped() {
     let dir = tempfile::tempdir().expect("tempdir");
     let orch_script = json!({"turns": [
@@ -507,7 +477,7 @@ async fn a_group_completes_when_the_main_clone_is_detached() {
 }
 
 #[tokio::test]
-async fn a_chat_whose_branch_disappeared_refuses_messages() {
+async fn a_chat_whose_worktree_disappeared_refuses_messages_but_keeps_its_history() {
     let r = TempRepo::new();
     r.git(&["branch", "topic"]);
     let script = json!({"turns": [{"match": "hello", "actions": [{"message": "hi"}]}]});
@@ -515,17 +485,22 @@ async fn a_chat_whose_branch_disappeared_refuses_messages() {
     let chat = new_chat(&orch, "topic").await;
     say(&orch, &chat, "hello").await;
     wait(&mut rx, &mut events, said("orchestrator:C-1", "hi")).await;
-    // Deleted behind Yhtye's back (worktree first, git will not delete a checked-out branch).
+    // Removed behind Yhtye's back; the branch itself is still there.
     let wt = branch_worktree(&r, "topic");
     r.git(&["worktree", "remove", "--force", &wt.to_string_lossy()]);
-    r.git(&["branch", "-D", "topic"]);
+    assert!(r.branch_exists("topic"));
 
-    // Sending is refused (`create_group` checks the same way).
     let err = orch
         .send_user_message(&chat, "make")
         .await
         .expect_err("refused");
-    assert!(err.to_string().contains("topic"), "{err}");
+    assert!(
+        err.to_string().contains("no longer exists") && err.to_string().contains("topic"),
+        "{err}"
+    );
+    assert!(!wt.exists(), "Yhtye does not make it again");
+    let chats = orch.store().chats(PROJECT).await.expect("chats");
+    assert_eq!(chats.len(), 1, "the chat stays");
     shutdown_and_check(orch, &events).await;
 }
 
@@ -576,6 +551,15 @@ impl yhtye_core::git::GitService for FailsAfterCreate {
             return Err("git went away".into());
         }
         self.inner.branch_exists(branch).await
+    }
+    async fn worktree_branch(&self, dir: &Path) -> Result<Option<String>, String> {
+        self.inner.worktree_branch(dir).await
+    }
+    async fn find_worktree(&self, dir: &Path) -> Result<Option<PathBuf>, String> {
+        if self.created.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("git went away".into());
+        }
+        self.inner.find_worktree(dir).await
     }
     async fn resolve_branch_worktree(
         &self,

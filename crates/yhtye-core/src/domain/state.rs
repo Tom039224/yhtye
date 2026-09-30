@@ -2,7 +2,7 @@
 //! changed only by [`super::DomainEvent`]s through [`State::apply`] (see `event.rs`),
 //! so it can be rebuilt from an event log or stored as current-state tables.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -110,15 +110,19 @@ pub fn task_branch(group: &str, task: &str) -> String {
     format!("yhtye/{group}-{task}")
 }
 
-/// A conversation with the orchestrator, bound to one target branch
-/// (`orchestration-model.md` §2.0, Stage 8). Times are not part of the state
-/// (the store derives them from the event log).
+/// A conversation with the orchestrator, bound to one worktree
+/// (`orchestration-model.md` §2.0, Stage 8e). The branch is not part of the
+/// chat: it is read from the worktree when shown, and when a group is created
+/// or merged. Times are not part of the state (the store derives them from
+/// the event log).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Chat {
     /// `C-<n>`.
     pub id: String,
-    /// The branch the chat works on; it never changes.
-    pub branch: String,
+    /// The worktree the chat works in, as `git worktree list` shows it: its
+    /// orchestrator's working directory and where its groups are merged. It
+    /// never changes.
+    pub worktree: PathBuf,
     /// The first user message, shortened (`None` until it is sent).
     pub title: Option<String>,
 }
@@ -130,7 +134,8 @@ pub struct Group {
     pub chat: String,
     pub title: String,
     pub summary: Option<String>,
-    /// The chat's target branch: where the group is merged.
+    /// Where the group is merged: the branch the chat's worktree had checked
+    /// out when the group was created (Stage 8e), or `finish_group`'s `into`.
     pub base_branch: String,
     pub group_branch: String,
     pub status: GroupStatus,
@@ -383,13 +388,20 @@ impl State {
         self.helps.iter_mut().find(|h| h.id == id)
     }
 
-    /// The group on `branch` that blocks creating another one there (`active`
-    /// or `finishing`; any chat's, Stage 8).
+    /// The worktree of the chat that created `group`.
     #[must_use]
-    pub fn open_group_on(&self, branch: &str) -> Option<&Group> {
+    pub fn worktree_of_group(&self, group: &str) -> Option<&Path> {
+        let chat = self.chat_of_group(group)?;
+        self.chat(chat).map(|c| c.worktree.as_path())
+    }
+
+    /// The group in `worktree` that blocks opening another one there (`active`
+    /// or `finishing`; any chat's in that worktree, Stage 8e).
+    #[must_use]
+    pub fn open_group_in(&self, worktree: &Path) -> Option<&Group> {
         self.groups
             .iter()
-            .find(|g| g.base_branch == branch && g.is_open())
+            .find(|g| g.is_open() && self.worktree_of_group(&g.id) == Some(worktree))
     }
 
     /// The `active` or `finishing` group of `chat` (what `get_status` shows by default).

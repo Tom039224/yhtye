@@ -43,7 +43,7 @@ async function open(store: AppStore) {
 
 function snapshotOf(state: Partial<State>, seq = 0): Snapshot {
   // The recordings' chat `C-1` (on `main`) exists and is selected.
-  const chat = { id: "C-1", branch: "main", title: null };
+  const chat = { id: "C-1", worktree: "/repo", title: null };
   const info = { ...chat, created_ms: 1, last_used_ms: 1 };
   return { seq, state: { ...emptyState("repo", { max_review_rounds: 2 }), chats: [chat], ...state }, sessions: [], chats: [info] };
 }
@@ -67,6 +67,7 @@ const GIT: GitOverview = {
     { name: "yhtye/G-1", sha: "g".repeat(40) },
     { name: "yhtye/G-1-T-2", sha: "t".repeat(40) },
   ],
+  worktrees: [{ path: "/repo", branch: "main", head_sha: "m".repeat(40), is_main: true, missing: false }],
   commits: [
     { sha: "t".repeat(40), parents: ["g".repeat(40)], branches: ["yhtye/G-1-T-2"], subject: "wip: second", ts_ms: 3 },
     { sha: "m".repeat(40), parents: ["a".repeat(40)], branches: ["main"], subject: "chore: base", ts_ms: 2 },

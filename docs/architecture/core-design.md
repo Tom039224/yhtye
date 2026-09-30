@@ -903,7 +903,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.1 型 (`domain`)
 
-- `Chat { id: String /* "C-1" */, branch: String, title: Option<String> }` — `State.chats: Vec<Chat>` (作成順)。
+- `Chat { id: String /* "C-1" */, branch: String, title: Option<String> }` — `State.chats: Vec<Chat>` (作成順)。**Stage 8e で `branch` は `worktree: PathBuf` に置き換え** (§17.8)。
   `Counters.chats` を足す。時刻は状態機械に入れない (§5) ので `created_ms` / `last_used_ms` は store が導く。
 - `Group.chat: String` を足す。`Group.base_branch` = そのチャットの `branch`。
   `InboxEntry.chat: String` を足す (宛先チャット、orchestration-model §5)。
@@ -935,6 +935,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.3 runtime
 
+> Stage 8e で、ブランチから作業ツリーを解決するのはチャットの作成時だけになり、起動・マージはチャットの作業ツリー (固定) で行う (§17.8)。
+
 - `Orchestration::start` は**オーケストレータを起動しない**。DB から `State` を読み、復元対象のチャット (orchestration-model §10:
   セッションが `stopped` 以外 / open グループあり / 未配達の受信箱あり) だけを `Restart` に渡して起動する。
   `Core::resume_unfinished` の判定 (active / finishing のグループか未配達の受信箱があるプロジェクトだけ開く) に、「live だったチャットのセッションがある」を足す。
@@ -951,6 +953,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `inbox.chat` で会話を絞る。
 
 ### 17.4 git
+
+> Stage 8e で、ブランチから作業ツリーを解決するのはチャットの作成時だけになり、起動・マージはチャットの作業ツリー (固定) で行う (§17.8)。
 
 - `GitService` に追加:
   - `resolve_branch_worktree(branch) -> Result<PathBuf, BranchWorktreeError>` — orchestration-model §6.1 の規則
@@ -1003,6 +1007,9 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 仕様と理由: [`orchestration-model.md`](orchestration-model.md) §6.1 / §8.1。
 
+> **Stage 8e で、この節の「ドメイン」「git の `was_renamed`」「runtime (`follow.rs`)」「フロントエンドの通知行」は撤去した** (§17.8)。残っているのは
+> オーケストレータの制限の撤廃と `GitService::worktree_branch`。
+
 - **オーケストレータの制限の撤廃**: `HarnessConfig::claude_code_orchestrator` と `ORCHESTRATOR_BUILTIN_TOOLS` を削除 (オーケストレータは `claude_code` と同じ設定)。
   `HarnessPreset.orchestrator_read_only` と `HarnessInfo.orchestrator_read_only` を削除 (`pnpm gen:types`)。MCP ツールは足さない。プロンプト `orchestrator.md` を書き換える。
 - **ドメイン**: `DomainCommand::ChatBranchChanged { chat, to }` (runtime が改名を検出したとき) → `DomainEvent::ChatBranchChanged { chat, from, to }` (`from` は決定時のチャットのブランチ)。
@@ -1024,3 +1031,50 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **フロントエンド**: `chat_branch_changed` を `chats` と `groups` の畳み込みに足し、会話のトランスクリプトに「ブランチ名が a → b に変わりました」の通知行を出す。ツリーはチャットを新しいブランチの下へ動かす。
 - テスト: 偽エージェント + 実 git (`tests/orchestration_fake_chats.rs`、`tests/git_branches.rs`)、ドメイン (`domain/tests/chats.rs`)、ストア (`store/tests.rs`)、vitest。実機 (Claude Code Haiku): `tests/orchestration_claude_real.rs`。
 
+### 17.8 Stage 8e: チャットを作業ツリーに紐づける
+
+仕様と理由: [`orchestration-model.md`](orchestration-model.md) §2.0 / §2.1 / §6 / §6.1、[`PLAN.md`](../PLAN.md) Stage 8e。
+理由の要点: ブランチ名は表示用。コマンドの結果に即座に反応して紐づけを書き換えるのは安全でないので、確認はマージの直前に 1 回、想定外はオーケストレータに返す。
+
+- **ドメイン**:
+  - `Chat { id, worktree: PathBuf, title }` (`branch` を削除)。`DomainCommand::CreateChat { worktree }` (runtime が解決・検査したパス)。
+  - `DomainCommand::CreateGroup { chat, args, base_branch, taken }` — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
+    **作業ツリーごと** (`State::open_group_in(worktree)` = チャットの作業ツリーが同じグループのうち `active` / `finishing`)。
+  - `GitOp::MergeGroup { group, worktree, group_branch, base_branch, trigger }` — `worktree` = グループのチャットの作業ツリー。
+  - `finish_group` は `active` (全タスク終端) と `merge_blocked` を受け付ける。`merge_blocked` からは `RetryGroupMerge` と同じく同じ作業ツリーの open グループがあれば `conflict`。
+    `FinishGroupArgs.into: Option<String>`: `check_target_branch` の後、`base_branch` と違えば `DomainEvent::GroupBaseChanged { group, from, to }` (`group.base_branch = to`) を出してからマージ。
+    `into` が作業ツリーの今のブランチと一致するかは runtime がツールを渡す前に確かめる (ドメインは git を読まない)。
+  - 削除: `DomainCommand::ChatBranchChanged` / `DomainEvent::ChatBranchChanged` / `State::open_group_on(branch)`。
+- **git**:
+  - `GitCli::merge_group` は `worktree` で行う。直前の確認 (`base_mismatch`): ディレクトリが無い / detached HEAD / 別のブランチなら `GitResult::Blocked`
+    (detail = 「base は X、作業ツリー … は今 Y / detached / 見つからない。何もマージしていない。戻して `finish_group` をもう一度、または `into: "Y"`」。LLM 向けなので英語)。
+    その後は従来の clean の確認とマージ。base ブランチの作業ツリーを解決し直す処理は無くなった。
+  - `resolve_branch_worktree` は `git worktree list` の表記のパスを返す (新しく作った作業ツリーも一覧から引き直す。UI がパスを文字列で突き合わせるため)。
+  - `GitService::find_worktree(dir) -> Result<Option<PathBuf>, String>` (既定は `Ok(Some(dir))`): `dir` が登録済みで存在する作業ツリーなら一覧の表記のパス。
+  - `GitService::worktree_branch(dir)` は表示・`create_group`・`into` の確認に使う。`NoopGit` は `base_branch` を返す (テスト用)。
+  - 削除: `GitService::was_renamed`、`repo::was_renamed`。
+  - `GitOverview.worktrees: Vec<GitWorktree { path, branch: Option<String>, head_sha: Option<String>, is_main, missing }>` (`git worktree list --porcelain`。
+    `missing` = ディレクトリが無い)。UI のツリーと表示名はここから作る。
+- **store**: マイグレーション `0007_chat_worktrees.sql` — **既存データを破棄** (0006 と同じ範囲: `events` / グループ・タスク / 受信箱 / `agent_sessions` / `chats`。
+  カウンタを 0 に)、`chats.branch` を `chats.worktree` に置き換える (表を作り直す)。理由: 8d までのイベントログの `chat_created { chat: { branch } }` や
+  `chat_branch_changed` は新しい型で読めず、互換用の欄を残すより破棄のほうが単純 (1a0e566 は未リリース、ユーザー了承済み)。`ChatInfo { id, worktree, title, created_ms, last_used_ms }`。
+- **runtime**:
+  - `runtime/follow.rs` を削除 (`follow_branch` / `realign_orchestrator` / `Orchestrators.stale_cwd`)。`stored_session` は `chats.rs` へ。
+  - `create_chat(branch)` = `check_target_branch` → `resolve_branch_worktree` (無ければ `not_found`) → `CreateChat{worktree}`。
+    `create_chat_in(worktree)` = `find_worktree` (無ければ `not_found`) → そのブランチが `yhtye/*` なら `invalid_argument` → `CreateChat`。
+    `create_branch` は作った作業ツリーのパスでチャットを作る。
+  - 送信 (`user_message`) と起動 (`plan_start`) は作業ツリーのディレクトリが無ければ `invalid_state` / 起動失敗 (「作業ツリー … が見つかりません」)。cwd = `chat.worktree`。
+  - `create_group`: `worktree_branch(chat.worktree)` → ブランチ (`yhtye/*` 以外) を `base_branch` に。detached / 無い → `invalid_state`。
+  - `finish_group{into}`: `worktree_branch(chat.worktree) == into` でなければ `invalid_argument` (今のブランチを message に)。
+  - ターン終了時・配達前・`RetryGroupMerge` 前の追跡・取り直しは削除。
+- **API**: `create_chat { project, branch?, worktree? }` (どちらか 1 つ。両方・どちらも無しは `invalid_argument`)。`Snapshot.chats` / `list_chats` は `ChatInfo` (worktree)。
+  イベント `domain { group_base_changed }` を追加、`chat_branch_changed` を削除。`pnpm gen:types`。
+- **フロントエンド**: ツリー (`ui/branchTree.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
+  表示名 = ブランチ / `detached @<sha7>` / 見つからない。チャットの作業ツリーが一覧に無ければ「(見つからない作業ツリー)」の下 (送信不可)。
+  作業ツリーの無いローカルブランチは末尾の折りたたみ「他のブランチ」(そこからの「+ 新しいチャット」で Yhtye の作業ツリーを作る)。
+  会話ヘッダ・ピルも作業ツリーの今のブランチ。git の概要は従来の契機に加えて、ウィンドウのフォーカスとオーケストレータのターン終了で読み直す (外部の改名・オーケストレータ自身の改名が表示に出るように)。
+  `chat_branch_changed` の畳み込みと会話の通知行を削除、`group_base_changed` をグループの畳み込みに追加。
+- テスト: ドメイン (`domain/tests/chats.rs`: 作業ツリーごとの上限・`create_group` の base・`into`・`merge_blocked` からの `finish_group`)、store、git (`tests/git_branches.rs`: 一覧の表記のパス・`find_worktree`・`worktree_branch`、
+  マージ直前の確認)、偽エージェント + 実 git (`tests/orchestration_fake_worktree.rs` が `orchestration_fake_follow.rs` を置き換え: 改名で表示が変わる → 次の `finish_group` は `merge_blocked` で返る → `into` で改名後のブランチへ / メインクローンの checkout → 同じ / detached → 返る /
+  代行の `finish_group` は受信箱の `merge_result` / 作業ツリーの消えたチャットは送信不可)、`core_chats`、vitest。実機 (Haiku): `real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it` を、
+  途中で外部から改名し、食い違いを受けた Haiku が `finish_group{into}` でマージを完了するテストに書き換える。

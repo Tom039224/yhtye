@@ -132,6 +132,12 @@ pub struct FinishGroupArgs {
     pub group_id: String,
     /// Summary of the finished work for the user.
     pub summary: String,
+    /// Merge into this branch instead of the group's base branch. It must be the
+    /// branch your working tree has checked out right now; use it when Yhtye
+    /// stopped a merge because the working tree is on another branch and you
+    /// decide to merge there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub into: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -251,7 +257,7 @@ tool_catalog! {
     CancelTask => "cancel_task", CancelTaskArgs, ORCH,
         "Cancel a task and stop its agent.";
     FinishGroup => "finish_group", FinishGroupArgs, ORCH,
-        "Finish a group whose tasks are all done or cancelled; merges its work into the base branch.";
+        "Finish a group whose tasks are all done or cancelled (or retry the merge of a merge_blocked group); merges its work into the base branch after checking that your working tree is on it. `into`: merge into the branch checked out now instead.";
     CancelGroup => "cancel_group", CancelGroupArgs, ORCH,
         "Cancel a group and all of its unfinished tasks.";
     GetStatus => "get_status", GetStatusArgs, ORCH,

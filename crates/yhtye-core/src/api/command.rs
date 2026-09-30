@@ -50,7 +50,7 @@ pub enum ApiCommand {
     /// Queues a `user_message` for the orchestrator of `chat` (sent when it is
     /// idle). Starts that orchestrator if it is not running (Stage 8: lazily,
     /// restoring the chat's stored session if there is one). `not_found` for an
-    /// unknown chat, `invalid_state` when the chat's branch no longer exists.
+    /// unknown chat, `invalid_state` when the chat's worktree no longer exists.
     SendUserMessage {
         project: String,
         chat: String,
@@ -66,11 +66,19 @@ pub enum ApiCommand {
     ListChats {
         project: String,
     },
-    /// A new chat on an existing local branch (its orchestrator is not started).
-    /// `not_found` for a missing branch, `invalid_argument` for `yhtye/*`.
+    /// A new chat (its orchestrator is not started), bound to a worktree
+    /// (Stage 8e): give exactly one of `branch` (its worktree: where it is
+    /// checked out, else a new Yhtye one) or `worktree` (an existing worktree,
+    /// as `get_git_overview` lists it). `not_found` for a missing branch or an
+    /// unknown worktree, `invalid_argument` for `yhtye/*`, for both or neither.
     CreateChat {
         project: String,
-        branch: String,
+        #[serde(default)]
+        #[ts(optional)]
+        branch: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        worktree: Option<String>,
     },
     /// Creates a branch in a Yhtye worktree (the main clone keeps its checkout)
     /// and its first chat. `from` defaults to the main worktree's HEAD.

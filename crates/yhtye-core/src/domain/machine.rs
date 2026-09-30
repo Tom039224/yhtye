@@ -94,9 +94,13 @@ impl Tx {
 pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), ToolError> {
     let mut tx = Tx::new(state.clone());
     match cmd {
-        DomainCommand::CreateChat { branch } => tx.create_chat(&branch)?,
-        DomainCommand::ChatBranchChanged { chat, to } => tx.chat_branch_changed(&chat, &to)?,
-        DomainCommand::CreateGroup { chat, args, taken } => tx.create_group(&chat, args, taken)?,
+        DomainCommand::CreateChat { worktree } => tx.create_chat(worktree)?,
+        DomainCommand::CreateGroup {
+            chat,
+            args,
+            base_branch,
+            taken,
+        } => tx.create_group(&chat, args, base_branch, taken)?,
         DomainCommand::Tool { binding, call } => tx.tool(&binding, call)?,
         DomainCommand::UserMessage { chat, text } => tx.user_message(&chat, text)?,
         DomainCommand::OrchestratorTurnEnded {

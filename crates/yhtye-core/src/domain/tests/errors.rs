@@ -25,6 +25,7 @@ fn create_group_errors() {
             title: "g".into(),
             summary: None,
         },
+        base_branch: "main".into(),
         taken: 0,
     };
     assert_eq!(sim.run(unknown_chat).expect_err("no chat").code, NotFound);

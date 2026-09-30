@@ -39,9 +39,11 @@ fn finish(task: &str, kind: TaskKind) -> GitOp {
     }
 }
 
-fn merge_group() -> GitOp {
+/// Merges `G-1` into `main` in the worktree `repo` (the chat's).
+fn merge_group(repo: &std::path::Path) -> GitOp {
     GitOp::MergeGroup {
         group: "G-1".into(),
+        worktree: repo.to_path_buf(),
         group_branch: "yhtye/G-1".into(),
         base_branch: "main".into(),
         trigger: yhtye_core::domain::MergeTrigger::FinishGroup,
@@ -313,13 +315,13 @@ async fn group_merge_lands_on_the_base_branch_and_cleans_up() {
     write_in(&dirs[0], "feature.txt", "feature\n");
     assert_merged(&git.run(&finish("T-1", TaskKind::Code)).await);
     r.write("untracked.txt", "user's scratch file\n");
-    let result = git.run(&merge_group()).await;
+    let result = git.run(&merge_group(&r.repo)).await;
     assert_merged(&result);
     assert_eq!(r.read("feature.txt"), "feature\n");
     assert_eq!(r.git(&["branch", "--show-current"]).trim(), "main");
     assert!(r.extra_worktrees().is_empty(), "{:?}", r.extra_worktrees());
     assert_eq!(r.read("untracked.txt"), "user's scratch file\n");
-    assert_merged(&git.run(&merge_group()).await);
+    assert_merged(&git.run(&merge_group(&r.repo)).await);
     let merges = r.git(&["rev-list", "--merges", "--count", "main"]);
     assert_eq!(merges.trim(), "2", "the task merge and one group merge");
 }
@@ -331,7 +333,7 @@ async fn a_dirty_base_tree_blocks_the_merge_and_is_left_alone() {
     write_in(&dirs[0], "feature.txt", "feature\n");
     assert_merged(&git.run(&finish("T-1", TaskKind::Code)).await);
     r.write("README.md", "# user's edit\n");
-    let result = git.run(&merge_group()).await;
+    let result = git.run(&merge_group(&r.repo)).await;
     assert!(
         matches!(&result, GitResult::Blocked { detail } if detail.contains("README.md")),
         "{result:?}"
@@ -340,7 +342,7 @@ async fn a_dirty_base_tree_blocks_the_merge_and_is_left_alone() {
     assert!(!r.repo.join("feature.txt").exists());
     // Once the user commits, the retry goes through.
     r.commit("user edit");
-    assert_merged(&git.run(&merge_group()).await);
+    assert_merged(&git.run(&merge_group(&r.repo)).await);
     assert_eq!(r.read("feature.txt"), "feature\n");
 }
 
@@ -352,7 +354,7 @@ async fn a_conflict_with_the_base_branch_blocks_and_restores_the_tree() {
     assert_merged(&git.run(&finish("T-1", TaskKind::Code)).await);
     r.write("README.md", "# from the user\n");
     r.commit("user change");
-    let result = git.run(&merge_group()).await;
+    let result = git.run(&merge_group(&r.repo)).await;
     assert!(
         matches!(&result, GitResult::Blocked { detail } if detail.contains("conflicts in: README.md")),
         "{result:?}"

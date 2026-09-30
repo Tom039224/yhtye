@@ -92,12 +92,6 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
         const g = body.event.group;
         return push(t, orchestratorKey(g.chat), { ...base, kind: "group", groupId: g.id, title: g.title });
       }
-      if (body.event.type === "chat_branch_changed") {
-        // A small line in the chat's conversation (not something an agent said).
-        const { chat, from, to } = body.event;
-        const text = `ブランチ名が ${from} → ${to} に変わりました`;
-        return push(t, orchestratorKey(chat), { ...base, kind: "lifecycle", text, error: false });
-      }
       if (body.event.type !== "inbox_queued") return t;
       const { id, item, chat } = body.event.entry;
       const key = orchestratorKey(chat);

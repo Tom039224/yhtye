@@ -11,7 +11,8 @@ mod orch;
 mod restart;
 mod table;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
@@ -26,6 +27,9 @@ type GitResponder = Box<dyn FnMut(&GitOp) -> GitResult>;
 struct Sim {
     state: State,
     git: GitResponder,
+    /// What each chat's worktree has checked out (the runtime reads this for
+    /// `create_group`); `None` = detached HEAD.
+    heads: HashMap<PathBuf, Option<String>>,
 }
 
 /// Everything a command chain produced (git effects already answered).
@@ -48,6 +52,11 @@ fn noop_git(op: &GitOp) -> GitResult {
         | GitOp::RemoveWorkspace { .. }
         | GitOp::RemoveGroupWorkspace { .. } => GitResult::Done,
     }
+}
+
+/// The worktree [`Sim::chat`] uses for `branch`.
+fn wt(branch: &str) -> PathBuf {
+    PathBuf::from(format!("/wt/{branch}"))
 }
 
 /// The orchestrator of chat `C-1`, which [`Sim::new`] creates on `main`.
@@ -80,18 +89,6 @@ fn agent(task: &str, role: Role, step: usize) -> AgentRef {
     }
 }
 
-fn tool_cmd(binding: SessionBinding, tool: ToolName, args: Value) -> DomainCommand {
-    let call = parse_call(tool, args.as_object().cloned()).expect("valid args");
-    match call {
-        crate::mcp::ToolCall::CreateGroup(args) => DomainCommand::CreateGroup {
-            chat: binding.chat.clone().expect("an orchestrator binding"),
-            args,
-            taken: 0,
-        },
-        call => DomainCommand::Tool { binding, call },
-    }
-}
-
 impl Sim {
     fn new() -> Self {
         Self::with_config(DomainConfig::default())
@@ -102,20 +99,50 @@ impl Sim {
         let mut sim = Self {
             state: State::new("P-1", config),
             git: Box::new(noop_git),
+            heads: HashMap::new(),
         };
         sim.chat("main");
         sim
     }
 
-    /// Creates a chat on `branch`; returns its id.
+    /// Creates a chat in the worktree of `branch` ([`wt`], which has `branch`
+    /// checked out); returns its id.
     fn chat(&mut self, branch: &str) -> String {
+        self.heads.insert(wt(branch), Some(branch.to_string()));
         let chain = self
             .run(DomainCommand::CreateChat {
-                branch: branch.into(),
+                worktree: wt(branch),
             })
             .expect("chat created");
         let reply = chain.reply.expect("reply").expect("ok reply");
         reply["chat"]["id"].as_str().expect("chat id").to_string()
+    }
+
+    /// Checks `head` out in the worktree `/wt/<of>` (`None`: detach it).
+    fn checkout(&mut self, of: &str, head: Option<&str>) {
+        self.heads.insert(wt(of), head.map(str::to_string));
+    }
+
+    /// The command for a tool call, as the runtime builds it: `create_group`
+    /// gets the branch the chat's worktree has checked out.
+    fn tool_cmd(&self, binding: SessionBinding, tool: ToolName, args: Value) -> DomainCommand {
+        let call = parse_call(tool, args.as_object().cloned()).expect("valid args");
+        match call {
+            crate::mcp::ToolCall::CreateGroup(args) => {
+                let chat = binding.chat.clone().expect("an orchestrator binding");
+                let worktree = self.state.chat(&chat).map(|c| c.worktree.clone());
+                let base_branch = worktree
+                    .and_then(|w| self.heads.get(&w).cloned().flatten())
+                    .unwrap_or_default();
+                DomainCommand::CreateGroup {
+                    chat,
+                    args,
+                    base_branch,
+                    taken: 0,
+                }
+            }
+            call => DomainCommand::Tool { binding, call },
+        }
     }
 
     /// One command, checking the replay invariant.
@@ -161,7 +188,8 @@ impl Sim {
     }
 
     fn tool(&mut self, b: SessionBinding, tool: ToolName, args: Value) -> Result<Chain, ToolError> {
-        self.run(tool_cmd(b, tool, args))
+        let cmd = self.tool_cmd(b, tool, args);
+        self.run(cmd)
     }
 
     fn orch_ok(&mut self, tool: ToolName, args: Value) -> (Value, Chain) {

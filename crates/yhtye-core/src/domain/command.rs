@@ -66,8 +66,12 @@ pub enum GitOp {
     RemoveWorkspace { group: String, task: String },
     /// A cancelled group: remove its integration worktree (the branch is kept).
     RemoveGroupWorkspace { group: String },
+    /// Merges the group branch into `base_branch` in `worktree` (the group's
+    /// chat's), if the worktree has `base_branch` checked out and is clean
+    /// (Stage 8e: anything else is `Blocked`, nothing is merged).
     MergeGroup {
         group: String,
+        worktree: PathBuf,
         group_branch: String,
         base_branch: String,
         /// Who started the merge; decides whether the result also goes to the
@@ -122,21 +126,17 @@ pub enum GitResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainCommand {
-    /// A new chat on `branch` (the runtime checked that the branch exists).
+    /// A new chat in `worktree` (the runtime resolved it and checked that it
+    /// is an existing worktree of the repository).
     CreateChat {
-        branch: String,
+        worktree: PathBuf,
     },
-    /// The runtime found that the branch of `chat` was renamed to `to`
-    /// (`orchestration-model.md` §6.1): the chat and its unfinished groups follow.
-    ChatBranchChanged {
-        chat: String,
-        to: String,
-    },
-    /// `create_group` by the orchestrator of `chat`; the base branch is the
-    /// chat's branch (the runtime checked that it still exists).
+    /// `create_group` by the orchestrator of `chat`, merging into `base_branch`:
+    /// the branch the chat's worktree has checked out now (read by the runtime).
     CreateGroup {
         chat: String,
         args: CreateGroupArgs,
+        base_branch: String,
         /// The highest group number git already has (branches or worktree
         /// directories left by an earlier database): the new group is numbered
         /// past it, and past every group of the state.

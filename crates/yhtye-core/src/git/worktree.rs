@@ -58,6 +58,19 @@ pub(super) async fn is_worktree(repo: &Path, path: &Path) -> Result<bool, String
     Ok(path.exists() && is_registered(repo, path).await?)
 }
 
+/// The worktree registered at `path` as `git worktree list` shows it (`None`:
+/// not a worktree of the repository, or its directory is gone).
+pub(super) async fn listed_path(repo: &Path, path: &Path) -> Result<Option<PathBuf>, String> {
+    if !path.is_dir() {
+        return Ok(None);
+    }
+    Ok(list(repo)
+        .await?
+        .into_iter()
+        .find(|w| same_path(&w.path, path))
+        .map(|w| w.path))
+}
+
 /// Whether git has a worktree registered at `path` (its directory may be gone).
 pub(super) async fn is_registered(repo: &Path, path: &Path) -> Result<bool, String> {
     Ok(list(repo).await?.iter().any(|w| same_path(&w.path, path)))
@@ -76,6 +89,8 @@ async fn worktree_branch(repo: &Path, path: &Path) -> Result<Option<String>, Str
 pub(super) struct Worktree {
     pub(super) path: PathBuf,
     pub(super) branch: Option<String>,
+    /// Commit checked out (`None`: no commits yet).
+    pub(super) head: Option<String>,
     /// Locked with `git worktree lock` (git never removes or prunes it).
     pub(super) locked: bool,
     /// Git would prune it: its directory is gone.
@@ -95,10 +110,13 @@ pub(super) async fn list(repo: &Path) -> Result<Vec<Worktree>, String> {
     for block in text.split("\n\n") {
         let mut path = None;
         let mut branch = None;
+        let mut head = None;
         let (mut locked, mut prunable) = (false, false);
         for line in block.lines() {
             if let Some(p) = line.strip_prefix("worktree ") {
                 path = Some(PathBuf::from(p));
+            } else if let Some(h) = line.strip_prefix("HEAD ") {
+                head = Some(h.to_string()).filter(|h| h.chars().any(|c| c != '0'));
             } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
                 branch = Some(b.to_string());
             } else if line == "locked" || line.starts_with("locked ") {
@@ -111,6 +129,7 @@ pub(super) async fn list(repo: &Path) -> Result<Vec<Worktree>, String> {
             all.push(Worktree {
                 path,
                 branch,
+                head,
                 locked,
                 prunable,
             });

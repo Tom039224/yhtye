@@ -12,6 +12,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use super::chats::ChatTarget;
 use super::driver::{Channels, Cmd, Driver, Restarted};
 use super::emitter::{Emitter, Publisher};
 use super::port::{LoopPort, ToolRequest};
@@ -247,7 +248,7 @@ impl Orchestration {
 
     /// Queues a `user_message` for the orchestrator of `chat`; it is started if
     /// it is not running and gets the message when it is idle. Refused for an
-    /// unknown chat (`not_found`) or one whose branch is gone (`invalid_state`).
+    /// unknown chat (`not_found`) or one whose worktree is gone (`invalid_state`).
     pub async fn send_user_message(
         &self,
         chat: impl Into<String>,
@@ -269,13 +270,20 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
-    /// A new chat on the existing local branch `branch` (nothing is started).
+    /// A new chat in the worktree of the existing local branch `branch`: where
+    /// it is checked out, else a new Yhtye worktree (nothing is started).
     pub async fn create_chat(
         &self,
         branch: impl Into<String>,
     ) -> Result<ChatInfo, UserActionError> {
+        self.create_chat_for(ChatTarget::Branch(branch.into()))
+            .await
+    }
+
+    /// A new chat in `target` (a branch's worktree, or an existing worktree).
+    pub async fn create_chat_for(&self, target: ChatTarget) -> Result<ChatInfo, UserActionError> {
         let (tx, rx) = oneshot::channel();
-        self.send(Cmd::CreateChat(branch.into(), tx))?;
+        self.send(Cmd::CreateChat(target, tx))?;
         self.chat_info(rx.await.map_err(|_| OrchError::Closed)??.id)
             .await
     }
@@ -339,9 +347,10 @@ impl Orchestration {
         self.user_tool(call).await
     }
 
-    /// Retries the base merge of a `merge_blocked` group (after the user made
-    /// the main worktree mergeable). The result is in the group's status and
-    /// is also sent to the orchestrator as `merge_result`.
+    /// Retries the base merge of a `merge_blocked` group (the same check as
+    /// `finish_group`: the chat's worktree must be on the base branch and
+    /// clean). The result is in the group's status and is also sent to the
+    /// orchestrator as `merge_result`.
     pub async fn retry_group_merge(
         &self,
         group: impl Into<String>,

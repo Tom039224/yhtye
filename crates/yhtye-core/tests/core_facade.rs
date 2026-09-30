@@ -70,7 +70,8 @@ async fn open(core: &Core, path: &Path) -> ProjectInfo {
 async fn new_chat(core: &Core, project: &str) {
     let cmd = ApiCommand::CreateChat {
         project: project.into(),
-        branch: "main".into(),
+        branch: Some("main".into()),
+        worktree: None,
     };
     run(core, cmd).await;
 }

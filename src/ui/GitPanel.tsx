@@ -4,6 +4,7 @@ import type { GitCommit, GitOverview, State } from "../api/generated";
 import { scopeState } from "../store/chats";
 import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
+import { placeOf } from "./branchTree";
 import { type Graph, layoutGraph } from "./gitGraph";
 import { type Tone, TONE_LABEL, taskTone } from "./labels";
 import { focusGroup } from "./taskInfo";
@@ -76,7 +77,9 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
   const overview = git?.overview ?? null;
   const state = view.state;
   // The graph is repository-wide; the header and the base lane follow the selected chat.
-  const chatBranch = selectedChatInfo(view)?.branch ?? null;
+  const chat = selectedChatInfo(view);
+  const place = chat ? placeOf(chat, overview) : null;
+  const chatBranch = place?.kind === "branch" ? place.name : null;
   const group = state ? focusGroup(scopeState(state, view.selectedChat)) : null;
   const base = group?.base_branch ?? chatBranch ?? overview?.head ?? null;
   const graph = useMemo(() => (overview ? layoutGraph(overview.commits) : null), [overview]);

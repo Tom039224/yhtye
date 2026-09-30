@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::sync::broadcast;
 
+use super::chats::ChatTarget;
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
 use crate::agents::{
@@ -196,11 +197,16 @@ impl Core {
                     chats: self.inner.store.chats(&project).await?,
                 })
             }
-            ApiCommand::CreateChat { project, branch } => {
+            ApiCommand::CreateChat {
+                project,
+                branch,
+                worktree,
+            } => {
+                let target = chat_target(branch, worktree)?;
                 let chat = self
                     .open_orchestration(&project)
                     .await?
-                    .create_chat(branch)
+                    .create_chat_for(target)
                     .await
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Chat { chat })
@@ -680,6 +686,17 @@ async fn repository_root(path: &str) -> Result<PathBuf, ApiError> {
     Ok(dir)
 }
 
+/// `create_chat`'s target: exactly one of a branch or a worktree.
+fn chat_target(branch: Option<String>, worktree: Option<String>) -> Result<ChatTarget, ApiError> {
+    match (branch, worktree) {
+        (Some(b), None) => Ok(ChatTarget::Branch(b)),
+        (None, Some(w)) => Ok(ChatTarget::Worktree(PathBuf::from(w))),
+        _ => Err(ApiError::invalid_argument(
+            "give exactly one of branch or worktree",
+        )),
+    }
+}
+
 fn reason_or_default(reason: Option<String>) -> String {
     reason
         .filter(|r| !r.trim().is_empty())
@@ -726,6 +743,20 @@ mod tests {
         assert_eq!(new_project_id(Path::new("/a/日本"), &[]), "project");
         let known = [record("app"), record("app-2")];
         assert_eq!(new_project_id(Path::new("/b/app"), &known), "app-3");
+    }
+
+    #[test]
+    fn a_chat_is_created_for_exactly_one_target() {
+        assert_eq!(
+            chat_target(Some("main".into()), None).ok(),
+            Some(ChatTarget::Branch("main".into()))
+        );
+        assert_eq!(
+            chat_target(None, Some("/w".into())).ok(),
+            Some(ChatTarget::Worktree("/w".into()))
+        );
+        assert!(chat_target(None, None).is_err());
+        assert!(chat_target(Some("main".into()), Some("/w".into())).is_err());
     }
 
     #[test]

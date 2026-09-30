@@ -1,21 +1,32 @@
-//! The chats' orchestrators inside the runtime loop (`core-design.md` §17.3):
-//! one session per chat (`orchestrator:<chatId>`), started lazily when there is
-//! something to send, in the working tree of the chat's branch, and started
-//! again after its process ended.
+//! The chats' orchestrators inside the runtime loop (`core-design.md` §17.3,
+//! §17.8): one session per chat (`orchestrator:<chatId>`), started lazily when
+//! there is something to send, in the chat's worktree (which never moves), and
+//! started again after its process ended.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::driver::{Driver, Restarted};
 use super::launch::FirstPrompts;
 use super::sessions::{AgentPick, StoredSession};
 use crate::domain::{
-    Chat, DomainCommand, InboxItem, InboxKind, OrchestratorResume, ToolError, TurnOutcome,
-    chat_of_session, check_target_branch, lost_session_note, orchestrator_session, render_batch,
+    Chat, DomainCommand, INTERNAL_BRANCH_PREFIX, InboxItem, InboxKind, OrchestratorResume,
+    ToolError, TurnOutcome, chat_of_session, check_target_branch, lost_session_note,
+    orchestrator_session, render_batch,
 };
-use crate::git::CreateBranchError;
+use crate::git::{BranchWorktreeError, CreateBranchError};
 use crate::mcp::{SessionBinding, ToolCall};
 use crate::store::SessionRecord;
+
+/// What a new chat is created in (`create_chat`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatTarget {
+    /// The worktree of this local branch (created by Yhtye if it is checked
+    /// out nowhere).
+    Branch(String),
+    /// This existing worktree of the repository.
+    Worktree(PathBuf),
+}
 
 /// Bookkeeping of the orchestrators being started.
 #[derive(Default)]
@@ -29,9 +40,6 @@ pub(super) struct Orchestrators {
     /// The newest inbox entry of a chat when its start failed. Nothing is retried
     /// until a newer entry (or the next app start) gives a new reason.
     failed: HashMap<String, u64>,
-    /// Chats whose running orchestrator is in a directory its branch has left
-    /// but was in a turn when that was seen: looked at again when the turn ends.
-    pub(super) stale_cwd: HashSet<String>,
 }
 
 /// Where and how an orchestrator is started.
@@ -50,7 +58,7 @@ impl Driver {
         chat: String,
         text: String,
     ) -> Result<(), ToolError> {
-        self.follow_branch(&chat).await?;
+        self.chat_worktree(&chat)?;
         match self
             .execute(DomainCommand::UserMessage { chat, text })
             .await
@@ -60,18 +68,29 @@ impl Driver {
         }
     }
 
-    pub(super) async fn create_chat(&mut self, branch: String) -> Result<Chat, ToolError> {
-        check_target_branch(&branch)?;
-        match self.git.branch_exists(&branch).await {
-            Ok(true) => {}
-            Ok(false) => return Err(ToolError::not_found(format!("no branch {branch}"))),
-            Err(e) => {
-                return Err(ToolError::internal(format!(
-                    "could not check branch {branch}: {e}"
-                )));
-            }
+    /// The worktree of `chat` if its directory still exists: `not_found` for
+    /// an unknown chat, `invalid_state` for one whose worktree is gone.
+    pub(super) fn chat_worktree(&self, chat: &str) -> Result<PathBuf, ToolError> {
+        let c = self
+            .state
+            .chat(chat)
+            .ok_or_else(|| ToolError::not_found(format!("no chat {chat}")))?;
+        if c.worktree.is_dir() {
+            return Ok(c.worktree.clone());
         }
-        if let Some(Err(e)) = self.execute(DomainCommand::CreateChat { branch }).await {
+        Err(ToolError::invalid_state(format!(
+            "the working tree {} of chat {chat} no longer exists; its history can be read, \
+             but nothing can be sent to it",
+            c.worktree.display()
+        )))
+    }
+
+    pub(super) async fn create_chat(&mut self, target: ChatTarget) -> Result<Chat, ToolError> {
+        let worktree = match target {
+            ChatTarget::Branch(branch) => self.branch_worktree(&branch).await?,
+            ChatTarget::Worktree(dir) => self.existing_worktree(&dir).await?,
+        };
+        if let Some(Err(e)) = self.execute(DomainCommand::CreateChat { worktree }).await {
             return Err(e);
         }
         self.state
@@ -81,15 +100,49 @@ impl Driver {
             .ok_or_else(|| ToolError::internal("the chat was not created"))
     }
 
-    /// Creates the branch in a Yhtye worktree, then its first chat.
+    /// The worktree of `branch`: where it is checked out, else a new Yhtye one.
+    async fn branch_worktree(&self, branch: &str) -> Result<PathBuf, ToolError> {
+        check_target_branch(branch)?;
+        self.git
+            .resolve_branch_worktree(branch)
+            .await
+            .map_err(|e| match e {
+                BranchWorktreeError::BranchMissing(_) => {
+                    ToolError::not_found(format!("no branch {branch}"))
+                }
+                BranchWorktreeError::Failed(m) => ToolError::internal(m),
+            })
+    }
+
+    /// `dir` as git lists it, if it is an existing worktree that is not one of
+    /// Yhtye's internal ones (on a `yhtye/*` branch).
+    async fn existing_worktree(&self, dir: &Path) -> Result<PathBuf, ToolError> {
+        let internal = |e: String| ToolError::internal(format!("could not read git: {e}"));
+        let Some(listed) = self.git.find_worktree(dir).await.map_err(internal)? else {
+            return Err(ToolError::not_found(format!(
+                "{} is not a worktree of this repository",
+                dir.display()
+            )));
+        };
+        let branch = self.git.worktree_branch(&listed).await.map_err(internal)?;
+        if branch.is_some_and(|b| b.starts_with(INTERNAL_BRANCH_PREFIX)) {
+            return Err(ToolError::invalid_argument(format!(
+                "{} is one of Yhtye's own worktrees; pick another one",
+                listed.display()
+            )));
+        }
+        Ok(listed)
+    }
+
+    /// Creates the branch in a Yhtye worktree, then its first chat there.
     pub(super) async fn create_branch(
         &mut self,
         name: String,
         from: Option<String>,
     ) -> Result<Chat, ToolError> {
         check_target_branch(&name)?;
-        self.git.create_branch(&name, from.as_deref()).await?;
-        match self.create_chat(name.clone()).await {
+        let dir = self.git.create_branch(&name, from.as_deref()).await?;
+        match self.create_chat(ChatTarget::Worktree(dir)).await {
             Ok(chat) => Ok(chat),
             Err(e) => {
                 // No chat: undo the branch, or a retry would find it existing.
@@ -131,15 +184,7 @@ impl Driver {
         chat: &str,
         record: Option<&SessionRecord>,
     ) -> Result<StartPlan, String> {
-        let branch = self
-            .follow_branch(chat)
-            .await
-            .map_err(|e| e.message.clone())?;
-        let cwd = self
-            .git
-            .resolve_branch_worktree(&branch)
-            .await
-            .map_err(|e| e.to_string())?;
+        let cwd = self.chat_worktree(chat).map_err(|e| e.message)?;
         // OpenCode wants the same directory for `session/load`; a session that
         // would start elsewhere is not restored.
         let same_dir = record.and_then(|r| r.cwd.as_deref()) == Some(&*cwd.to_string_lossy());
@@ -237,14 +282,6 @@ impl Driver {
         if outcome == TurnOutcome::Closed {
             self.orchestrators.cut_off.insert(chat.clone());
         }
-        // The orchestrator may have renamed its branch in this turn; the domain
-        // (a group Yhtye finishes for it) must see the new name.
-        if let Err(e) = self.follow_branch(&chat).await {
-            tracing::debug!("{e}");
-        }
-        if self.orchestrators.stale_cwd.contains(&chat) {
-            self.realign_orchestrator(&chat).await;
-        }
         self.execute(DomainCommand::OrchestratorTurnEnded {
             chat,
             outcome,
@@ -272,13 +309,6 @@ impl Driver {
         let Some(up_to) = self.state.inbox_of(chat).last().map(|e| e.id) else {
             return;
         };
-        if self.sessions.is_idle(&key) {
-            // Before delivering: has the branch been renamed or moved?
-            if let Err(e) = self.follow_branch(chat).await {
-                tracing::debug!("{e}");
-            }
-            self.realign_orchestrator(chat).await;
-        }
         if self.sessions.is_idle(&key) {
             let items: Vec<_> = self.state.inbox_of(chat).map(|e| e.item.clone()).collect();
             self.sessions.queue_and_deliver(&key, render_batch(&items));
@@ -313,6 +343,62 @@ impl Driver {
                 .await;
         }
         self.launch_orchestrator(chat, plan);
+    }
+}
+
+impl Driver {
+    /// The branch the worktree of `chat` has checked out now: what a new group
+    /// merges into (Stage 8e). `invalid_state` for a detached HEAD, a Yhtye
+    /// branch or a worktree that is gone.
+    pub(super) async fn checked_out_branch(&self, chat: &str) -> Result<String, ToolError> {
+        let dir = self.chat_worktree(chat)?;
+        match self.head_of(&dir).await? {
+            Some(b) if !b.starts_with(INTERNAL_BRANCH_PREFIX) => Ok(b),
+            head => Err(ToolError::invalid_state(format!(
+                "the working tree {} is {}; a group merges into the branch checked out \
+                 there, so check out a branch first",
+                dir.display(),
+                head.map_or("at a detached HEAD".to_string(), |b| format!("on {b}"))
+            ))),
+        }
+    }
+
+    /// `finish_group`'s `into` must be the branch the chat's worktree has
+    /// checked out right now (`invalid_argument` naming what it has).
+    pub(super) async fn check_into(&self, chat: &str, into: &str) -> Result<(), ToolError> {
+        let dir = self.chat_worktree(chat)?;
+        let head = self.head_of(&dir).await?;
+        if head.as_deref() == Some(into) {
+            return Ok(());
+        }
+        let now = head.map_or("a detached HEAD".to_string(), |b| format!("branch `{b}`"));
+        Err(ToolError::invalid_argument(format!(
+            "into must be the branch checked out in your working tree {} right now, which is \
+             {now}, not `{into}`",
+            dir.display()
+        )))
+    }
+
+    async fn head_of(&self, dir: &Path) -> Result<Option<String>, ToolError> {
+        self.git.worktree_branch(dir).await.map_err(|e| {
+            ToolError::internal(format!(
+                "could not read the branch of {}: {e}",
+                dir.display()
+            ))
+        })
+    }
+
+    /// The stored session of `chat`'s orchestrator (what it was started with).
+    pub(super) async fn stored_session(&mut self, chat: &str) -> Option<SessionRecord> {
+        self.publisher.flush().await;
+        let key = orchestrator_session(chat);
+        match self.publisher.store().sessions(&self.cfg.project).await {
+            Ok(all) => all.into_iter().find(|s| s.session_key == key),
+            Err(e) => {
+                tracing::error!("could not read the stored sessions: {e}");
+                None
+            }
+        }
     }
 }
 

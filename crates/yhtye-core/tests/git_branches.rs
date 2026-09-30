@@ -1,6 +1,7 @@
-//! Working trees of target branches, creating branches, and merging a group
-//! where its base branch is checked out (`orchestration-model.md` §6.1,
-//! `core-design.md` §17.4). Real git in temporary repositories.
+//! Worktrees of chats, creating branches, and merging a group in its chat's
+//! worktree only while that has the base branch checked out
+//! (`orchestration-model.md` §6 / §6.1, `core-design.md` §17.4 / §17.8). Real
+//! git in temporary repositories.
 
 mod common;
 
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 use common::repo::{TempRepo, git_in, write_in};
 use yhtye_core::domain::{GitOp, GitResult, MergeTrigger, TaskKind};
 use yhtye_core::git::{
-    BranchWorktreeError, CreateBranchError, GitService, list_branches, worktree_root,
+    BranchWorktreeError, CreateBranchError, GitService, list_branches, overview, worktree_root,
 };
 
 fn canonical(p: &Path) -> PathBuf {
@@ -211,9 +212,10 @@ async fn list_branches_hides_yhtye_internal_branches() {
     assert_eq!(names, ["feature", "main"]);
 }
 
-fn merge_group_into(base: &str) -> GitOp {
+fn merge_group_into(worktree: &Path, base: &str) -> GitOp {
     GitOp::MergeGroup {
         group: "G-1".into(),
+        worktree: worktree.to_path_buf(),
         group_branch: "yhtye/G-1".into(),
         base_branch: base.into(),
         trigger: MergeTrigger::FinishGroup,
@@ -252,16 +254,16 @@ async fn group_with_a_file(r: &TempRepo, base: &str) {
 }
 
 #[tokio::test]
-async fn a_group_merges_into_its_branch_in_that_branchs_own_worktree() {
+async fn a_group_merges_into_its_branch_in_the_chats_worktree() {
     let r = TempRepo::new();
     r.git(&["branch", "release"]);
     group_with_a_file(&r, "release").await;
     let git = r.git_cli();
-    let result = git.run(&merge_group_into("release")).await;
+    let wt = resolve(&r, "release").await;
+    let result = git.run(&merge_group_into(&wt, "release")).await;
     assert!(matches!(result, GitResult::Merged { .. }), "{result:?}");
     // The merge happened in the Yhtye worktree of `release`; the main clone
     // is still on `main`, untouched.
-    let wt = managed(&r, "release");
     assert_eq!(
         std::fs::read_to_string(wt.join("feature.txt")).expect("file"),
         "feature\n"
@@ -279,37 +281,108 @@ async fn a_dirty_branch_worktree_blocks_the_merge_and_a_clean_one_goes_through()
     let git = r.git_cli();
     let wt = resolve(&r, "release").await;
     write_in(&wt, "README.md", "# edited\n");
-    let result = git.run(&merge_group_into("release")).await;
+    let result = git.run(&merge_group_into(&wt, "release")).await;
     assert!(
         matches!(&result, GitResult::Blocked { detail } if detail.contains("README.md")),
         "{result:?}"
     );
     git_in(&wt, &["commit", "-qam", "edit"]);
-    let result = git.run(&merge_group_into("release")).await;
+    let result = git.run(&merge_group_into(&wt, "release")).await;
     assert!(matches!(result, GitResult::Merged { .. }), "{result:?}");
 }
 
-#[tokio::test]
-async fn merging_into_a_branch_of_a_detached_main_clone_still_works() {
+/// Merging `G-1` (made on `main`) in the main clone after `change` ran there:
+/// it must be blocked without touching anything, with a detail naming `seen`.
+async fn blocked_after(change: &[&[&str]], seen: &str) {
     let r = TempRepo::new();
     group_with_a_file(&r, "main").await;
-    r.git(&["checkout", "-q", "--detach"]);
-    let result = r.git_cli().run(&merge_group_into("main")).await;
-    assert!(matches!(result, GitResult::Merged { .. }), "{result:?}");
-    assert!(managed(&r, "main").join("feature.txt").exists());
+    for args in change {
+        r.git(args);
+    }
+    let head = r.git(&["rev-parse", "HEAD"]);
+    let result = r.git_cli().run(&merge_group_into(&r.repo, "main")).await;
+    let GitResult::Blocked { detail } = &result else {
+        panic!("blocked, not {result:?}");
+    };
+    assert!(
+        detail.contains("Nothing was merged") && detail.contains(seen) && detail.contains("into"),
+        "{detail}"
+    );
+    assert_eq!(r.git(&["rev-parse", "HEAD"]), head, "nothing was merged");
+    assert!(!r.repo.join("feature.txt").exists());
 }
 
 #[tokio::test]
-async fn a_deleted_base_branch_blocks_the_merge() {
+async fn a_renamed_base_branch_blocks_the_merge_and_names_the_new_branch() {
+    blocked_after(&[&["branch", "-m", "main", "trunk"]], "`trunk`").await;
+}
+
+#[tokio::test]
+async fn another_branch_checked_out_blocks_the_merge() {
+    blocked_after(&[&["checkout", "-q", "-b", "other"]], "`other`").await;
+}
+
+#[tokio::test]
+async fn a_detached_worktree_blocks_the_merge() {
+    blocked_after(&[&["checkout", "-q", "--detach"]], "detached HEAD").await;
+}
+
+/// Merging `G-1` (made on `main`) in the main clone while someone checks out
+/// `other` right after the checks: it must not count as merged into `main`,
+/// and the detail must say where the merge went.
+async fn switched_during_the_merge(other_at: &str) -> TempRepo {
+    let r = TempRepo::new();
+    group_with_a_file(&r, "main").await;
+    r.git(&["branch", "other", other_at]);
+    let main = r.git(&["rev-parse", "main"]);
+    let repo = r.repo.clone();
+    let git = r
+        .git_cli()
+        .before_group_merge(move |_| drop(git_in(&repo, &["checkout", "-q", "other"])));
+    let result = git.run(&merge_group_into(&r.repo, "main")).await;
+    let GitResult::Blocked { detail } = &result else {
+        panic!("blocked, not {result:?}");
+    };
+    assert!(
+        detail.contains("`other`") && detail.contains("`main`"),
+        "{detail}"
+    );
+    assert_eq!(r.git(&["rev-parse", "main"]), main, "main is untouched");
+    assert!(r.git_status(&["merge-base", "--is-ancestor", "yhtye/G-1", "other"]));
+    assert_eq!(
+        r.extra_worktrees().len(),
+        1,
+        "the integration worktree is kept"
+    );
+    r
+}
+
+#[tokio::test]
+async fn a_branch_switch_right_before_the_merge_is_reported_with_where_it_went() {
+    let r = switched_during_the_merge("main").await;
+    let parent = r.git(&["rev-parse", "other^1"]);
+    assert_eq!(parent, r.git(&["rev-parse", "main"]), "merged on other");
+}
+
+#[tokio::test]
+async fn a_switch_to_a_branch_that_has_the_group_is_not_taken_as_merged() {
+    // `other` already contains the group branch: `HEAD` has it, `main` does not.
+    switched_during_the_merge("yhtye/G-1").await;
+}
+
+#[tokio::test]
+async fn a_missing_worktree_blocks_the_merge() {
     let r = TempRepo::new();
     r.git(&["branch", "release"]);
     group_with_a_file(&r, "release").await;
-    r.git(&["branch", "-M", "release", "renamed"]);
-    let result = r.git_cli().run(&merge_group_into("release")).await;
+    let wt = resolve(&r, "release").await;
+    std::fs::remove_dir_all(&wt).expect("rm");
+    let result = r.git_cli().run(&merge_group_into(&wt, "release")).await;
     assert!(
-        matches!(&result, GitResult::Blocked { detail } if detail.contains("release")),
+        matches!(&result, GitResult::Blocked { detail } if detail.contains("no longer exists")),
         "{result:?}"
     );
+    assert!(!wt.exists(), "not recreated");
 }
 
 #[tokio::test]
@@ -351,19 +424,33 @@ async fn a_locked_missing_worktree_of_yhtye_is_left_registered() {
 }
 
 #[tokio::test]
-async fn a_directory_reports_the_branch_it_has_checked_out_and_follows_a_rename() {
+async fn a_directory_reports_the_branch_it_has_checked_out_now() {
     let r = TempRepo::new();
     let git = r.git_cli();
     assert_eq!(git.worktree_branch(&r.repo).await, Ok(Some("main".into())));
     // `git branch -m` moves HEAD of the worktree that has the branch.
     r.git(&["branch", "-m", "main", "trunk"]);
     assert_eq!(git.worktree_branch(&r.repo).await, Ok(Some("trunk".into())));
-    assert_eq!(git.branch_exists("main").await, Ok(false));
     // A Yhtye worktree too.
     r.git(&["branch", "feature/x"]);
     let wt = resolve(&r, "feature/x").await;
     git_in(&wt, &["branch", "-m", "feature/y"]);
     assert_eq!(git.worktree_branch(&wt).await, Ok(Some("feature/y".into())));
+}
+
+#[tokio::test]
+async fn a_tag_named_like_the_branch_does_not_change_the_branch_name() {
+    let r = TempRepo::new();
+    let git = r.git_cli();
+    r.git(&["tag", "main"]);
+    assert_eq!(git.current_branch().await, Ok(Some("main".into())));
+    assert_eq!(git.worktree_branch(&r.repo).await, Ok(Some("main".into())));
+    r.git(&["checkout", "-q", "-b", "yhtye/x"]);
+    r.git(&["tag", "yhtye/x"]);
+    assert_eq!(
+        git.worktree_branch(&r.repo).await,
+        Ok(Some("yhtye/x".into()))
+    );
 }
 
 #[tokio::test]
@@ -375,17 +462,90 @@ async fn a_detached_or_missing_directory_has_no_branch() {
     assert_eq!(git.worktree_branch(&r.data.join("gone")).await, Ok(None));
 }
 
+/// Paths of `git worktree list --porcelain`, as git prints them.
+fn listed(r: &TempRepo) -> Vec<String> {
+    r.git(&["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|l| l.strip_prefix("worktree "))
+        .map(str::to_string)
+        .collect()
+}
+
 #[tokio::test]
-async fn a_rename_is_told_from_a_deletion_by_the_reflog() {
+async fn worktrees_are_given_as_git_lists_them() {
     let r = TempRepo::new();
     let git = r.git_cli();
-    r.git(&["branch", "feature"]);
-    r.git(&["branch", "-m", "feature", "renamed"]);
-    assert_eq!(git.was_renamed("feature", "renamed").await, Ok(true));
-    // Not the other way round, and not for an unrelated branch.
-    assert_eq!(git.was_renamed("renamed", "feature").await, Ok(false));
-    assert_eq!(git.was_renamed("other", "renamed").await, Ok(false));
-    // A branch that was only created has no rename in its reflog; nor has a missing one.
-    assert_eq!(git.was_renamed("feature", "main").await, Ok(false));
-    assert_eq!(git.was_renamed("feature", "nope").await, Ok(false));
+    r.git(&["branch", "topic"]);
+    let topic = git.resolve_branch_worktree("topic").await.expect("topic");
+    let made = git.create_branch("fresh", None).await.expect("fresh");
+    let main = git.resolve_branch_worktree("main").await.expect("main");
+    let shown = |p: &Path| p.to_string_lossy().into_owned();
+    let all = listed(&r);
+    for p in [&topic, &made, &main] {
+        assert!(all.contains(&shown(p)), "{p:?} in {all:?}");
+    }
+}
+
+#[tokio::test]
+async fn find_worktree_knows_only_existing_worktrees_of_the_repository() {
+    let r = TempRepo::new();
+    let git = r.git_cli();
+    let main = git.find_worktree(&r.repo).await.expect("git");
+    assert_eq!(main.map(|p| canonical(&p)), Some(canonical(&r.repo)));
+    let other = r.data.join("not-a-worktree");
+    std::fs::create_dir_all(&other).expect("mkdir");
+    assert_eq!(git.find_worktree(&other).await, Ok(None));
+    assert_eq!(git.find_worktree(&r.repo.join("sub")).await, Ok(None));
+    r.git(&["branch", "topic"]);
+    let topic = resolve(&r, "topic").await;
+    std::fs::remove_dir_all(&topic).expect("rm");
+    assert_eq!(git.find_worktree(&topic).await, Ok(None), "gone");
+}
+
+#[tokio::test]
+async fn the_overview_lists_every_worktree_main_first() {
+    let r = TempRepo::new();
+    r.git(&["branch", "topic"]);
+    let topic = resolve(&r, "topic").await;
+    r.git(&["branch", "gone"]);
+    let gone = resolve(&r, "gone").await;
+    std::fs::remove_dir_all(&gone).expect("rm");
+    git_in(&topic, &["checkout", "-q", "--detach"]);
+    let o = overview(&r.repo, 10).await.expect("overview");
+    let rows: Vec<(PathBuf, Option<&str>, bool, bool, bool)> = o
+        .worktrees
+        .iter()
+        .map(|w| {
+            let p = Path::new(&w.path);
+            let p = if p.exists() {
+                canonical(p)
+            } else {
+                p.to_path_buf()
+            };
+            (
+                p,
+                w.branch.as_deref(),
+                w.head_sha.is_some(),
+                w.is_main,
+                w.missing,
+            )
+        })
+        .collect();
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    assert_eq!(
+        rows[0],
+        (canonical(&r.repo), Some("main"), true, true, false)
+    );
+    assert!(
+        rows.contains(&(topic, None, true, false, false)),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|(p, b, _, main, missing)| p.ends_with("gone")
+                && *b == Some("gone")
+                && !main
+                && *missing),
+        "{rows:?}"
+    );
 }

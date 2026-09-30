@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use super::repo::current_branch;
 use super::run::git;
+use super::worktree::list;
 use crate::domain::INTERNAL_BRANCH_PREFIX;
 
 /// Field and record separators of the `git log` format (unit / record separator).
@@ -27,6 +28,9 @@ pub struct GitOverview {
     pub head_sha: Option<String>,
     /// Local branches, by name.
     pub branches: Vec<GitBranch>,
+    /// Every worktree of the repository, the main one first (Stage 8e: the
+    /// BRANCHES tree and the branch shown for a chat come from here).
+    pub worktrees: Vec<GitWorktree>,
     /// Newest first, parents after their children (`--topo-order`).
     pub commits: Vec<GitCommit>,
     /// More commits exist beyond `commits`.
@@ -37,6 +41,21 @@ pub struct GitOverview {
 pub struct GitBranch {
     pub name: String,
     pub sha: String,
+}
+
+/// One worktree as `git worktree list --porcelain` shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct GitWorktree {
+    /// As git shows it (what a chat's `worktree` is compared with).
+    pub path: String,
+    /// Checked-out branch (`None`: detached HEAD).
+    pub branch: Option<String>,
+    /// Checked-out commit (`None`: no commits yet).
+    pub head_sha: Option<String>,
+    /// The repository's main worktree (the original clone).
+    pub is_main: bool,
+    /// Its directory is gone.
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
@@ -60,6 +79,7 @@ pub async fn overview(dir: &Path, limit: usize) -> Result<GitOverview, String> {
         out.ok.then(|| out.stdout.trim().to_string())
     };
     let branches = branches(dir).await?;
+    let worktrees = worktrees(dir).await?;
     let (commits, truncated) = if branches.is_empty() && head_sha.is_none() {
         (Vec::new(), false)
     } else {
@@ -69,9 +89,25 @@ pub async fn overview(dir: &Path, limit: usize) -> Result<GitOverview, String> {
         head,
         head_sha,
         branches,
+        worktrees,
         commits,
         truncated,
     })
+}
+
+async fn worktrees(dir: &Path) -> Result<Vec<GitWorktree>, String> {
+    let all = list(dir).await?;
+    Ok(all
+        .into_iter()
+        .enumerate()
+        .map(|(i, w)| GitWorktree {
+            missing: !w.path.is_dir(),
+            path: w.path.to_string_lossy().into_owned(),
+            branch: w.branch,
+            head_sha: w.head,
+            is_main: i == 0,
+        })
+        .collect())
 }
 
 /// The local branches a user works on: every branch but Yhtye's own `yhtye/*`.

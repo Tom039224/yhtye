@@ -4,7 +4,7 @@
 
 import type { ApiEvent, ChatInfo, State } from "../api/generated";
 
-/** Branches Yhtye creates for groups and tasks; never shown as work targets. */
+/** Branches Yhtye creates for groups and tasks; their worktrees are not shown as work places. */
 export const INTERNAL_BRANCH_PREFIX = "yhtye/";
 const ORCHESTRATOR_PREFIX = "orchestrator:";
 
@@ -36,14 +36,11 @@ export function applyChatEvent(chats: ChatInfo[], ev: ApiEvent): ChatInfo[] {
   if (body.type !== "domain") return chats;
   const event = body.event;
   if (event.type === "chat_created") {
-    const { id, branch, title } = event.chat;
-    return upsertChat(chats, { id, branch, title, created_ms: ev.ts_ms, last_used_ms: ev.ts_ms });
+    const { id, worktree, title } = event.chat;
+    return upsertChat(chats, { id, worktree, title, created_ms: ev.ts_ms, last_used_ms: ev.ts_ms });
   }
   if (event.type === "chat_titled") {
     return chats.map((c) => (c.id === event.chat ? { ...c, title: event.title } : c));
-  }
-  if (event.type === "chat_branch_changed") {
-    return chats.map((c) => (c.id === event.chat ? { ...c, branch: event.to } : c));
   }
   return chats;
 }

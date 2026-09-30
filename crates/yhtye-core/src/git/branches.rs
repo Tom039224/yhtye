@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use super::repo;
 use super::run::{git, git_ok};
-use super::worktree::{is_registered, is_under, list};
+use super::worktree::{is_registered, is_under, list, listed_path};
 use super::{BranchWorktreeError, CreateBranchError};
 use crate::domain::INTERNAL_BRANCH_PREFIX;
 
@@ -16,6 +16,8 @@ const BRANCHES_DIR: &str = "branches";
 
 /// The worktree where `branch` is checked out: an existing one (the main clone
 /// or any other worktree, Yhtye's or not), else a new one under `<root>/branches/`.
+/// The path is the one `git worktree list` shows (the UI matches chats to
+/// worktrees by it).
 pub(super) async fn resolve(
     repo_dir: &Path,
     root: &Path,
@@ -35,7 +37,7 @@ pub(super) async fn resolve(
     add_worktree(repo_dir, &path, &["-q", &path.to_string_lossy(), branch])
         .await
         .map_err(failed)?;
-    Ok(path)
+    as_listed(repo_dir, path).await.map_err(failed)
 }
 
 /// Creates `name` at `from` (default: the main clone's HEAD) in a new worktree
@@ -66,7 +68,12 @@ pub(super) async fn create(
     let shown = path.to_string_lossy();
     let args = ["-q", "--no-track", "-b", name, &shown, &start];
     add_worktree(repo_dir, &path, &args).await.map_err(failed)?;
-    Ok(path)
+    as_listed(repo_dir, path).await.map_err(failed)
+}
+
+/// A worktree just added at `path`, as `git worktree list` shows it.
+async fn as_listed(repo_dir: &Path, path: PathBuf) -> Result<PathBuf, String> {
+    Ok(listed_path(repo_dir, &path).await?.unwrap_or(path))
 }
 
 /// Removes the worktree of `name` and deletes the branch (the undo of [`create`]).

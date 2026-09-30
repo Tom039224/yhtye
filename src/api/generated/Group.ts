@@ -7,7 +7,8 @@ export type Group = { id: string,
  */
 chat: string, title: string, summary: string | null, 
 /**
- * The chat's target branch: where the group is merged.
+ * Where the group is merged: the branch the chat's worktree had checked
+ * out when the group was created (Stage 8e), or `finish_group`'s `into`.
  */
 base_branch: string, group_branch: string, status: GroupStatus, 
 /**

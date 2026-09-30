@@ -1,9 +1,11 @@
 //! The chat API of [`Core`] (`core-design.md` §17.5) on a temporary git
-//! repository with fake agents: listing, creating chats and branches and their
-//! errors, sending to chats, and resuming projects with live chats.
+//! repository with fake agents: listing, creating chats (for a branch or a
+//! worktree) and branches and their errors, sending to chats, and resuming
+//! projects with live chats.
 
 mod common;
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use common::fake_harness;
@@ -57,12 +59,20 @@ async fn open(core: &Core, r: &TempRepo) -> String {
     }
 }
 
-async fn create_chat(core: &Core, project: &str, branch: &str) -> ChatInfo {
-    let cmd = ApiCommand::CreateChat {
+fn chat_on(project: &str, branch: Option<&str>, worktree: Option<&Path>) -> ApiCommand {
+    ApiCommand::CreateChat {
         project: project.into(),
-        branch: branch.into(),
-    };
-    match run(core, cmd).await {
+        branch: branch.map(str::to_string),
+        worktree: worktree.map(|w| w.display().to_string()),
+    }
+}
+
+fn canonical(p: &str) -> PathBuf {
+    std::fs::canonicalize(p).expect("canonical path")
+}
+
+async fn create_chat(core: &Core, project: &str, branch: &str) -> ChatInfo {
+    match run(core, chat_on(project, Some(branch), None)).await {
         ApiResponse::Chat { chat } => chat,
         other => panic!("unexpected {other:?}"),
     }
@@ -118,15 +128,18 @@ async fn chats_are_created_listed_and_used_through_the_api() {
 
     let first = create_chat(&core, &project, "main").await;
     let second = create_chat(&core, &project, "topic").await;
+    assert_eq!((first.id.as_str(), first.title.as_deref()), ("C-1", None));
     assert_eq!(
-        (
-            first.id.as_str(),
-            first.branch.as_str(),
-            first.title.as_deref()
-        ),
-        ("C-1", "main", None)
+        canonical(&first.worktree),
+        std::fs::canonicalize(&r.repo).expect("repo"),
+        "main is checked out in the main clone"
     );
     assert_eq!(second.id, "C-2");
+    assert!(
+        second.worktree.ends_with("branches/topic"),
+        "a Yhtye worktree for topic: {}",
+        second.worktree
+    );
     assert_eq!(second.created_ms, second.last_used_ms);
     let ids: Vec<String> = list_chats(&core, &project)
         .await
@@ -161,10 +174,7 @@ async fn chats_are_created_listed_and_used_through_the_api() {
         .await
         .expect("core");
     assert_eq!(list_chats(&core, &project).await, chats);
-    let create = ApiCommand::CreateChat {
-        project: project.clone(),
-        branch: "main".into(),
-    };
+    let create = chat_on(&project, Some("main"), None);
     assert_eq!(code(&core, create).await, ApiErrorCode::Unavailable);
     let unknown = ApiCommand::ListChats {
         project: "nope".into(),
@@ -181,10 +191,7 @@ async fn creating_chats_and_sending_report_bad_input() {
         .await
         .expect("core");
     let project = open(&core, &r).await;
-    let create = |branch: &str| ApiCommand::CreateChat {
-        project: project.clone(),
-        branch: branch.into(),
-    };
+    let create = |branch: &str| chat_on(&project, Some(branch), None);
     assert_eq!(code(&core, create("nope")).await, ApiErrorCode::NotFound);
     assert_eq!(
         code(&core, create("yhtye/G-1")).await,
@@ -214,14 +221,62 @@ async fn creating_chats_and_sending_report_bad_input() {
     };
     assert_eq!(code(&core, cancel).await, ApiErrorCode::NotFound);
 
-    // A chat whose branch was deleted can be read but not written to.
+    // A chat whose worktree was removed can be read but not written to.
     r.git(&["branch", "topic"]);
-    create_chat(&core, &project, "topic").await;
-    r.git(&["branch", "-D", "topic"]);
+    let topic = create_chat(&core, &project, "topic").await;
+    r.git(&["worktree", "remove", "--force", &topic.worktree]);
     assert_eq!(
         code(&core, send(&project, "C-1", "hi")).await,
         ApiErrorCode::InvalidState
     );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_chat_can_be_made_in_a_worktree_given_by_its_path() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let project = open(&core, &r).await;
+    // The main clone, detached: a chat there is fine (only create_group needs a branch).
+    r.git(&["checkout", "-q", "--detach"]);
+    let ApiResponse::Chat { chat } = run(&core, chat_on(&project, None, Some(&r.repo))).await
+    else {
+        panic!("a chat");
+    };
+    assert_eq!(
+        canonical(&chat.worktree),
+        std::fs::canonicalize(&r.repo).expect("repo")
+    );
+    let internal = r.data.join("internal");
+    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&[
+        "worktree",
+        "add",
+        "-q",
+        &internal.to_string_lossy(),
+        "yhtye/G-1",
+    ]);
+    let bad = [
+        (
+            chat_on(&project, None, Some(&r.data)),
+            ApiErrorCode::NotFound,
+        ),
+        (
+            chat_on(&project, None, Some(&internal)),
+            ApiErrorCode::InvalidArgument,
+        ),
+        (chat_on(&project, None, None), ApiErrorCode::InvalidArgument),
+        (
+            chat_on(&project, Some("main"), Some(&r.repo)),
+            ApiErrorCode::InvalidArgument,
+        ),
+    ];
+    for (cmd, expected) in bad {
+        assert_eq!(code(&core, cmd.clone()).await, expected, "{cmd:?}");
+    }
+    assert_eq!(list_chats(&core, &project).await.len(), 1);
     core.shutdown().await;
 }
 
@@ -240,9 +295,11 @@ async fn a_new_branch_gets_its_own_worktree_and_a_first_chat() {
     let ApiResponse::Chat { chat } = run(&core, create("feature/new", None)).await else {
         panic!("a chat");
     };
-    assert_eq!(
-        (chat.id.as_str(), chat.branch.as_str()),
-        ("C-1", "feature/new")
+    assert_eq!(chat.id, "C-1");
+    assert!(
+        chat.worktree.ends_with("branches/feature-new"),
+        "{}",
+        chat.worktree
     );
     assert!(r.branch_exists("feature/new"));
     assert_eq!(

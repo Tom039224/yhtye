@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CommandError } from "../api/transport";
-import { CHAT_INFOS, CHAT_LOG, chatSnapshot } from "../test/chats";
+import { CHAT_INFOS, CHAT_LOG, chatSnapshot, MAIN_WT } from "../test/chats";
 import { ev, prompted, userMessage } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
@@ -137,20 +137,39 @@ describe("commands", () => {
     ]);
   });
 
-  it("creates a chat on a branch and selects it", async () => {
+  it("creates a chat in a worktree, or in a branch's, and selects it", async () => {
     const s = newStore();
     await open(s);
-    expect(await s.createChat("feat/x")).toBe(true);
-    expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "feat/x" }]);
+    expect(await s.createChat({ worktree: MAIN_WT })).toBe(true);
     expect(view(s).selectedChat).toBe("C-3");
-    expect(view(s).chats.find((c) => c.id === "C-3")?.branch).toBe("feat/x");
+    expect(view(s).chats.find((c) => c.id === "C-3")?.worktree).toBe(MAIN_WT);
+    expect(await s.createChat({ branch: "feat/x" })).toBe(true);
+    expect(transport.callsOf("create_chat")).toEqual([
+      { type: "create_chat", project: "repo", worktree: MAIN_WT },
+      { type: "create_chat", project: "repo", branch: "feat/x" },
+    ]);
+  });
+
+  it("re-reads git before selecting a chat made in a branch's new worktree", async () => {
+    const s = newStore();
+    await open(s);
+    // Whether git listed the chat's worktree when the chat first became selected.
+    let listedWhenSelected: boolean | null = null;
+    s.subscribe(() => {
+      if (listedWhenSelected !== null || s.getState().project?.selectedChat !== "C-3") return;
+      const worktrees = s.getState().git?.overview?.worktrees ?? [];
+      listedWhenSelected = worktrees.some((w) => w.branch === "feat/x");
+    });
+    expect(await s.createChat({ branch: "feat/x" })).toBe(true);
+    // No "(見つからない作業ツリー)" flash.
+    expect(listedWhenSelected).toBe(true);
   });
 
   it("shows the error and keeps the selection when a chat cannot be created", async () => {
     const s = newStore();
     await open(s);
     core.failures.set("create_chat", new CommandError("not_found", "branch gone: feat/x"));
-    expect(await s.createChat("feat/x")).toBe(false);
+    expect(await s.createChat({ branch: "feat/x" })).toBe(false);
     expect(s.getState().errors[0].message).toContain("branch gone");
     expect(view(s).selectedChat).toBe("C-2");
   });

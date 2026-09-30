@@ -2,6 +2,7 @@
 
 use serde_json::{Value, json};
 
+use super::chat_rules::check_target_branch;
 use super::command::{Effect, GitOp, MergeTrigger};
 use super::event::DomainEvent;
 use super::flow::help_agent;
@@ -48,29 +49,38 @@ impl Tx {
         Ok(())
     }
 
-    /// `create_group` of the orchestrator of `chat`: the group merges into the
-    /// chat's branch, and only one group per branch may be open.
+    /// `create_group` of the orchestrator of `chat`: the group merges into
+    /// `base_branch` (what the chat's worktree has checked out now), and only
+    /// one group per worktree may be open (Stage 8e).
     pub(super) fn create_group(
         &mut self,
         chat: &str,
         a: CreateGroupArgs,
+        base_branch: String,
         taken: u32,
     ) -> Result<(), ToolError> {
         non_empty("title", &a.title)?;
-        let base_branch = self
+        let worktree = self
             .state
             .chat(chat)
             .ok_or_else(|| ToolError::not_found(format!("no chat {chat}")))?
-            .branch
+            .worktree
             .clone();
-        if let Some(g) = self.state.open_group_on(&base_branch) {
+        if check_target_branch(&base_branch).is_err() {
+            return Err(ToolError::invalid_state(format!(
+                "the worktree {} has no branch checked out that a group can merge into \
+                 (detached HEAD or a yhtye/* branch); check out a branch first",
+                worktree.display()
+            )));
+        }
+        if let Some(g) = self.state.open_group_in(&worktree) {
             let whose = if g.chat == chat {
                 String::new()
             } else {
                 format!(" (created by chat {})", g.chat)
             };
             return Err(ToolError::conflict(format!(
-                "group {} on branch {base_branch} is still {}{whose}; finish_group or \
+                "group {} in this worktree is still {}{whose}; finish_group or \
                  cancel_group it first",
                 g.id,
                 g.status.as_str()
@@ -316,42 +326,53 @@ impl Tx {
         Ok(json!({ "task_id": a.task_id, "status": "cancelled" }))
     }
 
+    /// `finish_group`: an `active` group whose tasks are all terminal, or a
+    /// `merge_blocked` one (the merge runs again, Stage 8e). With `into` (the
+    /// runtime checked that the chat's worktree has it checked out) the group
+    /// merges there instead of its recorded base branch.
     fn finish_group(&mut self, a: FinishGroupArgs) -> Reply {
         let g = self
             .state
             .group(&a.group_id)
             .ok_or_else(|| ToolError::not_found(format!("no group {}", a.group_id)))?;
-        if g.status != GroupStatus::Active {
-            return Err(ToolError::invalid_state(format!(
-                "group {} is {}, not active",
-                g.id,
-                g.status.as_str()
-            )));
+        match g.status {
+            GroupStatus::Active => self.check_tasks_finished(&a.group_id)?,
+            GroupStatus::MergeBlocked => self.check_worktree_free(&a.group_id)?,
+            other => {
+                return Err(ToolError::invalid_state(format!(
+                    "group {} is {}; only an active or merge_blocked group can be finished",
+                    g.id,
+                    other.as_str()
+                )));
+            }
         }
+        let from = g.base_branch.clone();
+        if let Some(into) = a.into.filter(|i| *i != from) {
+            check_target_branch(&into)?;
+            self.emit(DomainEvent::GroupBaseChanged {
+                group: a.group_id.clone(),
+                from,
+                to: into,
+            });
+        }
+        self.start_merge(&a.group_id, a.summary, MergeTrigger::FinishGroup)?;
+        Ok(json!({ "group_id": a.group_id, "status": GroupStatus::Finishing }))
+    }
+
+    fn check_tasks_finished(&self, group: &str) -> Result<(), ToolError> {
         let open: Vec<String> = self
             .state
-            .tasks_of(&a.group_id)
+            .tasks_of(group)
             .filter(|t| !t.status.is_terminal())
             .map(|t| format!("{} ({})", t.id, t.status.as_str()))
             .collect();
-        if !open.is_empty() {
-            return Err(ToolError::invalid_state(format!(
-                "tasks not finished yet: {} (wait for them, or cancel_task them)",
-                open.join(", ")
-            )));
+        if open.is_empty() {
+            return Ok(());
         }
-        let op = GitOp::MergeGroup {
-            group: g.id.clone(),
-            group_branch: g.group_branch.clone(),
-            base_branch: g.base_branch.clone(),
-            trigger: MergeTrigger::FinishGroup,
-        };
-        self.emit(DomainEvent::GroupFinishing {
-            group: a.group_id.clone(),
-            summary: a.summary,
-        });
-        self.effect(Effect::Git(op));
-        Ok(json!({ "group_id": a.group_id, "status": GroupStatus::Finishing }))
+        Err(ToolError::invalid_state(format!(
+            "tasks not finished yet: {} (wait for them, or cancel_task them)",
+            open.join(", ")
+        )))
     }
 
     fn cancel_group(&mut self, a: &CancelGroupArgs) -> Reply {

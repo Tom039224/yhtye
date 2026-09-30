@@ -1,5 +1,5 @@
 //! Helpers for the fake-agent chat tests (`orchestration_fake_chats`,
-//! `orchestration_fake_follow`): a repository-backed orchestration, sending
+//! `orchestration_fake_worktree`): a repository-backed orchestration, sending
 //! to chats and waiting for events.
 
 use std::path::{Path, PathBuf};
@@ -103,19 +103,6 @@ pub fn said(session: &'static str, needle: &'static str) -> impl Fn(&ApiEvent) -
 
 pub fn is_domain(e: &ApiEvent, f: impl Fn(&DomainEvent) -> bool) -> bool {
     matches!(&e.body, ApiEventBody::Domain { event } if f(event))
-}
-
-/// `(chat, from, to)` of every `chat_branch_changed` event.
-pub fn branch_changes(events: &[ApiEvent]) -> Vec<(String, String, String)> {
-    events
-        .iter()
-        .filter_map(|e| match &e.body {
-            ApiEventBody::Domain {
-                event: DomainEvent::ChatBranchChanged { chat, from, to },
-            } => Some((chat.clone(), from.clone(), to.clone())),
-            _ => None,
-        })
-        .collect()
 }
 
 /// Whether `e` says the session `key` stopped (not by a shutdown).

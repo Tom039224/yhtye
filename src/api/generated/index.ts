@@ -24,6 +24,7 @@ export type * from "./ErrorCode";
 export type * from "./GitBranch";
 export type * from "./GitCommit";
 export type * from "./GitOverview";
+export type * from "./GitWorktree";
 export type * from "./Group";
 export type * from "./GroupStatus";
 export type * from "./HarnessInfo";

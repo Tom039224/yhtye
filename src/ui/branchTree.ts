@@ -1,37 +1,101 @@
-// The BRANCHES tree's data (orchestrator-desktop §9): local branches without
-// Yhtye's internal ones, each with its chats (newest first), and the chats
-// whose branch no longer exists.
+// The BRANCHES tree's data (orchestrator-desktop §9, Stage 8e): the
+// repository's worktrees (named by the branch each has checked out now), each
+// with its chats (newest first); chats whose worktree git no longer lists; and
+// the local branches no worktree has checked out.
 
-import type { ChatInfo, GitOverview } from "../api/generated";
+import type { ChatInfo, GitOverview, GitWorktree } from "../api/generated";
 import { byRecency, isInternalBranch, orchestratorKey } from "../store/chats";
 import type { ProjectView } from "../store/project";
 
-export interface BranchNode {
-  name: string;
-  /** Checked out in the main clone. */
-  isHead: boolean;
+export interface WorktreeNode {
+  path: string;
+  /** What to call it: its branch now, `detached @sha`, or its directory while git is unread. */
+  label: string;
+  /** The main worktree (the original clone). */
+  isMain: boolean;
+  /** Its directory is gone (sending to its chats is refused). */
+  missing: boolean;
   chats: ChatInfo[];
 }
 
 export interface BranchTree {
-  branches: BranchNode[];
-  /** Chats of a branch git no longer has (only known once git was read). */
-  deleted: ChatInfo[];
+  worktrees: WorktreeNode[];
+  /** Chats of a worktree git no longer lists (only known once git was read). */
+  lost: ChatInfo[];
+  /** Local branches checked out nowhere (a chat there makes a Yhtye worktree). */
+  otherBranches: string[];
+}
+
+/** Where a chat's worktree is now, as git was last read (`unknown`: not read yet). */
+export type Place =
+  | { kind: "branch"; name: string }
+  | { kind: "detached"; sha: string | null }
+  | { kind: "missing" }
+  | { kind: "unknown" };
+
+export function findWorktree(overview: GitOverview | null, path: string): GitWorktree | undefined {
+  return overview?.worktrees.find((w) => w.path === path);
+}
+
+export function placeOf(chat: ChatInfo, overview: GitOverview | null): Place {
+  if (!overview) return { kind: "unknown" };
+  const w = findWorktree(overview, chat.worktree);
+  if (!w || w.missing) return { kind: "missing" };
+  return w.branch ? { kind: "branch", name: w.branch } : { kind: "detached", sha: w.head_sha };
+}
+
+/** The last part of a path (`/a/b/feature-x` → `feature-x`). */
+export function dirName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+export function detachedLabel(sha: string | null): string {
+  return sha ? `detached @${sha.slice(0, 7)}` : "detached";
+}
+
+/** A place as shown in the header and the pill (`null` while git is unread). */
+export function placeLabel(place: Place): string | null {
+  switch (place.kind) {
+    case "branch":
+      return place.name;
+    case "detached":
+      return detachedLabel(place.sha);
+    case "missing":
+      return "作業ツリーが見つかりません";
+    case "unknown":
+      return null;
+  }
+}
+
+function worktreeLabel(w: GitWorktree): string {
+  return w.branch ?? detachedLabel(w.head_sha);
+}
+
+/** Yhtye's own worktrees of groups and tasks (on `yhtye/*`); shown only if a chat is bound to one. */
+function isShown(w: GitWorktree, chats: ChatInfo[]): boolean {
+  if (chats.length > 0) return true;
+  return !w.missing && !(w.branch && isInternalBranch(w.branch));
 }
 
 export function buildTree(chats: ChatInfo[], overview: GitOverview | null): BranchTree {
   const sorted = byRecency(chats);
-  const chatsOf = (branch: string) => sorted.filter((c) => c.branch === branch);
+  const chatsOf = (path: string) => sorted.filter((c) => c.worktree === path);
   if (!overview) {
-    const names = [...new Set(sorted.map((c) => c.branch))];
-    return { branches: names.map((name) => ({ name, isHead: false, chats: chatsOf(name) })), deleted: [] };
+    const paths = [...new Set(sorted.map((c) => c.worktree))];
+    const worktrees = paths.map((path) => ({ path, label: dirName(path), isMain: false, missing: false, chats: chatsOf(path) }));
+    return { worktrees, lost: [], otherBranches: [] };
   }
-  const names = overview.branches.map((b) => b.name).filter((n) => !isInternalBranch(n));
-  const known = new Set(names);
-  return {
-    branches: names.map((name) => ({ name, isHead: name === overview.head, chats: chatsOf(name) })),
-    deleted: sorted.filter((c) => !known.has(c.branch)),
-  };
+  const worktrees: WorktreeNode[] = overview.worktrees
+    .map((w) => ({ w, chats: chatsOf(w.path) }))
+    .filter(({ w, chats: c }) => isShown(w, c))
+    .map(({ w, chats: c }) => ({ path: w.path, label: worktreeLabel(w), isMain: w.is_main, missing: w.missing, chats: c }));
+  const listed = new Set(overview.worktrees.map((w) => w.path));
+  const checkedOut = new Set(overview.worktrees.map((w) => w.branch).filter((b): b is string => b !== null));
+  const otherBranches = overview.branches
+    .map((b) => b.name)
+    .filter((n) => !isInternalBranch(n) && !checkedOut.has(n));
+  return { worktrees, lost: sorted.filter((c) => !listed.has(c.worktree)), otherBranches };
 }
 
 export type Ring = "running" | "ready" | "stopped";

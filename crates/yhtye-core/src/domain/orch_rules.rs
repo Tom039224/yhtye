@@ -6,7 +6,7 @@
 //! `reminder=N`); after `MAX_GROUP_FINISH_NUDGES` reminders Yhtye finishes the
 //! group itself (merge into the base branch, result as `merge_result`).
 
-use super::command::{Effect, GitOp, MergeTrigger, TurnOutcome};
+use super::command::{MergeTrigger, TurnOutcome};
 use super::event::DomainEvent;
 use super::inbox::{InboxItem, InboxKind};
 use super::machine::Tx;
@@ -87,19 +87,9 @@ impl Tx {
 
     /// `finish_group` on the orchestrator's behalf.
     fn auto_finish(&mut self, group: &str) {
-        let Some(g) = self.state.group(group) else {
-            return;
-        };
-        let op = GitOp::MergeGroup {
-            group: g.id.clone(),
-            group_branch: g.group_branch.clone(),
-            base_branch: g.base_branch.clone(),
-            trigger: MergeTrigger::Yhtye,
-        };
-        self.emit(DomainEvent::GroupFinishing {
-            group: group.to_string(),
-            summary: AUTO_FINISH_SUMMARY.to_string(),
-        });
-        self.effect(Effect::Git(op));
+        let summary = AUTO_FINISH_SUMMARY.to_string();
+        if let Err(e) = self.start_merge(group, summary, MergeTrigger::Yhtye) {
+            tracing::error!("could not finish group {group}: {e}");
+        }
     }
 }

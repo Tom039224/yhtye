@@ -75,14 +75,9 @@ describe("a replaced harness", () => {
   });
 });
 
-describe("a renamed branch", () => {
-  it("adds a small line to the conversation of its chat only", () => {
-    const t = fold([
-      ev(1, { type: "domain", event: { type: "chat_branch_changed", chat: "C-2", from: "feat/x", to: "feat/y" } }),
-    ]);
-    expect(t["orchestrator:C-2"]).toEqual([
-      expect.objectContaining({ kind: "lifecycle", text: "ブランチ名が feat/x → feat/y に変わりました", error: false }),
-    ]);
-    expect(t["orchestrator:C-1"]).toBeUndefined();
+describe("a group merged into another branch", () => {
+  it("adds nothing to the conversation (the orchestrator reports it)", () => {
+    const t = fold([ev(1, { type: "domain", event: { type: "group_base_changed", group: "G-1", from: "feat/x", to: "feat/y" } })]);
+    expect(t).toEqual({});
   });
 });

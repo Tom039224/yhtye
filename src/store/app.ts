@@ -24,7 +24,7 @@ import type {
   UsageReport,
 } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
-import { upsertChat } from "./chats";
+import { isOrchestratorKey, upsertChat } from "./chats";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
@@ -203,12 +203,18 @@ export class AppStore {
     this.updateProject((v) => ({ ...v, selectedChat: chat, unread }));
   }
 
-  /** A new chat on `branch` (no orchestrator yet); it becomes the selected one. Failures are shown as errors. */
-  async createChat(branch: string): Promise<boolean> {
+  /**
+   * A new chat (no orchestrator yet) in a worktree, or in the worktree of a
+   * branch (Yhtye makes one if it is checked out nowhere); it becomes the
+   * selected one. Failures are shown as errors.
+   */
+  async createChat(target: { worktree: string } | { branch: string }): Promise<boolean> {
     const project = this.state.project?.info.id;
     if (!project) return false;
-    const r = await this.run({ type: "create_chat", project, branch }, "chat");
+    const r = await this.run({ type: "create_chat", project, ...target }, "chat");
     if (!r) return false;
+    // A branch may have got a new worktree: list it before showing the chat.
+    if ("branch" in target) await this.refreshGit();
     this.adoptChat(project, r.chat);
     return true;
   }
@@ -222,7 +228,7 @@ export class AppStore {
     const project = this.state.project?.info.id;
     if (!project) return;
     const r = await this.invoke({ type: "create_branch", project, name, from }, "chat");
-    // Git first: a chat shown before the overview has its branch reads as "deleted".
+    // Git first: a chat shown before the overview lists its worktree reads as "not found".
     await this.refreshGit();
     this.adoptChat(project, r.chat);
   }
@@ -389,7 +395,7 @@ export class AppStore {
       this.notify();
       return;
     }
-    if (!ev.live && changesGit(ev)) this.scheduleGitRefresh();
+    if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) this.scheduleGitRefresh();
     if (this.syncing) {
       this.buffer.push(ev);
       return;
@@ -560,13 +566,21 @@ export class AppStore {
   }
 }
 
+/**
+ * An orchestrator finished a turn: it may have renamed or switched a branch
+ * itself (Stage 8e: the tree shows what the worktrees have checked out now).
+ */
+function endsOrchestratorTurn(ev: ApiEvent): boolean {
+  return ev.body.type === "agent" && ev.body.event.type === "turn_ended" && isOrchestratorKey(ev.body.session);
+}
+
 /** Durable domain events after which branches or commits may have changed. */
 function changesGit(ev: ApiEvent): boolean {
   if (ev.body.type !== "domain") return false;
   switch (ev.body.event.type) {
     case "chat_created":
-    case "chat_branch_changed":
     case "group_created":
+    case "group_base_changed":
     case "group_merge_finished":
     case "group_cancelled":
     case "workspace_ready":

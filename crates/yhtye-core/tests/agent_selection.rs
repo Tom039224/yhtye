@@ -80,7 +80,8 @@ async fn open(core: &Core, r: &TempRepo) -> String {
     // The chat every test sends to (`C-1`, on `main`).
     let cmd = ApiCommand::CreateChat {
         project: project.clone(),
-        branch: "main".into(),
+        branch: Some("main".into()),
+        worktree: None,
     };
     run(core, cmd).await;
     project

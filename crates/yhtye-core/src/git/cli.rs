@@ -8,13 +8,14 @@
 //! Every operation accepts the results of an earlier, interrupted run of itself.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::branches;
 use super::repo::{self, Hooks, MergeOutcome};
 use super::run::git_ok;
-use super::worktree::{ensure_worktree, is_worktree, remove_worktree};
+use super::worktree::{ensure_worktree, is_worktree, listed_path, remove_worktree};
 use super::{BranchWorktreeError, CreateBranchError, GitService};
 use crate::domain::{GitOp, GitResult, TaskKind, task_branch};
 
@@ -33,6 +34,18 @@ pub fn worktree_root(data_dir: &Path, project: &str) -> PathBuf {
 pub struct GitCli {
     repo: PathBuf,
     root: PathBuf,
+    before_group_merge: Option<TestHook>,
+}
+
+/// Test hook run in the chat's worktree between checking it and merging a
+/// group there (to simulate someone switching branches at that moment).
+#[derive(Clone)]
+struct TestHook(Arc<dyn Fn(&Path) + Send + Sync>);
+
+impl std::fmt::Debug for TestHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TestHook")
+    }
 }
 
 /// The branches an operation works with.
@@ -59,7 +72,17 @@ impl GitCli {
         Self {
             repo: repo.into(),
             root: root.into(),
+            before_group_merge: None,
         }
+    }
+
+    /// For tests only: runs `hook` (with the chat's worktree) after a group
+    /// merge's checks and right before git merges.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn before_group_merge(mut self, hook: impl Fn(&Path) + Send + Sync + 'static) -> Self {
+        self.before_group_merge = Some(TestHook(Arc::new(hook)));
+        self
     }
 
     /// Integration worktree of `group` (checked out on the group branch).
@@ -224,25 +247,28 @@ impl GitCli {
         Ok(GitResult::Done)
     }
 
-    /// Merges the group branch into the base branch in the base branch's
-    /// worktree (resolved now: the main worktree if it has the branch checked
-    /// out, any other worktree of it, or one Yhtye creates), if it has no
-    /// uncommitted changes to tracked files and no operation in progress.
-    /// Anything in the way is `Blocked`; the user's tree is never changed
-    /// except by a successful merge.
-    async fn merge_group(&self, b: &Branches<'_>) -> Step<GitResult> {
-        let dir = match self.resolve(b.base_branch).await {
-            Ok(dir) => dir,
-            Err(e) => {
-                return Ok(GitResult::Blocked {
-                    detail: e.to_string(),
-                });
-            }
-        };
-        if let Some(reason) = base_blocker(&dir, b.base_branch).await? {
+    /// Merges the group branch into the base branch in the chat's worktree
+    /// `dir`, checked right before (Stage 8e): the worktree must exist and have
+    /// the base branch checked out (else nothing is merged and the detail tells
+    /// the orchestrator what it found), have no uncommitted changes to tracked
+    /// files and no operation in progress. Anything in the way is `Blocked`; the
+    /// user's tree is never changed except by a successful merge. The check and
+    /// the merge are not atomic (another chat or the user may switch branches in
+    /// between), so where the merge landed is checked afterwards.
+    async fn merge_group(&self, dir: &Path, b: &Branches<'_>) -> Step<GitResult> {
+        if let Some(reason) = base_mismatch(dir, b).await? {
             return Ok(GitResult::Blocked { detail: reason });
         }
-        let result = if repo::is_ancestor(&dir, b.group_branch, "HEAD").await? {
+        if let Some(reason) = base_blocker(dir, b.base_branch).await? {
+            return Ok(GitResult::Blocked { detail: reason });
+        }
+        let dir = dir.to_path_buf();
+        let before = repo::rev(&dir, &format!("refs/heads/{}", b.base_branch)).await?;
+        if let Some(TestHook(hook)) = &self.before_group_merge {
+            hook(&dir);
+        }
+        // The base branch itself, not `HEAD` (which may have been switched).
+        let result = if repo::is_ancestor(&dir, b.group_branch, &before).await? {
             GitResult::Merged {
                 detail: format!("{} is already in {}", b.group_branch, b.base_branch),
             }
@@ -252,14 +278,7 @@ impl GitCli {
                 b.group_branch, b.group, b.base_branch
             );
             match repo::merge_no_ff(&dir, b.group_branch, &msg, Hooks::Run).await? {
-                MergeOutcome::Merged(head) => GitResult::Merged {
-                    detail: format!(
-                        "merged {} into {} ({})",
-                        b.group_branch,
-                        b.base_branch,
-                        short(&head)
-                    ),
-                },
+                MergeOutcome::Merged(head) => landing(&dir, b, &before, &head).await?,
                 MergeOutcome::Conflict(files) => GitResult::Blocked {
                     detail: format!(
                         "merging {} into {} conflicts in: {} (the merge was aborted)",
@@ -324,15 +343,77 @@ impl GitCli {
             GitOp::RemoveGroupWorkspace { group } => self.remove_group(group).await,
             GitOp::MergeGroup {
                 group,
+                worktree,
                 group_branch,
                 base_branch,
                 ..
             } => {
                 let b = branch_set(group, group_branch, base_branch);
-                self.merge_group(&b).await
+                self.merge_group(worktree, &b).await
             }
         }
     }
+}
+
+/// Why the group cannot be merged in `dir` because it is not on the group's
+/// base branch any more (renamed, switched, detached, or gone), if so. The
+/// text is for the orchestrator: what it found and how to go on.
+async fn base_mismatch(dir: &Path, b: &Branches<'_>) -> Step<Option<String>> {
+    let base = b.base_branch;
+    let shown = dir.display();
+    let now = if !dir.is_dir() {
+        format!("the working tree {shown} no longer exists")
+    } else {
+        match repo::current_branch(dir).await? {
+            Some(branch) if branch == base => return Ok(None),
+            Some(branch) => {
+                format!("the working tree {shown} now has branch `{branch}` checked out")
+            }
+            None => format!("the working tree {shown} is now at a detached HEAD"),
+        }
+    };
+    Ok(Some(format!(
+        "Nothing was merged: group {} was to be merged into `{base}`, but {now}. Put the \
+         working tree back on `{base}` and call finish_group again, or call finish_group with \
+         `into` set to the branch checked out now to merge there instead.",
+        b.group
+    )))
+}
+
+/// Whether the merge git just made in `dir` (now at `head`) landed on the base
+/// branch on top of `before` (its commit when the checks passed). If not (the
+/// worktree was switched, or the base branch moved, while merging) it is
+/// `Blocked` with where it went; nothing is undone, the user decides.
+async fn landing(dir: &Path, b: &Branches<'_>, before: &str, head: &str) -> Step<GitResult> {
+    let base = b.base_branch;
+    let now = repo::current_branch(dir).await?;
+    let parent = repo::rev_opt(dir, "HEAD^1").await?;
+    if now.as_deref() == Some(base) && parent.as_deref() == Some(before) {
+        return Ok(GitResult::Merged {
+            detail: format!("merged {} into {base} ({})", b.group_branch, short(head)),
+        });
+    }
+    let shown = dir.display();
+    let went = match now {
+        Some(branch) if branch != base => {
+            format!("branch `{branch}` (checked out in {shown} when git merged), not to `{base}`")
+        }
+        Some(_) => format!(
+            "`{base}`, but `{base}` had moved from {} while merging",
+            short(before)
+        ),
+        None => format!("a detached HEAD in {shown}, not to `{base}`"),
+    };
+    Ok(GitResult::Blocked {
+        detail: format!(
+            "The working tree changed while group {} was being merged: the merge of {} (now \
+             {}) went to {went}. Yhtye undid nothing. Check that branch (revert the merge there \
+             if it was not wanted), put {shown} back on `{base}` and call finish_group again.",
+            b.group,
+            b.group_branch,
+            short(head)
+        ),
+    })
 }
 
 /// Why the worktree `dir` of `base` cannot take the group merge now, if anything.
@@ -396,8 +477,8 @@ impl GitService for GitCli {
         repo::current_branch(dir).await
     }
 
-    async fn was_renamed(&self, from: &str, to: &str) -> Result<bool, String> {
-        repo::was_renamed(&self.repo, from, to).await
+    async fn find_worktree(&self, dir: &Path) -> Result<Option<PathBuf>, String> {
+        listed_path(&self.repo, dir).await
     }
 
     async fn resolve_branch_worktree(&self, branch: &str) -> Result<PathBuf, BranchWorktreeError> {

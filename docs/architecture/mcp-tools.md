@@ -59,9 +59,9 @@ type Verdict = "approve" | "needs_changes";
 | | |
 |---|---|
 | 引数 | `title: string` (必須), `summary?: string` |
-| 戻り値 | `{ group_id, group_branch, base_branch }` (`base_branch` = 呼び出したチャットの作業対象ブランチ。Stage 8) |
-| 遷移 | 新しい Group を `active` で作成。group ブランチと統合 worktree を作る |
-| エラー | `conflict` (**そのチャットの作業対象ブランチ**に active / finishing のグループが既にある — 同じブランチの別チャットのものも数える。`merge_blocked` は数えない。Stage 8 で「プロジェクトに」から変更), `invalid_state` (作業対象ブランチが削除・改名されて存在しない。Stage 8 で「detached HEAD 等」から変更), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
+| 戻り値 | `{ group_id, group_branch, base_branch }` (`base_branch` = 呼び出した時点でチャットの作業ツリーがチェックアウトしているブランチ。Stage 8e) |
+| 遷移 | 新しい Group を `active` で作成 (`base_branch` を記録)。group ブランチと統合 worktree を作る |
+| エラー | `conflict` (**そのチャットの作業ツリー**に active / finishing のグループが既にある — 同じ作業ツリーの別チャットのものも数える。`merge_blocked` は数えない。Stage 8e で「ブランチに」から変更), `invalid_state` (作業ツリーが detached HEAD / `yhtye/*` をチェックアウト中 / 作業ツリーが見つからない。Stage 8e), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
 
 ### `create_task`
 
@@ -135,10 +135,11 @@ effort 違いで複数あるのに `effort` が無ければ、`invalid_argument`
 
 | | |
 |---|---|
-| 引数 | `group_id`, `summary: string` (ユーザー向けの完了要約。イベントとして保存) |
+| 引数 | `group_id`, `summary: string` (ユーザー向けの完了要約。イベントとして保存), `into?: string` (Stage 8e: 今の作業ツリーのブランチにマージすることを受け入れる。下記) |
 | 戻り値 | `{ group_id, status, merge: { ok: bool, detail } }` |
-| 遷移 | 全タスクが終端のときのみ。`active` → `finishing` → group ブランチを base ブランチへマージ → `done`。マージできない (dirty / 別ブランチ / コンフリクト) なら `merge_blocked`。応答はマージが終わってから返す (戻り値の `merge` が結果) |
-| エラー | `invalid_state` (終端でないタスクがある — message に一覧を含める / グループが `active` でない), `not_found` |
+| 遷移 | 全タスクが終端の `active` グループ、または `merge_blocked` のグループ (マージのやり直し、Stage 8e)。→ `finishing` → **マージの直前にチャットの作業ツリーが今どのブランチかを確かめ**、グループの `base_branch` と同じで clean なら group ブランチをマージ → `done`。ブランチが違う (改名・別ブランチ・detached・作業ツリーが無い) なら**マージせず** `merge_blocked` にし、`merge.detail` で状況 (「base は X、作業ツリーは今 Y」) と対処を返す。dirty / コンフリクトも `merge_blocked`。応答はマージ (または確認) が終わってから返す (戻り値の `merge` が結果) |
+| `into` | 作業ツリーが今チェックアウトしているブランチ名と**一致すること** (Yhtye がその場で確かめる)。一致すればグループの `base_branch` を `into` に変えて (`group_base_changed`) からマージする。食い違いを知らされたオーケストレータが「今のブランチにマージする」と決めたときに使う。直すなら作業ツリーを base に戻して `into` なしで呼び直す |
+| エラー | `invalid_state` (終端でないタスクがある — message に一覧を含める / グループが `active` でも `merge_blocked` でもない), `invalid_argument` (`into` が作業ツリーの今のブランチと違う — message に今のブランチ (または detached) を含める / `into` が `yhtye/*`), `conflict` (`merge_blocked` からのやり直しで、同じ作業ツリーに別の active / finishing のグループがある), `not_found` |
 
 ### `cancel_group`
 
@@ -210,7 +211,7 @@ Yhtye が stash に退避済み (resume でそのまま完了できる。Stage 3
 | `help_raised` | `help_id`, `task`, `kind` | help の message | `answer_help` / `cancel_task` |
 | `instruction_needed` | `task` | 依存先タスクの最終結果 | `set_instruction` |
 | `group_settled` | `group` (催促では `reminder=N` も) | 全タスクの結果要約・開始不能タスク (催促では催促文) | タスク追加 or `finish_group` / `cancel_group` (同じターンで) |
-| `merge_result` | `group`, `ok` | base へのマージ結果 | ユーザーへの報告 |
+| `merge_result` | `group`, `ok` | base へのマージ結果 (Stage 8e: 作業ツリーのブランチが base と違って止めた場合はその状況と対処) | ユーザーへの報告。止められた場合は対処 (作業ツリーを直して `finish_group`、または `finish_group` の `into`) |
 | `restarted` | — | Yhtye の再起動・オーケストレータの終了で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
 
 `finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で

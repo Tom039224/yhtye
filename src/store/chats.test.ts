@@ -6,17 +6,10 @@ import { applyChatEvent, chatOfUserCall, initialChat, isInternalBranch, orchestr
 
 describe("chat list folding", () => {
   it("adds a created chat once and takes the times from the event", () => {
-    const created = ev(9, { type: "domain", event: { type: "chat_created", chat: { id: "C-3", branch: "dev", title: null } } });
+    const created = ev(9, { type: "domain", event: { type: "chat_created", chat: { id: "C-3", worktree: "/wt/dev", title: null } } });
     const once = applyChatEvent(CHAT_INFOS, created);
-    expect(once.at(-1)).toMatchObject({ id: "C-3", branch: "dev", created_ms: created.ts_ms, last_used_ms: created.ts_ms });
+    expect(once.at(-1)).toMatchObject({ id: "C-3", worktree: "/wt/dev", created_ms: created.ts_ms, last_used_ms: created.ts_ms });
     expect(applyChatEvent(once, created)).toHaveLength(3);
-  });
-
-  it("moves a chat to its renamed branch", () => {
-    const renamed = ev(9, { type: "domain", event: { type: "chat_branch_changed", chat: "C-2", from: "feat/x", to: "feat/y" } });
-    const list = applyChatEvent(CHAT_INFOS, renamed);
-    expect(list.find((c) => c.id === "C-2")?.branch).toBe("feat/y");
-    expect(list.find((c) => c.id === "C-1")?.branch).toBe("main");
   });
 
   it("titles a chat and stamps its last use when its orchestrator is prompted", () => {
