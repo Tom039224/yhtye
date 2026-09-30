@@ -12,6 +12,7 @@ import type {
   ApiResponse,
   ChatInfo,
   GitOverview,
+  HarnessDetection,
   HarnessInfo,
   HarnessModels,
   RoleSettings,
@@ -95,6 +96,8 @@ export class FakeCore {
   usage: UsageReport | null = null;
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
   agents = new FakeAgentSettings();
+  /** Harness detection served by `get_harnesses` / `detect_harnesses` / `set_harness_path`. */
+  harnesses = new FakeHarnesses();
   /** Registered secret env names, and the values the core "stored" (test-only, never shown). */
   secretNames: string[] = [];
   secretValues: Record<string, string> = {};
@@ -134,6 +137,15 @@ export class FakeCore {
     const w = { path, branch, head_sha: "n".repeat(40), is_main: false, missing: false };
     this.git = { ...this.git, worktrees: [...this.git.worktrees, w] };
     return path;
+  }
+
+  /** Detects the harnesses and registers the installed ones, like the core's catalog. */
+  private detected(): ApiResponse {
+    const harnesses = this.harnesses.detect();
+    this.agents.harnesses = harnesses
+      .filter((h) => h.installed)
+      .map((h) => this.agents.harnesses.find((known) => known.id === h.id) ?? { id: h.id, label: h.label, requires_model: h.id !== "claude-code" });
+    return { type: "harnesses", harnesses };
   }
 
   handle(cmd: ApiCommand): ApiResponse {
@@ -178,6 +190,12 @@ export class FakeCore {
         if (!efforts) throw new CommandError("unavailable", `efforts of ${cmd.harness}/${cmd.model}: could not select ${cmd.model}`);
         return { type: "model_efforts", efforts: { harness: cmd.harness, model: cmd.model, efforts } };
       }
+      case "get_harnesses":
+      case "detect_harnesses":
+        return this.detected();
+      case "set_harness_path":
+        this.harnesses.setPath(cmd.harness, cmd.path);
+        return this.detected();
       case "list_secret_env":
         return { type: "secret_env", names: [...this.secretNames] };
       case "set_secret_env":
@@ -249,5 +267,62 @@ export class FakeAgentSettings {
       project_layer: projectLayer ? { ...projectLayer } : null,
       effective,
     };
+  }
+}
+
+const HARNESS_SPECS = [
+  { id: "claude-code", label: "Claude Code", main: "npx", also: [] },
+  { id: "opencode", label: "OpenCode", main: "opencode", also: [] },
+  { id: "codex", label: "Codex", main: "codex", also: ["npx"] },
+  { id: "devin", label: "Devin", main: "devin", also: [] },
+];
+
+/** The core's harness detection in miniature: a search result per command, and manual paths. */
+export class FakeHarnesses {
+  /** What the automatic search finds, by command (a missing command is not found). */
+  found: Record<string, { path: string; source: "path" | "known_dir" }> = {
+    npx: { path: "/usr/bin/npx", source: "path" },
+  };
+  /** Absolute paths of executable files (a manual path must be one). */
+  executables = new Set<string>(["/usr/bin/npx"]);
+  /** Stored manual paths of the main executables, by harness. */
+  overrides: Record<string, string> = {};
+
+  setPath(harness: string, path: string | null): void {
+    if (!HARNESS_SPECS.some((s) => s.id === harness)) throw new CommandError("not_found", `unknown harness ${harness}`);
+    if (path === null) {
+      delete this.overrides[harness];
+      return;
+    }
+    const p = path.trim();
+    if (!p.startsWith("/")) throw new CommandError("invalid_argument", `${harness}: not an absolute path: ${p}`);
+    if (!this.executables.has(p)) throw new CommandError("invalid_argument", `${harness}: not an executable file: ${p}`);
+    this.overrides[harness] = p;
+  }
+
+  detect(): HarnessDetection[] {
+    return HARNESS_SPECS.map((spec) => {
+      const override = this.overrides[spec.id] ?? null;
+      const overrideError = override !== null && !this.executables.has(override) ? `not an executable file: ${override}` : null;
+      const auto = this.found[spec.main];
+      const [main, source] =
+        override !== null
+          ? [overrideError ? null : override, overrideError ? ("none" as const) : ("override" as const)]
+          : [auto?.path ?? null, auto?.source ?? ("none" as const)];
+      const requirements = [
+        { command: spec.main, found: main },
+        ...spec.also.map((command) => ({ command, found: this.found[command]?.path ?? null })),
+      ];
+      return {
+        id: spec.id,
+        label: spec.label,
+        installed: requirements.every((r) => r.found !== null),
+        resolved_path: main,
+        path_source: source,
+        override_path: override,
+        override_error: overrideError,
+        requirements,
+      };
+    });
   }
 }
