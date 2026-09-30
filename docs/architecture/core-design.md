@@ -58,10 +58,12 @@ pub struct CoreConfig {
     pub data_dir: PathBuf,                   // yhtye.sqlite3 と worktrees/
     pub harnesses: Vec<HarnessPreset>,       // Stage 7b: ハーネスの登録簿 (§15)。以前は役割ごとの HarnessConfig 3 つ
     pub default_agent: AgentChoice,          // Stage 7b: 設定が無い役割の既定 (ハーネス × モデル)
+    pub detection: Option<DetectionConfig>,  // T-6: Some のとき、実行ファイルが見つかったハーネスだけを登録する (harnesses / default_agent は無視。§15.2)
     pub mcp_bind: SocketAddr,                // 既定 127.0.0.1:0
     pub domain: DomainConfig,
 }
-// CoreConfig::claude_code(data_dir, "haiku") が Claude Code だけを登録し、全役割の既定を claude-code × haiku にする。
+// CoreConfig::claude_code(data_dir, "haiku") が Claude Code だけを登録し、全役割の既定を claude-code × haiku にする (detection なし。テスト用)。
+// CoreConfig::installed(data_dir, "haiku") はアプリと開発ブリッジの設定: 上に detection を足し、見つかったハーネスだけを登録する。
 ```
 
 - **Stage 4 の決定**:
@@ -125,10 +127,11 @@ pub struct CoreConfig {
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
   `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b) /
   `get_agent_settings{project?}` / `set_agent_settings{project?, role, settings}` / `list_harness_models{harness, refresh?}` (Stage 7b、§15)。
+  **T-6 (§15.2、§15.7)**: `get_harnesses` / `detect_harnesses` / `set_harness_path{harness, path?}` (ハーネスの検出状態・再検出・手動パス)。
   **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
   `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
   `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage` /
-  `agent_settings` / `harness_models` (Stage 8 で `chats` / `chat`)。
+  `agent_settings` / `harness_models` (T-6 で `harnesses`、Stage 8 で `chats` / `chat`)。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
@@ -250,6 +253,8 @@ pub enum AgentOutput {
 `fn outcome_for(Option<&PermissionOption>) -> RequestPermissionOutcome` は純粋関数。
 `allow_always` → `allow_once` の順に kind で選び、どちらも無ければ `Cancelled`。
 **配列の先頭を選ぶことはしない。** ハンドラ内で即応答する (ブロックしない)。
+**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin) は kind が `allow_once` で
+id が `switch_` / `plan_` で始まらず `_always` で終わらないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6)。
 
 ### 3.4 `HarnessConfig`
 
@@ -261,6 +266,8 @@ pub struct HarnessConfig {
     pub system_prompt: SystemPromptStyle,      // MetaAppend | FirstPrompt
     pub session_meta: Option<Map<String, Value>>, // session/new・load の _meta に足すハーネス固有フィールド (Stage 2)
     pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
+    pub client_info: Option<ClientInfoOverride>,   // T-5: initialize の clientInfo の上書き。None (既定) = "yhtye" (acp-harnesses.md §10.4)
+    pub permission_policy: PermissionPolicy,   // T-5: Default | OnceOnly (§3.3)
 }
 // HarnessConfig::claude_code("haiku") が Claude Code 用の既定値、
 // オーケストレータも同じ設定 (Stage 8d で組み込みツールの制限 = `claude_code_orchestrator` を廃止。`orchestration-model.md` §8.1)。
@@ -464,6 +471,9 @@ Stage 3b で実装。
   全シナリオの最後に「ライブの状態 == テーブルから読んだ状態 == イベント再生の状態」と
   「ログの最後の seq == 配信した seq」を検査している。
 - `DomainConfig` は設定なので、起動時は保存値ではなく現在の設定で上書きする。
+- **`harness_paths`** (T-6、マイグレーション `0008_harness_paths.sql`): `(harness TEXT PRIMARY KEY, path TEXT, updated_ms)`。ユーザーが指定したハーネスの主実行ファイルの
+  手動パス。行が無い = 自動検出。`Store::harness_paths()` (全行を `HashMap<id, path>` で) と `Store::set_harness_path(harness, Option<path>, now_ms)`
+  (`None` は行の削除)。既存データは壊さない (追加のみ)。使い方は §15.2。
 
 ## 7. `git` モジュール
 
@@ -772,32 +782,50 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 `orchestrator_read_only` (オーケストレータの設定がファイルを書けない。`false` は UI で警告) を追加し、`HarnessInfo` にも載せた
 (**Stage 8d で削除**: 全ハーネスのオーケストレータが書けるので、フラグ・警告とも無い)。
 `HarnessPreset::opencode(fallback_model, env_remove)` ([`acp-harnesses.md`](acp-harnesses.md) §7.6)。
-アプリと開発ブリッジは `CoreConfig::installed(data_dir, model)` = `agents::installed_presets`: Claude Code は常に、OpenCode は
-`PATH` に実行可能な `opencode` があるときだけ登録する。
+アプリと開発ブリッジは `CoreConfig::installed(data_dir, model)`。当初は `agents::installed_presets` が Claude Code を常に、OpenCode を
+`PATH` に実行可能な `opencode` があるときだけ登録していたが、T-6 で下の検出に一般化し `installed_presets` は無くなった。
 
 **Stage 7e (Codex)**: preset に `model_config_env: Option<String>` (モデルと effort を JSON で渡す環境変数。Codex は `CODEX_CONFIG`。設定すると
 `HarnessPreset::config` が `{"model","model_reasoning_effort"}` を組み立てて入れ、effort は option として送らない)、`effort_config_id` (effort の config id。
 既定 `effort`、Codex は `reasoning_effort`。以前のグローバル定数 `EFFORT_CONFIG_ID` は既定値としてだけ残る)、`model_source: ModelSource { Acp, Codex }`
 (§15.6) を追加。`HarnessPreset::codex(codex_path)` ([`acp-harnesses.md`](acp-harnesses.md) §9): 全役割 `HarnessConfig::codex` (npx で `codex-acp@2.0.0`、
-`CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`。`installed_presets` は `codex` が `PATH`
-にあるときだけ登録する (`CODEX_COMMAND`)。
+`CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`。登録は `codex` が見つかったときだけ (当初は `PATH` のみ。T-6 で `npx` も要り、既知の場所も探す)。
 
-**ハーネス検出の一般化 (Devin 対応, T-6)**: 登録は「インストール済みのものだけ」に一般化した (`agents/detect.rs` / `installed.rs`)。
-検出は実行ファイルの検索だけで `--version` は実行しない: `PATH` (絶対パスの項目、実行可能な通常ファイル) → 既知の場所
-(`~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは claude-code = `npx`、
-opencode = `opencode`、codex = `codex` + `npx`、devin = `devin` (claude CLI は不要)。`detect_harnesses` が `HarnessDetection { id, label, installed,
-resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }` を返し、
-`presets_from` が installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (claude-code / codex は npx のパス、
-opencode / devin は本体。codex は `CODEX_PATH` にも `codex` を渡す。`HarnessPreset::with_command`)。**手動パス** (テーブル `harness_paths`、
-マイグレーション `0008`) は各ハーネスの主実行ファイル (claude-code は npx) だけを置き換え、保存時に「絶対パスかつ実行可能な通常ファイル」を
-検査する (`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは未インストール扱い (`override_error` に理由。検索には
-フォールバックしない)。組み込みの既定 (`default_choice`) は claude-code > opencode > devin > codex の最初のインストール済み
-(モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin = 未指定、codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。
-1 つも無くても Core は起動し、エージェント開始時に「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`)。
-**再検出**は `GetHarnesses` (設定を開いたとき) と `DetectHarnesses` (再検出ボタン。モデルのキャッシュも捨てる) で行い、
-`AgentCatalog::refresh` が登録簿と組み込みの既定を入れ替える。動いているセッションには影響しない。未登録ハーネスの行は
-オーケストレータのプロンプト・`get_status.agents`・`create_task` の検証から外す (`AgentCatalog::available` / `available_settings`)
-が、保存データと設定パネル用の `AgentSettingsView` は変えない。`CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses`。
+**T-5 (Devin)**: `HarnessPreset::devin(command)` ([`acp-harnesses.md`](acp-harnesses.md) §10): 全役割 `HarnessConfig::devin` (`devin acp`、`bypass`、`FirstPrompt`、
+`PermissionPolicy::OnceOnly`)、`requires_model = false`、`model_source = Acp`、effort の config id は既定の `effort` (実際の option の id は `acp::effort_option` が
+`category: thought_level` から解決する)。probe は mode の切り替えなし。**実機未検証**。
+
+**ハーネス検出の一般化と登録簿の動的化 (Devin 対応, T-6、`agents/detect.rs` / `agents/installed.rs` / `runtime/core/harnesses.rs`)**:
+登録は「インストール済みのものだけ」に一般化した。
+
+- **検出** (`detect_harnesses`、純粋関数): 実行ファイルの検索だけで `--version` は実行しない。`PATH` (絶対パスの項目、実行可能な通常ファイル) →
+  既知の場所 (`KNOWN_DIRS` = `~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは `HARNESS_SPECS`:
+  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin` (claude CLI は不要)。UTF-8 でないパスは数えない。
+- **`HarnessDetection { id, label, installed, resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }`**
+  (ts-rs で `src/api/generated/`)。`installed` = 必要なコマンドがすべて見つかった (手動パスがあるならそれが使える)。`resolved_path` は主実行ファイル (`HarnessSpec::main`)。
+- **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code / codex は npx のパス、
+  opencode / devin は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
+  (`Detected::with_found_npx`。使用量のプローブは起動時に 1 回だけ作り、再検出では作り直さない)。
+- **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx) **だけ**を置き換える (codex の `npx` は自動検出のみ)。
+  保存時に「絶対パスかつ実行可能な通常ファイル」を検査する (`check_executable_path`、`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは
+  未インストール扱い (`override_error` に理由。検索にはフォールバックしない)。
+- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin = 未指定、
+  codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。1 つも無くても Core は起動し、エージェント開始時に
+  「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`、`NO_HARNESS_MESSAGE`)。
+- **登録簿の動的化**: `AgentCatalog` の登録簿 (`Registry { presets, builtin }`) は `RwLock` に入り、`AgentCatalog::refresh(presets, builtin)` が**丸ごと入れ替える**
+  (動いているセッションには影響しない: 新しく起動するセッションから効く)。`harnesses()` / `harness_ids()` / `preset()` / `builtin()` / `resolve()` / `validate()` は呼んだ時点の登録簿を読む。
+  ロックの毒化 (パニック) は無視して続ける。
+- **`available()` / `available_settings(project)`**: 実効値から**未登録ハーネスの行を除く** (既定が除かれたら、組み込みの既定が行に残っていればそれ、無ければ最初に残った行、
+  行が 1 つも残らなければ組み込みの既定だけ)。オーケストレータのプロンプト (`runtime/launch.rs`)・`get_status.agents`・`create_task` の検証 (`runtime/driver.rs`) はこれを使う。
+  保存データと設定パネル用の `AgentSettingsView` は変えない (行は残り、UI が「(見つからない)」を出す)。
+- **`Core` のコマンド** (`runtime/core/harnesses.rs`、`DetectionConfig { env, known_dirs, claude_model }` を `CoreConfig::detection` に持つ):
+  - `Core::start` が `harness_paths` を読んで検出し、登録簿を作る (各ハーネスの検出結果を 1 行ずつログに出す)。
+  - `GetHarnesses` (設定の「ハーネス」タブを開いたとき) は検出をやり直して登録簿を入れ替え、`HarnessDetection` の一覧を返す。
+  - `DetectHarnesses` (「再検出」ボタン) は同じことに加えて、全ハーネスのモデル一覧のキャッシュ (`ModelService::invalidate`) を捨てる。
+  - `SetHarnessPath{harness, path?}` は未知のハーネスを `not_found`、絶対パスの実行可能な通常ファイルでないものを `invalid_argument` で拒み、`harness_paths` に保存 (`None` は削除) して
+    そのハーネスのモデルのキャッシュを捨て、再検出して一覧を返す。
+  - 並行する検出は `Inner::detecting` (`tokio::sync::Mutex`) で直列化する (最後に終わる検出が最新の手動パスを読んでいる)。
+  - `CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses` / `default_agent` を登録し、3 つのコマンドは空の一覧を返す (`set_harness_path` は保存して検査する)。
 
 `AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
 `OrchestrationConfig::agents: Arc<AgentCatalog>` (以前の `orchestrator / implementer / reviewer` の 3 フィールドを置き換え。

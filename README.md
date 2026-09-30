@@ -25,7 +25,9 @@ English: [README-EN.md](README-EN.md)
 - 作業ツリーごとの複数のチャット: BRANCHES のツリー (作業ツリーを今のブランチ名で表示) から新しいチャットを作る (ブランチはアプリから作成でき、専用の作業ツリーで動く)。
   チャットは並行して動かせ、過去のチャットも再開できる (グループは作成時に作業ツリーがチェックアウトしていたブランチへマージされ、マージ前にずれていればオーケストレータが対処する)
 - 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
-- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (**実機では未検証**)。
+  実行ファイル (`npx` / `opencode` / `codex` / `devin`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる。
+  設定の「ハーネス」タブで検出状態の確認、パスの手動指定、再検出ができる
 - 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
 - API キーなどの秘密の環境変数の登録 (OS のキーリングに保存)
 
@@ -36,6 +38,8 @@ English: [README-EN.md](README-EN.md)
 - Codex はオーケストレータとして使えない
   ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
 - Codex は OpenRouter 経由でのみ実機確認している
+- Devin (`devin acp`) は偽エージェントでのテストだけで、Devin 本体では試していない。動かなければ、
+  [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 の手動検証チェックリストが手がかりになる
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
 
@@ -50,9 +54,9 @@ English: [README-EN.md](README-EN.md)
 
 - エージェントはあなたのリポジトリのコピー (git worktree) でコードとシェルコマンドを承認なしで実行する。
   Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
-- エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`)。
+- エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`、Devin は `bypass`)。
   サンドボックスは無い。
-- Claude Code / OpenCode / Codex (OpenRouter) の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
+- Claude Code / OpenCode / Codex (OpenRouter) / Devin の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
   ただし登録した変数は**すべてのエージェント**に渡る。
