@@ -42,11 +42,11 @@ function emptySnapshot(state?: Partial<State>): Snapshot {
 }
 
 describe("App", () => {
-  it("shows the connection state and keeps the composer disabled while disconnected", async () => {
+  it("shows a lost connection in the banner and keeps the composer disabled while disconnected", async () => {
     const { transport, store } = setup({ connected: false });
-    expect(screen.getByTestId("connection")).toHaveTextContent("接続中");
+    expect(screen.queryByTestId("connection-lost")).not.toBeInTheDocument();
     act(() => transport.setStatus({ state: "closed", reason: "connection refused", retryInMs: 1000 }));
-    expect(screen.getByTestId("connection")).toHaveTextContent("切断: connection refused");
+    expect(screen.getByTestId("connection-lost")).toHaveTextContent("connection refused");
     expect(screen.getByText("プロジェクト (git リポジトリ) を開いてください。")).toBeInTheDocument();
     act(() => transport.setStatus({ state: "open" }));
     await openProject(store);

@@ -61,7 +61,6 @@ const GLYPHS = {
       <path d="M12 4.5V8M9.5 13h.01M14.5 13h.01" />
     </>
   ),
-  plug: <path d="M9 4v4M15 4v4M7 8h10v3a5 5 0 0 1-10 0zM12 16v4" />,
   "plug-off": <path d="M9 4v4M15 4v4M7 8h10v3a5 5 0 0 1-10 0zM12 16v4M4 4l16 16" />,
   alert: (
     <>

@@ -36,10 +36,8 @@
 }
 @keyframes ybreathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
 
-/* A status shown as an icon (the connection): its tone follows the state. */
+/* A status shown as an icon (the orchestrator's): its tone follows the state. */
 .status-icon { display: inline-flex; align-items: center; flex: none; color: var(--text-dim); }
-.status-icon-ok { color: var(--status-done-bar); }
-.status-icon-busy { color: var(--status-implementing-bar); }
 .status-icon-bad { color: var(--status-handling-bar); }
 
 /* A state as a small coloured square holding one icon (task / group status); its colours are the .tone-* / .group-status-* classes of App.css. */

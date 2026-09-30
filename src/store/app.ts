@@ -123,7 +123,8 @@ export class AppStore {
   private usageTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
-  private readonly prefs: Prefs;
+  /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
+  readonly prefs: Prefs;
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
