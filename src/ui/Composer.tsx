@@ -50,11 +50,7 @@ export function Composer({
     void send();
   };
 
-  const hint =
-    disabledReason ??
-    (starting
-      ? "オーケストレータを起動中…"
-      : turnRunning ? "作業中です。送ったメッセージはターンが終わると届きます。" : null);
+  const hint = disabledReason ?? (starting ? "起動中…" : turnRunning ? "作業中 · 送信分はターン終了後に届きます" : null);
 
   return (
     <div className="composer-wrap">
@@ -78,7 +74,7 @@ export function Composer({
               aria-label={`${m.task} の引用を外す`}
               onClick={() => onRemoveMention(m.task)}
             >
-              <span className="at">@</span>
+              <Icon name="at" size={12} className="at" />
               <span className="label">
                 {m.task} {m.title}
               </span>
@@ -97,7 +93,12 @@ export function Composer({
             onClick={() => void send()}
             disabled={!canSend}
           />
-          {hint ? <span className={`composer-hint ${disabledReason ? "error-text" : ""}`}>{hint}</span> : null}
+          {hint ? (
+            <span className={`composer-hint ${disabledReason ? "error-text" : ""}`} role="status">
+              <Icon name={disabledReason ? "alert" : starting ? "loader" : "clock"} size={12} spin={!disabledReason && starting} />
+              {hint}
+            </span>
+          ) : null}
         </div>
       </div>
     </div>

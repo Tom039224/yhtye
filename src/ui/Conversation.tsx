@@ -5,7 +5,8 @@ import { orchestratorKey, scopeState } from "../store/chats";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
-import { Icon } from "./Icon";
+import { EmptyState } from "./EmptyState";
+import { Icon, IconButton } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
 import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
@@ -20,7 +21,7 @@ interface Props {
 }
 
 export const NEW_CHAT_TITLE = "新しいチャット";
-const NO_CHAT_HINT = "BRANCHES の「+ 新しいチャット」から始めます";
+const NO_CHAT_HINT = "サイドバーの「新しいチャット」から始めます";
 
 /** Where the chat's worktree is now (its branch, detached, gone; unknown until git is read). */
 function chatPlace(overview: GitOverview | null, chat: ChatInfo | null): Place {
@@ -66,6 +67,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   return (
     <section className="conversation" aria-label="orchestrator">
       <header className="panel-header">
+        <Icon name="message" size={14} className="panel-icon" />
         <span className="panel-title" data-testid="chat-title" title={chat?.title ?? undefined}>
           {chat ? (chat.title ?? NEW_CHAT_TITLE) : "orchestrator"}
         </span>
@@ -80,7 +82,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
       </header>
       <div className="scroll" ref={scroller}>
         {!chat ? (
-          <p className="empty" data-testid="no-chat">{NO_CHAT_HINT}</p>
+          <EmptyState icon="message-plus" testId="no-chat" text={NO_CHAT_HINT} />
         ) : items?.length || streaming || view.historyStart > 1 ? (
           <TranscriptView
             items={items ?? []}
@@ -91,14 +93,14 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             before={<OlderHistory view={view} />}
           />
         ) : (
-          <p className="empty">まだ会話はありません。下の欄からオーケストレータに依頼してください。</p>
+          <EmptyState icon="message" text="会話はまだありません" />
         )}
       </div>
       {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
         key={chat?.id ?? "none"}
         disabled={disabledReason !== null}
-        disabledReason={disabledReason}
+        disabledReason={chat ? disabledReason : null}
         sending={sending}
         turnRunning={session?.turn_running ?? false}
         starting={queued.size > 0 && session?.status !== "live"}
@@ -115,36 +117,52 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
 export function OlderHistory({ view }: { view: ProjectView }) {
   const store = useStore();
   if (view.historyStart <= 1) return null;
+  const loading = view.loadingOlder;
   return (
-    <button
-      type="button"
-      className="btn btn-small load-older"
-      disabled={view.loadingOlder || view.phase !== "ready"}
+    <IconButton
+      icon={loading ? "loader" : "chevrons-up"}
+      spin={loading}
+      className="load-older"
+      label={loading ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
+      disabled={loading || view.phase !== "ready"}
       onClick={() => void store.loadOlderHistory()}
-    >
-      {view.loadingOlder ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
-    </button>
+    />
   );
 }
 
 /**
  * The design's group-wait banner (§3.4): while a group runs, results reach the
- * orchestrator only when every task has settled.
+ * orchestrator only when every task has settled. The sentence is its tooltip;
+ * on screen: the group, how far it is, and how many tasks need handling.
  */
 function WaitBanner({ state }: { state: State }) {
   const group = focusGroup(state);
   if (!group || !isOpenGroup(group)) return null;
   const p = groupProgress(state, group.id);
-  const text =
-    group.status === "finishing"
-      ? `グループ「${group.title}」を base ブランチへマージ中`
-      : awaitingFinish(state, group)
-        ? `グループ「${group.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
-        : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
+  const finishing = group.status === "finishing";
+  const awaiting = awaitingFinish(state, group);
+  const text = finishing
+    ? `グループ「${group.title}」を base ブランチへマージ中`
+    : awaiting
+      ? `グループ「${group.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
+      : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
+  const share = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
   return (
-    <div className="wait-banner" role="status" data-testid="wait-banner">
-      <span className="dot dot-accent" />
-      {text}
+    <div className="wait-banner" role="status" data-testid="wait-banner" title={text} aria-label={text}>
+      <Icon name={finishing ? "git-merge" : awaiting ? "hourglass" : "layers"} size={14} className={finishing ? "wait-busy" : ""} />
+      <span className="wait-title">{group.title}</span>
+      <span className="wait-progress" aria-hidden="true">
+        <span style={{ width: `${share}%` }} />
+      </span>
+      <span className="wait-count">
+        {p.done}/{p.total}
+      </span>
+      {p.handling > 0 ? (
+        <span className="wait-handling">
+          <Icon name="alert" size={12} />
+          {p.handling}
+        </span>
+      ) : null}
     </div>
   );
 }

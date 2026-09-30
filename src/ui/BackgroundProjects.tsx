@@ -1,4 +1,5 @@
 import { useAppState, useStore } from "../store/useStore";
+import { Icon } from "./Icon";
 import { backgroundProjects } from "./projectActivity";
 
 /**
@@ -15,7 +16,9 @@ export function BackgroundProjects() {
   if (background.length === 0) return null;
   return (
     <div className="bg-projects">
-      <div className="bg-caption">動作中</div>
+      <span className="bg-caption" title="バックグラウンドで動作中">
+        <Icon name="activity" size={13} />
+      </span>
       <ul className="bg-list" aria-label="バックグラウンドで動作中のプロジェクト">
         {background.map((p) => (
           <li key={p.id}>

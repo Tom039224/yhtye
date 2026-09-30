@@ -36,6 +36,7 @@
   --accent: #d9a066;
   --accent-hover: #e8b884;
   --accent-strong: #e0a45c;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
 
   /* Status: fixed hue, lightness/chroma varied (tokens.md "ステータス"). */
   --status-implementing-fg: oklch(0.86 0.07 250);

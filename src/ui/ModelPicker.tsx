@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import type { HarnessModels } from "../api/generated";
 import { modelText, pickerModels } from "./agentSettings";
+import { Icon } from "./Icon";
 
 interface Props {
   /** Names the trigger button (`… のモデル`). */
@@ -55,7 +56,7 @@ export function ModelPicker({ label, value, listed, disabled, onChange }: Props)
         onClick={() => setOpen((o) => !o)}
       >
         <span className="picker-value">{value === null ? "既定のモデル" : modelText(value, listed)}</span>
-        <span aria-hidden="true">▾</span>
+        <Icon name="chevron-down" size={14} />
       </button>
       {open ? (
         <div

@@ -26,10 +26,16 @@ const GLYPHS = {
     </>
   ),
   code: <path d="M8.5 7.5L4 12l4.5 4.5M15.5 7.5L20 12l-4.5 4.5M13 6l-2 12" />,
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>
+  ),
   history: (
     <>
-      <circle cx="12" cy="12" r="8" />
-      <path d="M12 7.5V12l3 2" />
+      <path d="M4.2 12A7.8 7.8 0 1 0 6.6 6.4" />
+      <path d="M4.5 4v4h4M12 8v4l2.5 1.5" />
     </>
   ),
   sliders: (
@@ -63,9 +69,99 @@ const GLYPHS = {
       <path d="M12 7.5v5M12 16h.01" />
     </>
   ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 11v5.5M12 7.8h.01" />
+    </>
+  ),
+  help: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.6a2.4 2.4 0 1 1 3.5 2.1c-.7.4-1.1.9-1.1 1.8M12 16.6h.01" />
+    </>
+  ),
+  ban: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M6 6l12 12" />
+    </>
+  ),
+  plus: <path d="M12 5v14M5 12h14" />,
+  check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
+  "chevron-down": <path d="M6.5 9.5l5.5 5.5 5.5-5.5" />,
+  "chevrons-up": <path d="M7 11l5-5 5 5M7 18l5-5 5 5" />,
+  "arrow-left": <path d="M19 12H5M11 6l-6 6 6 6" />,
+  "arrow-right": <path d="M5 12h14M13 6l6 6-6 6" />,
+  user: (
+    <>
+      <circle cx="12" cy="8.5" r="3.5" />
+      <path d="M5 19.5c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M3 12s3.4-6 9-6 9 6 9 6-3.4 6-9 6-9-6-9-6z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="5.5" />
+      <path d="M14.6 14.6L20 20" />
+    </>
+  ),
+  flag: <path d="M6 20V4M6 5h11l-2.2 4 2.2 4H6" />,
+  hourglass: <path d="M7 4.5h10M7 19.5h10M8 4.5c0 4.2 4 4.6 4 7.5s-4 3.3-4 7.5M16 4.5c0 4.2-4 4.6-4 7.5s4 3.3 4 7.5" />,
+  loader: <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5" />,
+  activity: <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4" />,
+  wrench: <path transform="rotate(45 12 12)" d="M13.37 3.24A4 4 0 0 1 13.4 10.75V18a1.4 1.4 0 0 1-2.8 0V10.75A4 4 0 0 1 10.63 3.24L12 6z" />,
+  bolt: <path d="M13 4L6.5 13.5H12L11 20l6.5-9.5H12z" />,
+  bell: <path d="M7 16.5V11a5 5 0 0 1 10 0v5.5l1.5 1.5h-13zM10.4 20.5a1.8 1.8 0 0 0 3.2 0" />,
+  "file-text": <path d="M7 4h7l4 4v12H7zM14 4v4h4M9.7 12.5h5M9.7 15.8h5" />,
+  message: <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4 3.5V16H6.5A1.5 1.5 0 0 1 5 14.5z" />,
+  "message-plus": (
+    <>
+      <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4 3.5V16H6.5A1.5 1.5 0 0 1 5 14.5z" />
+      <path d="M12 8v5M9.5 10.5h5" />
+    </>
+  ),
+  thought: (
+    <>
+      <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4 3.5V16H6.5A1.5 1.5 0 0 1 5 14.5z" />
+      <path d="M9 10.5h.01M12 10.5h.01M15 10.5h.01" />
+    </>
+  ),
+  "git-merge": (
+    <>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="12.5" r="2" />
+      <path d="M6 8v8M8 6c6 0 10 2.5 10 4.5" />
+    </>
+  ),
+  folder: <path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H10l2 2.5h6.5A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.1-3.6-8.5S9.6 5.8 12 3.5" />
+    </>
+  ),
+  key: (
+    <>
+      <circle cx="8" cy="15.5" r="3.5" />
+      <path d="M10.5 13L19 4.5M16.5 7l2.5 2.5M13.5 10l2 2" />
+    </>
+  ),
+  star: <path d="M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.2l-4.8 2.7 1-5.4-4-3.8 5.4-.7z" />,
+  list: <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />,
+  layers: <path d="M12 4.5l8 4.2-8 4.2-8-4.2zM4 12.8l8 4.2 8-4.2M4 16.8l8 4.2 8-4.2" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;
+
+/** Every glyph of the set (the icon test draws each one). */
+export const ICON_NAMES = Object.keys(GLYPHS) as IconName[];
 
 interface IconProps {
   name: IconName;

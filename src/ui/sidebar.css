@@ -3,7 +3,7 @@
 
 /* ---- project pull-down ---------------------------------------------------- */
 
-.project-picker { position: relative; padding: 0 6px; }
+.project-picker { position: relative; padding: 10px 6px 0; }
 .project-trigger {
   width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px;
   border: 1px solid var(--border-card); border-radius: 6px; background: var(--surface-inset);
@@ -17,7 +17,7 @@
 .project-trigger[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 
 .project-popup {
-  position: absolute; z-index: 30; top: calc(100% + 4px); left: 6px; right: 6px; padding: 4px;
+  position: absolute; z-index: 30; top: calc(100% - 0px + 4px); left: 6px; right: 6px; padding: 4px;
   display: flex; flex-direction: column; gap: 4px; outline: none;
   border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-panel);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
@@ -40,9 +40,9 @@
 
 /* ---- projects running in the background ------------------------------------ */
 
-.bg-projects { padding: 8px 6px 0; display: flex; flex-direction: column; gap: 5px; }
-.bg-caption { padding: 0 4px; font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.12em; color: var(--text-faint); }
-.bg-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 68px; overflow-y: auto; }
+.bg-projects { padding: 8px 6px 0 12px; display: flex; align-items: flex-start; gap: 8px; }
+.bg-caption { display: inline-flex; flex: none; padding-top: 5px; color: var(--status-done-bar); }
+.bg-list { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 68px; overflow-y: auto; }
 .bg-list li { min-width: 0; max-width: 100%; }
 .bg-chip {
   max-width: 100%; display: flex; align-items: center; gap: 6px; padding: 3px 9px;
@@ -57,12 +57,17 @@
 
 /* ---- branches: the head stays, only the tree scrolls ------------------------ */
 
-.branches { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.branches-title { padding-top: 14px; }
+.branches { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 10px; border-top: 1px solid var(--border-subtle); }
 .branches .branch-tree { flex: 1 1 auto; overscroll-behavior: contain; }
 .branch-row .name, .chat-row .name { flex: 1; min-width: 0; white-space: nowrap; }
-.branch-row .caret { display: flex; width: 10px; flex: none; color: var(--text-dim); }
-.branch-row .caret.collapsed .chevron { transform: rotate(-90deg); }
+.icon.caret { flex: none; color: var(--text-dim); transition: transform 0.12s; }
+.icon.caret.collapsed { transform: rotate(-90deg); }
+.wt-head { display: flex; align-items: center; gap: 2px; }
+.wt-head > .side-row { flex: 1; min-width: 0; }
+.row-action { opacity: 0.5; }
+.wt-head:hover .row-action, .row-action:focus-visible { opacity: 1; }
+.lost-title { display: flex; align-items: center; color: var(--status-handling-bar); }
+.side-row .age .icon { color: var(--status-handling-bar); }
 .chat-list { padding-left: 12px; }
 .new-chat { color: var(--text-faint); }
 .new-chat:hover:not(:disabled) { color: var(--accent-strong); }

@@ -55,9 +55,9 @@ export function StatusBar() {
           disabled={connection.state !== "open" || usage.loading}
           onClick={() => void store.refreshUsage(true)}
         >
-          <UsageMeter label="5h" tone="usage-5h" window={pick(report, "five_hour")} now={now} />
+          <UsageMeter id="5h" label="5h" tone="usage-5h" window={pick(report, "five_hour")} now={now} />
           <span className="meter-sep" />
-          <UsageMeter label="week" tone="usage-week" window={pick(report, "week")} now={now} />
+          <UsageMeter id="week" label="7d" tone="usage-week" window={pick(report, "week")} now={now} />
         </button>
       </div>
     </footer>
@@ -69,11 +69,14 @@ function pick(report: UsageReport | null, kind: UsageWindow["kind"]): UsageWindo
 }
 
 function UsageMeter({
+  id,
   label,
   tone,
   window,
   now,
 }: {
+  /** Names the meter for tests (`usage-<id>`); `label` is what is shown. */
+  id: string;
   label: string;
   tone: string;
   window: UsageWindow | null;
@@ -81,7 +84,7 @@ function UsageMeter({
 }) {
   const percent = window ? Math.max(0, Math.min(100, window.percent)) : null;
   return (
-    <span className="meter" data-testid={`usage-${label}`}>
+    <span className="meter" data-testid={`usage-${id}`}>
       <span className="meter-label">{label}</span>
       <span className="meter-bar">
         {percent !== null ? (
@@ -91,7 +94,7 @@ function UsageMeter({
       <span className="meter-value">{percent !== null ? `${Math.round(percent)}%` : "—"}</span>
       {window?.resets_at_ms != null ? (
         <span className="meter-reset" title="リセットまで">
-          <Icon name="history" size={10} />
+          <Icon name="hourglass" size={10} />
           {formatRemaining(window.resets_at_ms - now)}
         </span>
       ) : null}

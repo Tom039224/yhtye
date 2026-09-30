@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
-import { IconButton } from "./Icon";
+import { Icon, IconButton } from "./Icon";
 
 /** Longest accepted name (the core checks the same). */
 export const MAX_SECRET_NAME = 128;
@@ -88,10 +88,12 @@ export function SecretEnvSection() {
 
   return (
     <div className="agent-section secret-env-section">
-      <p className="agent-panel-note">
-        エージェントに渡す <b>秘密の環境変数</b> (API キーなど) を登録します。値は OS のキーリング (Secret Service など) に保存され、
-        Yhtye は名前だけを覚えます。値は保存後に表示も取得もできません (上書きか削除だけ)。登録した変数は、これから起動する
-        <b>すべてのエージェント</b> の環境に入ります。
+      <p
+        className="agent-panel-note"
+        title="エージェントに渡す秘密の環境変数 (API キーなど) を登録します。値は OS のキーリング (Secret Service など) に保存され、Yhtye は名前だけを覚えます。値は保存後に表示も取得もできません (上書きか削除だけ)。登録した変数は、これから起動するすべてのエージェントの環境に入ります。"
+      >
+        <Icon name="key" size={14} />
+        <span>値は OS のキーリングに保存され、保存後は見られません。登録した変数は、すべてのエージェントの環境に入ります。</span>
       </p>
       {error ? (
         <p className="agent-warning" role="alert">
@@ -117,9 +119,7 @@ export function SecretEnvSection() {
           autoComplete="new-password"
           onChange={(e) => setValue(e.target.value)}
         />
-        <button type="submit" className="btn" disabled={busy}>
-          登録
-        </button>
+        <IconButton type="submit" icon="plus" size={15} className="icon-button-outline" label="登録" disabled={busy} />
       </form>
       {names === null ? (
         error ? null : <p className="agent-panel-status">読み込み中…</p>
@@ -130,17 +130,16 @@ export function SecretEnvSection() {
           {names.map((n) => (
             <li key={n} className="secret-row">
               <code className="secret-name">{n}</code>
-              <span className="chip secret-badge">登録済み</span>
+              <span className="chip secret-badge" title="登録済み">
+                <Icon name="check" size={12} />
+                <span className="sr-only">登録済み</span>
+              </span>
               <span className="spacer" />
               {confirming === n ? (
                 <>
                   <span className="agent-panel-status">{n} を削除しますか?</span>
-                  <button type="button" className="btn btn-small btn-danger" disabled={busy} onClick={() => remove(n)}>
-                    削除する
-                  </button>
-                  <button type="button" className="btn btn-small" onClick={() => setConfirming(null)}>
-                    やめる
-                  </button>
+                  <IconButton icon="trash" size={14} tone="danger" label="削除する" disabled={busy} onClick={() => remove(n)} />
+                  <IconButton icon="x" size={14} label="やめる" onClick={() => setConfirming(null)} />
                 </>
               ) : (
                 <>

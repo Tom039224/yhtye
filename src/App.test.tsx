@@ -69,13 +69,14 @@ describe("App", () => {
     expect(within(conversation).getByText(/Done: hello.txt is on main\./)).toBeInTheDocument();
     const thought = within(conversation).getAllByText("thought")[0].closest("details");
     expect(thought).not.toHaveAttribute("open");
-    expect(within(conversation).getByText(/Read README.md/)).toHaveTextContent("completed");
+    expect(within(conversation).getByText(/Read README.md/).closest(".tool")).toHaveTextContent("completed");
 
     const tasks = screen.getByRole("region", { name: "tasks" });
     const task = within(tasks).getByRole("article", { name: "task T-1" });
     expect(within(task).getByText("完了")).toBeInTheDocument();
     expect(within(task).queryByRole("button", { name: "T-1 を中止" })).not.toBeInTheDocument();
-    expect(within(task).getByLabelText("steps")).toHaveTextContent("implement ✓ → review ✓ (approve) → done ✓");
+    const steps = within(within(task).getByLabelText("steps")).getAllByRole("listitem", { hidden: false });
+    expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual(["implement done", "review done (approve)", "done done"]);
     expect(within(tasks).getByRole("region", { name: "group G-1" })).toHaveTextContent("1/1 完了");
   });
 
@@ -174,7 +175,7 @@ describe("App", () => {
   it("shows empty states for a new project", async () => {
     const { store } = setup({ snapshot: emptySnapshot(), log: [] });
     await openProject(store);
-    expect(screen.getByText(/まだ会話はありません/)).toBeInTheDocument();
+    expect(screen.getByText(/会話はまだありません/)).toBeInTheDocument();
     expect(screen.getByText(/グループはまだありません/)).toBeInTheDocument();
     expect(screen.getByText("コミットはまだありません。")).toBeInTheDocument();
     expect(screen.getByText("not started")).toBeInTheDocument();
