@@ -1078,3 +1078,21 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   マージ直前の確認)、偽エージェント + 実 git (`tests/orchestration_fake_worktree.rs` が `orchestration_fake_follow.rs` を置き換え: 改名で表示が変わる → 次の `finish_group` は `merge_blocked` で返る → `into` で改名後のブランチへ / メインクローンの checkout → 同じ / detached → 返る /
   代行の `finish_group` は受信箱の `merge_result` / 作業ツリーの消えたチャットは送信不可)、`core_chats`、vitest。実機 (Haiku): `real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it` を、
   途中で外部から改名し、食い違いを受けた Haiku が `finish_group{into}` でマージを完了するテストに書き換える。
+
+### 17.9 チャットの改名・削除とホストの ping (左パネルの改善)
+
+- **`ping`** → `pong{host}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) を返す軽い疎通確認。プロジェクトは要らない。
+  UI (`AppStore`) は接続が開いている間 3 秒おきに送り (`PING_INTERVAL_MS`)、5 秒で応答が無ければ失敗として数える。左パネルのフッタは「ホスト名 + 最後の ping 応答からの経過時間
+  (5 秒以下は `now`)」と接続状態のドット (緑 = 応答あり / 琥珀 = 接続中・初回応答待ち / 赤 = 切断か 12 秒以上応答なし) を出す。Tauri でも WS ブリッジでも同じ `ApiCommand` なので transport は変えない。
+- **`rename_chat{project, chat, title}`** → `chat{chat}`: 空白を 1 つに畳んで trim、空は `invalid_argument`、80 文字 (`MAX_RENAMED_TITLE_CHARS`) 超も `invalid_argument`、未知のチャットは `not_found`。
+  `DomainCommand::RenameChat` は既存の `DomainEvent::ChatTitled` を出す (同じタイトルなら何も出さない)。`user_message` は `title.is_none()` のときだけ最初のメッセージで題を付けるので、ユーザーの名前は上書きされない。
+- **`delete_chat{project, chat}`** → `accepted`: `DomainCommand::DeleteChat` は `DomainEvent::ChatDeleted { chat }` を出す。
+  - 拒否: 未知のチャットは `not_found`。**未完了のグループ** (`active` / `finishing` / `merge_blocked`) があれば `invalid_state` (グループを片付けられるのはそのチャットのオーケストレータだけ)。
+    **オーケストレータがターン中 (または起動中)** なら runtime が `invalid_state` で断る (ターンを切るのはユーザーの `cancel_orchestrator_turn` の仕事で、削除は勝手に中断しない)。
+  - 成功時: 待機中 (live で idle) のオーケストレータのプロセスは `Sessions::stop` で止める。`State::apply(ChatDeleted)` はチャットと、そのグループ・タスク・help・受信箱を落とす (カウンタは戻さない = ID は再利用しない)。
+  - store (`projection::write` が before / after の差分で行う): `chats` / `task_groups` / `tasks` / `steps` / `task_deps` / `helps` / `inbox` の行と、`agent_sessions` のオーケストレータ (`orchestrator:<chat>`) とタスクのセッションの行を消し、
+    残った `task_groups` / `tasks` / `helps` の `ord` を振り直す (後から入れる行と `ord` が重ならないように)。`chats.ord` は `MAX(ord) + 1`。
+  - **イベントログは追記のみ** (UI が `seq` の連続を前提にしているので消さない)。削除したチャットの会話の履歴はログに残り、`chat_deleted` 以降の状態には出ない。
+  - 作業ツリーとブランチには触れない (チャットの削除は会話の記録の削除)。
+- フロントエンド: `store/domain.ts` と `store/chats.ts` に `chat_deleted` の畳み込み (Rust の `remove_chat` と同じ)、`store/project.ts` の `forgetChat` が会話・セッション・ストリーム・未読の印を捨て、表示中のチャットなら次のチャットを選ぶ。
+  `AppStore.renameChat` / `deleteChat` はコアの拒否で reject し (行内の編集・確認が表示する)、成功時はイベントを待たずに反映する。

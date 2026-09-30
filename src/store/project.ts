@@ -112,9 +112,37 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
   const chats = applyChatEvent(next.chats, ev);
   if (body.type === "domain" && next.state) {
     const unread = markUnread(next, body.event);
-    return { ...next, chats, unread, state: applyDomainEvent(next.state, body.event) };
+    const applied = { ...next, chats, unread, state: applyDomainEvent(next.state, body.event) };
+    return body.event.type === "chat_deleted" ? forgetChat(applied, next.state, body.event.chat) : applied;
   }
   return { ...next, chats, sessions: applySessionEvent(next.sessions, body) };
+}
+
+/**
+ * What a deleted chat leaves in the view: its conversation, its agents' sessions
+ * and text, and its notification mark go, and another chat is shown if it was
+ * on screen. `before` is the state that still has its groups and tasks.
+ * Idempotent (the core's answer and its event both come).
+ */
+export function forgetChat(view: ProjectView, before: State | null, chat: string): ProjectView {
+  const groups = new Set(before?.groups.filter((g) => g.chat === chat).map((g) => g.id));
+  const tasks = new Set(before?.tasks.filter((t) => groups.has(t.group)).map((t) => t.id));
+  const key = orchestratorKey(chat);
+  const ofChat = (session: string) => session === key || [...tasks].some((t) => session.startsWith(`${t}/`));
+  const { [chat]: _read, ...unread } = view.unread;
+  return {
+    ...view,
+    selectedChat: view.selectedChat === chat ? initialChat(view.chats, null) : view.selectedChat,
+    unread,
+    sessions: view.sessions.filter((s) => !ofChat(s.session_key)),
+    transcripts: Object.fromEntries(Object.entries(view.transcripts).filter(([session]) => !ofChat(session))),
+    streaming: Object.fromEntries(Object.entries(view.streaming).filter(([session]) => !ofChat(session))),
+  };
+}
+
+/** A chat the core has deleted, before its event arrives: off the list and off the screen. */
+export function removeChatNow(view: ProjectView, chat: string): ProjectView {
+  return forgetChat({ ...view, chats: view.chats.filter((c) => c.id !== chat) }, view.state, chat);
 }
 
 /** A notification for a chat that is not on screen marks it (cleared by selecting it). */
