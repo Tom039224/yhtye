@@ -16,7 +16,7 @@ use crate::agents::{
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
 use crate::secrets::SecretValue;
-use crate::store::{StoreError, StoredEvent};
+use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
 
 /// Default page size of [`ApiCommand::ListEvents`].
@@ -47,14 +47,41 @@ pub enum ApiCommand {
         #[ts(optional)]
         limit: Option<u32>,
     },
-    /// Queues a `user_message` for the orchestrator (sent when it is idle).
+    /// Queues a `user_message` for the orchestrator of `chat` (sent when it is
+    /// idle). Starts that orchestrator if it is not running (Stage 8: lazily,
+    /// restoring the chat's stored session if there is one). `not_found` for an
+    /// unknown chat, `invalid_state` when the chat's branch no longer exists.
     SendUserMessage {
         project: String,
+        chat: String,
         text: String,
     },
-    /// Cancels the orchestrator's running turn, if any.
+    /// Cancels the running turn of the chat's orchestrator, if any.
     CancelOrchestratorTurn {
         project: String,
+        chat: String,
+    },
+    /// The project's chats, most recently used first. Works for projects that
+    /// are not open.
+    ListChats {
+        project: String,
+    },
+    /// A new chat on an existing local branch (its orchestrator is not started).
+    /// `not_found` for a missing branch, `invalid_argument` for `yhtye/*`.
+    CreateChat {
+        project: String,
+        branch: String,
+    },
+    /// Creates a branch in a Yhtye worktree (the main clone keeps its checkout)
+    /// and its first chat. `from` defaults to the main worktree's HEAD.
+    /// `invalid_argument` for a bad or reserved (`yhtye/*`) name, `conflict` if
+    /// the branch exists, `not_found` if `from` does not.
+    CreateBranch {
+        project: String,
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        from: Option<String>,
     },
     /// Cancels a task as the user (like the orchestrator's `cancel_task`); the
     /// orchestrator is told with a `user_message`.
@@ -223,6 +250,12 @@ pub enum ApiResponse {
     },
     /// The command was accepted (sending, cancelling).
     Accepted,
+    Chats {
+        chats: Vec<ChatInfo>,
+    },
+    Chat {
+        chat: ChatInfo,
+    },
     GitOverview {
         git: GitOverview,
     },

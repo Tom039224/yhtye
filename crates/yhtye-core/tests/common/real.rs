@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use yhtye_core::acp::{AgentEvent, HarnessConfig};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, OrchestrationConfig};
+use yhtye_core::runtime::OrchestrationConfig;
 
-use super::orch::config;
+use super::orch::{ORCHESTRATOR_SESSION, config};
 
 pub const MODEL: &str = "haiku";
 pub const REAL_TIMEOUT: Duration = Duration::from_secs(300);
@@ -37,7 +37,7 @@ pub fn is_orchestrator_turn_end(e: &ApiEvent) -> bool {
 pub fn real_config(dir: &Path) -> OrchestrationConfig {
     config(
         dir,
-        HarnessConfig::claude_code_orchestrator(MODEL),
+        HarnessConfig::claude_code(MODEL),
         HarnessConfig::claude_code(MODEL),
         HarnessConfig::claude_code(MODEL),
     )
@@ -47,7 +47,7 @@ pub fn real_config(dir: &Path) -> OrchestrationConfig {
 pub fn real_git_config(repo: &super::repo::TempRepo) -> OrchestrationConfig {
     super::orch::git_config(
         repo,
-        HarnessConfig::claude_code_orchestrator(MODEL),
+        HarnessConfig::claude_code(MODEL),
         HarnessConfig::claude_code(MODEL),
         HarnessConfig::claude_code(MODEL),
     )

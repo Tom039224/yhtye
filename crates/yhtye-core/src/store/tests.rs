@@ -9,8 +9,8 @@ use crate::acp::schema::StopReason;
 use crate::agents::AgentChoice;
 use crate::api::{ApiEventBody, TextKind};
 use crate::domain::{
-    DomainEvent, Group, GroupStatus, Help, HelpKind, HelpSource, HelpState, InboxEntry, InboxItem,
-    InboxKind, Role, Step, StepKind, StepStatus, Task, TaskKind, TaskStatus, Verdict,
+    Chat, DomainEvent, Group, GroupStatus, Help, HelpKind, HelpSource, HelpState, InboxEntry,
+    InboxItem, InboxKind, Role, Step, StepKind, StepStatus, Task, TaskKind, TaskStatus, Verdict,
 };
 
 fn db(dir: &Path) -> PathBuf {
@@ -43,8 +43,19 @@ fn step(kind: StepKind, status: StepStatus) -> Step {
 /// A state with every kind of row and most optional fields set.
 fn rich_state() -> State {
     let mut s = State::new("P-1", DomainConfig::default());
+    s.chats.push(Chat {
+        id: "C-1".into(),
+        branch: "main".into(),
+        title: Some("first chat".into()),
+    });
+    s.chats.push(Chat {
+        id: "C-2".into(),
+        branch: "feature/x".into(),
+        title: None,
+    });
     s.groups.push(Group {
         id: "G-1".into(),
+        chat: "C-1".into(),
         title: "Group".into(),
         summary: Some("sum".into()),
         base_branch: "main".into(),
@@ -107,12 +118,14 @@ fn rich_state() -> State {
     });
     s.inbox.push(InboxEntry {
         id: 3,
+        chat: "C-2".into(),
         item: InboxItem::new(
             InboxKind::HelpRaised,
             &[("help_id", "H-1"), ("task", "T-1")],
             "stuck",
         ),
     });
+    s.counters.chats = 2;
     s.counters.groups = 1;
     s.counters.tasks = 2;
     s.counters.helps = 1;
@@ -128,7 +141,10 @@ async fn stored_rich(dir: &Path) -> (Store, State) {
     let events = [event(
         1,
         ApiEventBody::Domain {
-            event: DomainEvent::InboxDelivered { up_to: 0 },
+            event: DomainEvent::InboxDelivered {
+                chat: "C-2".into(),
+                up_to: 0,
+            },
         },
     )];
     store.commit(&events, &empty, &rich).await.expect("commit");
@@ -143,7 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 5);
+    assert_eq!(applied, 6);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -155,6 +171,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         [
             "agent_sessions",
             "agent_settings",
+            "chats",
             "events",
             "helps",
             "inbox",
@@ -175,7 +192,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 5);
+    assert_eq!(applied, 6);
 }
 
 #[tokio::test]
@@ -196,6 +213,7 @@ async fn state_round_trips_through_the_tables() {
     next.inbox.clear();
     next.inbox.push(InboxEntry {
         id: 4,
+        chat: "C-1".into(),
         item: InboxItem::user_message("hi"),
     });
     next.counters.inbox = 4;
@@ -203,7 +221,10 @@ async fn state_round_trips_through_the_tables() {
     let events = [event(
         2,
         ApiEventBody::Domain {
-            event: DomainEvent::InboxDelivered { up_to: 3 },
+            event: DomainEvent::InboxDelivered {
+                chat: "C-2".into(),
+                up_to: 3,
+            },
         },
     )];
     store.commit(&events, &rich, &next).await.expect("commit");
@@ -239,7 +260,10 @@ async fn a_failed_transition_stores_neither_events_nor_state() {
         event(
             3,
             ApiEventBody::Domain {
-                event: DomainEvent::InboxDelivered { up_to: 3 },
+                event: DomainEvent::InboxDelivered {
+                    chat: "C-2".into(),
+                    up_to: 3,
+                },
             },
         ),
     ];
@@ -274,6 +298,7 @@ async fn replay_rebuilds_the_state_from_domain_events() {
         .expect("create");
     let entry = InboxEntry {
         id: 1,
+        chat: "C-1".into(),
         item: InboxItem::user_message("hello"),
     };
     let mut after = empty.clone();
@@ -283,7 +308,7 @@ async fn replay_rebuilds_the_state_from_domain_events() {
         event(
             1,
             ApiEventBody::Prompted {
-                session: "orchestrator".into(),
+                session: "orchestrator:C-1".into(),
                 text: "x".into(),
             },
         ),
@@ -298,7 +323,7 @@ async fn replay_rebuilds_the_state_from_domain_events() {
     let stored = store.events_after("P-1", 0, 10).await.expect("events");
     let kinds: Vec<&str> = stored.iter().map(|e| e.kind.as_str()).collect();
     assert_eq!(kinds, ["prompted", "domain.inbox_queued"]);
-    assert_eq!(stored[0].session.as_deref(), Some("orchestrator"));
+    assert_eq!(stored[0].session.as_deref(), Some("orchestrator:C-1"));
     assert_eq!(
         store
             .events_after("P-1", 1, 10)
@@ -321,6 +346,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             resumed: false,
             agent: Some(AgentChoice::new("claude-code", Some(acp)).with_effort("high")),
             replaced: None,
+            cwd: Some("/work/tree".into()),
         },
     )
 }
@@ -496,4 +522,118 @@ async fn secret_names_are_stored_sorted_without_duplicates() {
         .await
         .expect("remove again");
     assert_eq!(store.secret_names().await.expect("list"), ["B_KEY"]);
+}
+
+#[tokio::test]
+async fn chats_keep_their_times_from_the_event_log() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let empty = State::new("P-1", DomainConfig::default());
+    store
+        .create_project(&empty, dir.path())
+        .await
+        .expect("create");
+    let created = |seq, id: &str| {
+        let chat = Chat {
+            id: id.into(),
+            branch: "main".into(),
+            title: None,
+        };
+        event(
+            seq,
+            ApiEventBody::Domain {
+                event: DomainEvent::ChatCreated { chat },
+            },
+        )
+    };
+    let mut after = empty.clone();
+    let events = [created(1, "C-1"), created(2, "C-2")];
+    for e in &events {
+        if let ApiEventBody::Domain { event } = &e.body {
+            after.apply(event);
+        }
+    }
+    store.commit(&events, &empty, &after).await.expect("commit");
+    // C-1 is prompted later than C-2 was created; the title arrives on the way.
+    let mut titled = after.clone();
+    let title = DomainEvent::ChatTitled {
+        chat: "C-1".into(),
+        title: "hello".into(),
+    };
+    titled.apply(&title);
+    let events = [
+        event(
+            3,
+            ApiEventBody::Prompted {
+                session: "orchestrator:C-1".into(),
+                text: "x".into(),
+            },
+        ),
+        event(4, ApiEventBody::Domain { event: title }),
+    ];
+    store
+        .commit(&events, &after, &titled)
+        .await
+        .expect("commit");
+
+    assert_eq!(store.load_state("P-1").await.expect("load"), Some(titled));
+    let chats = store.chats("P-1").await.expect("chats");
+    let summary: Vec<(&str, Option<&str>, u64, u64)> = chats
+        .iter()
+        .map(|c| {
+            (
+                c.id.as_str(),
+                c.title.as_deref(),
+                c.created_ms,
+                c.last_used_ms,
+            )
+        })
+        .collect();
+    // Most recently used first.
+    assert_eq!(
+        summary,
+        [
+            ("C-1", Some("hello"), 1_001, 1_003),
+            ("C-2", None, 1_002, 1_002)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sessions_record_the_directory_they_started_in() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = stored_rich(dir.path()).await;
+    store
+        .append(&[session_started(2, "orchestrator:C-1", "acp-1")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(sessions[0].cwd.as_deref(), Some("/work/tree"));
+}
+
+#[tokio::test]
+async fn a_branch_rename_is_stored_for_the_chat_and_its_groups() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, rich) = stored_rich(dir.path()).await;
+    let rename = DomainEvent::ChatBranchChanged {
+        chat: "C-1".into(),
+        from: "main".into(),
+        to: "trunk".into(),
+    };
+    let mut renamed = rich.clone();
+    renamed.apply(&rename);
+    let events = [event(2, ApiEventBody::Domain { event: rename })];
+    store
+        .commit(&events, &rich, &renamed)
+        .await
+        .expect("commit");
+
+    let loaded = store.load_state("P-1").await.expect("load").expect("state");
+    assert_eq!(loaded, renamed);
+    assert_eq!(loaded.chat("C-1").expect("C-1").branch, "trunk");
+    assert_eq!(loaded.group("G-1").expect("G-1").base_branch, "trunk");
+    let listed = store.chats("P-1").await.expect("chats");
+    let branch_of = |id: &str| listed.iter().find(|c| c.id == id).map(|c| c.branch.clone());
+    assert_eq!(branch_of("C-1").as_deref(), Some("trunk"));
+    assert_eq!(branch_of("C-2").as_deref(), Some("feature/x"));
 }

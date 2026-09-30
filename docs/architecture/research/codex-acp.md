@@ -90,7 +90,7 @@
 
 | # | ギャップ | 影響 | 対応案 |
 |---|---|---|---|
-| 1 | **読み取り専用のオーケストレータを作れない** (`read-only` は「承認が要る」で、Yhtye の自動承認だと書ける。reject するとターンが `cancelled`。`plan` の collaboration_mode でも MCP は呼べるが、シェルによる書き込みは止まらない可能性 (未実測)) | `orchestrator_read_only = false` (OpenCode と同じ警告) | 案 A: `agent-full-access` + プロンプトで禁止 (OpenCode 相当)。案 B: `read-only` + 権限応答ポリシーに「MCP ツールは許可、それ以外は reject」を足す (reject でターンが cancelled になるのを Yhtye が許容する必要あり)。案 C: `CODEX_CONFIG` で `features.shell_tool=false` にしてシェルを無効化 (未実測、ファイルも読めなくなる) |
+| 1 | **読み取り専用のオーケストレータを作れない** (`read-only` は「承認が要る」で、Yhtye の自動承認だと書ける。reject するとターンが `cancelled`。`plan` の collaboration_mode でも MCP は呼べるが、シェルによる書き込みは止まらない可能性 (未実測)) | `orchestrator_read_only = false` (OpenCode と同じ警告。**Stage 8d で `orchestrator_read_only` は廃止済み**) | 案 A: `agent-full-access` + プロンプトで禁止 (OpenCode 相当)。案 B: `read-only` + 権限応答ポリシーに「MCP ツールは許可、それ以外は reject」を足す (reject でターンが cancelled になるのを Yhtye が許容する必要あり)。案 C: `CODEX_CONFIG` で `features.shell_tool=false` にしてシェルを無効化 (未実測、ファイルも読めなくなる) |
 | 2 | モデル: 一覧が OpenAI カタログで、OpenRouter などカスタムプロバイダのモデルは選べない・出ない | Yhtye の「選択肢からモデルを選ぶ」UI がカスタムプロバイダで使えない | env `CODEX_CONFIG` にモデルを入れる (§4)。一覧は ChatGPT/OpenAI ユーザーでは有効。カスタムプロバイダ用は自由入力が要る (Yhtye は一覧に無い値を選べる?) |
 | 3 | effort の config id が `reasoning_effort` (Yhtye は `effort` 固定)、モデルによって option が無い、`CODEX_CONFIG` の `model_reasoning_effort` でも指定できる | Yhtye の effort 設定 (`EFFORT_CONFIG_ID`) が Codex に効かない | `HarnessConfig.effort` の `config_id` を per-preset にする (すでに `ModelSelect` なので型はそのまま)。`catalog.rs` の `EFFORT_CONFIG_ID` 定数の使用箇所を preset 側に寄せる |
 | 4 | 失敗が応答テキスト + `end_turn` | 認証切れ・課金上限が「作業した」ように見え、`protocol_violation` (報告なしのターン) として現れる | 「MCP の報告ツールが呼ばれず usage が null」のようなヒューリスティック、または警告文の除去、または `_meta`/通知に失敗が出ないか (AIR の session-failure 拡張は AIR クライアントのみ) 追加調査 |
@@ -116,7 +116,7 @@ system_prompt = "first_prompt"
 startup_timeout = 120
 ```
 
-- `HarnessPreset::codex(...)`: `id = "codex"`、`label = "Codex"`、`requires_model = true` (ユーザーの config の既定モデルを黙って使わない。OpenRouter で使えないモデルが選ばれる事故も避ける)、`model_env = Some("CODEX_CONFIG")` は**形式が違う** (JSON 全体を組み立てる) ため `model_env` の代わりに専用のモデル差し込み関数が要る。`probe`: プロンプトなしの短命セッション (`session/new` だけで約 0.5 秒) で `configOptions` から一覧を読む。`orchestrator_read_only = false`。
+- `HarnessPreset::codex(...)`: `id = "codex"`、`label = "Codex"`、`requires_model = true` (ユーザーの config の既定モデルを黙って使わない。OpenRouter で使えないモデルが選ばれる事故も避ける)、`model_env = Some("CODEX_CONFIG")` は**形式が違う** (JSON 全体を組み立てる) ため `model_env` の代わりに専用のモデル差し込み関数が要る。`probe`: プロンプトなしの短命セッション (`session/new` だけで約 0.5 秒) で `configOptions` から一覧を読む。`orchestrator_read_only = false` (**Stage 8d で廃止済み**)。
 - 役割ごとの案:
 
 | 役割 | モード | 補足 |

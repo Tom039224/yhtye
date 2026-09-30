@@ -7,64 +7,147 @@
       "config": {
         "max_review_rounds": 2
       },
+      "chats": [
+        {
+          "id": "C-1",
+          "branch": "main",
+          "title": null
+        }
+      ],
       "groups": [],
       "tasks": [],
       "helps": [],
       "inbox": [],
       "counters": {
+        "chats": 1,
         "groups": 0,
         "tasks": 0,
         "helps": 0,
         "inbox": 0
       }
     },
-    "sessions": [
+    "sessions": [],
+    "chats": [
       {
-        "session_key": "orchestrator",
-        "role": "orchestrator",
-        "task": null,
-        "acp_session_id": "fake-2423848",
-        "status": "live",
-        "turn_running": false,
-        "agent": {
-          "harness": "fake",
-          "model": "haiku"
-        }
+        "id": "C-1",
+        "branch": "main",
+        "title": null,
+        "created_ms": 1790760249000,
+        "last_used_ms": 1790760249000
       }
     ]
   },
   "events": [
     {
       "seq": 1,
-      "ts_ms": 1790138505127,
+      "ts_ms": 1790760249000,
       "project": "repo",
       "live": false,
       "body": {
-        "type": "session_started",
-        "session": "orchestrator",
-        "role": "orchestrator",
-        "task": null,
-        "pid": 2423848,
-        "acp_session_id": "fake-2423848",
-        "resumed": false,
-        "agent": {
-          "harness": "fake",
-          "model": "haiku"
+        "type": "domain",
+        "event": {
+          "type": "chat_created",
+          "chat": {
+            "id": "C-1",
+            "branch": "main",
+            "title": null
+          }
         }
       }
     },
     {
       "seq": 2,
-      "ts_ms": 1790138505128,
+      "ts_ms": 1790760249002,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "chat_titled",
+          "chat": "C-1",
+          "title": "Add hello.txt please"
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "ts_ms": 1790760249002,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 1,
+            "chat": "C-1",
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "Add hello.txt please"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "ts_ms": 1790760249011,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "orchestrator:C-1",
+        "role": "orchestrator",
+        "task": null,
+        "pid": 865951,
+        "acp_session_id": "fake-865951",
+        "resumed": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/repo"
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790760249011,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator:C-1",
+        "text": "[yhtye:user_message]\nAdd hello.txt please"
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790760249012,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "chat": "C-1",
+          "up_to": 1
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "ts_ms": 1790760249014,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2423848",
+            "acp_session_id": "fake-865951",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -117,57 +200,13 @@
       }
     },
     {
-      "seq": 3,
-      "ts_ms": 1790138505128,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_queued",
-          "entry": {
-            "id": 1,
-            "item": {
-              "kind": "user_message",
-              "attrs": [],
-              "body": "Add hello.txt please"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 4,
-      "ts_ms": 1790138505129,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "prompted",
-        "session": "orchestrator",
-        "text": "[yhtye:user_message]\nAdd hello.txt please"
-      }
-    },
-    {
-      "seq": 5,
-      "ts_ms": 1790138505129,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_delivered",
-          "up_to": 1
-        }
-      }
-    },
-    {
-      "seq": 5,
-      "ts_ms": 1790138505130,
+      "seq": 7,
+      "ts_ms": 1790760249014,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -183,13 +222,13 @@
       }
     },
     {
-      "seq": 5,
-      "ts_ms": 1790138505131,
+      "seq": 7,
+      "ts_ms": 1790760249014,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -205,25 +244,25 @@
       }
     },
     {
-      "seq": 6,
-      "ts_ms": 1790138505131,
+      "seq": 8,
+      "ts_ms": 1790760249014,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "thought",
         "text": "The user wants a greeting file. One code task with a review."
       }
     },
     {
-      "seq": 6,
-      "ts_ms": 1790138505131,
+      "seq": 8,
+      "ts_ms": 1790760249014,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -239,13 +278,13 @@
       }
     },
     {
-      "seq": 6,
-      "ts_ms": 1790138505132,
+      "seq": 8,
+      "ts_ms": 1790760249015,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -261,25 +300,25 @@
       }
     },
     {
-      "seq": 7,
-      "ts_ms": 1790138505132,
+      "seq": 9,
+      "ts_ms": 1790760249015,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "message",
         "text": "I will create a group for this."
       }
     },
     {
-      "seq": 8,
-      "ts_ms": 1790138505132,
+      "seq": 10,
+      "ts_ms": 1790760249015,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -294,13 +333,13 @@
       }
     },
     {
-      "seq": 9,
-      "ts_ms": 1790138505133,
+      "seq": 11,
+      "ts_ms": 1790760249015,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -314,8 +353,8 @@
       }
     },
     {
-      "seq": 10,
-      "ts_ms": 1790138505136,
+      "seq": 12,
+      "ts_ms": 1790760249017,
       "project": "repo",
       "live": false,
       "body": {
@@ -324,6 +363,7 @@
           "type": "group_created",
           "group": {
             "id": "G-1",
+            "chat": "C-1",
             "title": "greeting",
             "summary": null,
             "base_branch": "main",
@@ -337,17 +377,18 @@
       }
     },
     {
-      "seq": 11,
-      "ts_ms": 1790138505151,
+      "seq": 13,
+      "ts_ms": 1790760249027,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "create_group",
           "args": {
@@ -364,13 +405,13 @@
       }
     },
     {
-      "seq": 11,
-      "ts_ms": 1790138505153,
+      "seq": 13,
+      "ts_ms": 1790760249029,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -386,8 +427,8 @@
       }
     },
     {
-      "seq": 12,
-      "ts_ms": 1790138505157,
+      "seq": 14,
+      "ts_ms": 1790760249031,
       "project": "repo",
       "live": false,
       "body": {
@@ -440,8 +481,8 @@
       }
     },
     {
-      "seq": 13,
-      "ts_ms": 1790138505157,
+      "seq": 15,
+      "ts_ms": 1790760249031,
       "project": "repo",
       "live": false,
       "body": {
@@ -454,8 +495,8 @@
       }
     },
     {
-      "seq": 14,
-      "ts_ms": 1790138505170,
+      "seq": 16,
+      "ts_ms": 1790760249041,
       "project": "repo",
       "live": false,
       "body": {
@@ -463,13 +504,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpmRfWEd/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
-      "seq": 15,
-      "ts_ms": 1790138505170,
+      "seq": 17,
+      "ts_ms": 1790760249041,
       "project": "repo",
       "live": false,
       "body": {
@@ -483,17 +524,18 @@
       }
     },
     {
-      "seq": 16,
-      "ts_ms": 1790138505173,
+      "seq": 18,
+      "ts_ms": 1790760249042,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "create_task",
           "args": {
@@ -531,13 +573,13 @@
       }
     },
     {
-      "seq": 16,
-      "ts_ms": 1790138505174,
+      "seq": 18,
+      "ts_ms": 1790760249044,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -553,13 +595,13 @@
       }
     },
     {
-      "seq": 16,
-      "ts_ms": 1790138505175,
+      "seq": 18,
+      "ts_ms": 1790760249044,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -575,25 +617,25 @@
       }
     },
     {
-      "seq": 17,
-      "ts_ms": 1790138505175,
+      "seq": 19,
+      "ts_ms": 1790760249045,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "message",
         "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"review\"},{\"kind\":\"done\"}]}Task T-1 is running."
       }
     },
     {
-      "seq": 18,
-      "ts_ms": 1790138505175,
+      "seq": 20,
+      "ts_ms": 1790760249045,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "turn_ended",
           "data": {
@@ -603,8 +645,8 @@
       }
     },
     {
-      "seq": 19,
-      "ts_ms": 1790138505178,
+      "seq": 21,
+      "ts_ms": 1790760249048,
       "project": "repo",
       "live": false,
       "body": {
@@ -612,18 +654,20 @@
         "session": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "pid": 2424120,
-        "acp_session_id": "fake-2424120",
+        "pid": 866167,
+        "acp_session_id": "fake-866167",
         "resumed": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1"
       }
     },
     {
-      "seq": 20,
-      "ts_ms": 1790138505178,
+      "seq": 22,
+      "ts_ms": 1790760249048,
       "project": "repo",
       "live": false,
       "body": {
@@ -633,8 +677,8 @@
       }
     },
     {
-      "seq": 21,
-      "ts_ms": 1790138505181,
+      "seq": 23,
+      "ts_ms": 1790760249048,
       "project": "repo",
       "live": false,
       "body": {
@@ -643,7 +687,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2424120",
+            "acp_session_id": "fake-866167",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -696,8 +740,8 @@
       }
     },
     {
-      "seq": 21,
-      "ts_ms": 1790138505182,
+      "seq": 23,
+      "ts_ms": 1790760249050,
       "project": "repo",
       "live": true,
       "body": {
@@ -718,8 +762,8 @@
       }
     },
     {
-      "seq": 22,
-      "ts_ms": 1790138505182,
+      "seq": 24,
+      "ts_ms": 1790760249050,
       "project": "repo",
       "live": false,
       "body": {
@@ -730,8 +774,8 @@
       }
     },
     {
-      "seq": 23,
-      "ts_ms": 1790138505182,
+      "seq": 25,
+      "ts_ms": 1790760249050,
       "project": "repo",
       "live": false,
       "body": {
@@ -751,8 +795,8 @@
       }
     },
     {
-      "seq": 24,
-      "ts_ms": 1790138505182,
+      "seq": 26,
+      "ts_ms": 1790760249050,
       "project": "repo",
       "live": false,
       "body": {
@@ -771,8 +815,8 @@
       }
     },
     {
-      "seq": 25,
-      "ts_ms": 1790138505184,
+      "seq": 27,
+      "ts_ms": 1790760249052,
       "project": "repo",
       "live": false,
       "body": {
@@ -787,8 +831,8 @@
       }
     },
     {
-      "seq": 26,
-      "ts_ms": 1790138505185,
+      "seq": 28,
+      "ts_ms": 1790760249052,
       "project": "repo",
       "live": false,
       "body": {
@@ -816,8 +860,8 @@
       }
     },
     {
-      "seq": 26,
-      "ts_ms": 1790138505186,
+      "seq": 28,
+      "ts_ms": 1790760249054,
       "project": "repo",
       "live": true,
       "body": {
@@ -838,8 +882,8 @@
       }
     },
     {
-      "seq": 27,
-      "ts_ms": 1790138505187,
+      "seq": 29,
+      "ts_ms": 1790760249054,
       "project": "repo",
       "live": false,
       "body": {
@@ -850,8 +894,8 @@
       }
     },
     {
-      "seq": 28,
-      "ts_ms": 1790138505187,
+      "seq": 30,
+      "ts_ms": 1790760249054,
       "project": "repo",
       "live": false,
       "body": {
@@ -866,8 +910,8 @@
       }
     },
     {
-      "seq": 29,
-      "ts_ms": 1790138505187,
+      "seq": 31,
+      "ts_ms": 1790760249054,
       "project": "repo",
       "live": false,
       "body": {
@@ -881,8 +925,8 @@
       }
     },
     {
-      "seq": 30,
-      "ts_ms": 1790138505194,
+      "seq": 32,
+      "ts_ms": 1790760249060,
       "project": "repo",
       "live": false,
       "body": {
@@ -890,18 +934,20 @@
         "session": "T-1/review-1",
         "role": "reviewer",
         "task": "T-1",
-        "pid": 2424201,
-        "acp_session_id": "fake-2424201",
+        "pid": 866269,
+        "acp_session_id": "fake-866269",
         "resumed": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1"
       }
     },
     {
-      "seq": 31,
-      "ts_ms": 1790138505194,
+      "seq": 33,
+      "ts_ms": 1790760249060,
       "project": "repo",
       "live": false,
       "body": {
@@ -911,8 +957,8 @@
       }
     },
     {
-      "seq": 32,
-      "ts_ms": 1790138505196,
+      "seq": 34,
+      "ts_ms": 1790760249060,
       "project": "repo",
       "live": false,
       "body": {
@@ -921,7 +967,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2424201",
+            "acp_session_id": "fake-866269",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -974,8 +1020,8 @@
       }
     },
     {
-      "seq": 32,
-      "ts_ms": 1790138505197,
+      "seq": 34,
+      "ts_ms": 1790760249061,
       "project": "repo",
       "live": true,
       "body": {
@@ -996,8 +1042,8 @@
       }
     },
     {
-      "seq": 33,
-      "ts_ms": 1790138505199,
+      "seq": 35,
+      "ts_ms": 1790760249064,
       "project": "repo",
       "live": false,
       "body": {
@@ -1012,8 +1058,8 @@
       }
     },
     {
-      "seq": 34,
-      "ts_ms": 1790138505200,
+      "seq": 36,
+      "ts_ms": 1790760249064,
       "project": "repo",
       "live": false,
       "body": {
@@ -1042,8 +1088,8 @@
       }
     },
     {
-      "seq": 34,
-      "ts_ms": 1790138505201,
+      "seq": 36,
+      "ts_ms": 1790760249066,
       "project": "repo",
       "live": true,
       "body": {
@@ -1064,8 +1110,8 @@
       }
     },
     {
-      "seq": 35,
-      "ts_ms": 1790138505201,
+      "seq": 37,
+      "ts_ms": 1790760249066,
       "project": "repo",
       "live": false,
       "body": {
@@ -1076,8 +1122,8 @@
       }
     },
     {
-      "seq": 36,
-      "ts_ms": 1790138505201,
+      "seq": 38,
+      "ts_ms": 1790760249066,
       "project": "repo",
       "live": false,
       "body": {
@@ -1092,8 +1138,8 @@
       }
     },
     {
-      "seq": 37,
-      "ts_ms": 1790138505202,
+      "seq": 39,
+      "ts_ms": 1790760249066,
       "project": "repo",
       "live": false,
       "body": {
@@ -1107,8 +1153,8 @@
       }
     },
     {
-      "seq": 38,
-      "ts_ms": 1790138505202,
+      "seq": 40,
+      "ts_ms": 1790760249066,
       "project": "repo",
       "live": false,
       "body": {
@@ -1121,8 +1167,8 @@
       }
     },
     {
-      "seq": 39,
-      "ts_ms": 1790138505255,
+      "seq": 41,
+      "ts_ms": 1790760249105,
       "project": "repo",
       "live": false,
       "body": {
@@ -1131,14 +1177,14 @@
           "type": "step_completed",
           "task": "T-1",
           "step": 2,
-          "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (e634008567)",
+          "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (52a1aefca7)",
           "verdict": null
         }
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790138505255,
+      "seq": 42,
+      "ts_ms": 1790760249105,
       "project": "repo",
       "live": false,
       "body": {
@@ -1151,8 +1197,8 @@
       }
     },
     {
-      "seq": 41,
-      "ts_ms": 1790138505255,
+      "seq": 43,
+      "ts_ms": 1790760249105,
       "project": "repo",
       "live": false,
       "body": {
@@ -1161,6 +1207,7 @@
           "type": "inbox_queued",
           "entry": {
             "id": 2,
+            "chat": "C-1",
             "item": {
               "kind": "group_settled",
               "attrs": [
@@ -1176,65 +1223,38 @@
       }
     },
     {
-      "seq": 42,
-      "ts_ms": 1790138505256,
+      "seq": 44,
+      "ts_ms": 1790760249106,
       "project": "repo",
       "live": false,
       "body": {
         "type": "prompted",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "text": "[yhtye:group_settled] group=G-1\nT-1 done: fine"
       }
     },
     {
-      "seq": 43,
-      "ts_ms": 1790138505257,
+      "seq": 45,
+      "ts_ms": 1790760249107,
       "project": "repo",
       "live": false,
       "body": {
         "type": "domain",
         "event": {
           "type": "inbox_delivered",
+          "chat": "C-1",
           "up_to": 2
         }
       }
     },
     {
-      "seq": 44,
-      "ts_ms": 1790138505257,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "agent",
-        "session": "T-1/review-1",
-        "event": {
-          "type": "exited",
-          "data": {
-            "code": 0,
-            "signal": null
-          }
-        }
-      }
-    },
-    {
-      "seq": 45,
-      "ts_ms": 1790138505257,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "session_stopped",
-        "session": "T-1/review-1",
-        "suspended": false
-      }
-    },
-    {
       "seq": 46,
-      "ts_ms": 1790138505259,
+      "ts_ms": 1790760249107,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "T-1/implementer",
+        "session": "T-1/review-1",
         "event": {
           "type": "exited",
           "data": {
@@ -1246,7 +1266,35 @@
     },
     {
       "seq": 47,
-      "ts_ms": 1790138505259,
+      "ts_ms": 1790760249107,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-1/review-1",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 48,
+      "ts_ms": 1790760249108,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "exited",
+          "data": {
+            "code": 0,
+            "signal": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 49,
+      "ts_ms": 1790760249108,
       "project": "repo",
       "live": false,
       "body": {
@@ -1256,8 +1304,8 @@
       }
     },
     {
-      "seq": 48,
-      "ts_ms": 1790138505261,
+      "seq": 50,
+      "ts_ms": 1790760249110,
       "project": "repo",
       "live": false,
       "body": {
@@ -1270,8 +1318,8 @@
       }
     },
     {
-      "seq": 49,
-      "ts_ms": 1790138505284,
+      "seq": 51,
+      "ts_ms": 1790760249127,
       "project": "repo",
       "live": false,
       "body": {
@@ -1280,22 +1328,23 @@
           "type": "group_merge_finished",
           "group": "G-1",
           "ok": true,
-          "detail": "merged yhtye/G-1 into main (6b37812603)"
+          "detail": "merged yhtye/G-1 into main (7cd33e73ce)"
         }
       }
     },
     {
-      "seq": 50,
-      "ts_ms": 1790138505285,
+      "seq": 52,
+      "ts_ms": 1790760249127,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "finish_group",
           "args": {
@@ -1308,7 +1357,7 @@
               "status": "done",
               "merge": {
                 "ok": true,
-                "detail": "merged yhtye/G-1 into main (6b37812603)"
+                "detail": "merged yhtye/G-1 into main (7cd33e73ce)"
               }
             }
           }
@@ -1316,13 +1365,13 @@
       }
     },
     {
-      "seq": 50,
-      "ts_ms": 1790138505287,
+      "seq": 52,
+      "ts_ms": 1790760249129,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -1330,7 +1379,7 @@
             "update": {
               "content": {
                 "type": "text",
-                "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (6b37812603)\"}}"
+                "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (7cd33e73ce)\"}}"
               }
             }
           }
@@ -1338,13 +1387,13 @@
       }
     },
     {
-      "seq": 50,
-      "ts_ms": 1790138505287,
+      "seq": 52,
+      "ts_ms": 1790760249129,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -1360,25 +1409,25 @@
       }
     },
     {
-      "seq": 51,
-      "ts_ms": 1790138505287,
+      "seq": 53,
+      "ts_ms": 1790760249129,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "message",
-        "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (6b37812603)\"}}Done: hello.txt is on main."
+        "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (7cd33e73ce)\"}}Done: hello.txt is on main."
       }
     },
     {
-      "seq": 52,
-      "ts_ms": 1790138505287,
+      "seq": 54,
+      "ts_ms": 1790760249129,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "turn_ended",
           "data": {
@@ -1389,22 +1438,30 @@
     }
   ],
   "end": {
-    "seq": 52,
+    "seq": 54,
     "state": {
       "project": "repo",
       "config": {
         "max_review_rounds": 2
       },
+      "chats": [
+        {
+          "id": "C-1",
+          "branch": "main",
+          "title": "Add hello.txt please"
+        }
+      ],
       "groups": [
         {
           "id": "G-1",
+          "chat": "C-1",
           "title": "greeting",
           "summary": null,
           "base_branch": "main",
           "group_branch": "yhtye/G-1",
           "status": "done",
           "finish_summary": "hello.txt added",
-          "detail": "merged yhtye/G-1 into main (6b37812603)",
+          "detail": "merged yhtye/G-1 into main (7cd33e73ce)",
           "finish_nudges": 0
         }
       ],
@@ -1439,7 +1496,7 @@
               "kind": "done",
               "instruction": null,
               "status": "done",
-              "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (e634008567)",
+              "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (52a1aefca7)",
               "verdict": null,
               "note": null,
               "nudges": 0
@@ -1448,13 +1505,14 @@
           "current": 2,
           "status": "done",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpmRfWEd/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1",
           "cancel_reason": null
         }
       ],
       "helps": [],
       "inbox": [],
       "counters": {
+        "chats": 1,
         "groups": 1,
         "tasks": 1,
         "helps": 0,
@@ -1466,37 +1524,52 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-2424120",
+        "acp_session_id": "fake-866167",
         "status": "stopped",
         "turn_running": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1"
       },
       {
         "session_key": "T-1/review-1",
         "role": "reviewer",
         "task": "T-1",
-        "acp_session_id": "fake-2424201",
+        "acp_session_id": "fake-866269",
         "status": "stopped",
         "turn_running": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/data/worktrees/repo/G-1/T-1"
       },
       {
-        "session_key": "orchestrator",
+        "session_key": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-2423848",
+        "acp_session_id": "fake-865951",
         "status": "live",
         "turn_running": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmpMlINEi/repo"
+      }
+    ],
+    "chats": [
+      {
+        "id": "C-1",
+        "branch": "main",
+        "title": "Add hello.txt please",
+        "created_ms": 1790760249000,
+        "last_used_ms": 1790760249106
       }
     ]
   }

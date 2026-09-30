@@ -17,8 +17,8 @@ import { DUPLICATE_ROW, MAX_MATCHES, addRow, newRow, pickerModels, removeRow, up
 const HAIKU: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
 const SONNET_HIGH: AgentChoice = { harness: "claude-code", model: "sonnet", effort: "high" };
 const FREE = "opencode/muse-spark-1.3-contributor-free";
-const OPENCODE: HarnessInfo = { id: "opencode", label: "OpenCode", requires_model: true, orchestrator_read_only: false };
-const PLAIN = { requires_model: false, orchestrator_read_only: true };
+const OPENCODE: HarnessInfo = { id: "opencode", label: "OpenCode", requires_model: true };
+const PLAIN = { requires_model: false };
 
 const row = (c: AgentChoice, note = ""): Candidate => ({ ...c, note });
 const efforts = (...values: string[]): EffortOption[] => values.map((v) => ({ value: v, name: v, description: null }));
@@ -225,7 +225,7 @@ describe("settings modal", () => {
     await waitFor(() => expect(core.agents.global.implementer?.candidates[1]).toEqual(row(free)));
   });
 
-  it("warns that an OpenCode orchestrator cannot be made read-only", async () => {
+  it("shows no write-restriction warning: every harness's orchestrator can write (Stage 8d)", async () => {
     const free: AgentChoice = { harness: "opencode", model: FREE, effort: null };
     await setup((core) => {
       withOpenCode(core);
@@ -234,15 +234,11 @@ describe("settings modal", () => {
     });
     const { dialog } = await openSettings();
     const orchestrator = role(dialog, "オーケストレータ");
-    await waitFor(() => expect(within(orchestrator).getByRole("note")).toHaveTextContent("OpenCode のオーケストレータは書き込みを制限できません"));
-    const [claudeRow, openCodeRow] = rowsOf(orchestrator);
-    expect(within(openCodeRow).getAllByText("⚠ 書き込み制限なし")).toHaveLength(1);
-    expect(within(claudeRow).queryByText("⚠ 書き込み制限なし")).toBeNull();
-    // The harness choice itself carries the mark in the orchestrator's list only.
-    expect(within(orchestrator).getAllByRole("option", { name: /OpenCode.*⚠ 書き込み制限なし/ }).length).toBeGreaterThan(0);
-    const implementer = role(dialog, "実装");
-    expect(within(implementer).queryByRole("note")).toBeNull();
-    expect(within(implementer).queryByText(/書き込み制限なし/)).toBeNull();
+    await waitFor(() => expect(rowsOf(orchestrator)).toHaveLength(2));
+    expect(within(orchestrator).queryByRole("note")).toBeNull();
+    expect(within(dialog).queryByText(/書き込み制限/)).toBeNull();
+    expect(within(orchestrator).queryByRole("option", { name: /OpenCode.*⚠/ })).toBeNull();
+    expect(within(orchestrator).getAllByRole("option", { name: "OpenCode" }).length).toBeGreaterThan(0);
   });
 
   it("shows settings that name a harness which is no longer installed", async () => {

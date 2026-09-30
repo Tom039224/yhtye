@@ -7,64 +7,147 @@
       "config": {
         "max_review_rounds": 2
       },
+      "chats": [
+        {
+          "id": "C-1",
+          "branch": "main",
+          "title": null
+        }
+      ],
       "groups": [],
       "tasks": [],
       "helps": [],
       "inbox": [],
       "counters": {
+        "chats": 1,
         "groups": 0,
         "tasks": 0,
         "helps": 0,
         "inbox": 0
       }
     },
-    "sessions": [
+    "sessions": [],
+    "chats": [
       {
-        "session_key": "orchestrator",
-        "role": "orchestrator",
-        "task": null,
-        "acp_session_id": "fake-2423867",
-        "status": "live",
-        "turn_running": false,
-        "agent": {
-          "harness": "fake",
-          "model": "haiku"
-        }
+        "id": "C-1",
+        "branch": "main",
+        "title": null,
+        "created_ms": 1790760249000,
+        "last_used_ms": 1790760249000
       }
     ]
   },
   "events": [
     {
       "seq": 1,
-      "ts_ms": 1790138505139,
+      "ts_ms": 1790760249000,
       "project": "repo",
       "live": false,
       "body": {
-        "type": "session_started",
-        "session": "orchestrator",
-        "role": "orchestrator",
-        "task": null,
-        "pid": 2423867,
-        "acp_session_id": "fake-2423867",
-        "resumed": false,
-        "agent": {
-          "harness": "fake",
-          "model": "haiku"
+        "type": "domain",
+        "event": {
+          "type": "chat_created",
+          "chat": {
+            "id": "C-1",
+            "branch": "main",
+            "title": null
+          }
         }
       }
     },
     {
       "seq": 2,
-      "ts_ms": 1790138505141,
+      "ts_ms": 1790760249002,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "chat_titled",
+          "chat": "C-1",
+          "title": "hold on"
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "ts_ms": 1790760249002,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 1,
+            "chat": "C-1",
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "hold on"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "ts_ms": 1790760249011,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "orchestrator:C-1",
+        "role": "orchestrator",
+        "task": null,
+        "pid": 865950,
+        "acp_session_id": "fake-865950",
+        "resumed": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmp60MztG/repo"
+      }
+    },
+    {
+      "seq": 5,
+      "ts_ms": 1790760249011,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator:C-1",
+        "text": "[yhtye:user_message]\nhold on"
+      }
+    },
+    {
+      "seq": 6,
+      "ts_ms": 1790760249012,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "chat": "C-1",
+          "up_to": 1
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "ts_ms": 1790760249012,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2423867",
+            "acp_session_id": "fake-865950",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -117,57 +200,13 @@
       }
     },
     {
-      "seq": 3,
-      "ts_ms": 1790138505141,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_queued",
-          "entry": {
-            "id": 1,
-            "item": {
-              "kind": "user_message",
-              "attrs": [],
-              "body": "hold on"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 4,
-      "ts_ms": 1790138505142,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "prompted",
-        "session": "orchestrator",
-        "text": "[yhtye:user_message]\nhold on"
-      }
-    },
-    {
-      "seq": 5,
-      "ts_ms": 1790138505143,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_delivered",
-          "up_to": 1
-        }
-      }
-    },
-    {
-      "seq": 5,
-      "ts_ms": 1790138505144,
+      "seq": 7,
+      "ts_ms": 1790760249013,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -183,25 +222,25 @@
       }
     },
     {
-      "seq": 6,
-      "ts_ms": 1790138505144,
+      "seq": 8,
+      "ts_ms": 1790760249013,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "message",
         "text": "thinking..."
       }
     },
     {
-      "seq": 7,
-      "ts_ms": 1790138505144,
+      "seq": 9,
+      "ts_ms": 1790760249013,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "turn_ended",
           "data": {
@@ -211,8 +250,8 @@
       }
     },
     {
-      "seq": 8,
-      "ts_ms": 1790138505145,
+      "seq": 10,
+      "ts_ms": 1790760249016,
       "project": "repo",
       "live": false,
       "body": {
@@ -221,6 +260,7 @@
           "type": "inbox_queued",
           "entry": {
             "id": 2,
+            "chat": "C-1",
             "item": {
               "kind": "user_message",
               "attrs": [],
@@ -231,32 +271,33 @@
       }
     },
     {
-      "seq": 9,
-      "ts_ms": 1790138505146,
+      "seq": 11,
+      "ts_ms": 1790760249016,
       "project": "repo",
       "live": false,
       "body": {
         "type": "prompted",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "text": "[yhtye:user_message]\nstart two"
       }
     },
     {
-      "seq": 10,
-      "ts_ms": 1790138505148,
+      "seq": 12,
+      "ts_ms": 1790760249017,
       "project": "repo",
       "live": false,
       "body": {
         "type": "domain",
         "event": {
           "type": "inbox_delivered",
+          "chat": "C-1",
           "up_to": 2
         }
       }
     },
     {
-      "seq": 11,
-      "ts_ms": 1790138505153,
+      "seq": 13,
+      "ts_ms": 1790760249021,
       "project": "repo",
       "live": false,
       "body": {
@@ -265,6 +306,7 @@
           "type": "group_created",
           "group": {
             "id": "G-1",
+            "chat": "C-1",
             "title": "two",
             "summary": null,
             "base_branch": "main",
@@ -278,17 +320,18 @@
       }
     },
     {
-      "seq": 12,
-      "ts_ms": 1790138505166,
+      "seq": 14,
+      "ts_ms": 1790760249030,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "create_group",
           "args": {
@@ -305,13 +348,13 @@
       }
     },
     {
-      "seq": 12,
-      "ts_ms": 1790138505168,
+      "seq": 14,
+      "ts_ms": 1790760249031,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -327,8 +370,8 @@
       }
     },
     {
-      "seq": 13,
-      "ts_ms": 1790138505170,
+      "seq": 15,
+      "ts_ms": 1790760249033,
       "project": "repo",
       "live": false,
       "body": {
@@ -372,8 +415,8 @@
       }
     },
     {
-      "seq": 14,
-      "ts_ms": 1790138505170,
+      "seq": 16,
+      "ts_ms": 1790760249033,
       "project": "repo",
       "live": false,
       "body": {
@@ -386,8 +429,8 @@
       }
     },
     {
-      "seq": 15,
-      "ts_ms": 1790138505184,
+      "seq": 17,
+      "ts_ms": 1790760249042,
       "project": "repo",
       "live": false,
       "body": {
@@ -395,13 +438,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
-      "seq": 16,
-      "ts_ms": 1790138505184,
+      "seq": 18,
+      "ts_ms": 1790760249042,
       "project": "repo",
       "live": false,
       "body": {
@@ -415,17 +458,18 @@
       }
     },
     {
-      "seq": 17,
-      "ts_ms": 1790138505186,
+      "seq": 19,
+      "ts_ms": 1790760249044,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "create_task",
           "args": {
@@ -457,13 +501,13 @@
       }
     },
     {
-      "seq": 17,
-      "ts_ms": 1790138505187,
+      "seq": 19,
+      "ts_ms": 1790760249046,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -479,8 +523,8 @@
       }
     },
     {
-      "seq": 18,
-      "ts_ms": 1790138505191,
+      "seq": 20,
+      "ts_ms": 1790760249049,
       "project": "repo",
       "live": false,
       "body": {
@@ -524,8 +568,8 @@
       }
     },
     {
-      "seq": 19,
-      "ts_ms": 1790138505191,
+      "seq": 21,
+      "ts_ms": 1790760249049,
       "project": "repo",
       "live": false,
       "body": {
@@ -538,8 +582,8 @@
       }
     },
     {
-      "seq": 20,
-      "ts_ms": 1790138505205,
+      "seq": 22,
+      "ts_ms": 1790760249060,
       "project": "repo",
       "live": false,
       "body": {
@@ -547,13 +591,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-2",
-          "path": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-2"
+          "path": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-2"
         }
       }
     },
     {
-      "seq": 21,
-      "ts_ms": 1790138505205,
+      "seq": 23,
+      "ts_ms": 1790760249060,
       "project": "repo",
       "live": false,
       "body": {
@@ -567,8 +611,8 @@
       }
     },
     {
-      "seq": 22,
-      "ts_ms": 1790138505206,
+      "seq": 24,
+      "ts_ms": 1790760249061,
       "project": "repo",
       "live": false,
       "body": {
@@ -576,18 +620,20 @@
         "session": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "pid": 2424163,
-        "acp_session_id": "fake-2424163",
+        "pid": 866198,
+        "acp_session_id": "fake-866198",
         "resumed": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-1"
       }
     },
     {
-      "seq": 23,
-      "ts_ms": 1790138505206,
+      "seq": 25,
+      "ts_ms": 1790760249061,
       "project": "repo",
       "live": false,
       "body": {
@@ -597,8 +643,8 @@
       }
     },
     {
-      "seq": 24,
-      "ts_ms": 1790138505208,
+      "seq": 26,
+      "ts_ms": 1790760249063,
       "project": "repo",
       "live": false,
       "body": {
@@ -624,8 +670,8 @@
       }
     },
     {
-      "seq": 25,
-      "ts_ms": 1790138505209,
+      "seq": 27,
+      "ts_ms": 1790760249063,
       "project": "repo",
       "live": false,
       "body": {
@@ -638,8 +684,8 @@
       }
     },
     {
-      "seq": 26,
-      "ts_ms": 1790138505225,
+      "seq": 28,
+      "ts_ms": 1790760249075,
       "project": "repo",
       "live": false,
       "body": {
@@ -665,8 +711,8 @@
       }
     },
     {
-      "seq": 27,
-      "ts_ms": 1790138505225,
+      "seq": 29,
+      "ts_ms": 1790760249075,
       "project": "repo",
       "live": false,
       "body": {
@@ -675,6 +721,7 @@
           "type": "inbox_queued",
           "entry": {
             "id": 3,
+            "chat": "C-1",
             "item": {
               "kind": "user_message",
               "attrs": [],
@@ -685,41 +732,43 @@
       }
     },
     {
-      "seq": 28,
-      "ts_ms": 1790138505226,
+      "seq": 30,
+      "ts_ms": 1790760249076,
       "project": "repo",
       "live": false,
       "body": {
         "type": "prompted",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
       }
     },
     {
-      "seq": 29,
-      "ts_ms": 1790138505226,
+      "seq": 31,
+      "ts_ms": 1790760249076,
       "project": "repo",
       "live": false,
       "body": {
         "type": "domain",
         "event": {
           "type": "inbox_delivered",
+          "chat": "C-1",
           "up_to": 3
         }
       }
     },
     {
-      "seq": 30,
-      "ts_ms": 1790138505227,
+      "seq": 32,
+      "ts_ms": 1790760249077,
       "project": "repo",
       "live": false,
       "body": {
         "type": "tool_called",
         "record": {
           "binding": {
-            "session": "orchestrator",
+            "session": "orchestrator:C-1",
             "role": "orchestrator",
-            "project": "repo"
+            "project": "repo",
+            "chat": "C-1"
           },
           "tool": "create_task",
           "args": {
@@ -751,8 +800,8 @@
       }
     },
     {
-      "seq": 31,
-      "ts_ms": 1790138505227,
+      "seq": 33,
+      "ts_ms": 1790760249078,
       "project": "repo",
       "live": false,
       "body": {
@@ -765,8 +814,8 @@
       }
     },
     {
-      "seq": 32,
-      "ts_ms": 1790138505227,
+      "seq": 34,
+      "ts_ms": 1790760249078,
       "project": "repo",
       "live": false,
       "body": {
@@ -779,8 +828,8 @@
       }
     },
     {
-      "seq": 33,
-      "ts_ms": 1790138505262,
+      "seq": 35,
+      "ts_ms": 1790760249103,
       "project": "repo",
       "live": false,
       "body": {
@@ -806,8 +855,8 @@
       }
     },
     {
-      "seq": 34,
-      "ts_ms": 1790138505262,
+      "seq": 36,
+      "ts_ms": 1790760249103,
       "project": "repo",
       "live": false,
       "body": {
@@ -816,6 +865,7 @@
           "type": "inbox_queued",
           "entry": {
             "id": 4,
+            "chat": "C-1",
             "item": {
               "kind": "user_message",
               "attrs": [],
@@ -826,32 +876,33 @@
       }
     },
     {
-      "seq": 35,
-      "ts_ms": 1790138505263,
+      "seq": 37,
+      "ts_ms": 1790760249104,
       "project": "repo",
       "live": false,
       "body": {
         "type": "prompted",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
       }
     },
     {
-      "seq": 36,
-      "ts_ms": 1790138505263,
+      "seq": 38,
+      "ts_ms": 1790760249104,
       "project": "repo",
       "live": false,
       "body": {
         "type": "domain",
         "event": {
           "type": "inbox_delivered",
+          "chat": "C-1",
           "up_to": 4
         }
       }
     },
     {
-      "seq": 37,
-      "ts_ms": 1790138505264,
+      "seq": 39,
+      "ts_ms": 1790760249105,
       "project": "repo",
       "live": false,
       "body": {
@@ -860,7 +911,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-2424163",
+            "acp_session_id": "fake-866198",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -913,8 +964,8 @@
       }
     },
     {
-      "seq": 38,
-      "ts_ms": 1790138505267,
+      "seq": 40,
+      "ts_ms": 1790760249108,
       "project": "repo",
       "live": false,
       "body": {
@@ -940,13 +991,13 @@
       }
     },
     {
-      "seq": 38,
-      "ts_ms": 1790138505268,
+      "seq": 40,
+      "ts_ms": 1790760249108,
       "project": "repo",
       "live": true,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "output",
           "data": {
@@ -962,25 +1013,25 @@
       }
     },
     {
-      "seq": 39,
-      "ts_ms": 1790138505268,
+      "seq": 41,
+      "ts_ms": 1790760249108,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "kind": "message",
         "text": "mcp:create_group:ok:{\"group_id\":\"G-1\",\"group_branch\":\"yhtye/G-1\",\"base_branch\":\"main\"}mcp:create_task:ok:{\"task_id\":\"T-1\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}mcp:create_task:ok:{\"task_id\":\"T-2\",\"status\":\"running\",\"steps\":[{\"kind\":\"implement\"},{\"kind\":\"done\"}]}"
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790138505268,
+      "seq": 42,
+      "ts_ms": 1790760249108,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent",
-        "session": "orchestrator",
+        "session": "orchestrator:C-1",
         "event": {
           "type": "turn_ended",
           "data": {
@@ -991,15 +1042,23 @@
     }
   ],
   "end": {
-    "seq": 40,
+    "seq": 42,
     "state": {
       "project": "repo",
       "config": {
         "max_review_rounds": 2
       },
+      "chats": [
+        {
+          "id": "C-1",
+          "branch": "main",
+          "title": "hold on"
+        }
+      ],
       "groups": [
         {
           "id": "G-1",
+          "chat": "C-1",
           "title": "two",
           "summary": null,
           "base_branch": "main",
@@ -1041,7 +1100,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-1",
           "cancel_reason": "cancelled by the user"
         },
         {
@@ -1074,13 +1133,14 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpT2IKpC/data/worktrees/repo/G-1/T-2",
+          "workdir": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-2",
           "cancel_reason": "group cancelled: changed my mind"
         }
       ],
       "helps": [],
       "inbox": [],
       "counters": {
+        "chats": 1,
         "groups": 1,
         "tasks": 2,
         "helps": 0,
@@ -1092,25 +1152,38 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-2424163",
+        "acp_session_id": "fake-866198",
         "status": "live",
         "turn_running": true,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmp60MztG/data/worktrees/repo/G-1/T-1"
       },
       {
-        "session_key": "orchestrator",
+        "session_key": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-2423867",
+        "acp_session_id": "fake-865950",
         "status": "live",
         "turn_running": false,
         "agent": {
           "harness": "fake",
-          "model": "haiku"
-        }
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmp60MztG/repo"
+      }
+    ],
+    "chats": [
+      {
+        "id": "C-1",
+        "branch": "main",
+        "title": "hold on",
+        "created_ms": 1790760249000,
+        "last_used_ms": 1790760249104
       }
     ]
   }

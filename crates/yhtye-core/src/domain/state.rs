@@ -110,11 +110,27 @@ pub fn task_branch(group: &str, task: &str) -> String {
     format!("yhtye/{group}-{task}")
 }
 
+/// A conversation with the orchestrator, bound to one target branch
+/// (`orchestration-model.md` §2.0, Stage 8). Times are not part of the state
+/// (the store derives them from the event log).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Chat {
+    /// `C-<n>`.
+    pub id: String,
+    /// The branch the chat works on; it never changes.
+    pub branch: String,
+    /// The first user message, shortened (`None` until it is sent).
+    pub title: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Group {
     pub id: String,
+    /// The chat that created the group (`C-<n>`).
+    pub chat: String,
     pub title: String,
     pub summary: Option<String>,
+    /// The chat's target branch: where the group is merged.
     pub base_branch: String,
     pub group_branch: String,
     pub status: GroupStatus,
@@ -126,6 +142,14 @@ pub struct Group {
     /// had settled and the group was still open (Stage 7a; 0 in older logs).
     #[serde(default)]
     pub finish_nudges: u32,
+}
+
+impl Group {
+    /// `active` or `finishing`: counts against the branch's open-group limit.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        matches!(self.status, GroupStatus::Active | GroupStatus::Finishing)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -269,12 +293,16 @@ impl Help {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct InboxEntry {
     pub id: u64,
+    /// The chat whose orchestrator this is for.
+    pub chat: String,
     pub item: InboxItem,
 }
 
 /// Id counters (the number of each kind created so far).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Counters {
+    #[serde(default)]
+    pub chats: u32,
     pub groups: u32,
     pub tasks: u32,
     pub helps: u32,
@@ -286,6 +314,8 @@ pub struct Counters {
 pub struct State {
     pub project: String,
     pub config: DomainConfig,
+    /// In creation order.
+    pub chats: Vec<Chat>,
     pub groups: Vec<Group>,
     pub tasks: Vec<Task>,
     pub helps: Vec<Help>,
@@ -300,12 +330,30 @@ impl State {
         Self {
             project: project.into(),
             config,
+            chats: Vec::new(),
             groups: Vec::new(),
             tasks: Vec::new(),
             helps: Vec::new(),
             inbox: Vec::new(),
             counters: Counters::default(),
         }
+    }
+
+    #[must_use]
+    pub fn chat(&self, id: &str) -> Option<&Chat> {
+        self.chats.iter().find(|c| c.id == id)
+    }
+
+    /// The chat that created `group`.
+    #[must_use]
+    pub fn chat_of_group(&self, group: &str) -> Option<&str> {
+        self.group(group).map(|g| g.chat.as_str())
+    }
+
+    /// The chat of the group `task` belongs to.
+    #[must_use]
+    pub fn chat_of_task(&self, task: &str) -> Option<&str> {
+        self.chat_of_group(&self.task(task)?.group)
     }
 
     #[must_use]
@@ -335,12 +383,30 @@ impl State {
         self.helps.iter_mut().find(|h| h.id == id)
     }
 
-    /// The group that blocks creating another one (`active` or `finishing`).
+    /// The group on `branch` that blocks creating another one there (`active`
+    /// or `finishing`; any chat's, Stage 8).
     #[must_use]
-    pub fn open_group(&self) -> Option<&Group> {
+    pub fn open_group_on(&self, branch: &str) -> Option<&Group> {
         self.groups
             .iter()
-            .find(|g| matches!(g.status, GroupStatus::Active | GroupStatus::Finishing))
+            .find(|g| g.base_branch == branch && g.is_open())
+    }
+
+    /// The `active` or `finishing` group of `chat` (what `get_status` shows by default).
+    #[must_use]
+    pub fn open_group_of(&self, chat: &str) -> Option<&Group> {
+        self.groups.iter().find(|g| g.chat == chat && g.is_open())
+    }
+
+    /// Whether any group is `active` or `finishing`.
+    #[must_use]
+    pub fn has_open_group(&self) -> bool {
+        self.groups.iter().any(Group::is_open)
+    }
+
+    /// The undelivered inbox entries of `chat`, oldest first.
+    pub fn inbox_of<'a>(&'a self, chat: &'a str) -> impl Iterator<Item = &'a InboxEntry> + 'a {
+        self.inbox.iter().filter(move |e| e.chat == chat)
     }
 
     pub fn tasks_of<'a>(&'a self, group: &'a str) -> impl Iterator<Item = &'a Task> + 'a {

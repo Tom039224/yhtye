@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use sqlx::{FromRow, Sqlite, SqliteConnection, Transaction};
 
-use super::StoreError;
 use super::codec::{from_json, int, json, name, parse, parse_opt, uint};
+use super::{StoreError, chats};
 use crate::domain::{Group, Help, InboxEntry, InboxItem, State, Step, Task};
 
 type Tx = Transaction<'static, Sqlite>;
@@ -45,6 +45,7 @@ pub(super) async fn write(tx: &mut Tx, before: &State, after: &State) -> Result<
             .execute(&mut **tx)
             .await?;
     }
+    chats::write(tx, project, &before.chats, &after.chats).await?;
     for (ord, g) in after.groups.iter().enumerate() {
         if before.group(&g.id) != Some(g) {
             upsert_group(tx, project, ord, g).await?;
@@ -65,13 +66,14 @@ pub(super) async fn write(tx: &mut Tx, before: &State, after: &State) -> Result<
 
 async fn upsert_group(tx: &mut Tx, project: &str, ord: usize, g: &Group) -> Result<(), StoreError> {
     sqlx::query(
-        "INSERT OR REPLACE INTO task_groups (project_id, id, ord, title, summary, base_branch, \
-         group_branch, status, finish_summary, detail, finish_nudges) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR REPLACE INTO task_groups (project_id, id, ord, chat_id, title, summary, \
+         base_branch, group_branch, status, finish_summary, detail, finish_nudges) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(project)
     .bind(&g.id)
     .bind(int(ord)?)
+    .bind(&g.chat)
     .bind(&g.title)
     .bind(&g.summary)
     .bind(&g.base_branch)
@@ -197,14 +199,18 @@ async fn write_inbox(
             .await?;
     }
     for new in after.iter().filter(|e| !old.contains(&e.id)) {
-        sqlx::query("INSERT INTO inbox (project_id, id, kind, attrs, body) VALUES (?, ?, ?, ?, ?)")
-            .bind(project)
-            .bind(int(new.id)?)
-            .bind(name(&new.item.kind)?)
-            .bind(json(&new.item.attrs)?)
-            .bind(&new.item.body)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query(
+            "INSERT INTO inbox (project_id, id, chat_id, kind, attrs, body) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(project)
+        .bind(int(new.id)?)
+        .bind(&new.chat)
+        .bind(name(&new.item.kind)?)
+        .bind(json(&new.item.attrs)?)
+        .bind(&new.item.body)
+        .execute(&mut **tx)
+        .await?;
     }
     Ok(())
 }
@@ -218,6 +224,7 @@ struct ProjectRow {
 #[derive(FromRow)]
 struct GroupRow {
     id: String,
+    chat_id: String,
     title: String,
     summary: Option<String>,
     base_branch: String,
@@ -272,6 +279,7 @@ struct HelpRow {
 #[derive(FromRow)]
 struct InboxRow {
     id: i64,
+    chat_id: String,
     kind: String,
     attrs: String,
     body: String,
@@ -292,6 +300,7 @@ pub(super) async fn load(
     };
     let mut state = State::new(project, from_json(&p.config)?);
     state.counters = from_json(&p.counters)?;
+    state.chats = chats::load(conn, project).await?;
     state.groups = load_groups(conn, project).await?;
     state.tasks = load_tasks(conn, project).await?;
     state.helps = load_helps(conn, project).await?;
@@ -301,8 +310,8 @@ pub(super) async fn load(
 
 async fn load_groups(conn: &mut SqliteConnection, project: &str) -> Result<Vec<Group>, StoreError> {
     let rows = sqlx::query_as::<_, GroupRow>(
-        "SELECT id, title, summary, base_branch, group_branch, status, finish_summary, detail, \
-         finish_nudges FROM task_groups WHERE project_id = ? ORDER BY ord",
+        "SELECT id, chat_id, title, summary, base_branch, group_branch, status, finish_summary, \
+         detail, finish_nudges FROM task_groups WHERE project_id = ? ORDER BY ord",
     )
     .bind(project)
     .fetch_all(&mut *conn)
@@ -311,6 +320,7 @@ async fn load_groups(conn: &mut SqliteConnection, project: &str) -> Result<Vec<G
         .map(|r| {
             Ok(Group {
                 id: r.id,
+                chat: r.chat_id,
                 title: r.title,
                 summary: r.summary,
                 base_branch: r.base_branch,
@@ -430,7 +440,7 @@ async fn load_inbox(
     project: &str,
 ) -> Result<Vec<InboxEntry>, StoreError> {
     let rows = sqlx::query_as::<_, InboxRow>(
-        "SELECT id, kind, attrs, body FROM inbox WHERE project_id = ? ORDER BY id",
+        "SELECT id, chat_id, kind, attrs, body FROM inbox WHERE project_id = ? ORDER BY id",
     )
     .bind(project)
     .fetch_all(&mut *conn)
@@ -439,6 +449,7 @@ async fn load_inbox(
         .map(|r| {
             Ok(InboxEntry {
                 id: uint(r.id)?,
+                chat: r.chat_id,
                 item: InboxItem {
                     kind: parse(&r.kind)?,
                     attrs: from_json(&r.attrs)?,

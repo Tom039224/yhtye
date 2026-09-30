@@ -1,5 +1,6 @@
-//! Public face of the runtime for one project: one orchestrator session,
-//! sub-agent sessions started by the state machine, and the [`ApiEvent`] stream.
+//! Public face of the runtime for one project: one orchestrator session per
+//! chat, sub-agent sessions started by the state machine, and the [`ApiEvent`]
+//! stream.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -15,17 +16,13 @@ use super::driver::{Channels, Cmd, Driver, Restarted};
 use super::emitter::{Emitter, Publisher};
 use super::port::{LoopPort, ToolRequest};
 use super::sessions::{Sessions, StoredSession};
-use crate::acp::AgentError;
 use crate::agents::AgentCatalog;
 use crate::api::{ApiEvent, ApiEventBody, Snapshot};
-use crate::domain::{DomainConfig, OrchestratorResume, State, ToolError};
+use crate::domain::{DomainConfig, State, ToolError, chat_of_session};
 use crate::git::GitService;
 use crate::mcp::tools::{CancelGroupArgs, CancelTaskArgs};
 use crate::mcp::{McpHost, TokenRegistry, ToolCall, ToolCallRecord};
-use crate::store::{SessionRecord, Store, StoreError, StoredEvent};
-
-/// Session key of the orchestrator.
-pub const ORCHESTRATOR_SESSION: &str = "orchestrator";
+use crate::store::{ChatInfo, SessionRecord, SessionStatus, Store, StoreError, StoredEvent};
 
 #[derive(Clone)]
 pub struct OrchestrationConfig {
@@ -65,8 +62,6 @@ impl fmt::Debug for OrchestrationConfig {
 pub enum OrchError {
     #[error("MCP server failed to start: {0}")]
     Mcp(#[from] std::io::Error),
-    #[error("orchestrator session failed to start: {0}")]
-    Orchestrator(#[from] AgentError),
     #[error("database: {0}")]
     Store(#[from] StoreError),
     #[error("the orchestration loop has stopped")]
@@ -97,20 +92,23 @@ pub struct Orchestration {
 struct Stored {
     state: State,
     restarted: bool,
+    /// Every recorded session (the chats' orchestrators included).
     sessions: Vec<SessionRecord>,
 }
 
 impl Stored {
     /// Reports every session that was running (or suspended) when Yhtye stopped
-    /// as interrupted; returns their ACP session ids to restore, by session key.
+    /// as interrupted; returns the ACP session ids of the sub-agents to restore,
+    /// by session key. Orchestrators are restored by the loop, per chat.
     fn interrupt_sessions(&self, emit: &Emitter) -> HashMap<String, StoredSession> {
-        for s in &self.sessions {
+        let resumable = || self.sessions.iter().filter(|s| s.status.is_resumable());
+        for s in resumable() {
             emit.send(ApiEventBody::SessionInterrupted {
                 session: s.session_key.clone(),
             });
         }
-        self.sessions
-            .iter()
+        resumable()
+            .filter(|s| chat_of_session(&s.session_key).is_none())
             .map(|s| {
                 let stored = StoredSession {
                     acp_session_id: s.acp_session_id.clone(),
@@ -118,6 +116,25 @@ impl Stored {
                 };
                 (s.session_key.clone(), stored)
             })
+            .collect()
+    }
+
+    /// The chats whose orchestrators start with the project (§10): those whose
+    /// session was live when Yhtye stopped, that have an open group or that have
+    /// undelivered inbox entries. Every other chat starts when it is next used.
+    fn chats_to_restore(&self) -> Vec<String> {
+        self.state
+            .chats
+            .iter()
+            .filter(|c| {
+                let live = self.sessions.iter().any(|s| {
+                    chat_of_session(&s.session_key) == Some(c.id.as_str())
+                        && s.status != SessionStatus::Stopped
+                });
+                let open_group = self.state.open_group_of(&c.id).is_some();
+                live || open_group || self.state.inbox_of(&c.id).next().is_some()
+            })
+            .map(|c| c.id.clone())
             .collect()
     }
 }
@@ -154,12 +171,7 @@ async fn open_project(store: &Store, cfg: &OrchestrationConfig) -> Result<Stored
             (state, false)
         }
     };
-    let sessions = store
-        .sessions(&cfg.project)
-        .await?
-        .into_iter()
-        .filter(|s| s.status.is_resumable())
-        .collect();
+    let sessions = store.sessions(&cfg.project).await?;
     Ok(Stored {
         state,
         restarted,
@@ -168,11 +180,13 @@ async fn open_project(store: &Store, cfg: &OrchestrationConfig) -> Result<Stored
 }
 
 impl Orchestration {
-    /// Opens the project's stored state (or creates it), starts the MCP server
-    /// and the orchestrator session (returns once it is ready). After a restart,
-    /// in-flight tasks become `interrupted` and are resumed, restoring their
-    /// agent sessions with `session/load` where possible. Events arrive on the
-    /// returned receiver.
+    /// Opens the project's stored state (or creates it) and starts the MCP
+    /// server. No orchestrator is started for a new or idle project: each chat's
+    /// starts when something is sent to it (`core-design.md` §17.3). After a
+    /// restart, in-flight tasks become `interrupted` and are resumed, restoring
+    /// their agent sessions with `session/load` where possible, and the
+    /// orchestrators of the chats that were live or have open work are restored.
+    /// Events arrive on the returned receiver.
     pub async fn start(
         cfg: OrchestrationConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<ApiEvent>), OrchError> {
@@ -187,20 +201,10 @@ impl Orchestration {
         let (agent_tx, agents_rx) = mpsc::unbounded_channel();
         let project = cfg.project.clone();
         let cfg = Arc::new(cfg);
-        let mut sessions = Sessions::new(cfg.clone(), host, emit, agent_tx, resume);
-        let started = match sessions.start_orchestrator().await {
-            Ok(s) => s,
-            Err(e) => {
-                sessions.shutdown().await;
-                return Err(e.into());
-            }
-        };
+        let sessions = Sessions::new(cfg.clone(), host, emit, agent_tx, resume);
         let restarted = stored.restarted.then(|| Restarted {
-            orchestrator: OrchestratorResume {
-                had_session: started.had_session,
-                restored: started.restored,
-                turn_was_running: orchestrator_turn_running(&stored.sessions),
-            },
+            chats: stored.chats_to_restore(),
+            records: stored.sessions.clone(),
         });
         let driver = Driver::new(cfg, stored.state, sessions, publisher);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -241,14 +245,64 @@ impl Orchestration {
         self.mcp_addr
     }
 
-    /// Queues a `user_message` for the orchestrator (sent when it is idle).
-    pub fn send_user_message(&self, text: impl Into<String>) -> Result<(), OrchError> {
-        self.send(Cmd::UserMessage(text.into()))
+    /// Queues a `user_message` for the orchestrator of `chat`; it is started if
+    /// it is not running and gets the message when it is idle. Refused for an
+    /// unknown chat (`not_found`) or one whose branch is gone (`invalid_state`).
+    pub async fn send_user_message(
+        &self,
+        chat: impl Into<String>,
+        text: impl Into<String>,
+    ) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::UserMessage(chat.into(), text.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
-    /// Cancels the orchestrator's running turn, if any.
-    pub fn cancel_orchestrator_turn(&self) -> Result<(), OrchError> {
-        self.send(Cmd::CancelOrchestrator)
+    /// Cancels the running turn of the chat's orchestrator, if any (`not_found`
+    /// for an unknown chat).
+    pub async fn cancel_orchestrator_turn(
+        &self,
+        chat: impl Into<String>,
+    ) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::CancelOrchestrator(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// A new chat on the existing local branch `branch` (nothing is started).
+    pub async fn create_chat(
+        &self,
+        branch: impl Into<String>,
+    ) -> Result<ChatInfo, UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::CreateChat(branch.into(), tx))?;
+        self.chat_info(rx.await.map_err(|_| OrchError::Closed)??.id)
+            .await
+    }
+
+    /// Creates branch `name` (at `from`, default the main worktree's HEAD) in a
+    /// Yhtye worktree and the branch's first chat.
+    pub async fn create_branch(
+        &self,
+        name: impl Into<String>,
+        from: Option<String>,
+    ) -> Result<ChatInfo, UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::CreateBranch(name.into(), from, tx))?;
+        self.chat_info(rx.await.map_err(|_| OrchError::Closed)??.id)
+            .await
+    }
+
+    async fn chat_info(&self, id: String) -> Result<ChatInfo, UserActionError> {
+        let chats = self
+            .store
+            .chats(&self.project)
+            .await
+            .map_err(OrchError::from)?;
+        chats
+            .into_iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| ToolError::internal(format!("chat {id} was not stored")).into())
     }
 
     /// The current state and the `seq` of the last event it includes.
@@ -321,10 +375,4 @@ impl Orchestration {
     fn send(&self, cmd: Cmd) -> Result<(), OrchError> {
         self.cmd_tx.send(cmd).map_err(|_| OrchError::Closed)
     }
-}
-
-fn orchestrator_turn_running(sessions: &[SessionRecord]) -> bool {
-    sessions
-        .iter()
-        .any(|s| s.session_key == ORCHESTRATOR_SESSION && s.turn_running)
 }

@@ -14,6 +14,8 @@ export type * from "./ApiEvent";
 export type * from "./ApiEventBody";
 export type * from "./ApiResponse";
 export type * from "./Candidate";
+export type * from "./Chat";
+export type * from "./ChatInfo";
 export type * from "./Counters";
 export type * from "./DomainConfig";
 export type * from "./DomainEvent";

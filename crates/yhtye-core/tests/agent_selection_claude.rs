@@ -11,6 +11,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::sync::Arc;
 
 use common::orch::{shutdown_and_check, tool_calls, until};
@@ -20,7 +22,7 @@ use yhtye_core::agents::{
     AgentCatalog, AgentChoice, AgentRole, Candidate, HarnessPreset, RoleSettings,
 };
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 const REQUEST: &str = "Create one group with exactly one code task that appends the line \
 'agent ok' to README.md (steps: implement only). I want that task to run on a specific model: \
@@ -53,7 +55,7 @@ async fn real_orchestrator_override_is_checked_and_runs_the_resolved_model() {
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(REQUEST).expect("send");
+    common::orch::send(&orch, REQUEST).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, finish_called).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     eprintln!("tool calls: {:#?}", tool_calls(&events));

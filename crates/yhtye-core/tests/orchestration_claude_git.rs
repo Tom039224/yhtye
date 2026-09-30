@@ -6,12 +6,14 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use common::orch::{prompts_to, shutdown_and_check, summary, tool_calls, until};
 use common::real::{REAL_TIMEOUT, assert_haiku, is_orchestrator_turn_end, real_git_config};
 use common::repo::TempRepo;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, GroupStatus, TaskStatus};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 const REQUEST: &str = "Create one group with exactly two code tasks. \
 Task 1: create add.py defining add(a, b) that returns a + b, plus test_add.py that asserts add(2, 3) == 5; \
@@ -47,7 +49,7 @@ async fn real_group_with_two_code_tasks_lands_on_the_base_branch() {
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(REQUEST).expect("send");
+    common::orch::send(&orch, REQUEST).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, finish_called).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     log_run(&events);
@@ -99,7 +101,7 @@ async fn real_implementer_waits_for_a_long_command_before_reporting() {
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(LONG_COMMAND_REQUEST).expect("send");
+    common::orch::send(&orch, LONG_COMMAND_REQUEST).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, finish_called).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, is_orchestrator_turn_end).await;
     log_run(&events);
@@ -136,11 +138,10 @@ async fn real_group_without_a_finish_hint_still_ends_done() {
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(
+    common::orch::send(&orch,
         "サブエージェントを使うテストをしてください。README を読んで要約する調査タスクを 1 つだけ作ってください。\
          ファイルには変更を加えないでください",
-    )
-    .expect("send");
+    ).await;
     let merged = |e: &ApiEvent| {
         matches!(
             &e.body,

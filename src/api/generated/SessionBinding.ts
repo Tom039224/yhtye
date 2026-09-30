@@ -8,7 +8,13 @@ export type SessionBinding = {
 /**
  * Yhtye's key of the agent session (not the ACP session id).
  */
-session: string, role: Role, project: string, group?: string | null, task?: string | null, 
+session: string, role: Role, project: string, 
+/**
+ * The chat an orchestrator session belongs to (Stage 8): its tools only
+ * reach that chat's groups and tasks. `None` for sub-agents (they belong to
+ * a task) and for the user's own actions (no restriction).
+ */
+chat?: string, group?: string | null, task?: string | null, 
 /**
  * Index of the task step this session runs.
  */

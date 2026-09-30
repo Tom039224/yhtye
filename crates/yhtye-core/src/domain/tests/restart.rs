@@ -21,8 +21,10 @@ fn running(steps: Value) -> Sim {
 }
 
 fn restart(sim: &mut Sim, orchestrator: OrchestratorResume) -> Chain {
-    sim.run(DomainCommand::Restart { orchestrator })
-        .expect("restart never fails")
+    sim.run(DomainCommand::Restart {
+        orchestrators: vec![("C-1".into(), orchestrator)],
+    })
+    .expect("restart never fails")
 }
 
 fn resume(sim: &mut Sim, task: &str) -> Chain {

@@ -14,4 +14,8 @@ turn_running: boolean,
 /**
  * The harness × model × effort it ran (Stage 7b; `None` for older sessions).
  */
-agent: AgentChoice | null, };
+agent: AgentChoice | null, 
+/**
+ * The directory the session was started in (Stage 8; `None` for older rows).
+ */
+cwd: string | null, };

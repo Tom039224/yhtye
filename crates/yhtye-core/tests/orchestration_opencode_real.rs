@@ -4,6 +4,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use common::opencode::{
     MODEL, REAL_TIMEOUT, assert_model, assert_no_new_servers, opencode_harness, opencode_servers,
     real_config,
@@ -15,7 +17,7 @@ use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::Role;
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 /// ACP tool calls (`title (kind)`) an agent session made, for the log.
 fn acp_tools(events: &[ApiEvent], session: &str) -> Vec<String> {
@@ -38,7 +40,7 @@ async fn run_request(
     request: &str,
 ) -> Vec<ApiEvent> {
     let mut events = Vec::new();
-    orch.send_user_message(request).expect("send");
+    common::orch::send(orch, request).await;
     until_healthy(rx, &mut events, REAL_TIMEOUT, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, text }
             if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))

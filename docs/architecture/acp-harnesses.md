@@ -197,8 +197,8 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
 | `ENABLE_TOOL_SEARCH=false` | プロセス env | MCP ツールを遅延ロードせず最初から見せる |
 | `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` | プロセス env | (Stage 6a) Bash の `run_in_background`・長いコマンドの自動背景化などの背景タスクを無効にする。ACP ではターンが終わるとエージェントを起こす手段が無く、背景のコマンドを待つつもりでターンを終えると報告なしのターン (`protocol_violation`) になる (Stage 5 で観察、実 Haiku の `real_implementer_waits_for_a_long_command_before_reporting` で再現・修正を確認) |
 
-オーケストレータはさらに `tools: ["Read","Glob","Grep"]`
-([`orchestration-model.md`](orchestration-model.md) §8.1)。
+(Stage 8d 以降、オーケストレータも組み込みツールを制限しない。以前は `tools: ["Read","Glob","Grep"]` で絞っていた。
+[`orchestration-model.md`](orchestration-model.md) §8.1。)
 `settingSources` (ユーザーの CLAUDE.md・フック・プラグイン・スキル) は既定のまま = **常に有効**
 (Stage 7a でユーザーが決定、[`orchestration-model.md`](orchestration-model.md) §11)。MCP サーバーだけは上の
 `strictMcpConfig` で隔離する。
@@ -361,8 +361,8 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
 - 補足の観察: プロジェクトの `opencode.json` に `permission: {edit: deny, bash: deny}` を置くと、プロンプトが `-32000 Authentication required` で失敗した
   (`{}` や `edit: deny` だけなら通る)。設定の `permission` は ACP 経由でも一部効いているが挙動が読めないので使わない。
 
-したがって OpenCode のオーケストレータは `build` モードで、読み取り専用はシステムプロンプト (「作業はタスクに委ねる」) だけが頼り。
-`orchestration-model.md` §11 の緩和策が OpenCode では効かないことを 7c-2 でユーザーに示す必要がある。
+したがって OpenCode のオーケストレータは `build` モード。(**Stage 8d でユーザーが決定: 読み取り専用は求めない。** 全ハーネスのオーケストレータが
+書き込めるので、この制限できない点は問題ではなくなった。`orchestration-model.md` §8.1。)
 
 ### 7.4 実機での観察と実行結果 (2026-09-23)
 
@@ -379,7 +379,7 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
 - ハーネスは `HarnessConfig::opencode(model)` を全役割で使う。モデル一覧は session/new 応答の `model` config option
   (値 `<provider>/<model>`) から取れる — 7b の「configOptions から取得」にそのまま載る。選択肢が 475 件と多いので UI で絞り込みが要る。
 - 既定モデルが OpenCode の最後に使ったモデル (有料のことがある) なので、**モデル未指定で OpenCode を起動しない** (`model` を必須にする)。
-- オーケストレータを OpenCode にした場合は読み取り専用にならない (7.3)。UI / ドキュメントで明示するか、OpenCode をオーケストレータ候補から外すかを決める。
+- オーケストレータを OpenCode にした場合は読み取り専用にならない (7.3)。→ 7c-2 で警告を出す形にしたが、Stage 8d で全ハーネスが書ける方針に変えたので警告は無くなった。
 - ACP の `tool_call` は MCP 呼び出しが `execute` (コードモード) に見える。UI でツール名を出す箇所は `rawInput.code` を見せるか、
   MCP サーバー側の `ToolCalled` を使う。
 - MCP の隔離が無い (7.2)。必要になったら Yhtye 専用の `OPENCODE_CONFIG_DIR` (アプリのデータディレクトリ配下、他ユーザーが書けない場所) を渡す。
@@ -399,9 +399,8 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
   **OpenCode の「最後に使ったモデル」では起動しない**。
 - **モデル一覧**: 実機で 475 件、約 1.5 秒 (`real_opencode_model_list_comes_from_the_preset_probe`)。値はすべて `<provider>/<model>`。
   プローブも OpenCode のセッションを 1 つ作る (`data_dir/model-probe` の cwd、OpenCode の履歴に残る。プロンプトは送らない)。
-- **オーケストレータ**: 選べる (ユーザー決定)。読み取り専用にできない (7.3) ので preset の `orchestrator_read_only = false` を UI に渡し、
-  設定パネルが「⚠ 書き込み制限なし」を出す (オーケストレータの役割で OpenCode の候補を**出す・選ぶ**どちらでも)。
-  プロンプトでの禁止 (`orchestrator.md`) はそのまま。
+- **オーケストレータ**: 選べる (ユーザー決定)。(7c-2 では読み取り専用にできない (7.3) ので preset の `orchestrator_read_only = false` を UI に渡して
+  「⚠ 書き込み制限なし」を出していたが、**Stage 8d で全ハーネスのオーケストレータが書ける方針に変え、このフラグと警告は削除した**。)
 - **MCP 呼び出しの表示**: サーバー側の `tool_called` 記録 (ハーネス非依存) を従来どおり会話・エージェント出力に `yhtye <tool>` として出す。
   加えて ACP の `execute` ツールは `rawInput.code` の `tools.<server>.<tool>(` を読み、「tool execute → yhtye.report_step_done」と表示する
   (`src/api/acp.ts::codeToolCalls`)。実機では `search({query})` (コードモードのツール検索) も `execute` で来る。
@@ -502,11 +501,12 @@ Codex 本体は ACP を話さない (`codex app-server` は独自の JSON-RPC)�
   `effort: "low"` (`acp_codex_real::real_codex_effort_from_codex_config_is_applied`)。effort を渡さないときはユーザーの設定の値が使われる。
 - 注意: ユーザーの `~/.codex/config.toml` の `model_reasoning_effort` は既定値として効く (Yhtye が何も指定しないとその値で動く)。
 
-### 9.3 オーケストレータは読み取り専用にできない
+### 9.3 オーケストレータは読み取り専用にできない (Stage 8d で問題ではなくなった)
 
 `read-only` モードは「承認が要る」で、Yhtye の自動承認 (allow_always 優先) だと書けてしまい、`reject_once` を返すとターンごと `cancelled` になる。
-そこで OpenCode と同じ扱い (ユーザー決定): オーケストレータも `agent-full-access`、preset の `orchestrator_read_only = false`
-(設定パネルが「⚠ 書き込み制限なし」を出す)、役割のプロンプト (`orchestrator.md`) が書き込みを禁じる。
+そこで OpenCode と同じ扱い (ユーザー決定): オーケストレータも `agent-full-access`。7e では preset の `orchestrator_read_only = false` (「⚠ 書き込み制限なし」) と
+プロンプトでの禁止を付けていたが、Stage 8d で全ハーネスのオーケストレータが書ける方針に変え、フラグ・警告は削除、プロンプトは
+「検証のいらない小さな変更だけ自分でしてすぐコミット」に変えた (`orchestration-model.md` §8.1)。
 
 ### 9.4 モデル一覧はプロバイダで変わる (`agents/openrouter.rs`、`agents/codex_config.rs`)
 

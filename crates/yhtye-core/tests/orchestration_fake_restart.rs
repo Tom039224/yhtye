@@ -4,6 +4,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -15,7 +17,7 @@ use common::orch::{
 use serde_json::{Value, json};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, TaskStatus};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 use yhtye_core::store::SessionStatus;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -43,7 +45,7 @@ async fn run_until_quit(dir: &Path) -> Vec<ApiEvent> {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("add a line").expect("send");
+    common::orch::send(&orch, "add a line").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
         is_message(e, IMPLEMENTER, "working on it")
     })
@@ -271,7 +273,7 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         orch_prompts[0].contains("could not be restored"),
         "{orch_prompts:?}"
     );
-    assert!(orch_prompts[0].contains("task T-1 [interrupted] step 1/2: append"));
+    assert!(orch_prompts[0].contains("task T-1 [running] step 1/2: append"));
     shutdown_and_check(orch, &events).await;
 }
 

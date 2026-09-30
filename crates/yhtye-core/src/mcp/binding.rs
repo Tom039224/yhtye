@@ -16,6 +16,12 @@ pub struct SessionBinding {
     pub session: String,
     pub role: Role,
     pub project: String,
+    /// The chat an orchestrator session belongs to (Stage 8): its tools only
+    /// reach that chat's groups and tasks. `None` for sub-agents (they belong to
+    /// a task) and for the user's own actions (no restriction).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub chat: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -27,11 +33,16 @@ pub struct SessionBinding {
 
 impl SessionBinding {
     #[must_use]
-    pub fn orchestrator(session: impl Into<String>, project: impl Into<String>) -> Self {
+    pub fn orchestrator(
+        session: impl Into<String>,
+        project: impl Into<String>,
+        chat: impl Into<String>,
+    ) -> Self {
         Self {
             session: session.into(),
             role: Role::Orchestrator,
             project: project.into(),
+            chat: Some(chat.into()),
             group: None,
             task: None,
             step: None,
@@ -150,7 +161,7 @@ mod tests {
     #[test]
     fn issue_get_revoke() {
         let reg = TokenRegistry::new();
-        let binding = SessionBinding::orchestrator("orch", "P-1");
+        let binding = SessionBinding::orchestrator("orch", "P-1", "C-1");
         let token = reg.issue(binding.clone());
         assert_eq!(reg.get(token.as_str()), Some(binding.clone()));
         assert_eq!(reg.get("nope"), None);

@@ -154,7 +154,7 @@ mod tests {
     fn the_codex_preset_passes_model_and_effort_through_codex_config() {
         use super::super::AgentRole;
         let p = HarnessPreset::codex(Some("/bin/codex"));
-        assert!(p.requires_model && !p.orchestrator_read_only);
+        assert!(p.requires_model);
         assert_eq!(p.model_config_id(), "model");
         assert_eq!(p.effort_config_id, "reasoning_effort");
         let info = p.info();
@@ -233,14 +233,13 @@ mod tests {
     }
 
     #[test]
-    fn the_opencode_preset_always_sets_a_model_and_warns_about_the_orchestrator() {
+    fn the_opencode_preset_always_sets_a_model() {
         let p =
             HarnessPreset::opencode(OPENCODE_FALLBACK_MODEL, vec!["OPENCODE_CONFIG_DIR".into()]);
         assert!(p.requires_model);
-        assert!(!p.orchestrator_read_only);
         assert!(p.model_env.is_none());
         let info = p.info();
-        assert!(info.requires_model && !info.orchestrator_read_only);
+        assert!(info.requires_model);
         for role in [
             super::super::AgentRole::Orchestrator,
             super::super::AgentRole::Implementer,

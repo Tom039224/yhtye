@@ -1,8 +1,9 @@
 import { useMemo, useRef } from "react";
 
 import type { State } from "../api/generated";
-import { orchestratorSession, type ProjectView } from "../store/project";
-import { ORCHESTRATOR } from "../store/transcript";
+import type { AppState } from "../store/app";
+import { orchestratorKey, scopeState } from "../store/chats";
+import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
 import { withMentions, type Mention } from "./mentions";
@@ -17,25 +18,42 @@ interface Props {
   onClearMentions: () => void;
 }
 
+export const NEW_CHAT_TITLE = "新しいチャット";
+const NO_CHAT_HINT = "BRANCHES の「+ 新しいチャット」から始めます";
+
+/** The chat's branch is gone (git is read; unknown while it has not been). */
+function isBranchMissing(s: AppState, view: ProjectView, branch: string | undefined): boolean {
+  const git = s.git?.project === view.info.id ? s.git.overview : null;
+  return Boolean(branch && git && !git.branches.some((b) => b.name === branch));
+}
+
 export function Conversation({ view, mentions, onRemoveMention, onClearMentions }: Props) {
   const store = useStore();
   const connection = useAppState((s) => s.connection);
   const sending = useAppState((s) => s.busy.sending);
-  const items = view.transcripts[ORCHESTRATOR];
-  const streaming = view.streaming[ORCHESTRATOR];
-  const queued = useMemo(() => new Set((view.state?.inbox ?? []).map((e) => e.id)), [view.state?.inbox]);
-  const session = orchestratorSession(view);
+  const chat = selectedChatInfo(view) ?? null;
+  const key = chat ? orchestratorKey(chat.id) : null;
+  const items = key ? view.transcripts[key] : undefined;
+  const streaming = key ? view.streaming[key] : undefined;
+  const scoped = useMemo(() => (view.state ? scopeState(view.state, chat?.id ?? null) : null), [view.state, chat?.id]);
+  const queued = useMemo(() => new Set((scoped?.inbox ?? []).map((e) => e.id)), [scoped]);
+  const session = orchestratorSession(view, chat?.id ?? null);
+  const branchMissing = useAppState((s) => isBranchMissing(s, view, chat?.branch));
   const scroller = useRef<HTMLDivElement>(null);
-  useAutoScroll(scroller, [items, streaming], items?.[0]?.seq);
+  useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, chat?.id);
 
   const disabledReason =
-    connection.state !== "open"
+    !chat
+      ? NO_CHAT_HINT
+      : connection.state !== "open"
       ? "コアに接続していません"
       : view.phase === "loading"
         ? "読み込み中…"
         : view.phase === "error"
           ? "プロジェクトを読み込めませんでした"
-          : null;
+          : branchMissing
+            ? `ブランチ「${chat.branch}」が存在しないため送信できません (履歴は読めます)`
+            : null;
 
   const send = async (text: string) => {
     const ok = await store.sendMessage(withMentions(text, mentions));
@@ -46,11 +64,22 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   return (
     <section className="conversation" aria-label="orchestrator">
       <header className="panel-header">
-        <span className="panel-title">orchestrator</span>
+        <span className="panel-title" data-testid="chat-title" title={chat?.title ?? undefined}>
+          {chat ? (chat.title ?? NEW_CHAT_TITLE) : "orchestrator"}
+        </span>
+        {chat ? (
+          <span className="chip branch-chip" title="このチャットの作業対象ブランチ" data-testid="chat-branch">
+            ⎇ {chat.branch}
+            {branchMissing ? " · 削除済み" : ""}
+          </span>
+        ) : null}
+        <span className="spacer" />
         <SessionBadge status={session?.status} running={session?.turn_running ?? false} />
       </header>
       <div className="scroll" ref={scroller}>
-        {items?.length || streaming || view.historyStart > 1 ? (
+        {!chat ? (
+          <p className="empty" data-testid="no-chat">{NO_CHAT_HINT}</p>
+        ) : items?.length || streaming || view.historyStart > 1 ? (
           <TranscriptView
             items={items ?? []}
             streaming={streaming}
@@ -63,12 +92,14 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
           <p className="empty">まだ会話はありません。下の欄からオーケストレータに依頼してください。</p>
         )}
       </div>
-      {view.state ? <WaitBanner state={view.state} /> : null}
+      {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
+        key={chat?.id ?? "none"}
         disabled={disabledReason !== null}
         disabledReason={disabledReason}
         sending={sending}
         turnRunning={session?.turn_running ?? false}
+        starting={queued.size > 0 && session?.status !== "live"}
         mentions={mentions}
         onRemoveMention={onRemoveMention}
         onSend={send}

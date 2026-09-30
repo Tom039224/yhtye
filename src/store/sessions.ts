@@ -23,6 +23,8 @@ export function applySessionEvent(sessions: SessionRecord[], body: ApiEventBody)
         turn_running: false,
         // Older logs have no agent (Stage 7b).
         agent: body.agent ?? null,
+        // Older logs have no directory (Stage 8).
+        cwd: body.cwd ?? null,
       };
       const rest = sessions.filter((s) => s.session_key !== body.session);
       // Same order as the core (SQLite's binary collation).

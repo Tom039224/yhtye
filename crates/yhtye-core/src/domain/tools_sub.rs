@@ -105,15 +105,21 @@ impl Tx {
         Ok((task_id, t.current))
     }
 
-    pub(super) fn get_status(&self, a: &GetStatusArgs) -> Reply {
-        let group = match &a.group_id {
-            Some(id) => self
+    pub(super) fn get_status(&self, binding: &SessionBinding, a: &GetStatusArgs) -> Reply {
+        let group = match (&a.group_id, binding.chat.as_deref()) {
+            (Some(id), _) => self
                 .state
                 .group(id)
                 .ok_or_else(|| ToolError::not_found(format!("no group {id}")))?,
-            None => self
+            (None, Some(chat)) => self
                 .state
-                .open_group()
+                .open_group_of(chat)
+                .ok_or_else(|| ToolError::not_found("there is no active group in this chat"))?,
+            (None, None) => self
+                .state
+                .groups
+                .iter()
+                .find(|g| g.is_open())
                 .ok_or_else(|| ToolError::not_found("there is no active group"))?,
         };
         let tasks: Vec<Value> = self.state.tasks_of(&group.id).map(task_summary).collect();

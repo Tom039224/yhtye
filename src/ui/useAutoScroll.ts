@@ -6,10 +6,17 @@ const NEAR_BOTTOM_PX = 48;
  * Keeps a scroll container pinned to the bottom when `content` changes, unless
  * the user has scrolled up to read (then it stays where it is). When `head`
  * (the first item's identity) changes, older content was prepended: the view
- * keeps its place instead of jumping.
+ * keeps its place instead of jumping. When `resetKey` changes (another chat is
+ * shown) the new content starts at the bottom.
  */
-export function useAutoScroll(ref: RefObject<HTMLElement | null>, content: unknown, head?: unknown): void {
+export function useAutoScroll(
+  ref: RefObject<HTMLElement | null>,
+  content: unknown,
+  head?: unknown,
+  resetKey?: unknown,
+): void {
   const pinned = useRef(true);
+  const lastReset = useRef(resetKey);
   const lastHead = useRef(head);
   const lastHeight = useRef(0);
 
@@ -26,6 +33,11 @@ export function useAutoScroll(ref: RefObject<HTMLElement | null>, content: unkno
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    if (resetKey !== lastReset.current) {
+      lastReset.current = resetKey;
+      pinned.current = true;
+      lastHead.current = head;
+    }
     if (head !== lastHead.current && !pinned.current) {
       el.scrollTop += el.scrollHeight - lastHeight.current;
     } else if (pinned.current) {
@@ -33,5 +45,5 @@ export function useAutoScroll(ref: RefObject<HTMLElement | null>, content: unkno
     }
     lastHead.current = head;
     lastHeight.current = el.scrollHeight;
-  }, [ref, content, head]);
+  }, [ref, content, head, resetKey]);
 }

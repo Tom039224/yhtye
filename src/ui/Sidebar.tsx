@@ -1,9 +1,9 @@
 import { type FormEvent, useState } from "react";
 
 import type { ProjectInfo } from "../api/generated";
-import type { AppState } from "../store/app";
 import type { ProjectView } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
+import { BranchTree } from "./BranchTree";
 import { useNow } from "./useNow";
 
 type Ring = "running" | "ready" | "stopped";
@@ -19,10 +19,11 @@ const RING_LABEL: Record<Ring, string> = { running: "実行中", ready: "待機�
 
 /** PROJECTS / BRANCHES / core host (design §3.3), all from the core. */
 export function Sidebar() {
+  const project = useAppState((s) => s.project?.info.id);
   return (
     <aside className="sidebar" aria-label="projects">
       <Projects />
-      <Branches />
+      <BranchTree key={project ?? "none"} />
       <HostFooter />
     </aside>
   );
@@ -74,36 +75,6 @@ function Projects() {
           {opening ? "…" : "開く"}
         </button>
       </form>
-    </>
-  );
-}
-
-function selectBranches(s: AppState) {
-  return s.git && s.project && s.git.project === s.project.info.id ? s.git : null;
-}
-
-function Branches() {
-  const git = useAppState(selectBranches);
-  const overview = git?.overview;
-  return (
-    <>
-      <div className="section-title branches-title">BRANCHES</div>
-      {!git ? <p className="side-note">プロジェクトを開くと表示します。</p> : null}
-      {git && !overview && git.error ? <p className="side-note error-text">{git.error}</p> : null}
-      {overview && overview.branches.length === 0 ? <p className="side-note">ブランチはまだありません。</p> : null}
-      {overview ? (
-        <ul className="side-list" aria-label="branches">
-          {overview.branches.map((b) => {
-            const current = b.name === overview.head;
-            return (
-              <li key={b.name} className={`side-row branch-row ${current ? "current" : ""}`} title={`${b.name} · ${b.sha.slice(0, 7)}`}>
-                <span className={`dot ${current ? "dot-ok" : ""}`} />
-                <span className="name">{b.name}</span>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
     </>
   );
 }

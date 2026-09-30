@@ -4,4 +4,8 @@ import type { InboxItem } from "./InboxItem";
 /**
  * An undelivered reason to wake the orchestrator.
  */
-export type InboxEntry = { id: number, item: InboxItem, };
+export type InboxEntry = { id: number, 
+/**
+ * The chat whose orchestrator this is for.
+ */
+chat: string, item: InboxItem, };

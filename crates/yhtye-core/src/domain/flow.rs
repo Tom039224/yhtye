@@ -30,11 +30,10 @@ impl Tx {
         }
         let body = dependency_results(&self.state, t);
         self.set_status(id, TaskStatus::AwaitingInstruction);
-        self.queue_inbox(InboxItem::new(
-            InboxKind::InstructionNeeded,
-            &[("task", id)],
-            body,
-        ));
+        self.queue_inbox_task(
+            id,
+            InboxItem::new(InboxKind::InstructionNeeded, &[("task", id)], body),
+        );
     }
 
     /// Runs a task from its first unfinished step, preparing its git workspace
@@ -115,11 +114,14 @@ impl Tx {
             .map(|t| earlier_results(t, index))
             .unwrap_or_default();
         let step = index.to_string();
-        self.queue_inbox(InboxItem::new(
-            InboxKind::CheckpointReached,
-            &[("task", id), ("step", &step)],
-            body,
-        ));
+        self.queue_inbox_task(
+            id,
+            InboxItem::new(
+                InboxKind::CheckpointReached,
+                &[("task", id), ("step", &step)],
+                body,
+            ),
+        );
     }
 
     pub(super) fn start_finish(&mut self, id: &str) {
@@ -224,11 +226,14 @@ impl Tx {
             },
         });
         self.set_status(id, TaskStatus::Handling);
-        self.queue_inbox(InboxItem::new(
-            InboxKind::HelpRaised,
-            &[("help_id", &help_id), ("task", id), ("kind", kind.as_str())],
-            message,
-        ));
+        self.queue_inbox_task(
+            id,
+            InboxItem::new(
+                InboxKind::HelpRaised,
+                &[("help_id", &help_id), ("task", id), ("kind", kind.as_str())],
+                message,
+            ),
+        );
         Some(help_id)
     }
 
@@ -285,11 +290,14 @@ impl Tx {
         if lines.is_empty() {
             return;
         }
-        self.queue_inbox(InboxItem::new(
-            InboxKind::GroupSettled,
-            &[("group", group)],
-            lines.join("\n"),
-        ));
+        self.queue_inbox_group(
+            group,
+            InboxItem::new(
+                InboxKind::GroupSettled,
+                &[("group", group)],
+                lines.join("\n"),
+            ),
+        );
     }
 }
 

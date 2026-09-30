@@ -293,6 +293,7 @@ async fn real_codex_implementer_reports_through_mcp() {
         session: "T-1/0".into(),
         role: Role::Implementer,
         project: "P-1".into(),
+        chat: None,
         group: Some("G-1".into()),
         task: Some("T-1".into()),
         step: Some(0),

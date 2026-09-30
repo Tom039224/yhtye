@@ -1,4 +1,7 @@
+import { useMemo } from "react";
+
 import type { Group, State } from "../api/generated";
+import { scopeState } from "../store/chats";
 import type { ProjectView } from "../store/project";
 import { useStore } from "../store/useStore";
 import type { Mention } from "./mentions";
@@ -13,9 +16,13 @@ interface Props {
   onMention: (m: Mention) => void;
 }
 
-/** Header, the focus group's task cards, and earlier groups folded (design §3.5). */
+/**
+ * Header, the focus group's task cards, and earlier groups folded (design
+ * §3.5). Only the selected chat's groups are shown (orchestrator-desktop §9).
+ */
 export function TaskColumn({ view, selectedTask, onSelectTask, onMention }: Props) {
-  const state = view.state;
+  const { state: all, selectedChat } = view;
+  const state = useMemo(() => (all ? scopeState(all, selectedChat) : null), [all, selectedChat]);
   const group = state ? focusGroup(state) : null;
   const progress = state && group ? groupProgress(state, group.id) : null;
   const now = useNow(30_000);
@@ -45,13 +52,19 @@ export function TaskColumn({ view, selectedTask, onSelectTask, onMention }: Prop
         {progress ? <span className="panel-meta">{progress.done}/{progress.total} 完了</span> : null}
         <span className="spacer" />
         <span className="panel-meta" title="動いているサブエージェントのセッション数">
-          subagents {liveSubagents(view)}
+          subagents {state ? liveSubagents(view, state) : 0}
         </span>
       </header>
       <div className="scroll">
         {view.phase === "loading" && !state ? <p className="empty">読み込み中…</p> : null}
         {view.phase === "error" ? <p className="empty error-text">{view.loadError}</p> : null}
-        {state && !group ? <p className="empty">グループはまだありません。オーケストレータがタスクを作るとここに出ます。</p> : null}
+        {state && !group ? (
+          <p className="empty">
+            {selectedChat
+              ? "グループはまだありません。オーケストレータがタスクを作るとここに出ます。"
+              : "チャットを選ぶと、そのチャットのグループがここに出ます。"}
+          </p>
+        ) : null}
         {state && group ? (
           <div className="task-list">
             <GroupBar group={group} state={state} />

@@ -19,14 +19,15 @@ fn create_group_errors() {
         sim.orch_err(ToolName::CreateGroup, json!({"title": " "})),
         InvalidArgument
     );
-    let detached = DomainCommand::CreateGroup {
+    let unknown_chat = DomainCommand::CreateGroup {
+        chat: "C-9".into(),
         args: crate::mcp::tools::CreateGroupArgs {
             title: "g".into(),
             summary: None,
         },
-        base_branch: None,
+        taken: 0,
     };
-    assert_eq!(sim.run(detached).expect_err("detached").code, InvalidState);
+    assert_eq!(sim.run(unknown_chat).expect_err("no chat").code, NotFound);
     sim.group();
     assert_eq!(
         sim.orch_err(ToolName::CreateGroup, json!({"title": "again"})),

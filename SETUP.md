@@ -73,9 +73,8 @@ OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、
 
 | ハーネス | 制約 |
 |---|---|
-| Claude Code | オーケストレータは読み取りツール (Read / Glob / Grep) だけに絞られる |
-| OpenCode | オーケストレータにも使えるが、読み取り専用にできない (設定画面に警告が出る)。作業を委ねるかはシステムプロンプト頼み |
-| Codex | オーケストレータとしては使えない ([openai/codex#13746](https://github.com/openai/codex/issues/13746) で `create_task` が呼べない)。実装・調査・レビュー役で使う。読み取り専用にもできない |
+| 全ハーネス共通 | オーケストレータも書き込める (検証のいらない小さな変更は自分でコミットし、それ以外はタスクに渡す。システムプロンプトでの指示のみ) |
+| Codex | オーケストレータとしては使えない ([openai/codex#13746](https://github.com/openai/codex/issues/13746) で `create_task` が呼べない)。実装・調査・レビュー役で使う |
 | Codex / OpenCode 共通 | 権限確認なしで動く (Codex は `agent-full-access`)。OpenRouter の無料モデルは 429 や遅延が多く、失敗が普通の応答として返ることがある |
 
 ## ビルドとインストール

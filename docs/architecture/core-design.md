@@ -125,8 +125,10 @@ pub struct CoreConfig {
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
   `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b) /
   `get_agent_settings{project?}` / `set_agent_settings{project?, role, settings}` / `list_harness_models{harness, refresh?}` (Stage 7b、§15)。
+  **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
+  `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
   `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage` /
-  `agent_settings` / `harness_models`。
+  `agent_settings` / `harness_models` (Stage 8 で `chats` / `chat`)。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
@@ -261,7 +263,7 @@ pub struct HarnessConfig {
     pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
 }
 // HarnessConfig::claude_code("haiku") が Claude Code 用の既定値、
-// HarnessConfig::claude_code_orchestrator("haiku") がオーケストレータ用 (組み込みツールを読み取り系に限定)。
+// オーケストレータも同じ設定 (Stage 8d で組み込みツールの制限 = `claude_code_orchestrator` を廃止。`orchestration-model.md` §8.1)。
 ```
 
 ハーネス固有の知識はここだけ。コアのコードに `"claude"` 等の分岐を書かない。
@@ -343,7 +345,7 @@ Stage 2 の仮実装 (`Board` / `MemoryToolPort`) は Stage 3a で本物の状�
 - `runtime::driver` — ループ本体 (§8)。`runtime::port::LoopPort` が `ToolPort` を実装し、
   ツール呼び出しを oneshot 付きでループへ送る (ループが処理して応答する)。
 - `runtime::sessions` — セッションの起動 (裏で `JoinSet`)・プロンプトのキュー・トークンの
-  `rebind` / `revoke`・停止。セッションキーは `orchestrator` / `T-n/implementer` (タスク中は同じ
+  `rebind` / `revoke`・停止。セッションキーは `orchestrator:<chatId>` (Stage 8。以前は `orchestrator`、§17) / `T-n/implementer` (タスク中は同じ
   セッション) / `T-n/review-<step>` (毎回新規)。起動中に止められたセッションは起動完了時に即停止する。
 - `runtime::emitter` (3b) — `Emitter` (セッション管理側が持つ。本文をバッファするだけ) と
   `Publisher` (ループが持つ)。`Publisher::flush` はループの 1 周ごとにバッファを取り出し、
@@ -415,7 +417,7 @@ pub enum Effect {
   `task_status_changed` / `task_cancelled` / `workspace_ready` / `step_started` /
   `step_completed` / `step_reset` / `steps_replaced` / `review_steps_inserted` / `nudge_sent` /
   `help_raised` / `help_answered` / `help_closed` / `help_agent_lost` / `inbox_queued` /
-  `inbox_delivered`。
+  `inbox_delivered`。Stage 8 で `chat_created` / `chat_titled` が加わる (§17)。
 - `State` は `groups` / `tasks` (steps を含む) / `helps` / `inbox` (未配達分) / ID カウンタ /
   `DomainConfig`。すべて `Serialize + Deserialize`。受信箱もドメイン状態の一部 (3b で永続化)。
 - 時刻は状態機械に入れない (`now` 引数は無し)。時刻は `ApiEvent.ts_ms` で runtime が付ける。
@@ -534,6 +536,9 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 [`orchestration-model.md`](orchestration-model.md) §10 の実装。
 
+> **Stage 8 で変更 (§17.3)**: オーケストレータの起動・復元は**チャットごと**で、復元対象のチャット (live / open グループあり / 未配達の受信箱あり) だけを起動時に復元し、
+> 他は最初の送信で遅延起動する。以下の 2・3 は各チャットに適用する。
+
 1. `Orchestration::start` が DB からプロジェクトの状態を読む。`agent_sessions` のうち復元対象
    (`stopped` 以外) を `session_interrupted` として配信し、そのキー → ACP セッション ID を
    セッション管理に渡す (各キーで 1 回だけ使う)。
@@ -554,6 +559,10 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
    準備中だったタスクは準備からやり直す。
 - 停止 (`shutdown`) はタスクの状態を変えない。止めたセッションは `session_stopped { suspended: true }`
   になり、次回の起動で復元対象になる。
+
+### 8.2 チャットごとのオーケストレータ (Stage 8)
+
+ループはプロジェクトに 1 つのまま、オーケストレータのセッションだけがチャットごとになる。詳細は §17.3。
 
 ## 9. Tauri アプリ層 (`src-tauri`)
 
@@ -760,7 +769,8 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 7c で OpenCode を足すときは preset を 1 つ登録するだけ (`CoreConfig::harnesses`)。
 
 **Stage 7c-2**: preset に `requires_model` (選択は必ずモデルを持つ。`AgentCatalog::validate` が検査) と
-`orchestrator_read_only` (オーケストレータの設定がファイルを書けない。`false` は UI で警告) を追加し、`HarnessInfo` にも載せる。
+`orchestrator_read_only` (オーケストレータの設定がファイルを書けない。`false` は UI で警告) を追加し、`HarnessInfo` にも載せた
+(**Stage 8d で削除**: 全ハーネスのオーケストレータが書けるので、フラグ・警告とも無い)。
 `HarnessPreset::opencode(fallback_model, env_remove)` ([`acp-harnesses.md`](acp-harnesses.md) §7.6)。
 アプリと開発ブリッジは `CoreConfig::installed(data_dir, model)` = `agents::installed_presets`: Claude Code は常に、OpenCode は
 `PATH` に実行可能な `opencode` があるときだけ登録する。
@@ -769,7 +779,7 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 `HarnessPreset::config` が `{"model","model_reasoning_effort"}` を組み立てて入れ、effort は option として送らない)、`effort_config_id` (effort の config id。
 既定 `effort`、Codex は `reasoning_effort`。以前のグローバル定数 `EFFORT_CONFIG_ID` は既定値としてだけ残る)、`model_source: ModelSource { Acp, Codex }`
 (§15.6) を追加。`HarnessPreset::codex(codex_path)` ([`acp-harnesses.md`](acp-harnesses.md) §9): 全役割 `HarnessConfig::codex` (npx で `codex-acp@2.0.0`、
-`CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`、`orchestrator_read_only = false`。`installed_presets` は `codex` が `PATH`
+`CODEX_PATH`、`agent-full-access`、`FirstPrompt`)、`requires_model = true`。`installed_presets` は `codex` が `PATH`
 にあるときだけ登録する (`CODEX_COMMAND`)。
 
 `AgentCatalog` (`Arc`、全プロジェクトで共有) が登録簿・組み込みの既定・全体とプロジェクトの層 (メモリ上の写し) を持つ。
@@ -885,3 +895,132 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **UI**: 設定モーダルの項目「秘密の環境変数」 ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。
 - **テスト**: 単体 (名前と値の検査、`Debug` に値が出ない、キーリング不可の扱い)、`tests/acp_secret_env.rs` (実プロセスの環境に入る・ハーネスの `env` が勝つ・読めなければ起動しない)、
   `tests/secret_env_api.rs` (Core の 3 コマンド、再起動後も名前が残る、値が応答に出ない)、`store` のテスト、実キーリングの往復 1 件 (`--ignored`)。
+
+## 17. チャットとブランチ (Stage 8)
+
+仕様と決定の理由: [`orchestration-model.md`](orchestration-model.md) §2.0 / §5 / §6.1 / §10、画面: [`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §3.3 / §3.4 / §8。
+ここでは型・テーブル・API・runtime の変更を定める。**旧データ (単一オーケストレータの履歴) は移行せず破棄する** (ユーザー決定)。
+
+### 17.1 型 (`domain`)
+
+- `Chat { id: String /* "C-1" */, branch: String, title: Option<String> }` — `State.chats: Vec<Chat>` (作成順)。
+  `Counters.chats` を足す。時刻は状態機械に入れない (§5) ので `created_ms` / `last_used_ms` は store が導く。
+- `Group.chat: String` を足す。`Group.base_branch` = そのチャットの `branch`。
+  `InboxEntry.chat: String` を足す (宛先チャット、orchestration-model §5)。
+- `DomainEvent::ChatCreated { chat: Chat }` / `ChatTitled { chat: String, title: String }` (最初の `UserMessage` で 1 回、
+  先頭 40 文字 + 改行は空白に、で切り詰める)。
+- `DomainCommand`:
+  - `CreateChat { branch }` (ブランチの存在確認は runtime が git で行い、ここは形式だけ)、
+  - `UserMessage { chat, text }` (未知のチャットは `not_found`)、
+  - `Restart { orchestrators: Vec<(chat, OrchestratorResume)> }` (チャットごと。§8.1 の規則を各チャットに適用)、
+  - `OrchestratorTurnEnded { chat, outcome, prompt_queued }`、
+  - `CreateGroup { chat, args, base_branch }` — `base_branch` は runtime が渡さず **チャットの `branch`** を使う
+    (detached HEAD の `invalid_state` は無くなる)。open グループの上限チェックは `base_branch` 単位
+    (別チャットのグループがあれば `conflict`。メッセージに `chat` を含める)。
+  - `Effect::WakeOrchestrator { chat }`。
+- 各 `Tool` 呼び出し (`SessionBinding` はオーケストレータならチャット ID を持つ) は**自分のチャットのグループ・タスクだけ**を操作できる。
+  他のチャットのものは `forbidden`。`get_status` も自分のチャットのグループだけを返す。
+
+### 17.2 store (マイグレーション `0006_chats.sql`)
+
+- 旧データを破棄する: 各プロジェクトの `events` / `task_groups` / `tasks` / `task_deps` / `steps` / `helps` / `inbox` /
+  `agent_sessions` の行を削除し `projects` のカウンタを 0 に戻す。`projects` の行・エージェント設定・`secret_env_names` は残す。
+- `chats (project_id, id, ord, branch, title, created_ms, last_used_ms, PRIMARY KEY (project_id, id))` (`ord` = 作成順、`State.chats` の順)。
+  `created_ms` は `chat_created` の、`last_used_ms` はそのチャットのセッションの `prompted` の `ts_ms` (`agent_sessions.updated_ms` と同じ導き方)。
+- `task_groups.chat_id` / `inbox.chat_id` を `NOT NULL DEFAULT ''` で追加 (SQLite は既定値なしの `NOT NULL` 列を追加できない。旧行は先に削除済みなので既定値は使われない)。
+- `agent_sessions.cwd TEXT` を追加 (復元可否の判断、orchestration-model §6.1)。オーケストレータのセッションキーは `orchestrator:<chatId>`。
+  値は `session_started` イベントの新しい `cwd` (起動したディレクトリ) から導く。`SessionRecord` にも `cwd` が加わる。
+- `Snapshot.chats: Vec<ChatInfo>` — `ChatInfo { id, branch, title, created_ms, last_used_ms }` (`State.chats` + `chats` テーブル)。
+  ブランチが存在するかは含めない (UI は `GetGitOverview.branches` と突き合わせて `branch_missing` を出す)。
+
+### 17.3 runtime
+
+- `Orchestration::start` は**オーケストレータを起動しない**。DB から `State` を読み、復元対象のチャット (orchestration-model §10:
+  セッションが `stopped` 以外 / open グループあり / 未配達の受信箱あり) だけを `Restart` に渡して起動する。
+  `Core::resume_unfinished` の判定 (active / finishing のグループか未配達の受信箱があるプロジェクトだけ開く) に、「live だったチャットのセッションがある」を足す。
+- `runtime::sessions` はオーケストレータを**キー `orchestrator:<chatId>` の通常のセッション**として扱う (数はチャット数まで)。
+  MCP トークンの束縛 (`SessionBinding`) がチャット ID を持ち、`create_group` などはここからチャットを知る。
+- 起動 (`ensure_orchestrator(chat)`): ① `resolve_branch_worktree(branch)` (§17.4) で cwd を決める (失敗 = `branch_missing` → 送信は `invalid_state`)、
+  ② `agent_sessions` に記録があり cwd が一致すれば `session/load`、③ 失敗 / 不一致 / 記録なし なら新しいセッション
+  (記録ありだったときは `restarted` に要約)。起動するのは (a) `SendUserMessage`、(b) そのチャット宛ての受信箱の項目があるとき、(c) 復元対象。
+- `flush_inbox(chat)` はチャットごと。そのチャットのセッションが**無い / 終了している**ときは起動してから送る (今の「アイドルになるまで待つ」だけの挙動を変える)。
+  `on_exited` (オーケストレータ) は `SessionStopped` を出し `turn_running` を下ろすだけで再起動はしない。起動に失敗しても受信箱は残し、自動の再試行はしない。
+- `CancelOrchestratorTurn{chat}` はそのチャットのセッションにだけ `session/cancel`。セッションが無ければ `accepted` (何もしない)。
+- ユーザーによる `CancelTask` / `CancelGroup` の `user_message` は、そのグループのチャットの受信箱に積む。
+- 履歴: `ListEvents` は従来どおりプロジェクト全体 (seq の連続性を保つ)。UI が `session` (`orchestrator:<chatId>`) と、ドメインイベントの `group.chat` /
+  `inbox.chat` で会話を絞る。
+
+### 17.4 git
+
+- `GitService` に追加:
+  - `resolve_branch_worktree(branch) -> Result<PathBuf, BranchWorktreeError>` — orchestration-model §6.1 の規則
+    (`git worktree list --porcelain` → 既存 or `worktree add`)。エラー = `BranchMissing` / `Failed(message)`。
+  - `create_branch(name, from) -> Result<PathBuf, ..>` — `git check-ref-format --branch`、`yhtye/` 予約、既存ブランチは `Exists`、
+    `git worktree add -b <name> <path> <from>`。`from` の既定はメイン作業ツリーの HEAD (ブランチ名、detached なら SHA)。
+  - `list_branches()` — `GitOverview.branches` から `yhtye/*` を除く (UI が使う。`GitOverview` 自体は従来どおり全ブランチ)。
+- `GitOp::MergeGroup` に `target_dir` を持たせず、`GitCli` が `base_branch` から毎回 `resolve_branch_worktree` して統合する
+  (メイン作業ツリー前提の `cli.rs` の分岐を置き換える)。`NoopGit` は従来どおり (テスト用)。
+- `worktree_root(data_dir, project_id)` の下に `branches/<sanitized-branch>` を追加 (グループ・タスクの worktree と同じ root)。
+
+### 17.5 API (`api/command.rs`)
+
+| コマンド | 内容 | 応答 |
+|---|---|---|
+| `list_chats{project}` | プロジェクトのチャット (`last_used_ms` の新しい順)。開いていなくても DB から読める | `chats{chats: Vec<ChatInfo>}` |
+| `create_chat{project, branch}` | そのブランチの新しいチャットを作る (オーケストレータは起動しない)。ブランチが無ければ `not_found`、`yhtye/*` は `invalid_argument`。プロジェクトは開いている必要がある (`unavailable`) | `chat{chat: ChatInfo}` |
+| `create_branch{project, name, from?}` | ブランチを Yhtye の作業ツリーに作り (§17.4) 最初のチャットを作る。名前不正・`yhtye/` 始まりは `invalid_argument`、既存は `conflict`、`from` が無ければ `not_found` | `chat{chat}` |
+| `send_user_message{project, chat, text}` | (変更) チャットを指定。遅延起動 (§17.3)。`branch_missing` は `invalid_state` | `accepted` |
+| `cancel_orchestrator_turn{project, chat}` | (変更) チャットを指定 | `accepted` |
+
+- イベント: `domain { chat_created }` / `domain { chat_titled }` (durable)。ブランチ作成は git の状態なのでドメインイベントにせず、
+  UI は `chat_created` と `create_branch` の応答で `GetGitOverview` を読み直す。
+- `ProjectInfo` は変えない。`GetSnapshot` の `Snapshot` に `chats` を足す (§17.2)。TS 型は `pnpm gen:types` で再生成。
+- テスト: 偽エージェントで — チャット 2 つが別 cwd (別ブランチ) で並行 / 同一ブランチの 2 つ目のグループが `conflict` / 遅延起動 (作成だけでは
+  プロセスが起きない) / 終了後の送信で再起動 / `session/load` 失敗で `restarted` / 起動時に live のチャットだけ復元 / グループ通知が持ち主のチャットへ。
+  実 git (`TempRepo`) で — 既存の作業ツリーの再利用 (メイン・管理外) / Yhtye 管理の作成 / 消えたディレクトリの再作成 / detached HEAD / ブランチの外部削除。
+
+### 17.6 実装メモ (Stage 8a で仕様から具体化・変えたところ)
+
+- `SessionBinding.chat: Option<String>` を足した (オーケストレータのセッションだけ。サブエージェントと UI からのユーザー操作 (`USER_SESSION`) は `None` = 制限なし)。
+  `create_group` は `DomainCommand::CreateGroup { chat, args }` で、ブランチが存在するかの確認 (無ければ `invalid_state`) は runtime が git で行う。
+- `DomainCommand::TellOrchestrator { chat, resume }` を足した。`Restart` が各チャットに行うことと同じ (前のセッションを復元できない → 状態の要約、ターンが途中で切れた → その旨を
+  `restarted` として受信箱へ) を、アプリ起動以外の遅延起動・自動再起動でも使う。ターンが途中で切れたかは、アプリ起動時は保存済みの `turn_running`、
+  実行中は `TurnEnded(Closed)` を見た印 (メモリ上) から分かる。**アプリごと再起動した後は、ターン中に終了して `stopped` になったチャットの「切れた」印は残らない**
+  (`session_stopped` が `turn_running` を下ろすため。復元できれば会話は続くので実害は小さいとして許容した)。
+- 起動は背景で行う (`Sessions::launch`)。復元 (`session/load`) が起動時に失敗したら、その場で新しいセッションを作り、最初のプロンプトを
+  「状態の要約 (`lost_session_note`) + 受信箱のバッチ」に差し替える (サブエージェントの `ResumeStep` の fallback と同じ仕組み)。したがって、**復元を試みて失敗した場合の要約は
+  受信箱の `restarted` 項目にはならない** (起動と同時に渡すだけ)。起動前から分かる場合 (記録があるが cwd が違う) は `restarted` 項目として受信箱に積む。
+  要約は起動の瞬間の状態なので、再起動で再開したタスクは `interrupted` ではなく `running` と書かれる。
+- 起動時に一緒に渡した受信箱の項目は、セッションが立ち上がってから `InboxDelivered` にする。起動に失敗したら受信箱に残り、
+  チャットごとに「そのとき最新だった項目の id」を覚えて、それより新しい項目 (または新しい送信・アプリ起動) があるまで再試行しない。
+- `GitService` に `branch_exists` も足した (チャット作成・送信・`create_group` の存在確認)。`list_branches` は trait ではなく自由関数 `git::list_branches(dir)`。
+  `create_branch` は開始点が `-` で始まる場合を `FromMissing` にする (オプションとして解釈させない)。
+- `Orchestration::start` はオーケストレータを起動せずすぐ戻る。起動時に復元するチャットの起動も背景 (ループの最初) で行う。
+- `create_chat` / `create_branch` は、登録済みだが開いていないプロジェクトに対して `unavailable`、未登録なら `not_found`。
+- フロントエンド (8a の暫定): 型検査を保つため、`AppStore` はチャット `C-1` 固定で送る (無ければメインクローンのブランチで `create_chat`)。オーケストレータのセッションキーは `orchestrator:C-1` 固定。8b で選択中のチャットに置き換える。
+
+### 17.7 Stage 8d: 書けるオーケストレータ・ブランチ改名の追跡・作業ツリーの取り直し
+
+仕様と理由: [`orchestration-model.md`](orchestration-model.md) §6.1 / §8.1。
+
+- **オーケストレータの制限の撤廃**: `HarnessConfig::claude_code_orchestrator` と `ORCHESTRATOR_BUILTIN_TOOLS` を削除 (オーケストレータは `claude_code` と同じ設定)。
+  `HarnessPreset.orchestrator_read_only` と `HarnessInfo.orchestrator_read_only` を削除 (`pnpm gen:types`)。MCP ツールは足さない。プロンプト `orchestrator.md` を書き換える。
+- **ドメイン**: `DomainCommand::ChatBranchChanged { chat, to }` (runtime が改名を検出したとき) → `DomainEvent::ChatBranchChanged { chat, from, to }` (`from` は決定時のチャットのブランチ)。
+  `apply`: `chat.branch = to`、`group.chat == chat` かつ終端でない (`done` / `cancelled` 以外 = `active` / `finishing` / `merge_blocked`) グループの `base_branch = to`。
+  検査: 未知のチャットは `not_found`、`to` は `check_target_branch` (空・`yhtye/*` は `invalid_argument`)、`to` が今のブランチと同じなら何もしない。
+  ストアは `chats` 表の `branch` と `task_groups.base_branch` を既存の「差分のある行を書く」で更新する (専用のマイグレーションは無い)。
+- **git**: `GitService::worktree_branch(dir) -> Result<Option<String>, String>` を足す (`dir` がチェックアウトしているブランチ。detached HEAD・ディレクトリが無い・git の作業ツリーでない = `None`)。既定は `Ok(None)`。あわせて `was_renamed(from, to) -> Result<bool, String>` (既定 `Ok(false)`) を足す。
+- **runtime** (`runtime/follow.rs`):
+  - `follow_branch(chat) -> Result<String, ToolError>`: チャットのブランチが存在すればそれ。無ければ、そのチャットの記録された cwd (`agent_sessions.cwd`、ストアから読む) で
+    `worktree_branch` を見て、別のブランチ (存在し `yhtye/*` でない) で、かつ `GitService::was_renamed(旧, 新)` (新しいブランチの reflog `git reflog show --format=%gs refs/heads/<新>` に `Branch: renamed refs/heads/<旧> to refs/heads/<新>` がある。無い・reflog が無効なら `false`) なら `ChatBranchChanged` を実行して新しいブランチを返す。それ以外は従来の `invalid_state`
+    (「ブランチ `x` が削除または改名された」)。`check_chat_branch` を置き換える。
+  - `realign_orchestrator(chat)`: セッションが live のとき `resolve_branch_worktree(branch)` の結果と記録された cwd を比べ、違えば、アイドル (ターン中でなく送信待ちも無い) なら `Sessions::stop`
+    (その後の配達が遅延起動 = 新しい cwd・`session/load` せず・`restarted` の要約)、ターン中なら `Orchestrators.stale_cwd` に印を付け、`orchestrator_turn_ended` で再確認する。
+    起動途中のセッションは何もしない (起動の解決が最新)。
+  - 呼び出し点: `user_message` (`follow_branch`)、`flush_chat` の配達前 (`follow_branch` → `realign_orchestrator`、その後セッションが無ければ遅延起動)、`start_lazily` (`follow_branch`)、
+    `create_group` (`follow_branch` + `realign_orchestrator`)、`finish_group` の前と `RetryGroupMerge` の前 (`follow_branch`)、`orchestrator_turn_ended` (`follow_branch`、印があれば `realign_orchestrator`。
+    ドメインの `OrchestratorTurnEnded` より前に行い、Yhtye が代行する `finish_group` が新しい `base_branch` を使うようにする)。
+    配達前・ターン終了時の `follow_branch` の失敗 (ブランチ削除) は無視して従来どおり進める (拒否するのは送信と `create_group`)。
+- **フロントエンド**: `chat_branch_changed` を `chats` と `groups` の畳み込みに足し、会話のトランスクリプトに「ブランチ名が a → b に変わりました」の通知行を出す。ツリーはチャットを新しいブランチの下へ動かす。
+- テスト: 偽エージェント + 実 git (`tests/orchestration_fake_chats.rs`、`tests/git_branches.rs`)、ドメイン (`domain/tests/chats.rs`)、ストア (`store/tests.rs`)、vitest。実機 (Claude Code Haiku): `tests/orchestration_claude_real.rs`。
+

@@ -7,6 +7,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +27,7 @@ use yhtye_core::agents::{
 };
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::DomainEvent;
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 fn claude() -> AgentChoice {
     AgentChoice::new("claude-code", Some(HAIKU))
@@ -179,7 +181,7 @@ async fn run_within(
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(request).expect("send");
+    common::orch::send(&orch, request).await;
     let whole = async {
         until_healthy(&mut rx, &mut events, timeout, group_merged).await;
         until_healthy(&mut rx, &mut events, timeout, is_orchestrator_turn_end).await;

@@ -122,11 +122,25 @@ pub enum GitResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainCommand {
-    /// `create_group`, with the base branch the runtime read from the main
-    /// worktree (`None`: detached HEAD or no branch).
+    /// A new chat on `branch` (the runtime checked that the branch exists).
+    CreateChat {
+        branch: String,
+    },
+    /// The runtime found that the branch of `chat` was renamed to `to`
+    /// (`orchestration-model.md` §6.1): the chat and its unfinished groups follow.
+    ChatBranchChanged {
+        chat: String,
+        to: String,
+    },
+    /// `create_group` by the orchestrator of `chat`; the base branch is the
+    /// chat's branch (the runtime checked that it still exists).
     CreateGroup {
+        chat: String,
         args: CreateGroupArgs,
-        base_branch: Option<String>,
+        /// The highest group number git already has (branches or worktree
+        /// directories left by an earlier database): the new group is numbered
+        /// past it, and past every group of the state.
+        taken: u32,
     },
     /// Any other tool call.
     Tool {
@@ -134,11 +148,13 @@ pub enum DomainCommand {
         call: ToolCall,
     },
     UserMessage {
+        chat: String,
         text: String,
     },
     /// The orchestrator's turn ended (Stage 7a: a settled group it left open
     /// gets a reminder, then Yhtye finishes it).
     OrchestratorTurnEnded {
+        chat: String,
         outcome: TurnOutcome,
         /// A prompt is already queued for the orchestrator.
         prompt_queued: bool,
@@ -163,16 +179,24 @@ pub enum DomainCommand {
         op: GitOp,
         result: GitResult,
     },
-    /// The runtime sent every inbox entry up to `up_to` to the orchestrator.
+    /// The runtime sent every inbox entry of `chat` up to `up_to` to its orchestrator.
     InboxDelivered {
+        chat: String,
         up_to: u64,
     },
     /// Yhtye started again on a stored state (`orchestration-model.md` §10):
     /// tasks that were mid-turn or mid-merge become `interrupted`, agents that were
     /// waiting for a help answer are marked lost, an interrupted group merge is
-    /// reported as blocked, and the orchestrator is told what it missed.
+    /// reported as blocked, and the orchestrators of the restored chats are told
+    /// what they missed (`TellOrchestrator` for each).
     Restart {
-        orchestrator: OrchestratorResume,
+        orchestrators: Vec<(String, OrchestratorResume)>,
+    },
+    /// The orchestrator of `chat` is started again (after a restart, or lazily
+    /// after its process ended): queues what it missed, if anything.
+    TellOrchestrator {
+        chat: String,
+        resume: OrchestratorResume,
     },
     /// Continues an `interrupted` task (sent by the runtime after `Restart`).
     ResumeTask {
@@ -184,12 +208,12 @@ pub enum DomainCommand {
     },
 }
 
-/// What happened to the orchestrator's session on restart.
+/// What happened to a chat's orchestrator session when it is started again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrchestratorResume {
-    /// There was a session before the restart.
+    /// There was a session before.
     pub had_session: bool,
-    /// That session was restored with `session/load`.
+    /// That session can be restored with `session/load` (same working directory).
     pub restored: bool,
     /// Its turn was still running when Yhtye stopped.
     pub turn_was_running: bool,
@@ -230,8 +254,11 @@ pub enum Effect {
         task: String,
     },
     Git(GitOp),
-    /// The inbox has new entries; deliver them when the orchestrator is idle.
-    WakeOrchestrator,
+    /// The inbox of `chat` has new entries; deliver them when its orchestrator
+    /// is idle (starting it if it is not running).
+    WakeOrchestrator {
+        chat: String,
+    },
 }
 
 /// The result of one command.

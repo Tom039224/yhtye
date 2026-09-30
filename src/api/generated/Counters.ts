@@ -3,4 +3,4 @@
 /**
  * Id counters (the number of each kind created so far).
  */
-export type Counters = { groups: number, tasks: number, helps: number, inbox: number, };
+export type Counters = { chats: number, groups: number, tasks: number, helps: number, inbox: number, };

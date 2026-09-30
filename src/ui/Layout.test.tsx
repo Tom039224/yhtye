@@ -11,7 +11,7 @@ import type { GitOverview, Snapshot, State } from "../api/generated";
 import { AppStore, type AppStoreOptions, LAST_PROJECT_KEY } from "../store/app";
 import { emptyState } from "../store/domain";
 import { memoryPrefs } from "../store/prefs";
-import { ORCHESTRATOR } from "../store/transcript";
+import { ORCHESTRATOR } from "../test/events";
 import { StoreContext } from "../store/useStore";
 import { ev } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
@@ -42,7 +42,10 @@ async function open(store: AppStore) {
 }
 
 function snapshotOf(state: Partial<State>, seq = 0): Snapshot {
-  return { seq, state: { ...emptyState("repo", { max_review_rounds: 2 }), ...state }, sessions: [] };
+  // The recordings' chat `C-1` (on `main`) exists and is selected.
+  const chat = { id: "C-1", branch: "main", title: null };
+  const info = { ...chat, created_ms: 1, last_used_ms: 1 };
+  return { seq, state: { ...emptyState("repo", { max_review_rounds: 2 }), chats: [chat], ...state }, sessions: [], chats: [info] };
 }
 
 const base = FULL_RUN.end.state;
@@ -79,7 +82,9 @@ describe("design layout", () => {
     await open(store);
     expect(await screen.findByTestId("head-branch")).toHaveTextContent("main");
     const branches = screen.getByRole("list", { name: "branches" });
-    expect(within(branches).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["main", "yhtye/G-1", "yhtye/G-1-T-2"]);
+    // Yhtye's internal branches are in the graph but not in the tree.
+    expect(within(branches).getByRole("button", { name: "main" })).toBeInTheDocument();
+    expect(within(branches).queryByText(/yhtye\//)).not.toBeInTheDocument();
     const graph = screen.getByTestId("git-graph");
     expect(within(graph).getByText("ttttttt")).toBeInTheDocument();
     expect(within(graph).getByText("wip: second")).toBeInTheDocument();

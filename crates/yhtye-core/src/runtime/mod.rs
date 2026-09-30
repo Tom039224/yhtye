@@ -3,9 +3,11 @@
 //! publishes an [`crate::api::ApiEvent`] stream (`core-design.md` §8).
 
 mod agent_args;
+mod chats;
 mod core;
 mod driver;
 mod emitter;
+mod follow;
 mod launch;
 mod orchestration;
 mod port;
@@ -14,7 +16,5 @@ mod transcript;
 
 pub use core::{Core, CoreConfig};
 pub use driver::USER_SESSION;
-pub use orchestration::{
-    ORCHESTRATOR_SESSION, OrchError, Orchestration, OrchestrationConfig, UserActionError,
-};
+pub use orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 pub use sessions::{agent_ref, session_key};

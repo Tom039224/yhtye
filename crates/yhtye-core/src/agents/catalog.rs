@@ -65,9 +65,6 @@ pub struct HarnessPreset {
     /// A choice of this harness must name a model (OpenCode: its own default is
     /// the last model the user used, possibly a paid one).
     pub requires_model: bool,
-    /// The orchestrator config cannot write files (Claude Code: read-only
-    /// built-in tools). `false`: only the prompt forbids it (OpenCode).
-    pub orchestrator_read_only: bool,
 }
 
 /// A registered harness, for the UI.
@@ -77,8 +74,6 @@ pub struct HarnessInfo {
     pub label: String,
     /// Every choice names a model (no "harness default" entry).
     pub requires_model: bool,
-    /// As orchestrator it cannot write files; `false` is shown as a warning.
-    pub orchestrator_read_only: bool,
 }
 
 impl HarnessPreset {
@@ -89,7 +84,7 @@ impl HarnessPreset {
         Self {
             id: CLAUDE_CODE.into(),
             label: "Claude Code".into(),
-            orchestrator: HarnessConfig::claude_code_orchestrator(model),
+            orchestrator: HarnessConfig::claude_code(model),
             implementer: HarnessConfig::claude_code(model),
             investigator: HarnessConfig::claude_code(model),
             reviewer: HarnessConfig::claude_code(model),
@@ -99,15 +94,14 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: false,
-            orchestrator_read_only: true,
         }
     }
 
     /// OpenCode (`opencode acp`, `HarnessConfig::opencode`) for every role
     /// (`acp-harnesses.md` §7). A choice must name a model; `fallback_model` is
     /// only used if one without a model slips through (e.g. an old setting), so
-    /// OpenCode never starts on its own last-used model. The orchestrator runs in
-    /// `build` mode: OpenCode cannot restrict it to read-only tools (§7.3).
+    /// OpenCode never starts on its own last-used model. Every role, the
+    /// orchestrator included, runs in `build` mode (all tools).
     /// `env_remove` is dropped from the inherited environment
     /// ([`super::inherited_opencode_env_remove`]).
     #[must_use]
@@ -130,7 +124,6 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: true,
-            orchestrator_read_only: false,
         }
     }
 
@@ -138,8 +131,7 @@ impl HarnessPreset {
     /// `codex_path` is the user's `codex`. A choice must name a model (the
     /// user's own default model may not even be usable); the model and effort
     /// reach Codex through `CODEX_CONFIG`. Every role runs in
-    /// `agent-full-access` mode, so the orchestrator cannot be made read-only
-    /// (only its prompt forbids writing).
+    /// `agent-full-access` mode.
     #[must_use]
     pub fn codex(codex_path: Option<&str>) -> Self {
         let h = HarnessConfig::codex(codex_path);
@@ -159,7 +151,6 @@ impl HarnessPreset {
             effort_config_id: "reasoning_effort".into(),
             model_source: ModelSource::Codex,
             requires_model: true,
-            orchestrator_read_only: false,
         }
     }
 
@@ -185,7 +176,6 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: false,
-            orchestrator_read_only: true,
         }
     }
 
@@ -195,7 +185,6 @@ impl HarnessPreset {
             id: self.id.clone(),
             label: self.label.clone(),
             requires_model: self.requires_model,
-            orchestrator_read_only: self.orchestrator_read_only,
         }
     }
 
@@ -517,7 +506,7 @@ mod tests {
             Some("sonnet")
         );
         let o = p.config(AgentRole::Orchestrator, Some("haiku"), None);
-        assert_eq!(o, HarnessConfig::claude_code_orchestrator("haiku"));
+        assert_eq!(o, HarnessConfig::claude_code("haiku"));
         assert_eq!(
             p.config(AgentRole::Reviewer, None, None),
             HarnessConfig::claude_code("haiku")

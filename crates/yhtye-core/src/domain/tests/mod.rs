@@ -3,6 +3,7 @@
 //! events on the old state gives exactly the new state.
 
 mod agents;
+mod chats;
 mod errors;
 mod flows;
 mod git;
@@ -49,8 +50,14 @@ fn noop_git(op: &GitOp) -> GitResult {
     }
 }
 
+/// The orchestrator of chat `C-1`, which [`Sim::new`] creates on `main`.
 fn orch() -> SessionBinding {
-    SessionBinding::orchestrator("orchestrator", "P-1")
+    SessionBinding::orchestrator("orchestrator:C-1", "P-1", "C-1")
+}
+
+/// The orchestrator of another chat.
+fn orch_of(chat: &str) -> SessionBinding {
+    SessionBinding::orchestrator(orchestrator_session(chat), "P-1", chat)
 }
 
 fn sub(task: &str, role: Role, step: usize) -> SessionBinding {
@@ -58,6 +65,7 @@ fn sub(task: &str, role: Role, step: usize) -> SessionBinding {
         session: format!("{task}/{role}"),
         role,
         project: "P-1".into(),
+        chat: None,
         group: Some("G-1".into()),
         task: Some(task.into()),
         step: Some(step),
@@ -76,8 +84,9 @@ fn tool_cmd(binding: SessionBinding, tool: ToolName, args: Value) -> DomainComma
     let call = parse_call(tool, args.as_object().cloned()).expect("valid args");
     match call {
         crate::mcp::ToolCall::CreateGroup(args) => DomainCommand::CreateGroup {
+            chat: binding.chat.clone().expect("an orchestrator binding"),
             args,
-            base_branch: Some("main".into()),
+            taken: 0,
         },
         call => DomainCommand::Tool { binding, call },
     }
@@ -88,11 +97,25 @@ impl Sim {
         Self::with_config(DomainConfig::default())
     }
 
+    /// A project with chat `C-1` on `main`.
     fn with_config(config: DomainConfig) -> Self {
-        Self {
+        let mut sim = Self {
             state: State::new("P-1", config),
             git: Box::new(noop_git),
-        }
+        };
+        sim.chat("main");
+        sim
+    }
+
+    /// Creates a chat on `branch`; returns its id.
+    fn chat(&mut self, branch: &str) -> String {
+        let chain = self
+            .run(DomainCommand::CreateChat {
+                branch: branch.into(),
+            })
+            .expect("chat created");
+        let reply = chain.reply.expect("reply").expect("ok reply");
+        reply["chat"]["id"].as_str().expect("chat id").to_string()
     }
 
     /// One command, checking the replay invariant.
@@ -211,10 +234,23 @@ impl Sim {
         self.state.inbox.iter().map(|e| e.item.kind).collect()
     }
 
+    /// The inbox kinds queued for `chat`.
+    fn inbox_kinds_of(&self, chat: &str) -> Vec<InboxKind> {
+        self.state.inbox_of(chat).map(|e| e.item.kind).collect()
+    }
+
+    /// Delivers the inbox of chat `C-1`.
     fn deliver_inbox(&mut self) {
-        if let Some(up_to) = self.state.inbox.last().map(|e| e.id) {
-            self.run(DomainCommand::InboxDelivered { up_to })
-                .expect("deliver");
+        self.deliver_inbox_of("C-1");
+    }
+
+    fn deliver_inbox_of(&mut self, chat: &str) {
+        if let Some(up_to) = self.state.inbox_of(chat).last().map(|e| e.id) {
+            self.run(DomainCommand::InboxDelivered {
+                chat: chat.into(),
+                up_to,
+            })
+            .expect("deliver");
         }
     }
 }

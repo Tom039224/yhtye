@@ -11,12 +11,11 @@ use tokio::task::JoinSet;
 use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
-use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
+use super::orchestration::OrchestrationConfig;
 use crate::acp::{AgentError, AgentEvent, AgentHandle};
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
-use crate::secrets::spawn_agent_with_secrets;
 
 /// The prompts to send first: the queued ones, with the fallback in front if
 /// the stored session was to be restored but was not (`session/load` unsupported).
@@ -85,13 +84,6 @@ pub(super) struct Spawned {
     pub(super) result: Result<AgentHandle, AgentError>,
 }
 
-/// How the orchestrator session came up.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct OrchestratorStart {
-    pub(super) had_session: bool,
-    pub(super) restored: bool,
-}
-
 pub(super) struct Sessions {
     pub(super) cfg: Arc<OrchestrationConfig>,
     host: Option<McpHost>,
@@ -147,73 +139,6 @@ impl Sessions {
             .map(|l| l.launch)
             .or_else(|| self.starting.get(key).map(|s| s.launch));
         current.is_some_and(|c| c != launch)
-    }
-
-    /// Starts the orchestrator session and waits until it is ready, restoring the
-    /// stored one if there is one (a new session if that fails).
-    pub(super) async fn start_orchestrator(&mut self) -> Result<OrchestratorStart, AgentError> {
-        let resume = self.take_resume(ORCHESTRATOR_SESSION);
-        let had_session = resume.is_some();
-        let result = match self.spawn_orchestrator(resume).await {
-            Err(e) if had_session => {
-                self.failed_text(
-                    ORCHESTRATOR_SESSION,
-                    format!("could not restore the session ({e}); starting a new session"),
-                );
-                self.spawn_orchestrator(None).await
-            }
-            other => other,
-        };
-        let restored = result?;
-        Ok(OrchestratorStart {
-            had_session,
-            restored,
-        })
-    }
-
-    /// Returns whether the session was restored.
-    async fn spawn_orchestrator(
-        &mut self,
-        resume: Option<StoredSession>,
-    ) -> Result<bool, AgentError> {
-        let binding = SessionBinding::orchestrator(ORCHESTRATOR_SESSION, self.cfg.project.clone());
-        let token = self.host()?.registry().issue(binding.clone());
-        let launch = self.next_launch();
-        let pick = AgentPick::orchestrator();
-        let (harness, options, events, agent) = self
-            .launch_parts(&binding, &token, resume, &pick, launch)
-            .inspect_err(|_| self.revoke(&token))?;
-        let secrets = self.cfg.agents.secrets();
-        let result =
-            spawn_agent_with_secrets(&secrets, &harness, &self.cfg.project_dir, options, events)
-                .await;
-        let restored = match &result {
-            Ok(handle) => handle.info().resumed,
-            Err(e) => {
-                self.revoke(&token);
-                return Err(e.clone());
-            }
-        };
-        self.starting.insert(
-            binding.session.clone(),
-            Starting {
-                launch,
-                token: token.clone(),
-                queued: VecDeque::new(),
-                fallback: None,
-                resuming: false,
-                cwd: self.cfg.project_dir.clone(),
-                pick,
-                agent,
-            },
-        );
-        self.on_spawned(Spawned {
-            launch,
-            token,
-            binding,
-            result,
-        });
-        Ok(restored)
     }
 
     /// Sends `text` to the session of `binding` (bound to the given step),
@@ -317,6 +242,7 @@ impl Sessions {
             resumed: handle.info().resumed,
             agent: Some(starting.agent.agent.clone()),
             replaced: starting.agent.replaced.clone(),
+            cwd: Some(starting.cwd.display().to_string()),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {
@@ -385,12 +311,17 @@ impl Sessions {
         self.deliver(key);
     }
 
-    /// Whether prompts are waiting for `key`'s current turn to end.
+    /// Whether `key` is being started in the background.
+    pub(super) fn is_starting(&self, key: &str) -> bool {
+        self.starting.contains_key(key)
+    }
+
     /// Whether `key` has a running process that Yhtye has not stopped.
     pub(super) fn is_live(&self, key: &str) -> bool {
         self.live.contains_key(key)
     }
 
+    /// Whether prompts are waiting for `key`'s current turn to end.
     pub(super) fn has_queued(&self, key: &str) -> bool {
         self.live.get(key).is_some_and(|l| !l.queued.is_empty())
     }

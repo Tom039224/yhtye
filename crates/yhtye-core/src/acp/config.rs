@@ -48,9 +48,6 @@ pub struct HarnessConfig {
 /// The Claude Code ACP adapter run through `npx` (an exact version).
 pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.84.0";
 
-/// Claude Code built-in tools left to the orchestrator (read-only).
-pub const ORCHESTRATOR_BUILTIN_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
-
 /// OpenCode's built-in primary agent ("mode") with every tool allowed except
 /// asking for paths outside the session directory (answered by Yhtye).
 pub const OPENCODE_BUILD_MODE: &str = "build";
@@ -132,25 +129,6 @@ impl HarnessConfig {
                     .cloned(),
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
         }
-    }
-
-    /// [`HarnessConfig::claude_code`] for the orchestrator: only the read-only
-    /// built-in tools (`Read`, `Glob`, `Grep`) are enabled, so it cannot edit the
-    /// user's working tree or delegate to Claude Code's own sub-agents; MCP tools
-    /// (`mcp__yhtye__*`) stay available. Uses the adapter's
-    /// `_meta.claudeCode.options.tools` pass-through to the Agent SDK
-    /// (`docs/architecture/orchestration-model.md` §8.1).
-    #[must_use]
-    pub fn claude_code_orchestrator(model: &str) -> Self {
-        let mut h = Self::claude_code(model);
-        let meta = serde_json::json!({
-            "claudeCode": { "options": {
-                "strictMcpConfig": true,
-                "tools": ORCHESTRATOR_BUILTIN_TOOLS,
-            } }
-        });
-        h.session_meta = meta.as_object().cloned();
-        h
     }
 
     /// [`HarnessConfig::claude_code`] for reading subscription usage with the
@@ -295,21 +273,6 @@ mod tests {
             h.env.get("ENABLE_TOOL_SEARCH").map(String::as_str),
             Some("false")
         );
-    }
-
-    #[test]
-    fn claude_code_orchestrator_restricts_builtin_tools() {
-        let h = HarnessConfig::claude_code_orchestrator("haiku");
-        let meta = serde_json::Value::Object(h.session_meta.clone().expect("meta"));
-        assert_eq!(
-            meta.pointer("/claudeCode/options/tools"),
-            Some(&serde_json::json!(["Read", "Glob", "Grep"]))
-        );
-        assert_eq!(
-            meta.pointer("/claudeCode/options/strictMcpConfig"),
-            Some(&serde_json::json!(true))
-        );
-        assert_eq!(h.mode_after_new.as_deref(), Some("bypassPermissions"));
     }
 
     #[test]

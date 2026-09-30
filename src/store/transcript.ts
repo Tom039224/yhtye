@@ -3,9 +3,9 @@
 // separately in `Streaming` and replaced by the coalesced `agent_text`.
 
 import { chunkText, toolCallInfo } from "../api/acp";
-import type { ApiEvent, InboxKind, TextKind } from "../api/generated";
+import type { ApiEvent, InboxKind, State, TextKind } from "../api/generated";
+import { chatOfUserCall, isOrchestratorKey, orchestratorKey } from "./chats";
 
-export const ORCHESTRATOR = "orchestrator";
 /** Session key of tool calls the user made through the UI (runtime::USER_SESSION). */
 export const USER = "user";
 
@@ -77,8 +77,12 @@ function short(value: unknown): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
-/** Folds one durable (or, when storing failed, live non-chunk) event. */
-export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent): Transcripts {
+/**
+ * Folds one durable (or, when storing failed, live non-chunk) event. Items of
+ * a chat's conversation go to its `orchestrator:<chat>` transcript; `state`
+ * (any state that knows the group) tells which chat a user's tool call is for.
+ */
+export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State | null): Transcripts {
   const base: Base = { seq: ev.seq, ts: ev.ts_ms };
   const body = ev.body;
   switch (body.type) {
@@ -86,13 +90,20 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent): Transcripts 
       if (body.event.type === "group_created") {
         // Shown in the conversation as the design's "GROUP TASK" card (§3.4).
         const g = body.event.group;
-        return push(t, ORCHESTRATOR, { ...base, kind: "group", groupId: g.id, title: g.title });
+        return push(t, orchestratorKey(g.chat), { ...base, kind: "group", groupId: g.id, title: g.title });
+      }
+      if (body.event.type === "chat_branch_changed") {
+        // A small line in the chat's conversation (not something an agent said).
+        const { chat, from, to } = body.event;
+        const text = `ブランチ名が ${from} → ${to} に変わりました`;
+        return push(t, orchestratorKey(chat), { ...base, kind: "lifecycle", text, error: false });
       }
       if (body.event.type !== "inbox_queued") return t;
-      const { id, item } = body.event.entry;
+      const { id, item, chat } = body.event.entry;
+      const key = orchestratorKey(chat);
       return item.kind === "user_message"
-        ? push(t, ORCHESTRATOR, { ...base, kind: "user", inboxId: id, text: item.body })
-        : push(t, ORCHESTRATOR, {
+        ? push(t, key, { ...base, kind: "user", inboxId: id, text: item.body })
+        : push(t, key, {
             ...base,
             kind: "notice",
             inboxId: id,
@@ -103,14 +114,20 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent): Transcripts 
     }
     case "prompted":
       // The orchestrator's prompts are its inbox batches, shown as user / notice items.
-      return body.session === ORCHESTRATOR
+      return isOrchestratorKey(body.session)
         ? t
         : push(t, body.session, { ...base, kind: "prompt", text: body.text });
     case "agent_text":
       return push(t, body.session, { ...base, kind: "text", textKind: body.kind, text: body.text });
     case "tool_called": {
       const r = body.record;
-      const session = r.binding.session === USER ? ORCHESTRATOR : r.binding.session;
+      let session = r.binding.session;
+      if (session === USER) {
+        // The user's own action belongs to the chat whose group it touched.
+        const chat = chatOfUserCall(state, r.args);
+        if (!chat) return t;
+        session = orchestratorKey(chat);
+      }
       const ok = "Ok" in r.result;
       const detail = "Ok" in r.result ? short(r.result.Ok) : `${r.result.Err.code}: ${r.result.Err.message}`;
       return push(t, session, { ...base, kind: "yhtye_tool", tool: r.tool, by: r.binding.session, ok, detail });

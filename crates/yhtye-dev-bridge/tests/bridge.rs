@@ -224,9 +224,15 @@ async fn the_api_round_trips_over_the_websocket() {
     assert_eq!(replies[0]["ok"]["projects"][0]["open"], true);
     assert_eq!(replies[1]["ok"]["type"], "snapshot");
 
-    // A message: accepted, then the orchestrator's streamed and coalesced text arrives.
-    let msg =
-        json!({"id": 6, "cmd": {"type": "send_user_message", "project": project, "text": "hello"}});
+    // A chat on `main` (nothing is started), then a message to it: accepted, then
+    // the orchestrator's streamed and coalesced text arrives.
+    let cmd =
+        json!({"id": 7, "cmd": {"type": "create_chat", "project": project, "branch": "main"}});
+    send(&mut ws, cmd.to_string()).await;
+    let created = reply(&mut ws, 7, &mut events).await;
+    assert_eq!(created["ok"]["chat"]["id"], "C-1", "{created}");
+    let msg = json!({"id": 6, "cmd": {"type": "send_user_message", "project": project,
+        "chat": "C-1", "text": "hello"}});
     send(&mut ws, msg.to_string()).await;
     assert_eq!(
         reply(&mut ws, 6, &mut events).await["ok"]["type"],
@@ -252,7 +258,7 @@ async fn the_api_round_trips_over_the_websocket() {
 
     // A second client gets the same events.
     let mut other = connect(port, TOKEN, None).await.expect("second client");
-    let msg = json!({"id": 1, "cmd": {"type": "send_user_message", "project": project, "text": "hello again"}});
+    let msg = json!({"id": 1, "cmd": {"type": "send_user_message", "project": project, "chat": "C-1", "text": "hello again"}});
     send(&mut ws, msg.to_string()).await;
     let mut seen = Vec::new();
     until_event(&mut other, &mut seen, |e| e["body"]["type"] == "agent_text").await;

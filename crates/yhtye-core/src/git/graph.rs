@@ -9,6 +9,7 @@ use ts_rs::TS;
 
 use super::repo::current_branch;
 use super::run::git;
+use crate::domain::INTERNAL_BRANCH_PREFIX;
 
 /// Field and record separators of the `git log` format (unit / record separator).
 const FIELD: char = '\u{1f}';
@@ -71,6 +72,13 @@ pub async fn overview(dir: &Path, limit: usize) -> Result<GitOverview, String> {
         commits,
         truncated,
     })
+}
+
+/// The local branches a user works on: every branch but Yhtye's own `yhtye/*`.
+pub async fn list_branches(dir: &Path) -> Result<Vec<GitBranch>, String> {
+    let mut list = branches(dir).await?;
+    list.retain(|b| !b.name.starts_with(INTERNAL_BRANCH_PREFIX));
+    Ok(list)
 }
 
 async fn branches(dir: &Path) -> Result<Vec<GitBranch>, String> {

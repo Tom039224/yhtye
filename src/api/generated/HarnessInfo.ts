@@ -7,8 +7,4 @@ export type HarnessInfo = { id: string, label: string,
 /**
  * Every choice names a model (no "harness default" entry).
  */
-requires_model: boolean, 
-/**
- * As orchestrator it cannot write files; `false` is shown as a warning.
- */
-orchestrator_read_only: boolean, };
+requires_model: boolean, };

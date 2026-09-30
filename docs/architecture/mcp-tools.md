@@ -10,7 +10,9 @@ Yhtye は MCP サーバーをプロセス内でホストし、各 ACP セッシ�
 - **トランスポート**: streamable HTTP、`http://127.0.0.1:<port>/mcp/<sessionToken>`。
   1 プロセスで全セッションを捌く。`sessionToken` はセッション作成ごとに Yhtye が発行する
   推測不能なランダム値 (128bit 以上)。トークンから「役割 (orchestrator / implementer /
-  reviewer)・プロジェクト・グループ・タスク・Step」を引く。未知のトークンは HTTP 404。
+  reviewer)・プロジェクト・グループ・タスク・Step」を引く。オーケストレータのトークンは**チャット** (Stage 8) にも束縛される。
+  オーケストレータのツールは**自分のチャットのグループ・タスクだけ**を対象にでき (他のチャットのものは `forbidden`)、
+  `group_id` 省略時の「active グループ」も自分のチャットのもの。未知のトークンは HTTP 404。
 - **役割ごとにツール一覧が異なる。** `tools/list` はトークンの役割に応じた集合だけを返し、
   他役割のツールを呼ばれたら `forbidden` エラー。
 - **MCP サーバー名は `yhtye`。** Claude Code 上のツール名は `mcp__yhtye__<tool>` になる。
@@ -37,7 +39,7 @@ Yhtye は MCP サーバーをプロセス内でホストし、各 ACP セッシ�
 | `invalid_argument` | 引数の値が不正 (空文字、未知の kind など) |
 | `not_found` | ID が存在しない / 他グループのもの |
 | `invalid_state` | 現在の状態ではその操作ができない (message に現在状態を含める) |
-| `forbidden` | その役割では使えないツール、または自分の担当外のタスク |
+| `forbidden` | その役割では使えないツール、または自分の担当外のタスク (オーケストレータは別のチャットのグループ・タスクも) |
 | `conflict` | 制約違反 (active グループが既にある、依存の循環など) |
 | `internal` | Yhtye 内部エラー (ログを見る) |
 
@@ -57,9 +59,9 @@ type Verdict = "approve" | "needs_changes";
 | | |
 |---|---|
 | 引数 | `title: string` (必須), `summary?: string` |
-| 戻り値 | `{ group_id, group_branch, base_branch }` |
+| 戻り値 | `{ group_id, group_branch, base_branch }` (`base_branch` = 呼び出したチャットの作業対象ブランチ。Stage 8) |
 | 遷移 | 新しい Group を `active` で作成。group ブランチと統合 worktree を作る |
-| エラー | `conflict` (プロジェクトに active / finishing のグループが既にある。`merge_blocked` は数えない), `invalid_state` (メイン作業ツリーが detached HEAD 等で base ブランチを決められない), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
+| エラー | `conflict` (**そのチャットの作業対象ブランチ**に active / finishing のグループが既にある — 同じブランチの別チャットのものも数える。`merge_blocked` は数えない。Stage 8 で「プロジェクトに」から変更), `invalid_state` (作業対象ブランチが削除・改名されて存在しない。Stage 8 で「detached HEAD 等」から変更), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
 
 ### `create_task`
 
@@ -151,7 +153,7 @@ effort 違いで複数あるのに `effort` が無ければ、`invalid_argument`
 
 | | |
 |---|---|
-| 引数 | `group_id?` (省略時は active グループ) |
+| 引数 | `group_id?` (省略時は**このチャットの** active グループ) |
 | 戻り値 | グループと全タスクの要約: `{ group, tasks: [{ task_id, title, kind, status, depends_on, current_step, steps_summary }], open_helps, agents }`。`agents` (Stage 7b、7d) = `{ implementer, investigator, reviewer: { default: {harness, model, effort}, allowed: [{harness, model, effort, note}] } }` — `create_task` で選べる行 (用途メモ付き) |
 | 遷移 | なし |
 
@@ -203,18 +205,19 @@ Yhtye が stash に退避済み (resume でそのまま完了できる。Stage 3
 
 | type | キー | 本文 | 期待される応答 |
 |---|---|---|---|
-| `user_message` | — | ユーザーの入力 | 自由 |
+| `user_message` | — | ユーザーの入力 (受信箱はチャットごと。宛先は送ったチャット / グループ操作ならその持ち主。Stage 8) | 自由 |
 | `checkpoint_reached` | `task`, `step` | それまでの Step の結果 | `resolve_checkpoint` (必要なら先に `modify_steps`) |
 | `help_raised` | `help_id`, `task`, `kind` | help の message | `answer_help` / `cancel_task` |
 | `instruction_needed` | `task` | 依存先タスクの最終結果 | `set_instruction` |
 | `group_settled` | `group` (催促では `reminder=N` も) | 全タスクの結果要約・開始不能タスク (催促では催促文) | タスク追加 or `finish_group` / `cancel_group` (同じターンで) |
 | `merge_result` | `group`, `ok` | base へのマージ結果 | ユーザーへの報告 |
-| `restarted` | — | Yhtye の再起動で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
+| `restarted` | — | Yhtye の再起動・オーケストレータの終了で失ったもの (前のセッションを復元できなかった場合は状態の要約、ターンが途中で切れた場合はその旨) | `get_status` で確認して続行 |
 
 `finish_group` はマージ結果を同期的に返すので、`merge_result` は `finish_group` の応答以外で
 マージが走ったとき (UI からの再試行 `RetryGroupMerge`、Stage 5 で実装。Stage 7a から、催促後も
 `finish_group` を呼ばなかったグループを Yhtye が完了させたときも) にだけ使う (Stage 3a で決定)。
 `group_settled` の催促 (`reminder=N`) は Stage 7a で追加した ([`orchestration-model.md`](orchestration-model.md) §2.1)。
 再起動時にグループのマージ中 (`finishing`) だった場合も `ok=false` の `merge_result` を送る
-(グループは `merge_blocked`。Stage 3b)。`restarted` は Stage 3b で追加した
+(グループは `merge_blocked`。Stage 3b)。Stage 8 でオーケストレータはチャットごとになり、受信箱の項目はグループを作ったチャット (`restarted` は復元できなかったチャット) にだけ届く
+([`orchestration-model.md`](orchestration-model.md) §5)。`restarted` は Stage 3b で追加した
 ([`core-design.md`](core-design.md) §8.1)。

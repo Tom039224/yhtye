@@ -22,13 +22,13 @@ use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
-use crate::domain::DomainConfig;
+use crate::domain::{DomainConfig, chat_of_session};
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::secrets::{
     KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
     validate_secret_value,
 };
-use crate::store::{ProjectRecord, Store, db_path};
+use crate::store::{ProjectRecord, SessionStatus, Store, db_path};
 use crate::usage::UsageService;
 
 /// How many events a slow subscriber may fall behind before it misses some
@@ -169,20 +169,54 @@ impl Core {
                 after_seq,
                 limit,
             } => self.list_events(&project, after_seq, limit).await,
-            ApiCommand::SendUserMessage { project, text } => {
+            ApiCommand::SendUserMessage {
+                project,
+                chat,
+                text,
+            } => {
                 if text.trim().is_empty() {
                     return Err(ApiError::invalid_argument("the message is empty"));
                 }
                 self.orchestration(&project)?
-                    .send_user_message(text)
-                    .map_err(orch_error)?;
+                    .send_user_message(chat, text)
+                    .await
+                    .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
-            ApiCommand::CancelOrchestratorTurn { project } => {
+            ApiCommand::CancelOrchestratorTurn { project, chat } => {
                 self.orchestration(&project)?
-                    .cancel_orchestrator_turn()
-                    .map_err(orch_error)?;
+                    .cancel_orchestrator_turn(chat)
+                    .await
+                    .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::ListChats { project } => {
+                self.known_project(&project).await?;
+                Ok(ApiResponse::Chats {
+                    chats: self.inner.store.chats(&project).await?,
+                })
+            }
+            ApiCommand::CreateChat { project, branch } => {
+                let chat = self
+                    .open_orchestration(&project)
+                    .await?
+                    .create_chat(branch)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Chat { chat })
+            }
+            ApiCommand::CreateBranch {
+                project,
+                name,
+                from,
+            } => {
+                let chat = self
+                    .open_orchestration(&project)
+                    .await?
+                    .create_branch(name, from)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Chat { chat })
             }
             ApiCommand::CancelTask {
                 project,
@@ -376,10 +410,11 @@ impl Core {
     }
 
     /// Opens every known project that has unfinished work — an active or
-    /// finishing group, or undelivered inbox entries — so its interrupted tasks
-    /// resume right away instead of waiting for the UI to open it (Stage 5
-    /// decision, `core-design.md` §2). Projects are opened one after another;
-    /// the result of each is returned (and failures logged).
+    /// finishing group, undelivered inbox entries, or a chat whose orchestrator
+    /// was live when Yhtye stopped (Stage 8) — so its interrupted tasks resume
+    /// right away instead of waiting for the UI to open it (Stage 5 decision,
+    /// `core-design.md` §2). Projects are opened one after another; the result
+    /// of each is returned (and failures logged).
     pub async fn resume_unfinished(&self) -> Vec<(String, Result<ProjectInfo, ApiError>)> {
         let records = match self.inner.store.projects().await {
             Ok(r) => r,
@@ -390,13 +425,8 @@ impl Core {
         };
         let mut out = Vec::new();
         for r in records {
-            match self.inner.store.load_state(&r.id).await {
-                Ok(Some(state)) if state.open_group().is_some() || !state.inbox.is_empty() => {}
-                Ok(_) => continue,
-                Err(e) => {
-                    tracing::error!("could not read the state of {}: {e}", r.id);
-                    continue;
-                }
+            if !self.has_unfinished_work(&r.id).await {
+                continue;
             }
             let path = r.path.display().to_string();
             let result = self.open_project(&path).await;
@@ -407,6 +437,32 @@ impl Core {
             out.push((r.id, result));
         }
         out
+    }
+
+    /// Whether `project` has work that must continue after a start (see
+    /// [`Core::resume_unfinished`]); a read error counts as none (and is logged).
+    async fn has_unfinished_work(&self, project: &str) -> bool {
+        let store = &self.inner.store;
+        let state = match store.load_state(project).await {
+            Ok(Some(state)) => state,
+            Ok(None) => return false,
+            Err(e) => {
+                tracing::error!("could not read the state of {project}: {e}");
+                return false;
+            }
+        };
+        if state.has_open_group() || !state.inbox.is_empty() {
+            return true;
+        }
+        match store.sessions(project).await {
+            Ok(sessions) => sessions.iter().any(|s| {
+                chat_of_session(&s.session_key).is_some() && s.status != SessionStatus::Stopped
+            }),
+            Err(e) => {
+                tracing::error!("could not read the sessions of {project}: {e}");
+                false
+            }
+        }
     }
 
     /// The state of an open project (for tests and the app shell).
@@ -510,6 +566,16 @@ impl Core {
         git::overview(&record.path, limit.min(MAX_GRAPH_COMMITS))
             .await
             .map_err(|e| ApiError::unavailable(format!("could not read the repository: {e}")))
+    }
+
+    /// Like [`Core::orchestration`], but a known project that is not open is
+    /// `unavailable` (creating chats and branches needs the running project).
+    async fn open_orchestration(&self, project: &str) -> Result<Arc<Orchestration>, ApiError> {
+        self.known_project(project).await?;
+        self.lock_open()
+            .get(project)
+            .cloned()
+            .ok_or_else(|| ApiError::unavailable(format!("project {project} is not open")))
     }
 
     fn orchestration(&self, project: &str) -> Result<Arc<Orchestration>, ApiError> {

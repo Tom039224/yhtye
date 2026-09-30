@@ -9,6 +9,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -24,7 +26,7 @@ use yhtye_core::api::{
 };
 use yhtye_core::domain::{DomainEvent, GroupStatus, TaskStatus};
 use yhtye_core::git::GitOverview;
-use yhtye_core::runtime::{Core, CoreConfig, ORCHESTRATOR_SESSION, USER_SESSION};
+use yhtye_core::runtime::{Core, CoreConfig, USER_SESSION};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -62,6 +64,15 @@ async fn open(core: &Core, path: &Path) -> ProjectInfo {
         ApiResponse::Project { project } => project,
         other => panic!("unexpected {other:?}"),
     }
+}
+
+/// The chat the tests send to: `C-1` on `main`.
+async fn new_chat(core: &Core, project: &str) {
+    let cmd = ApiCommand::CreateChat {
+        project: project.into(),
+        branch: "main".into(),
+    };
+    run(core, cmd).await;
 }
 
 async fn snapshot(core: &Core, project: &str) -> Snapshot {
@@ -214,8 +225,10 @@ async fn projects_are_validated_registered_and_reopened() {
         limit: None,
     };
     assert_eq!(error_code(&core, unknown).await, ApiErrorCode::NotFound);
+    new_chat(&core, &p.id).await;
     let empty = ApiCommand::SendUserMessage {
         project: p.id.clone(),
+        chat: "C-1".into(),
         text: "  \n".into(),
     };
     assert_eq!(
@@ -253,9 +266,11 @@ async fn a_request_runs_to_the_merge_through_the_facade() {
         .expect("core");
     let mut rx = core.subscribe();
     let project = open(&core, &r.repo).await.id;
+    new_chat(&core, &project).await;
     let start = snapshot(&core, &project).await;
     let send = ApiCommand::SendUserMessage {
         project: project.clone(),
+        chat: "C-1".into(),
         text: "Add hello.txt please".into(),
     };
     assert!(matches!(run(&core, send).await, ApiResponse::Accepted));
@@ -316,9 +331,11 @@ async fn run_forgetful(finish_on_reminder: bool) -> (TempRepo, Snapshot, Vec<Api
         .expect("core");
     let mut rx = core.subscribe();
     let project = open(&core, &r.repo).await.id;
+    new_chat(&core, &project).await;
     let start = snapshot(&core, &project).await;
     let send = ApiCommand::SendUserMessage {
         project: project.clone(),
+        chat: "C-1".into(),
         text: "Add hello.txt please".into(),
     };
     assert!(matches!(run(&core, send).await, ApiResponse::Accepted));
@@ -404,9 +421,11 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         .expect("core");
     let mut rx = core.subscribe();
     let project = open(&core, &r.repo).await.id;
+    new_chat(&core, &project).await;
     let start = snapshot(&core, &project).await;
     let send = |text: &str| ApiCommand::SendUserMessage {
         project: project.clone(),
+        chat: "C-1".into(),
         text: text.into(),
     };
     let mut seen = Vec::new();
@@ -419,6 +438,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     .await;
     let cancel = ApiCommand::CancelOrchestratorTurn {
         project: project.clone(),
+        chat: "C-1".into(),
     };
     run(&core, cancel).await;
     until(&mut rx, &mut seen, orchestrator_turn_ended).await;
@@ -513,9 +533,11 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
     let core = Core::start(cfg).await.expect("core");
     let mut rx = core.subscribe();
     let project = open(&core, &r.repo).await.id;
+    new_chat(&core, &project).await;
     let idle = open(&core, &idle_repo.repo).await.id;
     let send = ApiCommand::SendUserMessage {
         project: project.clone(),
+        chat: "C-1".into(),
         text: "start one".into(),
     };
     run(&core, send).await;

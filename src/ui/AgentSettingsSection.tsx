@@ -18,7 +18,6 @@ import {
   removeRow,
   updateRow,
   withDefaultRow,
-  writesAsOrchestrator,
 } from "./agentSettings";
 
 export type Scope = "global" | "project";
@@ -223,14 +222,6 @@ function RoleEditor({
   const locked = saving || (scope === "project" && inherits);
   const inheritLabel = scope === "project" ? "全体の設定を使う" : "組み込みの既定を使う";
   const builtin = choiceLabel(view.builtin, view.harnesses, models[view.builtin.harness]?.models);
-  const isOrchestrator = role === "orchestrator";
-  const writers = [
-    ...new Set(
-      shown.candidates
-        .filter((c) => isOrchestrator && writesAsOrchestrator(c, view.harnesses))
-        .map((c) => view.harnesses.find((h) => h.id === c.harness)?.label ?? c.harness),
-    ),
-  ];
   const missing = [...new Set(shown.candidates.filter((c) => isMissing(c, view.harnesses)).map((c) => c.harness))];
   const add = () => {
     const row = newRow(view.harnesses, models, shown);
@@ -248,12 +239,6 @@ function RoleEditor({
         <input type="checkbox" checked={inherits} disabled={saving} onChange={(e) => onSave(e.target.checked ? null : shown)} />
         {inheritLabel}
       </label>
-      {writers.length > 0 ? (
-        <p className="agent-warning" role="note">
-          ⚠ {writers.join(" / ")} のオーケストレータは書き込みを制限できません。ファイル編集やコマンド実行ができ、
-          「自分で書かない」はプロンプトで指示しているだけです。
-        </p>
-      ) : null}
       {missing.length > 0 ? (
         <p className="agent-warning" role="alert">
           ⚠ {missing.join(" / ")} が見つかりません (インストールされていない)。該当する候補は使えず、
@@ -262,7 +247,6 @@ function RoleEditor({
       ) : null}
       <CandidateTable
         label={label}
-        isOrchestrator={isOrchestrator}
         settings={shown}
         harnesses={view.harnesses}
         models={models}

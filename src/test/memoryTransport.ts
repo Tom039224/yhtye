@@ -10,6 +10,7 @@ import type {
   ApiCommand,
   ApiEvent,
   ApiResponse,
+  ChatInfo,
   GitOverview,
   HarnessInfo,
   HarnessModels,
@@ -82,7 +83,7 @@ export class FakeCore {
   /** Largest page the fake returns (whatever the client asks for). */
   pageCap = Number.MAX_SAFE_INTEGER;
   /** Served for `get_git_overview`. */
-  git: GitOverview = { head: "main", head_sha: null, branches: [], commits: [], truncated: false };
+  git: GitOverview = { head: "main", head_sha: null, branches: [{ name: "main", sha: "m".repeat(40) }], commits: [], truncated: false };
   /** Served for `get_usage` (`null`: the core reports it unavailable). */
   usage: UsageReport | null = null;
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
@@ -92,6 +93,8 @@ export class FakeCore {
   secretValues: Record<string, string> = {};
   /** Makes the secret commands fail like an unavailable OS keyring. */
   secretError: string | null = null;
+  /** Makes `create_branch` fail (an invalid or existing name). */
+  branchError: CommandError | null = null;
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -105,6 +108,11 @@ export class FakeCore {
       await this.before?.(cmd);
       return this.handle(cmd);
     };
+  }
+
+  private newChat(branch: string): ChatInfo {
+    const n = this.snapshot.chats.length + 1;
+    return { id: `C-${n}`, branch, title: null, created_ms: 1, last_used_ms: 1 };
   }
 
   handle(cmd: ApiCommand): ApiResponse {
@@ -125,6 +133,12 @@ export class FakeCore {
       }
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
+      case "create_chat":
+        return { type: "chat", chat: this.newChat(cmd.branch) };
+      case "create_branch":
+        if (this.branchError) throw this.branchError;
+        this.git = { ...this.git, branches: [...this.git.branches, { name: cmd.name, sha: "n".repeat(40) }] };
+        return { type: "chat", chat: this.newChat(cmd.name) };
       case "get_usage":
         if (!this.usage) throw new CommandError("unavailable", "usage: no harness is configured to report usage");
         return { type: "usage", usage: this.usage };
@@ -169,7 +183,7 @@ function emptyLayer(): AgentSettingsLayer {
 
 /** The core's settings layers in miniature (no validation). */
 export class FakeAgentSettings {
-  harnesses: HarnessInfo[] = [{ id: "claude-code", label: "Claude Code", requires_model: false, orchestrator_read_only: true }];
+  harnesses: HarnessInfo[] = [{ id: "claude-code", label: "Claude Code", requires_model: false }];
   builtin: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
   global: AgentSettingsLayer = emptyLayer();
   projects = new Map<string, AgentSettingsLayer>();

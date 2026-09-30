@@ -5,6 +5,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::time::Duration;
 
 use common::fake_harness;
@@ -16,7 +18,7 @@ use common::repo::TempRepo;
 use serde_json::{Value, json};
 use yhtye_core::api::ApiEvent;
 use yhtye_core::domain::{DomainEvent, GroupStatus, HelpKind};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration, OrchestrationConfig};
+use yhtye_core::runtime::{Orchestration, OrchestrationConfig};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -55,7 +57,7 @@ fn finished(e: &ApiEvent) -> bool {
 async fn run(cfg: OrchestrationConfig) -> (Orchestration, Vec<ApiEvent>) {
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("do the work").expect("send");
+    common::orch::send(&orch, "do the work").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
     (orch, events)
 }
@@ -234,7 +236,7 @@ async fn a_blocked_group_merge_is_retried_after_the_user_cleans_the_tree() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("do the work").expect("send");
+    common::orch::send(&orch, "do the work").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
     assert!(finish_reply(&events).contains("merge_blocked"));
 
@@ -280,7 +282,7 @@ async fn a_restarted_step_in_a_new_session_is_shown_the_work_already_done() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut first = Vec::new();
-    orch.send_user_message("do the work").expect("send");
+    common::orch::send(&orch, "do the work").await;
     until(&mut rx, &mut first, TIMEOUT, |e| {
         is_message(e, "T-1/implementer", "working on it")
     })

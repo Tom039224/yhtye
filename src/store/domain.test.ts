@@ -117,7 +117,7 @@ describe("constructed domain events", () => {
 
   it("marks a failed group merge as merge_blocked", () => {
     const group = {
-      id: "G-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
+      id: "G-1", chat: "C-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
       status: "active" as const, finish_summary: null, detail: null, finish_nudges: 0,
     };
     let s = applyDomainEvent(base, { type: "group_created", group });
@@ -128,13 +128,39 @@ describe("constructed domain events", () => {
 
   it("counts finish reminders, also for groups recorded before the counter existed", () => {
     const { finish_nudges: _, ...old } = {
-      id: "G-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
+      id: "G-1", chat: "C-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",
       status: "active" as const, finish_summary: null, detail: null, finish_nudges: 0,
     };
     let s = applyDomainEvent(base, { type: "group_created", group: old as typeof old & { finish_nudges: number } });
     s = applyDomainEvent(s, { type: "group_finish_reminded", group: "G-1" });
     s = applyDomainEvent(s, { type: "group_finish_reminded", group: "G-1" });
     expect(s.groups[0].finish_nudges).toBe(2);
+  });
+
+  it("follows a renamed branch: the chat and its unfinished groups, not finished ones", () => {
+    const group = (id: string, chat: string, status: "active" | "merge_blocked" | "done" | "cancelled", base: string) => ({
+      id, chat, title: "g", summary: null, base_branch: base, group_branch: `yhtye/${id}`,
+      status, finish_summary: null, detail: null, finish_nudges: 0,
+    });
+    let s = applyDomainEvent(base, { type: "chat_created", chat: { id: "C-1", branch: "feature", title: null } });
+    s = applyDomainEvent(s, { type: "chat_created", chat: { id: "C-2", branch: "feature", title: null } });
+    for (const g of [
+      group("G-1", "C-1", "done", "feature"),
+      group("G-2", "C-1", "merge_blocked", "feature"),
+      group("G-3", "C-1", "active", "feature"),
+      group("G-4", "C-2", "active", "feature"),
+    ]) {
+      s = applyDomainEvent(s, { type: "group_created", group: g });
+    }
+    s = s.groups.reduce((acc, g) => (g.id === "G-1" ? applyDomainEvent(acc, { type: "group_cancelled", group: "G-1", reason: "x" }) : acc), s);
+    s = applyDomainEvent(s, { type: "chat_branch_changed", chat: "C-1", from: "feature", to: "renamed" });
+    expect(s.chats.map((c) => [c.id, c.branch])).toEqual([["C-1", "renamed"], ["C-2", "feature"]]);
+    expect(s.groups.map((g) => [g.id, g.base_branch])).toEqual([
+      ["G-1", "feature"], // cancelled: keeps what it was
+      ["G-2", "renamed"],
+      ["G-3", "renamed"],
+      ["G-4", "feature"], // another chat's
+    ]);
   });
 
   it("ignores events for unknown ids", () => {

@@ -4,6 +4,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::time::Duration;
 
 use common::fake_harness;
@@ -14,7 +16,7 @@ use common::orch::{
 use serde_json::{Value, json};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, Role, TaskStatus};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -65,28 +67,27 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("add a line to README")
-        .expect("send");
+    common::orch::send(&orch, "add a line to README").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
     let msgs = summary(&events);
     let has = |needle: &str| msgs.iter().any(|m| m.contains(needle));
     for needle in [
-        "orchestrator: mcp:tools:create_group,create_task,",
-        "orchestrator: mcp:report_step_done:error:{\"error\":{\"code\":\"forbidden\"",
+        "orchestrator:C-1: mcp:tools:create_group,create_task,",
+        "orchestrator:C-1: mcp:report_step_done:error:{\"error\":{\"code\":\"forbidden\"",
         "T-1/implementer: mcp:tools:report_step_done,help",
         "T-1/implementer: mcp:create_group:error:{\"error\":{\"code\":\"forbidden\"",
-        "orchestrator: mcp:finish_group:ok:",
+        "orchestrator:C-1: mcp:finish_group:ok:",
         "no git in this build (NoopGit)",
     ] {
         assert!(has(needle), "{needle} not in {msgs:#?}");
     }
     let calls = tool_calls(&events);
     for expected in [
-        ("orchestrator", "create_group", true),
-        ("orchestrator", "create_task", true),
+        (ORCHESTRATOR_SESSION, "create_group", true),
+        (ORCHESTRATOR_SESSION, "create_task", true),
         ("T-1/implementer", "report_step_done", true),
-        ("orchestrator", "finish_group", true),
+        (ORCHESTRATOR_SESSION, "finish_group", true),
     ] {
         assert!(
             calls.contains(&(expected.0.into(), expected.1.into(), expected.2)),
@@ -158,7 +159,7 @@ async fn help_is_answered_and_the_agent_resumes() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("add a line").expect("send");
+    common::orch::send(&orch, "add a line").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
@@ -207,7 +208,7 @@ async fn needs_changes_loops_through_fresh_reviewer_sessions() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("add a line").expect("send");
+    common::orch::send(&orch, "add a line").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
     let sessions = started_sessions(&events);
@@ -270,7 +271,7 @@ async fn checkpoint_wakes_orchestrator_and_note_reaches_the_next_step() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("add a line").expect("send");
+    common::orch::send(&orch, "add a line").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
@@ -303,7 +304,7 @@ async fn checkpoint_wakes_orchestrator_and_note_reaches_the_next_step() {
 }
 
 #[tokio::test]
-async fn failing_orchestrator_start_is_reported_and_leaves_nothing_behind() {
+async fn failing_orchestrator_start_is_reported_and_keeps_the_message_in_the_inbox() {
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg = config(
         dir.path(),
@@ -311,6 +312,29 @@ async fn failing_orchestrator_start_is_reported_and_leaves_nothing_behind() {
         fake_harness(json!({})),
         fake_harness(json!({})),
     );
-    let err = Orchestration::start(cfg).await.err().expect("start fails");
-    assert!(err.to_string().contains("session/new"), "{err}");
+    // Starting the project starts nothing; the failure shows on the first send.
+    let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
+    let mut events = Vec::new();
+    common::orch::send(&orch, "hello").await;
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        matches!(&e.body, ApiEventBody::SessionFailed { session, error }
+            if session == ORCHESTRATOR_SESSION && error.contains("session/new"))
+    })
+    .await;
+    let snapshot = orch.snapshot().await.expect("snapshot");
+    assert_eq!(
+        snapshot.state.inbox.len(),
+        1,
+        "the message stays in the inbox"
+    );
+    assert!(snapshot.sessions.is_empty(), "nothing was left behind");
+    // No automatic retry: nothing more happens until something new arrives.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(e) = rx.try_recv() {
+        assert!(
+            !matches!(&e.body, ApiEventBody::SessionFailed { .. }),
+            "retried by itself: {e:?}"
+        );
+    }
+    orch.shutdown().await;
 }

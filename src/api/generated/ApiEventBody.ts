@@ -19,7 +19,11 @@ agent: AgentChoice | null,
  * What it was meant to run when that harness is not registered (any
  * more) and `agent` runs instead (Stage 7c-2; shown to the user).
  */
-replaced?: AgentChoice, } | { "type": "session_failed", session: string, error: string, } | { "type": "session_stopped", session: string, 
+replaced?: AgentChoice, 
+/**
+ * The directory it was started in (Stage 8; absent in older logs).
+ */
+cwd?: string, } | { "type": "session_failed", session: string, error: string, } | { "type": "session_stopped", session: string, 
 /**
  * Stopped because Yhtye shut down; it is restored on the next start.
  */

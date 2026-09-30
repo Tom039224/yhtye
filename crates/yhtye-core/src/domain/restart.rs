@@ -15,7 +15,7 @@ use super::types::StepKind;
 use crate::prompts::{RESTART_NOTE, resume_prompt};
 
 impl Tx {
-    pub(super) fn restart(&mut self, orchestrator: OrchestratorResume) {
+    pub(super) fn restart(&mut self, orchestrators: &[(String, OrchestratorResume)]) {
         let in_flight: Vec<String> = self
             .state
             .tasks
@@ -28,7 +28,9 @@ impl Tx {
         }
         self.mark_waiting_agents_lost();
         self.block_interrupted_merges();
-        self.tell_orchestrator(orchestrator);
+        for (chat, resume) in orchestrators {
+            self.tell_orchestrator(chat, *resume);
+        }
     }
 
     /// Agents waiting for a help answer died with Yhtye: resuming the help
@@ -66,21 +68,23 @@ impl Tx {
                 ok: false,
                 detail: detail.clone(),
             });
-            self.queue_inbox(InboxItem::new(
-                InboxKind::MergeResult,
-                &[("group", &group), ("ok", "false")],
-                detail,
-            ));
+            self.queue_inbox_group(
+                &group,
+                InboxItem::new(
+                    InboxKind::MergeResult,
+                    &[("group", &group), ("ok", "false")],
+                    detail,
+                ),
+            );
         }
     }
 
-    fn tell_orchestrator(&mut self, o: OrchestratorResume) {
+    /// What the orchestrator of `chat` missed while it was not running
+    /// (`restarted`): the state if its session could not be restored, or that
+    /// its turn was cut off.
+    pub(super) fn tell_orchestrator(&mut self, chat: &str, o: OrchestratorResume) {
         let body = if o.had_session && !o.restored {
-            format!(
-                "Yhtye was restarted and your previous session could not be restored, so you do \
-                 not see the earlier conversation. Current state:\n{}",
-                state_summary(&self.state)
-            )
+            lost_session_note(&self.state, chat)
         } else if o.turn_was_running {
             "Yhtye was restarted while your previous turn was running, so that turn was cut off. \
              Check get_status and continue where you left off."
@@ -88,7 +92,7 @@ impl Tx {
         } else {
             return;
         };
-        self.queue_inbox(InboxItem::new(InboxKind::Restarted, &[], body));
+        self.queue_inbox(chat, InboxItem::new(InboxKind::Restarted, &[], body));
     }
 
     pub(super) fn resume_task(&mut self, id: &str) {
@@ -138,11 +142,22 @@ impl Tx {
     }
 }
 
-/// Groups, tasks and open helps, one per line (for an orchestrator that lost
-/// its session).
-fn state_summary(state: &State) -> String {
+/// The `restarted` text for an orchestrator that lost its session: what it
+/// does not see any more, and the current state of its chat.
+#[must_use]
+pub fn lost_session_note(state: &State, chat: &str) -> String {
+    format!(
+        "Yhtye started your session again and your previous session could not be restored, so \
+         you do not see the earlier conversation. Current state:\n{}",
+        state_summary(state, chat)
+    )
+}
+
+/// The chat's groups, tasks and open helps, one per line (for an orchestrator
+/// that lost its session).
+fn state_summary(state: &State, chat: &str) -> String {
     let mut lines = Vec::new();
-    for g in &state.groups {
+    for g in state.groups.iter().filter(|g| g.chat == chat) {
         lines.push(format!(
             "group {} [{}]: {}",
             g.id,
@@ -163,7 +178,11 @@ fn state_summary(state: &State) -> String {
             ));
         }
     }
-    for h in state.helps.iter().filter(|h| h.is_open()) {
+    let open_helps = state
+        .helps
+        .iter()
+        .filter(|h| h.is_open() && state.chat_of_task(&h.task) == Some(chat));
+    for h in open_helps {
         lines.push(format!(
             "open help {} on {} ({}): {}",
             h.id,

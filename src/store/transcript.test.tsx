@@ -20,7 +20,7 @@ function toolEvent(seq: number, kind: "tool_call" | "tool_call_update", update: 
 }
 
 function fold(events: ReturnType<typeof ev>[]): Transcripts {
-  return events.reduce(applyTranscriptEvent, {} as Transcripts);
+  return events.reduce((t, e) => applyTranscriptEvent(t, e), {} as Transcripts);
 }
 
 describe("code-mode tool calls", () => {
@@ -72,5 +72,17 @@ describe("a replaced harness", () => {
       ["opencode/opencode/free is not available (not installed?); started claude-code/haiku instead", true],
       ["session started", false],
     ]);
+  });
+});
+
+describe("a renamed branch", () => {
+  it("adds a small line to the conversation of its chat only", () => {
+    const t = fold([
+      ev(1, { type: "domain", event: { type: "chat_branch_changed", chat: "C-2", from: "feat/x", to: "feat/y" } }),
+    ]);
+    expect(t["orchestrator:C-2"]).toEqual([
+      expect.objectContaining({ kind: "lifecycle", text: "ブランチ名が feat/x → feat/y に変わりました", error: false }),
+    ]);
+    expect(t["orchestrator:C-1"]).toBeUndefined();
   });
 });

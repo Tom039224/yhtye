@@ -8,6 +8,8 @@ interface Props {
   disabledReason: string | null;
   sending: boolean;
   turnRunning: boolean;
+  /** Sent, but the orchestrator process is still starting (lazy start). */
+  starting?: boolean;
   mentions: Mention[];
   onRemoveMention: (task: string) => void;
   /** Sends `text` (mentions are added by the caller); resolves to whether it was accepted. */
@@ -26,6 +28,7 @@ export function Composer({
   disabledReason,
   sending,
   turnRunning,
+  starting = false,
   mentions,
   onRemoveMention,
   onSend,
@@ -47,7 +50,10 @@ export function Composer({
   };
 
   const hint =
-    disabledReason ?? (turnRunning ? "オーケストレータが作業中です。送ったメッセージは待機し、ターンが終わると届きます。" : null);
+    disabledReason ??
+    (starting
+      ? "オーケストレータを起動中…"
+      : turnRunning ? "オーケストレータが作業中です。送ったメッセージは待機し、ターンが終わると届きます。" : null);
 
   return (
     <div className="composer-wrap">

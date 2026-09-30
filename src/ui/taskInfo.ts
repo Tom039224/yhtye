@@ -5,7 +5,7 @@
 
 import type { Group, Help, State, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
-import { ORCHESTRATOR, type TranscriptItem } from "../store/transcript";
+import type { TranscriptItem } from "../store/transcript";
 import { GROUP_LABEL, isTerminal, type Tone, taskTone } from "./labels";
 
 /** Session keys of a task (`T-1/implementer`, `T-1/review-2`, ...) in start order. */
@@ -165,7 +165,8 @@ export function taskMeta(state: State, task: Task, agent: string | null): string
   return null;
 }
 
-/** Live agent sessions other than the orchestrator (the header's `subagents N`). */
-export function liveSubagents(view: ProjectView): number {
-  return view.sessions.filter((s) => s.session_key !== ORCHESTRATOR && s.status === "live").length;
+/** Live sub-agent sessions of the tasks in `state` (the header's `subagents N`). */
+export function liveSubagents(view: ProjectView, state: State): number {
+  const tasks = new Set(state.tasks.map((t) => t.id));
+  return view.sessions.filter((s) => s.status === "live" && tasks.has(s.session_key.split("/")[0])).length;
 }

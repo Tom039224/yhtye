@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { agentText, chunk, ev, turnEnded } from "../test/events";
 import { applyDurable, applyLive, applySnapshot, newProjectView, type ProjectView } from "./project";
-import { ORCHESTRATOR } from "./transcript";
+import { ORCHESTRATOR } from "../test/events";
 
 function fold(view: ProjectView, events = FULL_RUN.events): ProjectView {
   return events.reduce((v, e) => (e.live ? applyLive(v, e) : e.seq === v.cursor + 1 ? applyDurable(v, e) : v), view);

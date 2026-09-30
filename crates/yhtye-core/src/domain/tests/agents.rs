@@ -94,7 +94,7 @@ fn crash_mid_step_raises_agent_crashed_and_resume_restarts_the_step() {
         .expect("ok");
     assert!(has_effect(&chain, |e| matches!(
         e,
-        Effect::WakeOrchestrator
+        Effect::WakeOrchestrator { .. }
     )));
     let help = open_help(&sim);
     assert_eq!(help.kind, HelpKind::AgentCrashed);

@@ -31,6 +31,10 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](design/)。
 | 7c-2 | OpenCode を選べるハーネスとして組み込む (設定・検出・UI) | **完了** |
 | 7d | effort + 用途メモ付きの候補の行、アプリ全体の設定モーダル | **完了** |
 | 7e | Codex ハーネス (OpenRouter のモデル一覧)、OS キーリングの秘密の環境変数 | **完了** (Codex 実装者の実機は通過。Codex オーケストレータは codex#13746 で不可、当面放置) |
+| 8a | チャットとブランチ: コア (スキーマ + ドメイン + runtime + API、偽エージェントのテスト) | **完了** (結果メモは Stage 8a の節) |
+| 8b | チャットとブランチ: フロントエンド (ストア + BRANCHES ツリー + 会話ヘッダ + vitest) | **完了** (結果メモは Stage 8b の節) |
+| 8c | チャットとブランチ: 実機 E2E (Claude Code Haiku、スクリーンショット) | **完了** (結果メモは Stage 8c の節) |
+| 8d | 書けるオーケストレータ・ブランチ改名の追跡・作業ツリーの取り直し | **完了** (結果メモは Stage 8d の節) |
 
 ## 再開の仕方
 
@@ -1032,3 +1036,160 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
   `real_codex_orchestrator_with_a_claude_implementer` は失敗: Codex の既知バグ [openai/codex#13746](https://github.com/openai/codex/issues/13746)
   (MCP ツールスキーマの `$defs` / `$ref` を解決せずモデルに崩れたスキーマを見せる) により、`create_task` の `steps` (`items: {$ref: StepSpec}`) を
   `{"item": {...}}` や文字列で送り 6 回とも拒否された。Yhtye 側でスキーマの `$ref` を展開すれば回避できるが、**メインは Claude のため当面放置 (ユーザー決定)**。
+
+## Stage 8 — オーケストレータのチャットとブランチ (ユーザー決定済みの仕様)
+
+課題: プロジェクトのオーケストレータは固定キー `orchestrator` の 1 セッションだけで、cwd は常にメイン作業ツリー。新しい会話を始められず、
+プロセスが終了すると (`driver.rs` の `on_exited` は `SessionStopped` を出すだけ) 二度と起動しない。グループの base はメイン作業ツリーの HEAD 任せで、
+グループはプロジェクトに 1 つ、マージはメイン作業ツリーが base で clean のときだけ。サイドバーの BRANCHES はクリックできない一覧。
+
+設計: [`orchestration-model.md`](architecture/orchestration-model.md) §2.0 / §5 / §6.1 / §10、[`core-design.md`](architecture/core-design.md) §17、
+[`mcp-tools.md`](architecture/mcp-tools.md) (`create_group` ほか)、[`orchestrator-desktop.md`](design/orchestrator-desktop.md) §9。
+
+ユーザー決定 (再検討しない):
+1. **チャット**は 1 つの**作業対象ブランチ**に紐づく。そのチャットで作るグループの base_branch (マージ先) はそのブランチ (メイン作業ツリーの HEAD ではない)。
+2. Orca 流 (1 作業ツリー = 1 ブランチ。元のクローンも作業ツリーの 1 つで、checkout で切り替えない): チャットの作業ツリー = そのブランチがチェックアウトされている作業ツリー
+   (メイン作業ツリー / 既存の別の作業ツリー)、無ければ Yhtye が `git worktree add <data_dir>/worktrees/<project>/branches/<sanitized-branch> <branch>` で作る。
+   オーケストレータの cwd もグループのマージ場所もそこ (既存のマージ規則: base で clean、でなければ `merge_blocked`)。Yhtye はどの作業ツリーでもブランチを切り替えない。
+3. チャットは複数を並行して動かせる (それぞれ別のオーケストレータ)。**遅延起動** = そのチャットで送信したときにプロセスを起動。アプリ起動時に復元するのは live だった / open なグループを持つチャットだけ。
+   open グループの上限は「プロジェクトに 1 つ」から「**ブランチに 1 つ**」。
+4. 過去のチャットも再開できる (送信 → 保存済み ACP セッション ID で `session/load`、失敗したら新しいセッション + 状態の要約)。オーケストレータが終了したら次の送信 (または受信箱の項目) で自動再起動。
+   「チャットを作り直す」= ブランチの下の「+ 新しいチャット」。
+5. サイドバー BRANCHES: ローカルブランチ (Yhtye 内部の `yhtye/*` を除く) を折りたためるツリーにし、各ブランチの下にそのチャットと「+ 新しいチャット」。
+   「+ 新しいブランチ」(名前 + 開始点、既定 = メインクローンの現在の HEAD) はブランチを Yhtye の作業ツリーに作り (メインクローンでは checkout しない)、最初のチャットを開く。
+   チャット・ブランチの削除と作業ツリーの後片付けは**範囲外**。
+6. 既存データは破棄 (旧い単一オーケストレータの履歴は移行しない。マイグレーションで表を作り直してよい)。
+既定 (聞いていない、慣例に従う): tasks 列は選択中のチャットのグループだけ (git グラフはリポジトリ全体) / 受信箱・通知・メンション・グループイベントはそのグループを持つチャットへ /
+チャットのタイトル = 最初のユーザーメッセージの先頭の切り詰め / アプリは最後に使ったチャットを開き直す。
+
+### Stage 8a — コア (スキーマ + ドメイン + runtime + API)
+
+- マイグレーション `0006_chats.sql` (旧データの破棄、`chats` 表、`task_groups.chat_id` / `inbox.chat_id` / `agent_sessions.cwd`)。
+- ドメイン: `Chat` / `State.chats` / `Group.chat` / `InboxEntry.chat`、`ChatCreated` / `ChatTitled`、`UserMessage{chat}` など (core-design §17.1)。
+  `create_group` は `base_branch` = チャットのブランチ、open 上限はブランチごと。ツールは自分のチャットだけ操作できる (`forbidden`)。
+- runtime: セッションキー `orchestrator:<chatId>`、遅延起動、チャットごとの `flush_inbox`、終了後の自動再起動 (`on_exited` は起動し直さない・次の送信 / 項目で)、起動時の復元対象の限定、
+  cwd 不一致の `session/load` 回避、`restarted` の要約をチャット単位に (§17.3)。
+- git: `resolve_branch_worktree` / `create_branch`、`MergeGroup` を解決した作業ツリーで行う (§17.4)。
+- API: `list_chats` / `create_chat` / `create_branch` と、`send_user_message` / `cancel_orchestrator_turn` のチャット指定 (§17.5)。`pnpm gen:types`。
+- テスト (偽エージェント + 実 git、`--ignored` なし): core-design §17.5 に列挙したもの。`cargo test --workspace` / `clippy --workspace --all-targets` / `fmt --check` が通ること。
+  既存のテストは新しい API に合わせて直す (チャットを 1 つ作ってから送る)。
+
+**結果メモ (Stage 8a、実施済み)**:
+- 実装: `domain` (`Chat` / `State.chats` / `Group.chat` / `InboxEntry.chat`、`chat_rules.rs`、ブランチごとの open 上限、`forbidden`)、`store` (`0006_chats.sql`、`chats.rs`、`agent_sessions.cwd`)、
+  `git` (`branches.rs`: `resolve_branch_worktree` / `create_branch`、`MergeGroup` を解決した作業ツリーで実行)、`runtime` (`chats.rs`: 遅延起動・チャットごとの `flush_inbox`・自動再起動・限定した復元・cwd 不一致で `session/load` しない)、
+  `api` (`list_chats` / `create_chat` / `create_branch`、`send_user_message{chat}` / `cancel_orchestrator_turn{chat}`、`Snapshot.chats`、`session_started.cwd`)、`pnpm gen:types`。
+- 仕様から具体化・変えたところは [`core-design.md`](architecture/core-design.md) §17.6 (`TellOrchestrator`、`session/load` 失敗時の要約は起動と同時に渡す、`NOT NULL DEFAULT ''` など)。
+- テスト (偽エージェント + 実 git): `domain/tests/chats.rs`、`store/tests.rs` (chats・cwd)、`tests/git_branches.rs` (作業ツリーの解決・ブランチ作成・別ブランチの作業ツリーへのマージ・detached HEAD・消えたブランチ)、
+  `tests/orchestration_fake_chats.rs` (遅延起動と cwd、2 チャット並行 + それぞれのブランチへマージ、同一ブランチの 2 つ目のグループ拒否と他チャットへの `forbidden`、プロセス終了 → 次の送信で再起動、
+  過去チャットの再開と復元対象、`session/load` 失敗と cwd 不一致、detached HEAD、ブランチ消失)、`tests/core_chats.rs` (API とエラー、`resume_unfinished`)。既存のテストは `common::orch::send` (チャット `C-1` を作って送る) などに直した。
+- フロントエンドは型検査とテストを通すための最小の機械的修正だけ (`src/store/*` の畳み込みに `chat_created` / `chat_titled`、`AppStore` はチャット `C-1` 固定、フィクスチャを `pnpm record:fixtures` で録り直し)。実際の UI は 8b。
+- 確認したこと: `cargo build --workspace` / `cargo test --workspace` (`*_real` は `#[ignore]` のまま) / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` / `pnpm tsc --noEmit` / `pnpm build` / `pnpm test`。
+  マイグレーションは 0001-0005 を当てた旧 DB (行あり) に 0006 を当てて、旧データが消え `projects` のカウンタが戻り、設定と秘密名が残ることを sqlite3 で確認。実機 (実ハーネス) は 8c。
+
+### Stage 8b — フロントエンド
+
+- ストア: `chats` (snapshot + `chat_created` / `chat_titled` の畳み込み)、選択中のチャット (最後に使ったチャットで復帰)、会話・グループ・通知のチャット単位の絞り込み、`create_chat` / `create_branch` / `send_user_message{chat}`。
+- UI: BRANCHES ツリー (展開・チャット行・+ 新しいチャット・+ 新しいブランチのフォーム・削除済みブランチの扱い)、会話ヘッダ (タイトル + ブランチ)、tasks 列のチャット絞り込み、他チャットの通知の印 (orchestrator-desktop §9)。
+- Vitest: ストアの絞り込み・復帰、ツリーの描画と操作、新しいブランチのフォームの検証・エラー。`pnpm test` / `pnpm build` (型検査) が通ること。
+
+**結果メモ (Stage 8b、実施済み)**:
+- ストア: `ProjectView` に `chats` (`Snapshot.chats` + `chat_created` / `chat_titled` / チャットのセッションの `prompted` の畳み込み、`store/chats.ts`)・`selectedChat`・`unread` を追加。
+  会話は `orchestrator:<chatId>` のトランスクリプトへ (受信箱・user_message・group_created はそのチャット、UI からのユーザーの `cancel_*` のツール呼び出しはグループ / タスクの持ち主のチャット)。
+  `sendMessage` / `cancelTurn` は選択中のチャット、`selectChat` (prefs `yhtye.chat.<projectId>` に保存、開き直すと復帰、無ければ `last_used_ms` 最大)、`createChat(branch)`、`createBranch(name, from?)` (失敗は reject でフォームに表示)。
+  8a の暫定 (`C-1` 固定・自動作成) は削除。チャットが無いプロジェクトは案内文だけで、何も作らない。
+- UI: `BranchTree` (折りたたみ・チャット行・`+ 新しいチャット`・`+` のフォーム・削除済みブランチの見出し・`yhtye/*` を除外)、会話ヘッダ (タイトル + `⎇ ブランチ`、削除済みなら送信不可)、
+  タイトルバーのブランチピル = 選択中のチャットのブランチ、tasks 列・待機バナー・`subagents N`・メンションは選択中のチャット単位、git グラフはリポジトリ全体 (ヘッダ / base レーンだけ選択中のチャット)。
+  他のチャットの通知の印 (琥珀のドット)、遅延起動中の「オーケストレータを起動中…」。
+- 履歴: 8a の既定どおり `ListEvents` はプロジェクト全体で UI 側で絞る (コアの `chat` フィルタは足していない)。「さらに前の履歴」は全チャット共通。
+- テスト (追加): `store/chats.test.ts`、`store/appChats.test.ts`、`ui/BranchTree.test.tsx` (`test/chats.ts` の 2 チャット構成)。既存テストは `test/events.ts` の `ORCHESTRATOR` (= `orchestrator:C-1`) などに合わせて修正。フィクスチャは 8a で録り直し済みで再録音は不要。
+- 確認したこと: `pnpm tsc --noEmit` / `pnpm test` (128 件) / `pnpm build`、`cargo test -p yhtye-core --test core_facade` と `--lib api::typegen`。
+  ブラウザ (`pnpm dev:browser` + 実コア、LLM は使わず送信しない。ブリッジに偽エージェントの指定は無い): 一時リポジトリを開く → ブランチのツリー → `+ 新しいチャット` → `+` で `feat/smoke` を作成 → 最初のチャットが選ばれ、ピル・ヘッダ・git パネルが追従。起動したプロセスは停止・一時ディレクトリは削除済み。
+  スクリーンショットは保存していない (一時ファイルのみ)。実際の送信・遅延起動は 8c。
+- 仕様との差: 案内文は会話の場所とコンポーザの両方に出す。チャットが 1 つも無いブランチは折りたたみが既定 (§9 の「チャットを持つブランチが展開」どおり) なので、空のプロジェクトでは branch 名をクリックして開いてから `+ 新しいチャット`。
+  `FakeCore` の既定の git に `main` ブランチを足した (ブランチ消失の判定のため)。
+
+### Stage 8c — 実機 E2E
+
+- Claude Code のローカルログイン、**Haiku** (`ANTHROPIC_MODEL=haiku`)。Chrome (`pnpm dev:browser` + 実コア) で実際に確かめ、スクリーンショットを `docs/e2e/stage8c/` に置く。
+- 完了条件 (**本物で動くこと**):
+  1. 新しいブランチを作る → Yhtye の作業ツリーが `branches/` に出来、メインクローンのブランチは変わらない → 最初のチャットで送信すると、そのときだけオーケストレータが起動し、cwd がその作業ツリー。
+  2. 2 つのブランチで 2 つのチャットを同時に動かし、それぞれのグループが別々に完走して、それぞれのブランチにマージされる。同じブランチの 2 つ目のグループは拒否される。
+  3. アプリを再起動 → live だったチャットだけ復元される。過去のチャットに送信して `session/load` で再開できる (合言葉などで確認)。
+  4. オーケストレータのプロセスを kill → 次の送信で自動再起動し、返答する。
+  5. 既存の作業ツリー (メインクローンにチェックアウト済みのブランチ) をそのまま使え、メインクローンが detached HEAD でもグループが完走する。
+- 後始末: 起動した `claude-agent-acp` などが残っていないこと。ユーザーのリポジトリのブランチ・作業ツリーを変えない (テスト用の一時リポジトリで行う)。
+- 各サブ Stage の終わりに、この表の状態を更新し「結果メモ」を追記してコミット (上の「再開の仕方」)。
+
+**結果メモ (Stage 8c、実施済み)**:
+- 先に UX の修正 (TDD、vitest): チャットが 1 つも無いプロジェクトでも、メインクローンがチェックアウト中のブランチは既定で展開 (`BranchTree.tsx`、`isOpen` の既定 = チャットを持つ or `isHead`)。
+  `BranchTree.test.tsx` に「main が展開・feat/x は折りたたみ・`main の新しいチャット` が押せる」を追加。`orchestrator-desktop.md` §9 を更新し、8b が更新していなかった §8 (BRANCHES / 会話ヘッダ / tasks 列 / ブランチピルの行) も実装に合わせた。
+- 実機 Rust (Claude Code Haiku、`--ignored --test-threads=1`): 既存の `orchestration_claude_real` (3)、`orchestration_claude_git` (3)、`orchestration_claude_restart` (1)、`agent_selection_claude` (1) は Stage 8 の変更のまま**全部通過** (修正不要)。
+  新規 `tests/orchestration_claude_chats.rs` (1 件、約 50 秒): (1) `main` と、メインクローンにチェックアウトされていない `feature` の 2 チャットを同時に動かし、それぞれ別のグループが完走して各ブランチだけにマージ、
+  メインクローンのブランチは不変、オーケストレータの cwd が `main` = メインクローン / `feature` = `<data>/worktrees/<project>/branches/feature`。(2) 「Yhtye を終了」→ 同じ DB で再起動 → 合言葉 (PELICAN / WALRUS) を最初のメッセージで渡した 2 チャットが `session/load` (同じ ACP セッション ID、`resumed=true`) で再開し、合言葉を答える。
+  (3) オーケストレータのプロセスグループを `kill -KILL` → `SessionStopped` → 次の送信で自動再起動して返答 (完了条件 4)。
+  テストの作り方の注意: グループのマージ後に **そのターンが終わる**のを待ってから終了しないと、再起動時に「`[yhtye:restarted]`」の要約が先に送られ、質問への答えが変わる (最初の版はこれで失敗。アプリの不具合ではなくテストの待ち方)。
+- ブラウザ E2E (`pnpm dev:browser --data-dir <一時>` + 実コア + Haiku、Chrome DevTools MCP、一時リポジトリ `main` のみ): ①プロジェクトを開く → `main` が展開済みで `+ 新しいチャット` が見える (1)、送信前は `claude-agent-acp` のプロセスが無い (遅延起動)。
+  ②チャット (合言葉 PELICAN) で送信 → グループ G-1 / T-1 が完走して `main` にマージ (2)。③`+` → `feat/e2e` を作成 → `data/worktrees/repo/branches/feat-e2e` が出来、メインクローンは `main` のまま → 最初のチャットで送信 → G-2 が `feat/e2e` にマージ、`main` には無い (3)。
+  ④チャットの切り替えで会話と tasks 列が切り替わる (4)。⑤`main` の `+ 新しいチャット` (元の不具合) で新しい会話 (合言葉を聞くと NONE)、古いチャットも一覧に残り (5)、そこへ送ると PELICAN と答える (6)。
+  ⑥ページのリロードでプロジェクトが自動で開き、選択中のチャットと履歴が戻る。⑦ブリッジ (`pnpm dev:browser`) を停止 → 再起動: 3 つの live だったチャットのプロセスが起動時に復元され (会話に「session restored (session/load)」)、`feat/e2e` のチャットに送ると WALRUS と答える (7)。
+  スクリーンショット: [`docs/e2e/stage8c/`](e2e/stage8c/) (1-7)。起動したプロセス (ブリッジ・Vite・`claude-agent-acp`) は停止確認済み。一時リポジトリは `~/.claude/jobs/.../tmp/e2e` (このリポジトリでは何もしていない)。
+- 全体の確認: `cargo build --workspace` / `cargo test --workspace` (`*_real` は `#[ignore]`) / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` / `pnpm tsc --noEmit` / `pnpm test` (129 件) / `pnpm build`、すべて通過。
+- 未確認・メモ: 同じブランチの 2 つ目のグループの拒否とメインクローンが detached HEAD のときは偽エージェントのテスト (8a) のみで実機では見ていない。ブラウザ E2E 中に作った `yhtye/G-n*` の内部ブランチは、既存の挙動どおり一時リポジトリに残る。
+  DevTools MCP の `fill` は textarea の値を入れても React に届かず (送信ボタンが無効のまま)、Space キーを 1 回押して送っている (ツールの癖。手入力では起きない)。
+
+**結果メモ (Stage 8 レビュー修正、実施済み)**:
+- Rust: (1) 新しいグループ番号は `max(カウンタ, git に残る yhtye/G-n* ブランチ・worktrees/<project>/G-n ディレクトリの最大番号) + 1` (`GitService::highest_group_number` をランタイムが呼び `CreateGroup.taken` で渡す。ドメインは決定的なまま、`GroupCreated` でカウンタを id に合わせる)。
+  (2) 存在しない作業ツリーの登録は、Yhtye 管理下 (`<root>` 配下) で prunable かつ非 locked のものだけ外す。ユーザーのもの・locked は触らずパス入りのエラー。(3) `create_branch` で最初のチャット作成に失敗したら作業ツリーとブランチを戻す (`GitService::discard_branch`)。
+  (4) `rev-parse` の「不明なリビジョン」だけ `FromMissing`、他は `Failed`。(5) 未知のチャットの `cancel_orchestrator_turn` は `not_found` (API が非同期になった)。(6) ブランチ名の検証は `git check-ref-format refs/heads/<name>` (`@{-1}` を拒否)。
+- フロント: (7) `createBranch` は git 概要を取り直してからチャットを選択、`chat_created` でも git を更新。(8) Composer を chat id でキー付け (下書きは持ち越さない)。(9) `useAutoScroll` に `resetKey` (チャット切り替えで最下部から)。(10) `BranchTree` をプロジェクト id でキー付け。
+- 既知の制限 (メインクローンでユーザーが別のブランチをチェックアウトしても、動作中のオーケストレータの cwd は取り直さない) は Stage 8d で解消。
+
+### Stage 8d — 書けるオーケストレータ・ブランチ改名の追跡・作業ツリーの取り直し (ユーザー決定済みの仕様)
+
+ユーザー決定 (再検討しない):
+- **A. オーケストレータの「読み取り専用」(orchestration-model §8.1) を取りやめる。** Claude Code のオーケストレータにも組み込みツールをすべて渡す
+  (`tools = ["Read","Glob","Grep"]` の制限 = `ORCHESTRATOR_BUILTIN_TOOLS` / `HarnessConfig::claude_code_orchestrator` を削除)。`orchestrator_read_only` (preset・`HarnessInfo`) と
+  設定パネルの「⚠ 書き込み制限なし」も削除 (全ハーネスが同じ)。**新しい MCP ツールは作らない** (git・Edit など既存の機能を複製するツールは不要)。
+  `prompts/orchestrator.md`: 検証のいらない小さな変更 (設定の定数の変更、自分のチャットのブランチの改名 `git branch -m`) は自分の cwd で直接行い**すぐコミット**、
+  実装・検証が要るものは従来どおりタスク、ブランチを切り替えない・他の作業ツリーに触れない・未コミットを残さない (グループのマージは clean が必要 → `merge_blocked`)。
+  理由: 小さな変更のたびにエージェントを呼ぶのを避ける、既存機能を複製する MCP ツールは作らない。
+- **B. ブランチ改名の追跡**: チャットのブランチが無く、そのチャットの記録された cwd の HEAD が別のブランチなら改名とみなし、ドメインイベント `chat_branch_changed {chat, from, to}` で
+  `chat.branch` とそのチャットの未終了のグループの `base_branch` を更新する。改名とみなせなければ従来の「ブランチ削除」扱い。
+- **C. 作業ツリーの取り直し** (Stage 8 の既知の制限の解消): ブランチは残っているが記録した cwd にチェックアウトされていないとき、`resolve_branch_worktree` で取り直し、
+  今のセッションの cwd と違えばターンが終わってからセッションを止めて新しい cwd で起動し直す (`session/load` はせず状態の要約)。確認の時点: 配達前 (送信・受信箱のフラッシュ・遅延起動)、`create_group`、マージ。
+  改名の確認 (B) が先。
+- **D. フロントエンド**: `chat_branch_changed` を表示 (ツリーで新しいブランチの下へ、ヘッダ、会話の通知行「ブランチ名が a → b に変わりました」)。書き込み制限の警告 UI を削除。
+
+設計: [`orchestration-model.md`](architecture/orchestration-model.md) §6.1 / §8.1、[`core-design.md`](architecture/core-design.md) §17.7。
+
+進め方: 設計ドキュメント → TDD (偽エージェント + 実 git: `tests/orchestration_fake_chats.rs` / `tests/git_branches.rs` / `domain/tests/chats.rs` / `store/tests.rs` / vitest) → 実機 (Claude Code **Haiku のみ**、
+`orchestration_claude_real` / `_git` / `_restart` / `_chats`、`agent_selection_claude` を `-- --ignored --test-threads=1`)。実機テスト `real_orchestrator_harness_cannot_write_files` は、
+「直接頼むとオーケストレータが自分の作業ツリーで小さな変更をコミットできる」テストと、「外部の `git branch -m` にチャットが追従し、その後のグループが改名後のブランチにマージされる」テストに置き換える。
+
+**結果メモ (Stage 8d、実施済み)**:
+- A: `HarnessConfig::claude_code_orchestrator` / `ORCHESTRATOR_BUILTIN_TOOLS` / `HarnessPreset.orchestrator_read_only` / `HarnessInfo.orchestrator_read_only` を削除 (オーケストレータ = `claude_code` と同じ設定)、UI の「⚠ 書き込み制限なし」(`NO_WRITE_LIMIT`・`writesAsOrchestrator`・警告の帯) も削除。`prompts/orchestrator.md` を「検証のいらない小さな変更は自分の cwd で行いすぐコミット / ブランチを切り替えない・他の作業ツリーに触れない・未コミットを残さない」に書き換え。MCP ツールは足していない。
+- B/C: `DomainCommand::ChatBranchChanged{chat,to}` → `DomainEvent::ChatBranchChanged{chat,from,to}` (`chat.branch` と未終了のグループ = `active`/`finishing`/`merge_blocked` の `base_branch` を更新)。`GitService::worktree_branch(dir)` を追加。
+  runtime は新しい `runtime/follow.rs` (`follow_branch` = 改名の追跡、`realign_orchestrator` = cwd の取り直し)。呼び出し点: `user_message`、`flush_chat` の配達前、`plan_start` (遅延起動・起動時の復元)、`create_group`、`finish_group` の前、`RetryGroupMerge` の前、オーケストレータのターン終了時 (`OrchestratorTurnEnded` より前)。
+  実装の細部と仕様からの具体化は [`core-design.md`](architecture/core-design.md) §17.7。
+- D: `chat_branch_changed` を `store/domain.ts` (チャットとグループ)・`store/chats.ts`・`store/transcript.ts` (会話に薄い 1 行「ブランチ名が a → b に変わりました」、`lifecycle` 項目)・`store/app.ts` (git の再読み込み) に反映。ツリーは `chat.branch` から組むので新しいブランチの下へ動く。`pnpm gen:types` 済み。フィクスチャは変更不要 (再録音していない)。
+- テスト (TDD): `domain/tests/chats.rs` (5 件: 改名で未終了グループ・チャットが追従 / 完了済みは据え置き / 次のグループは新ブランチへマージ / 上限は新ブランチ単位 / 不正な引数)、`store/tests.rs` (改名が chats 表と base_branch に保存)、`tests/git_branches.rs` (`worktree_branch`: 改名追従・detached・消えたディレクトリ)、
+  新規 `tests/orchestration_fake_follow.rs` (偽エージェント + 実 git、8 件: 外部の改名 → 次のグループが新ブランチへ / オーケストレータ自身の改名をターン終了時に検出 / グループ進行中の改名で base が動く / 終了したプロセスの遅延起動で改名を追跡 / 改名の痕跡が無い (detached・一度も起動していない) と従来どおり拒否 / ブランチが別の作業ツリーへ移ったら新しい cwd で起動し直し (新しいセッション + 要約) /
+  メインクローンが別のブランチに切り替わったら Yhtye の作業ツリーで起動し直し / ターン中は殺さずターン終了後に止める)。共通の補助は `tests/common/chats.rs` に移した (`orchestration_fake_chats.rs` も使う)。vitest: `domain.test.ts` / `chats.test.ts` / `transcript.test.tsx` / `BranchTree.test.tsx` (ツリー・ヘッダ・会話の通知行) / `AgentSettings.test.tsx` (警告が出ないこと)。
+- 実機 (Claude Code **Haiku のみ**、`-- --ignored --test-threads=1`): `orchestration_claude_real` (4) / `orchestration_claude_git` (3) / `orchestration_claude_restart` (1) / `orchestration_claude_chats` (1) / `agent_selection_claude` (1) すべて通過。
+  `real_orchestrator_harness_cannot_write_files` は `real_orchestrator_can_make_and_commit_a_small_change_itself` (直接頼むと `settings.txt` の定数を自分で変えてコミット、グループなし・未コミットなし) と `real_chat_follows_a_renamed_branch_and_merges_the_next_group_into_it` (テストが外部で `git branch -m`、チャットが追従して次のグループが改名後のブランチにマージ) に置き換えた。
+- 確認したこと: `cargo build --workspace` / `cargo test --workspace` / `cargo clippy --workspace --all-targets -- -D warnings` / `cargo fmt --all --check` / `pnpm tsc --noEmit` / `pnpm test` (136 件) / `pnpm build`、すべて通過。
+- 制限・メモ: 改名の追跡は「そのチャットのセッションを一度でも起動した」(cwd が記録されている) ことが前提 (起動前に改名されたチャットは削除扱い)。`create_group` 時の取り直しは、ターン中なのでセッションを止めるのはターン終了後 (idle のまま stop し、次の配達で遅延起動)。取り直しで止めた古いセッションの `session_stopped` は、同じキーで新しいセッションが起動するため出ない (UI は新しい `session_started` を見る)。
+
+### Stage 8 の未決事項
+
+設計中に見つかった、上の決定では決まらないこと (既定の案を括弧で示す。ユーザー確認後に決定へ移す):
+- チャットが 1 つも無いプロジェクトを開いたとき (案: 案内文だけ。メインクローンのブランチで最初のチャットを自動作成するか?)。
+- ブランチが外部で削除・改名されたチャット (案: 履歴は読めるが送信不可。改名の追跡・チャットのブランチ付け替えはしない)。
+- 別のチャットのグループ・タスクへのツール呼び出し (案: `forbidden`、`get_status` は自分のチャットのみ)。
+- 新しい (`session/load` 失敗の) セッションに渡す要約は状態の要約だけ (案: 従来どおり。直近の会話は含めない)。
+- 起動時の復元対象に「未配達の受信箱を持つチャット」を含める (案: 含める。決定 3 の「live / open グループ」に加える拡張)。
+- 履歴の遅延読み込み: `ListEvents` はプロジェクト全体で、チャットを絞るとページが疎になる (案: 8b は UI 側で絞る。足りなければ `chat?` フィルタを足す)。
+- 旧 Stage のグループが残した `yhtye/*` ブランチ・作業ツリーは放置 (データ破棄の副作用)。
+- 起動失敗時の自動再試行 (案: しない。次の送信・項目・アプリ起動のときだけ)。
+- タイトルバーのブランチピル (案: 選択中のチャットのブランチ)。
+- ~~ブランチが外部で削除・改名されたチャット (案: 履歴は読めるが送信不可。改名の追跡はしない)~~ → 削除は従来どおり。**改名は Stage 8d で追跡する**。

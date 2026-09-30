@@ -48,13 +48,36 @@ impl Tx {
             .ok_or_else(|| ToolError::not_found(format!("no task {id}")))
     }
 
-    /// Queues an inbox item and asks the runtime to wake the orchestrator.
-    pub(super) fn queue_inbox(&mut self, item: InboxItem) {
+    /// Queues an inbox item for the orchestrator of `chat` and asks the runtime
+    /// to wake it.
+    pub(super) fn queue_inbox(&mut self, chat: &str, item: InboxItem) {
         let id = self.state.counters.inbox + 1;
         self.emit(DomainEvent::InboxQueued {
-            entry: InboxEntry { id, item },
+            entry: InboxEntry {
+                id,
+                chat: chat.to_string(),
+                item,
+            },
         });
-        self.effect(Effect::WakeOrchestrator);
+        self.effect(Effect::WakeOrchestrator {
+            chat: chat.to_string(),
+        });
+    }
+
+    /// Queues an item for the chat that created `group`.
+    pub(super) fn queue_inbox_group(&mut self, group: &str, item: InboxItem) {
+        match self.state.chat_of_group(group).map(str::to_string) {
+            Some(chat) => self.queue_inbox(&chat, item),
+            None => tracing::error!("group {group} has no chat; dropping {:?}", item.kind),
+        }
+    }
+
+    /// Queues an item for the chat of the group `task` belongs to.
+    pub(super) fn queue_inbox_task(&mut self, task: &str, item: InboxItem) {
+        match self.state.chat_of_task(task).map(str::to_string) {
+            Some(chat) => self.queue_inbox(&chat, item),
+            None => tracing::error!("task {task} has no chat; dropping {:?}", item.kind),
+        }
     }
 
     fn finish(self) -> (State, Transition) {
@@ -71,15 +94,16 @@ impl Tx {
 pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), ToolError> {
     let mut tx = Tx::new(state.clone());
     match cmd {
-        DomainCommand::CreateGroup { args, base_branch } => {
-            tx.create_group(args, base_branch)?;
-        }
+        DomainCommand::CreateChat { branch } => tx.create_chat(&branch)?,
+        DomainCommand::ChatBranchChanged { chat, to } => tx.chat_branch_changed(&chat, &to)?,
+        DomainCommand::CreateGroup { chat, args, taken } => tx.create_group(&chat, args, taken)?,
         DomainCommand::Tool { binding, call } => tx.tool(&binding, call)?,
-        DomainCommand::UserMessage { text } => tx.queue_inbox(InboxItem::user_message(text)),
+        DomainCommand::UserMessage { chat, text } => tx.user_message(&chat, text)?,
         DomainCommand::OrchestratorTurnEnded {
+            chat,
             outcome,
             prompt_queued,
-        } => tx.orchestrator_turn_ended(&outcome, prompt_queued),
+        } => tx.orchestrator_turn_ended(&chat, &outcome, prompt_queued),
         DomainCommand::TurnEnded {
             agent,
             outcome,
@@ -88,10 +112,11 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
         DomainCommand::AgentExited { agent, detail } => tx.agent_exited(&agent, &detail),
         DomainCommand::AgentStartFailed { agent, error } => tx.agent_start_failed(&agent, &error),
         DomainCommand::GitDone { op, result } => tx.git_done(op, result),
-        DomainCommand::InboxDelivered { up_to } => {
-            tx.emit(DomainEvent::InboxDelivered { up_to });
+        DomainCommand::InboxDelivered { chat, up_to } => {
+            tx.emit(DomainEvent::InboxDelivered { chat, up_to });
         }
-        DomainCommand::Restart { orchestrator } => tx.restart(orchestrator),
+        DomainCommand::Restart { orchestrators } => tx.restart(&orchestrators),
+        DomainCommand::TellOrchestrator { chat, resume } => tx.tell_orchestrator(&chat, resume),
         DomainCommand::ResumeTask { task } => tx.resume_task(&task),
         DomainCommand::RetryGroupMerge { group } => tx.retry_group_merge(&group)?,
     }

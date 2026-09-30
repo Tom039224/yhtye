@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::state::{
-    Group, GroupStatus, Help, HelpState, InboxEntry, State, Step, StepStatus, Task, TaskStatus,
+    Chat, Group, GroupStatus, Help, HelpState, InboxEntry, State, Step, StepStatus, Task,
+    TaskStatus,
 };
 use super::types::{StepSpec, Verdict};
 use crate::mcp::tools::HelpAction;
@@ -20,6 +21,22 @@ use crate::mcp::tools::HelpAction;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainEvent {
+    /// A chat was created (Stage 8, `orchestration-model.md` §2.0).
+    ChatCreated {
+        chat: Chat,
+    },
+    /// The chat got its title (from its first user message).
+    ChatTitled {
+        chat: String,
+        title: String,
+    },
+    /// The chat's branch was renamed (Stage 8d, `orchestration-model.md` §6.1): the
+    /// chat and its unfinished groups follow it.
+    ChatBranchChanged {
+        chat: String,
+        from: String,
+        to: String,
+    },
     GroupCreated {
         group: Group,
     },
@@ -110,8 +127,9 @@ pub enum DomainEvent {
     InboxQueued {
         entry: InboxEntry,
     },
-    /// Every inbox entry with `id <= up_to` was sent to the orchestrator.
+    /// Every inbox entry of `chat` with `id <= up_to` was sent to its orchestrator.
     InboxDelivered {
+        chat: String,
         up_to: u64,
     },
 }
@@ -134,7 +152,19 @@ impl State {
                 self.counters.inbox = self.counters.inbox.max(entry.id);
                 self.inbox.push(entry.clone());
             }
-            DomainEvent::InboxDelivered { up_to } => self.inbox.retain(|e| e.id > *up_to),
+            DomainEvent::InboxDelivered { chat, up_to } => {
+                self.inbox.retain(|e| e.chat != *chat || e.id > *up_to);
+            }
+            DomainEvent::ChatCreated { chat } => {
+                self.counters.chats += 1;
+                self.chats.push(chat.clone());
+            }
+            DomainEvent::ChatTitled { chat, title } => {
+                if let Some(c) = self.chats.iter_mut().find(|c| c.id == *chat) {
+                    c.title = Some(title.clone());
+                }
+            }
+            DomainEvent::ChatBranchChanged { chat, to, .. } => self.follow_rename(chat, to),
             DomainEvent::TaskCreated { task } => {
                 self.counters.tasks += 1;
                 self.tasks.push(task.clone());
@@ -143,10 +173,29 @@ impl State {
         }
     }
 
+    /// `chat` now works on `to`, and so do its groups that are not finished (their
+    /// merge target is the chat's branch).
+    fn follow_rename(&mut self, chat: &str, to: &str) {
+        let Some(c) = self.chats.iter_mut().find(|c| c.id == chat) else {
+            return;
+        };
+        c.branch = to.to_string();
+        let unfinished = |g: &&mut Group| {
+            g.chat == chat && !matches!(g.status, GroupStatus::Done | GroupStatus::Cancelled)
+        };
+        for g in self.groups.iter_mut().filter(unfinished) {
+            g.base_branch = to.to_string();
+        }
+    }
+
     fn apply_group(&mut self, event: &DomainEvent) {
         match event {
             DomainEvent::GroupCreated { group } => {
-                self.counters.groups += 1;
+                // The id may be past the counter (numbers taken in git).
+                let number = group.id.strip_prefix("G-").and_then(|n| n.parse().ok());
+                self.counters.groups = number.map_or(self.counters.groups + 1, |n: u32| {
+                    n.max(self.counters.groups + 1)
+                });
                 self.groups.push(group.clone());
             }
             DomainEvent::GroupFinishing { group, summary } => {

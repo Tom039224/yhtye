@@ -345,17 +345,6 @@ async fn a_dirty_base_tree_blocks_the_merge_and_is_left_alone() {
 }
 
 #[tokio::test]
-async fn another_branch_in_the_main_worktree_blocks_the_merge() {
-    let (r, _) = with_tasks(&[]).await;
-    r.git(&["checkout", "-q", "-b", "other"]);
-    let result = r.git_cli().run(&merge_group()).await;
-    assert!(
-        matches!(&result, GitResult::Blocked { detail } if detail.contains("on other")),
-        "{result:?}"
-    );
-}
-
-#[tokio::test]
 async fn a_conflict_with_the_base_branch_blocks_and_restores_the_tree() {
     let (r, dirs) = with_tasks(&["T-1"]).await;
     let git = r.git_cli();

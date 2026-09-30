@@ -11,6 +11,7 @@
 //! - Agent sessions (ACP session ids for `session/load`) are kept in
 //!   `agent_sessions`, updated from the session events in the same transaction.
 
+mod chats;
 mod codec;
 mod events;
 mod projection;
@@ -28,6 +29,7 @@ use crate::agents::{AgentRole, RoleSettings};
 use crate::api::ApiEvent;
 use crate::domain::{DomainConfig, State};
 
+pub use chats::ChatInfo;
 pub use events::StoredEvent;
 pub use sessions::{SessionRecord, SessionStatus};
 pub use settings::StoredAgentSettings;
@@ -191,6 +193,12 @@ impl Store {
             .collect()
     }
 
+    /// The chats of `project`, most recently used first (works for projects that
+    /// are not open).
+    pub async fn chats(&self, project: &str) -> Result<Vec<ChatInfo>, StoreError> {
+        chats::list(&self.pool, project).await
+    }
+
     /// Every agent session recorded for `project`.
     pub async fn sessions(&self, project: &str) -> Result<Vec<SessionRecord>, StoreError> {
         sessions::list(&self.pool, project).await
@@ -235,6 +243,7 @@ async fn write_events(
     for event in events {
         events::insert(tx, event).await?;
         sessions::apply(tx, event).await?;
+        chats::apply(tx, event).await?;
     }
     Ok(())
 }

@@ -13,8 +13,7 @@ mod startup;
 
 pub use config::{
     CODEX_ACP, CODEX_CONFIG_ENV, CODEX_FULL_ACCESS_MODE, CODEX_PATH_ENV, DEFAULT_STARTUP_TIMEOUT,
-    EFFORT_CONFIG_ID, HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE, ORCHESTRATOR_BUILTIN_TOOLS,
-    SystemPromptStyle,
+    EFFORT_CONFIG_ID, HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE, SystemPromptStyle,
 };
 pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};

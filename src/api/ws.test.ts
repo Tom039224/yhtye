@@ -94,7 +94,7 @@ describe("WsTransport", () => {
     const { t, statuses } = connect(server.url);
     await opened(statuses);
     const a = t.invoke({ type: "list_projects" });
-    const b = t.invoke({ type: "cancel_orchestrator_turn", project: "repo" });
+    const b = t.invoke({ type: "cancel_orchestrator_turn", project: "repo", chat: "C-1" });
     await expect(a).resolves.toEqual({ type: "projects", projects: [] });
     await expect(b).resolves.toEqual({ type: "accepted" });
     expect(server.requests.map((r) => r.id)).toEqual([1, 2]);
@@ -141,7 +141,7 @@ describe("WsTransport", () => {
       socket.send(JSON.stringify({ id: req.id, ok: { type: "accepted" } })),
     port);
     await vi.waitFor(() => expect(statuses.at(-1)?.state).toBe("open"), { timeout: 3000 });
-    await expect(t.invoke({ type: "cancel_orchestrator_turn", project: "p" })).resolves.toEqual({ type: "accepted" });
+    await expect(t.invoke({ type: "cancel_orchestrator_turn", project: "p", chat: "C-1" })).resolves.toEqual({ type: "accepted" });
     expect(again.requests).toHaveLength(1);
   });
 

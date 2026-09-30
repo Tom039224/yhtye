@@ -101,7 +101,17 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
         inbox: [...state.inbox, event.entry],
       };
     case "inbox_delivered":
-      return { ...state, inbox: state.inbox.filter((e) => e.id > event.up_to) };
+      return { ...state, inbox: state.inbox.filter((e) => e.chat !== event.chat || e.id > event.up_to) };
+    case "chat_created":
+      return {
+        ...state,
+        counters: { ...state.counters, chats: state.counters.chats + 1 },
+        chats: [...state.chats, event.chat],
+      };
+    case "chat_titled":
+      return { ...state, chats: state.chats.map((c) => (c.id === event.chat ? { ...c, title: event.title } : c)) };
+    case "chat_branch_changed":
+      return followBranchRename(state, event.chat, event.to);
     case "task_created":
       return {
         ...state,
@@ -111,6 +121,17 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
     default:
       return applyTaskEvent(state, event);
   }
+}
+
+/** A renamed branch: the chat, and its groups that are not finished (their merge target), follow it. */
+function followBranchRename(state: State, chat: string, to: string): State {
+  return {
+    ...state,
+    chats: state.chats.map((c) => (c.id === chat ? { ...c, branch: to } : c)),
+    groups: state.groups.map((g) =>
+      g.chat === chat && g.status !== "done" && g.status !== "cancelled" ? { ...g, base_branch: to } : g,
+    ),
+  };
 }
 
 type TaskEvent = Exclude<
@@ -128,6 +149,9 @@ type TaskEvent = Exclude<
       | "help_agent_lost"
       | "inbox_queued"
       | "inbox_delivered"
+      | "chat_created"
+      | "chat_titled"
+      | "chat_branch_changed"
       | "task_created";
   }
 >;
@@ -186,10 +210,11 @@ export function emptyState(project: string, config: State["config"]): State {
   return {
     project,
     config,
+    chats: [],
     groups: [],
     tasks: [],
     helps: [],
     inbox: [],
-    counters: { groups: 0, tasks: 0, helps: 0, inbox: 0 },
+    counters: { chats: 0, groups: 0, tasks: 0, helps: 0, inbox: 0 },
   };
 }

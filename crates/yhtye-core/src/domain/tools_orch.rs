@@ -26,6 +26,7 @@ impl Tx {
         binding: &SessionBinding,
         call: ToolCall,
     ) -> Result<(), ToolError> {
+        self.check_owner(binding, &call)?;
         let reply = match call {
             ToolCall::CreateGroup(_) => Err(ToolError::internal(
                 "create_group must be sent as DomainCommand::CreateGroup",
@@ -38,7 +39,7 @@ impl Tx {
             ToolCall::CancelTask(a) => self.cancel_task_tool(&a),
             ToolCall::FinishGroup(a) => self.finish_group(a),
             ToolCall::CancelGroup(a) => self.cancel_group(&a),
-            ToolCall::GetStatus(a) => self.get_status(&a),
+            ToolCall::GetStatus(a) => self.get_status(binding, &a),
             ToolCall::GetTask(a) => self.get_task(&a),
             ToolCall::ReportStepDone(a) => self.report_step_done(binding, a),
             ToolCall::Help(a) => self.help(binding, a),
@@ -47,30 +48,40 @@ impl Tx {
         Ok(())
     }
 
+    /// `create_group` of the orchestrator of `chat`: the group merges into the
+    /// chat's branch, and only one group per branch may be open.
     pub(super) fn create_group(
         &mut self,
+        chat: &str,
         a: CreateGroupArgs,
-        base_branch: Option<String>,
+        taken: u32,
     ) -> Result<(), ToolError> {
         non_empty("title", &a.title)?;
-        if let Some(g) = self.state.open_group() {
+        let base_branch = self
+            .state
+            .chat(chat)
+            .ok_or_else(|| ToolError::not_found(format!("no chat {chat}")))?
+            .branch
+            .clone();
+        if let Some(g) = self.state.open_group_on(&base_branch) {
+            let whose = if g.chat == chat {
+                String::new()
+            } else {
+                format!(" (created by chat {})", g.chat)
+            };
             return Err(ToolError::conflict(format!(
-                "group {} is still {}; finish_group or cancel_group it first",
+                "group {} on branch {base_branch} is still {}{whose}; finish_group or \
+                 cancel_group it first",
                 g.id,
                 g.status.as_str()
             )));
         }
-        let base_branch = base_branch.ok_or_else(|| {
-            ToolError::invalid_state(
-                "the project's main worktree is not on a branch (detached HEAD?), so there is \
-                 no base branch; ask the user to check out a branch",
-            )
-        })?;
-        let id = format!("G-{}", self.state.counters.groups + 1);
+        let id = format!("G-{}", self.state.counters.groups.max(taken) + 1);
         let group_branch = super::state::group_branch(&id);
         self.emit(DomainEvent::GroupCreated {
             group: Group {
                 id: id.clone(),
+                chat: chat.to_string(),
                 title: a.title,
                 summary: a.summary,
                 base_branch: base_branch.clone(),
@@ -374,6 +385,41 @@ impl Tx {
             group: a.group_id.clone(),
         }));
         Ok(json!({ "group_id": a.group_id, "status": "cancelled" }))
+    }
+}
+
+impl Tx {
+    /// An orchestrator bound to a chat only reaches that chat's groups and
+    /// tasks (`forbidden` otherwise). Unknown ids pass: the tool reports them.
+    fn check_owner(&self, binding: &SessionBinding, call: &ToolCall) -> Result<(), ToolError> {
+        let Some(chat) = binding.chat.as_deref() else {
+            return Ok(());
+        };
+        let owner = match call {
+            ToolCall::CreateTask(a) => self.state.chat_of_group(&a.group_id),
+            ToolCall::FinishGroup(a) => self.state.chat_of_group(&a.group_id),
+            ToolCall::CancelGroup(a) => self.state.chat_of_group(&a.group_id),
+            ToolCall::GetStatus(a) => a
+                .group_id
+                .as_deref()
+                .and_then(|g| self.state.chat_of_group(g)),
+            ToolCall::SetInstruction(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::ModifySteps(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::ResolveCheckpoint(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::CancelTask(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::GetTask(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::AnswerHelp(a) => self
+                .state
+                .help(&a.help_id)
+                .and_then(|h| self.state.chat_of_task(&h.task)),
+            _ => None,
+        };
+        match owner {
+            Some(o) if o != chat => Err(ToolError::forbidden(format!(
+                "that belongs to another chat ({o}); this chat is {chat}"
+            ))),
+            _ => Ok(()),
+        }
     }
 }
 

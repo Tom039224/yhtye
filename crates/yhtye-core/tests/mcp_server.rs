@@ -53,6 +53,7 @@ fn sub_binding(role: Role) -> SessionBinding {
         session: "T-1/0".into(),
         role,
         project: "P-1".into(),
+        chat: None,
         group: Some("G-1".into()),
         task: Some("T-1".into()),
         step: Some(0),
@@ -105,7 +106,7 @@ async fn tool_list_depends_on_role() {
     let orch = f
         .host
         .registry()
-        .issue(SessionBinding::orchestrator("orch", "P-1"));
+        .issue(SessionBinding::orchestrator("orch", "P-1", "C-1"));
     let sub = f.host.registry().issue(sub_binding(Role::Implementer));
 
     let client = connect(f.host.url(&orch)).await;
@@ -170,7 +171,7 @@ async fn wrong_role_is_forbidden_and_bad_args_are_invalid_argument() {
     let orch = f
         .host
         .registry()
-        .issue(SessionBinding::orchestrator("orch", "P-1"));
+        .issue(SessionBinding::orchestrator("orch", "P-1", "C-1"));
     let client = connect(f.host.url(&orch)).await;
 
     let res = call(&client, "report_step_done", json!({"result": "x"})).await;

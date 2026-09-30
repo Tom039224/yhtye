@@ -4,6 +4,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::time::Duration;
 
 use common::fake_harness;
@@ -15,7 +17,7 @@ use yhtye_core::acp::AgentEvent;
 use yhtye_core::acp::schema::StopReason;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::TaskStatus;
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -67,7 +69,7 @@ async fn run_until_finished(
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("please").expect("send");
+    common::orch::send(&orch, "please").await;
     until(&mut rx, &mut events, TIMEOUT, finished).await;
     (orch, events, dir)
 }
@@ -152,7 +154,7 @@ async fn failing_sub_agent_start_raises_agent_crashed() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("please").expect("send");
+    common::orch::send(&orch, "please").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
         is_message(e, ORCHESTRATOR_SESSION, "mcp:cancel_group:ok")
     })
@@ -226,12 +228,12 @@ async fn cancel_task_stops_the_agent_mid_turn() {
     );
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
     let mut events = Vec::new();
-    orch.send_user_message("please").expect("send");
+    common::orch::send(&orch, "please").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "T-1/implementer")
     })
     .await;
-    orch.send_user_message("cancel it").expect("send");
+    common::orch::send(&orch, "cancel it").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
         matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")
     })

@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use super::GitService;
+use super::branches;
 use super::repo::{self, Hooks, MergeOutcome};
+use super::run::git_ok;
 use super::worktree::{ensure_worktree, is_worktree, remove_worktree};
+use super::{BranchWorktreeError, CreateBranchError, GitService};
 use crate::domain::{GitOp, GitResult, TaskKind, task_branch};
 
 /// Most of the `git diff` given to a restarted agent (bytes).
@@ -41,6 +43,13 @@ struct Branches<'a> {
 }
 
 type Step<T> = Result<T, String>;
+
+/// `3` of `G-3` and of `G-3-T-1` (a group branch, a task branch, a directory).
+fn group_number(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("G-")?;
+    let digits = rest.split(|c: char| !c.is_ascii_digit()).next()?;
+    digits.parse().ok()
+}
 
 impl GitCli {
     /// `repo`: the project's main worktree. `root`: where worktrees go (see
@@ -215,15 +224,25 @@ impl GitCli {
         Ok(GitResult::Done)
     }
 
-    /// Merges the group branch into the base branch in the main worktree, if
-    /// it has the base branch checked out and no uncommitted changes to tracked
-    /// files. Anything in the way is `Blocked`; the user's tree is never changed
+    /// Merges the group branch into the base branch in the base branch's
+    /// worktree (resolved now: the main worktree if it has the branch checked
+    /// out, any other worktree of it, or one Yhtye creates), if it has no
+    /// uncommitted changes to tracked files and no operation in progress.
+    /// Anything in the way is `Blocked`; the user's tree is never changed
     /// except by a successful merge.
     async fn merge_group(&self, b: &Branches<'_>) -> Step<GitResult> {
-        if let Some(reason) = self.base_blocker(b.base_branch).await? {
+        let dir = match self.resolve(b.base_branch).await {
+            Ok(dir) => dir,
+            Err(e) => {
+                return Ok(GitResult::Blocked {
+                    detail: e.to_string(),
+                });
+            }
+        };
+        if let Some(reason) = base_blocker(&dir, b.base_branch).await? {
             return Ok(GitResult::Blocked { detail: reason });
         }
-        let result = if repo::is_ancestor(&self.repo, b.group_branch, "HEAD").await? {
+        let result = if repo::is_ancestor(&dir, b.group_branch, "HEAD").await? {
             GitResult::Merged {
                 detail: format!("{} is already in {}", b.group_branch, b.base_branch),
             }
@@ -232,7 +251,7 @@ impl GitCli {
                 "Merge {} ({}) into {}",
                 b.group_branch, b.group, b.base_branch
             );
-            match repo::merge_no_ff(&self.repo, b.group_branch, &msg, Hooks::Run).await? {
+            match repo::merge_no_ff(&dir, b.group_branch, &msg, Hooks::Run).await? {
                 MergeOutcome::Merged(head) => GitResult::Merged {
                     detail: format!(
                         "merged {} into {} ({})",
@@ -263,28 +282,8 @@ impl GitCli {
         Ok(result)
     }
 
-    /// Why the main worktree cannot take the group merge now, if anything.
-    async fn base_blocker(&self, base: &str) -> Step<Option<String>> {
-        let current = repo::current_branch(&self.repo).await?;
-        if current.as_deref() != Some(base) {
-            let on = current.unwrap_or_else(|| "a detached HEAD".into());
-            return Ok(Some(format!(
-                "the main worktree is on {on}, not {base}; check out {base} and retry"
-            )));
-        }
-        if let Some(op) = repo::operation_in_progress(&self.repo).await? {
-            return Ok(Some(format!(
-                "{op} is in progress in the main worktree; finish or abort it and retry"
-            )));
-        }
-        let dirty = repo::tracked_changes(&self.repo).await?;
-        if !dirty.is_empty() {
-            return Ok(Some(format!(
-                "the main worktree has uncommitted changes in: {}; commit or stash them and retry",
-                dirty.join(", ")
-            )));
-        }
-        Ok(None)
+    async fn resolve(&self, branch: &str) -> Result<PathBuf, BranchWorktreeError> {
+        branches::resolve(&self.repo, &self.root, branch).await
     }
 
     async fn run_op(&self, op: &GitOp) -> Step<GitResult> {
@@ -294,7 +293,7 @@ impl GitCli {
                 group_branch,
                 base_branch,
             } => {
-                let b = branches(group, group_branch, base_branch);
+                let b = branch_set(group, group_branch, base_branch);
                 self.create_group(&b).await
             }
             GitOp::PrepareWorkspace {
@@ -304,7 +303,7 @@ impl GitCli {
                 group_branch,
                 base_branch,
             } => {
-                let b = branches(group, group_branch, base_branch);
+                let b = branch_set(group, group_branch, base_branch);
                 self.prepare(&b, task, *kind).await
             }
             GitOp::FinishTask {
@@ -315,7 +314,7 @@ impl GitCli {
                 group_branch,
                 base_branch,
             } => {
-                let b = branches(group, group_branch, base_branch);
+                let b = branch_set(group, group_branch, base_branch);
                 match kind {
                     TaskKind::Code => self.finish_code(&b, task, message).await,
                     TaskKind::Investigate => self.finish_investigate(&b, task).await,
@@ -329,14 +328,34 @@ impl GitCli {
                 base_branch,
                 ..
             } => {
-                let b = branches(group, group_branch, base_branch);
+                let b = branch_set(group, group_branch, base_branch);
                 self.merge_group(&b).await
             }
         }
     }
 }
 
-fn branches<'a>(group: &'a str, group_branch: &'a str, base_branch: &'a str) -> Branches<'a> {
+/// Why the worktree `dir` of `base` cannot take the group merge now, if anything.
+async fn base_blocker(dir: &Path, base: &str) -> Step<Option<String>> {
+    if let Some(op) = repo::operation_in_progress(dir).await? {
+        return Ok(Some(format!(
+            "{op} is in progress in {}; finish or abort it and retry",
+            dir.display()
+        )));
+    }
+    let dirty = repo::tracked_changes(dir).await?;
+    if !dirty.is_empty() {
+        return Ok(Some(format!(
+            "the worktree of {base} ({}) has uncommitted changes in: {}; commit or stash them \
+             and retry",
+            dir.display(),
+            dirty.join(", ")
+        )));
+    }
+    Ok(None)
+}
+
+fn branch_set<'a>(group: &'a str, group_branch: &'a str, base_branch: &'a str) -> Branches<'a> {
     Branches {
         group,
         group_branch,
@@ -364,6 +383,61 @@ fn short(commit: &str) -> &str {
 impl GitService for GitCli {
     async fn current_branch(&self) -> Result<Option<String>, String> {
         repo::current_branch(&self.repo).await
+    }
+
+    async fn branch_exists(&self, branch: &str) -> Result<bool, String> {
+        repo::branch_exists(&self.repo, branch).await
+    }
+
+    async fn worktree_branch(&self, dir: &Path) -> Result<Option<String>, String> {
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+        repo::current_branch(dir).await
+    }
+
+    async fn was_renamed(&self, from: &str, to: &str) -> Result<bool, String> {
+        repo::was_renamed(&self.repo, from, to).await
+    }
+
+    async fn resolve_branch_worktree(&self, branch: &str) -> Result<PathBuf, BranchWorktreeError> {
+        self.resolve(branch).await
+    }
+
+    async fn create_branch(
+        &self,
+        name: &str,
+        from: Option<&str>,
+    ) -> Result<PathBuf, CreateBranchError> {
+        branches::create(&self.repo, &self.root, name, from).await
+    }
+
+    async fn discard_branch(&self, name: &str) -> Result<(), String> {
+        branches::discard(&self.repo, name).await
+    }
+
+    async fn highest_group_number(&self) -> Result<u32, String> {
+        let refs = git_ok(
+            &self.repo,
+            &["for-each-ref", "--format=%(refname)", "refs/heads/yhtye/"],
+        )
+        .await?;
+        let mut highest = refs
+            .lines()
+            .filter_map(|r| r.strip_prefix("refs/heads/yhtye/"))
+            .filter_map(group_number)
+            .max()
+            .unwrap_or(0);
+        // A missing worktree root just means no group had a worktree.
+        if let Ok(entries) = std::fs::read_dir(&self.root) {
+            let dirs = entries
+                .flatten()
+                .filter_map(|e| e.file_name().into_string().ok());
+            highest = dirs
+                .filter_map(|d| group_number(&d))
+                .fold(highest, u32::max);
+        }
+        Ok(highest)
     }
 
     async fn run(&self, op: &GitOp) -> GitResult {

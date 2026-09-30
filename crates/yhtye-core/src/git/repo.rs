@@ -34,6 +34,18 @@ pub(super) async fn branch_exists(dir: &Path, branch: &str) -> Result<bool, Stri
     Ok(git(dir, &["show-ref", "--verify", "--quiet", &r]).await?.ok)
 }
 
+/// Whether the reflog of `to` has the entry `git branch -m` writes for a rename
+/// from `from`. A missing or disabled reflog just has no such entry.
+pub(super) async fn was_renamed(dir: &Path, from: &str, to: &str) -> Result<bool, String> {
+    let r = format!("refs/heads/{to}");
+    let out = git(dir, &["reflog", "show", "--format=%gs", &r, "--"]).await?;
+    if !out.ok {
+        return Ok(false);
+    }
+    let entry = format!("Branch: renamed refs/heads/{from} to {r}");
+    Ok(out.stdout.lines().any(|l| l.trim() == entry))
+}
+
 /// Commit id of `rev`.
 pub(super) async fn rev(dir: &Path, rev: &str) -> Result<String, String> {
     let spec = format!("{rev}^{{commit}}");
@@ -41,6 +53,21 @@ pub(super) async fn rev(dir: &Path, rev: &str) -> Result<String, String> {
         .await?
         .trim()
         .to_string())
+}
+
+/// Like [`rev`], but `None` if `rev` is not a commit; any other failure is an error.
+pub(super) async fn rev_opt(dir: &Path, rev: &str) -> Result<Option<String>, String> {
+    let spec = format!("{rev}^{{commit}}");
+    let out = git(dir, &["rev-parse", "--verify", "-q", &spec]).await?;
+    if out.ok {
+        return Ok(Some(out.stdout.trim().to_string()));
+    }
+    // `--verify -q` exits 1 without a message for an unknown revision.
+    if out.stderr.trim().is_empty() {
+        Ok(None)
+    } else {
+        Err(out.failure("git rev-parse"))
+    }
 }
 
 /// Whether `ancestor` is reachable from (or equal to) `rev`.

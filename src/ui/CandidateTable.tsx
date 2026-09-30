@@ -10,17 +10,12 @@ import {
   modelKey,
   modelText,
   sameChoice,
-  writesAsOrchestrator,
 } from "./agentSettings";
 import { ModelPicker } from "./ModelPicker";
-
-/** Marks an orchestrator row whose harness cannot be made read-only. */
-export const NO_WRITE_LIMIT = "⚠ 書き込み制限なし";
 
 interface TableProps {
   /** The role's name (labels of the controls). */
   label: string;
-  isOrchestrator: boolean;
   settings: RoleSettings;
   harnesses: HarnessInfo[];
   models: Record<string, ModelsState | undefined>;
@@ -69,7 +64,6 @@ function CandidateRow({
   isDefault,
   only,
   label,
-  isOrchestrator,
   harnesses,
   models,
   efforts,
@@ -80,7 +74,6 @@ function CandidateRow({
 }: TableProps & { index: number; row: Candidate; isDefault: boolean; only: boolean }) {
   const n = index + 1;
   const missing = isMissing(row, harnesses);
-  const unlimited = isOrchestrator && writesAsOrchestrator(row, harnesses);
   const listed = models[row.harness]?.models ?? null;
 
   const changeHarness = (id: string) => {
@@ -116,12 +109,10 @@ function CandidateRow({
           {harnesses.map((h) => (
             <option key={h.id} value={h.id} disabled={h.id !== row.harness && firstModel(h, models[h.id]?.models) === undefined}>
               {h.label}
-              {isOrchestrator && !h.orchestrator_read_only ? ` ${NO_WRITE_LIMIT}` : ""}
             </option>
           ))}
         </select>
         {missing ? <span className="agent-warn-tag">見つかりません</span> : null}
-        {unlimited ? <span className="agent-warn-tag">{NO_WRITE_LIMIT}</span> : null}
       </td>
       <td>
         <ModelCell label={`${label} 候補${n} のモデル`} row={row} listed={listed} disabled={locked || missing} onChange={changeModel} />

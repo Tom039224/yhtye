@@ -201,8 +201,3 @@ export function firstModel(harness: HarnessInfo, listed: HarnessModels | null | 
 export function isMissing(choice: Pick<AgentChoice, "harness">, harnesses: HarnessInfo[]): boolean {
   return !harnesses.some((h) => h.id === choice.harness);
 }
-
-/** As orchestrator, `choice`'s harness can write files (only the prompt forbids it). */
-export function writesAsOrchestrator(choice: Pick<AgentChoice, "harness">, harnesses: HarnessInfo[]): boolean {
-  return harnesses.some((h) => h.id === choice.harness && !h.orchestrator_read_only);
-}

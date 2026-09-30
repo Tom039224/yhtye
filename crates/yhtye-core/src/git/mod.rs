@@ -1,6 +1,7 @@
 //! Git operations behind a trait (`core-design.md` §7): [`GitCli`] runs the
 //! `git` CLI (Stage 3c); [`NoopGit`] does nothing (tests without git).
 
+mod branches;
 mod cli;
 mod graph;
 mod repo;
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 pub use cli::{GitCli, worktree_root};
-pub use graph::{GitBranch, GitCommit, GitOverview, MAX_GRAPH_COMMITS, overview};
+pub use graph::{GitBranch, GitCommit, GitOverview, MAX_GRAPH_COMMITS, list_branches, overview};
 
 use crate::domain::{GitOp, GitResult};
 
@@ -24,12 +25,83 @@ pub async fn show_toplevel(dir: &Path) -> Result<Option<PathBuf>, String> {
     Ok((out.ok && !top.is_empty()).then(|| PathBuf::from(top)))
 }
 
+/// Why a chat's branch has no worktree.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BranchWorktreeError {
+    /// The branch was deleted or renamed.
+    #[error("branch {0} does not exist")]
+    BranchMissing(String),
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// Why a new branch could not be created.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CreateBranchError {
+    /// Not a valid branch name, or a reserved one (`yhtye/*`).
+    #[error("{0}")]
+    InvalidName(String),
+    #[error("branch {0} already exists")]
+    Exists(String),
+    /// The start point is not a branch or commit.
+    #[error("start point {0} does not exist")]
+    FromMissing(String),
+    #[error("{0}")]
+    Failed(String),
+}
+
 /// Runs git for the orchestration. Every method is called from the runtime loop
 /// and should finish quickly (plain git commands, no network).
 #[async_trait]
 pub trait GitService: Send + Sync + 'static {
     /// Branch checked out in the project's main worktree (`None`: detached HEAD).
     async fn current_branch(&self) -> Result<Option<String>, String>;
+
+    /// Whether the local branch `branch` exists.
+    async fn branch_exists(&self, branch: &str) -> Result<bool, String>;
+
+    /// The branch checked out in the worktree `dir` (`None`: detached HEAD, or
+    /// `dir` is gone). Used to see that a chat's branch was renamed: `git branch -m`
+    /// moves HEAD of the worktree that has the branch.
+    async fn worktree_branch(&self, dir: &Path) -> Result<Option<String>, String> {
+        let _ = dir;
+        Ok(None)
+    }
+
+    /// Whether the reflog of branch `to` records that it was renamed from `from`
+    /// (`git branch -m`). Positive evidence only: no reflog, or none that says so,
+    /// is `false` (a deleted branch leaves nothing behind).
+    async fn was_renamed(&self, from: &str, to: &str) -> Result<bool, String> {
+        let _ = (from, to);
+        Ok(false)
+    }
+
+    /// The worktree where `branch` is checked out, creating one under
+    /// `<worktree root>/branches/` if it is checked out nowhere (§17.4). Never
+    /// changes what any worktree has checked out.
+    async fn resolve_branch_worktree(&self, branch: &str) -> Result<PathBuf, BranchWorktreeError>;
+
+    /// Creates branch `name` at `from` (default: the main worktree's HEAD) in a
+    /// new worktree and returns its directory. The main worktree is not touched.
+    async fn create_branch(
+        &self,
+        name: &str,
+        from: Option<&str>,
+    ) -> Result<PathBuf, CreateBranchError>;
+
+    /// Undoes [`GitService::create_branch`]: removes the branch's worktree and
+    /// deletes the branch (only for a branch Yhtye just created).
+    async fn discard_branch(&self, name: &str) -> Result<(), String> {
+        let _ = name;
+        Ok(())
+    }
+
+    /// The highest number `n` of a `yhtye/G-<n>` branch or a `G-<n>` worktree
+    /// directory git has (0: none). A new group is numbered past it, so leftovers
+    /// of a wiped database do not collide with it.
+    async fn highest_group_number(&self) -> Result<u32, String> {
+        Ok(0)
+    }
 
     /// Runs `op`. Expected outcomes (conflicts, dirty trees) are results, not errors:
     /// `CreateGroupBranch` / `RemoveWorkspace` → `Done`; `PrepareWorkspace` →
@@ -71,6 +143,22 @@ impl NoopGit {
 impl GitService for NoopGit {
     async fn current_branch(&self) -> Result<Option<String>, String> {
         Ok(self.base_branch.clone())
+    }
+
+    async fn branch_exists(&self, _branch: &str) -> Result<bool, String> {
+        Ok(true)
+    }
+
+    async fn resolve_branch_worktree(&self, _branch: &str) -> Result<PathBuf, BranchWorktreeError> {
+        Ok(self.project_dir.clone())
+    }
+
+    async fn create_branch(
+        &self,
+        _name: &str,
+        _from: Option<&str>,
+    ) -> Result<PathBuf, CreateBranchError> {
+        Ok(self.project_dir.clone())
     }
 
     async fn run(&self, op: &GitOp) -> GitResult {

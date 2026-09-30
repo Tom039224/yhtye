@@ -145,7 +145,7 @@ impl Tx {
                 g.status.as_str()
             )));
         }
-        if let Some(open) = self.state.open_group() {
+        if let Some(open) = self.state.open_group_on(&g.base_branch) {
             return Err(ToolError::conflict(format!(
                 "group {} is {}; retry after it is done",
                 open.id,
@@ -188,11 +188,14 @@ impl Tx {
         };
         if let Some(origin) = origin {
             let ok_text = if ok { "true" } else { "false" };
-            self.queue_inbox(InboxItem::new(
-                InboxKind::MergeResult,
-                &[("group", group), ("ok", ok_text)],
-                format!("{origin}: {detail}"),
-            ));
+            self.queue_inbox_group(
+                group,
+                InboxItem::new(
+                    InboxKind::MergeResult,
+                    &[("group", group), ("ok", ok_text)],
+                    format!("{origin}: {detail}"),
+                ),
+            );
         }
         let status = self.state.group(group).map(|g| g.status);
         self.reply(Ok(json!({

@@ -15,7 +15,7 @@ use crate::acp::{AgentEvent, AgentOutput};
 use crate::agents::AgentChoice;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
-use crate::store::SessionRecord;
+use crate::store::{ChatInfo, SessionRecord};
 
 pub use command::{
     AgentSettingsView, ApiCommand, ApiError, ApiErrorCode, ApiResponse, DEFAULT_EVENT_PAGE,
@@ -77,6 +77,10 @@ pub enum ApiEventBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         replaced: Option<AgentChoice>,
+        /// The directory it was started in (Stage 8; absent in older logs).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        cwd: Option<String>,
     },
     SessionFailed {
         session: String,
@@ -149,11 +153,13 @@ impl ApiEventBody {
     }
 }
 
-/// The state of a project as of event `seq`: the domain state and the agent
-/// sessions (`agent_sessions`, derived from the same events).
+/// The state of a project as of event `seq`: the domain state, the agent
+/// sessions (`agent_sessions`, derived from the same events) and the chats.
 #[derive(Debug, Clone, Serialize, TS)]
 pub struct Snapshot {
     pub seq: u64,
     pub state: State,
     pub sessions: Vec<SessionRecord>,
+    /// The project's chats with their times, most recently used first (Stage 8).
+    pub chats: Vec<ChatInfo>,
 }

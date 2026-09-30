@@ -6,7 +6,7 @@ import { agentText, chunk, prompted } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 import { AppStore } from "./app";
-import { ORCHESTRATOR } from "./transcript";
+import { ORCHESTRATOR } from "../test/events";
 
 const LOG = durable(FULL_RUN);
 const LAST = LOG[LOG.length - 1].seq;
@@ -148,8 +148,8 @@ describe("AppStore sync", () => {
     await store.cancelGroup("G-1");
     await store.retryGroupMerge("G-2");
     expect(transport.calls.slice(-5)).toEqual([
-      { type: "send_user_message", project: "repo", text: "do it" },
-      { type: "cancel_orchestrator_turn", project: "repo" },
+      { type: "send_user_message", project: "repo", chat: "C-1", text: "do it" },
+      { type: "cancel_orchestrator_turn", project: "repo", chat: "C-1" },
       { type: "cancel_task", project: "repo", task: "T-1" },
       { type: "cancel_group", project: "repo", group: "G-1" },
       { type: "retry_group_merge", project: "repo", group: "G-2" },

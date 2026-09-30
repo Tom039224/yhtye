@@ -236,7 +236,7 @@ fn agent_help_is_answered_with_a_prompt_to_the_same_session() {
     assert_eq!(sim.status("T-1"), TaskStatus::Handling);
     assert!(has_effect(&chain, |e| matches!(
         e,
-        Effect::WakeOrchestrator
+        Effect::WakeOrchestrator { .. }
     )));
     // The silent turn end after `help` is not a protocol violation.
     let chain = sim.turn_ended(agent("T-1", Role::Implementer, 0), TurnOutcome::EndTurn);
@@ -328,7 +328,7 @@ fn cancel_group_cancels_open_tasks_without_waking_the_orchestrator() {
         !chain
             .effects
             .iter()
-            .any(|e| matches!(e, Effect::WakeOrchestrator))
+            .any(|e| matches!(e, Effect::WakeOrchestrator { .. }))
     );
     assert_eq!(
         sim.state.group("G-1").map(|g| g.status),
@@ -384,17 +384,21 @@ fn modify_steps_with_an_empty_list_leaves_only_done() {
 fn user_message_is_queued_and_delivered() {
     let mut sim = Sim::new();
     let chain = sim
-        .run(DomainCommand::UserMessage { text: "hi".into() })
+        .run(DomainCommand::UserMessage {
+            chat: "C-1".into(),
+            text: "hi".into(),
+        })
         .expect("ok");
     assert!(has_effect(&chain, |e| matches!(
         e,
-        Effect::WakeOrchestrator
+        Effect::WakeOrchestrator { .. }
     )));
     assert_eq!(
         render_batch(&[sim.state.inbox[0].item.clone()]),
         "[yhtye:user_message]\nhi"
     );
     sim.run(DomainCommand::UserMessage {
+        chat: "C-1".into(),
         text: "again".into(),
     })
     .expect("ok");
@@ -402,8 +406,11 @@ fn user_message_is_queued_and_delivered() {
         sim.state.inbox.iter().map(|e| e.id).collect::<Vec<_>>(),
         vec![1, 2]
     );
-    sim.run(DomainCommand::InboxDelivered { up_to: 1 })
-        .expect("ok");
+    sim.run(DomainCommand::InboxDelivered {
+        chat: "C-1".into(),
+        up_to: 1,
+    })
+    .expect("ok");
     assert_eq!(sim.state.inbox.len(), 1);
     sim.deliver_inbox();
     assert!(sim.state.inbox.is_empty());

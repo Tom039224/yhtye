@@ -15,6 +15,7 @@ import type {
   ApiCommand,
   ApiEvent,
   ApiResponse,
+  ChatInfo,
   GitOverview,
   HarnessModels,
   ModelEfforts,
@@ -23,6 +24,7 @@ import type {
   UsageReport,
 } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
+import { upsertChat } from "./chats";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
@@ -45,6 +47,8 @@ export const GIT_COMMITS = 120;
 export const GIT_REFRESH_MS = 400;
 /** Preference key: path of the project opened last (reopened after a reload). */
 export const LAST_PROJECT_KEY = "yhtye.lastProject";
+/** Preference key (per project id): the chat shown when the project is opened again. */
+export const chatPrefKey = (project: string): string => `yhtye.chat.${project}`;
 const MAX_ERRORS = 5;
 /** How often the usage meters are re-read while connected (the core caches for a minute). */
 export const USAGE_REFRESH_MS = 5 * 60_000;
@@ -171,11 +175,13 @@ export class AppStore {
 
   /** Returns whether the message was accepted (the composer keeps it otherwise). */
   async sendMessage(text: string): Promise<boolean> {
-    const project = this.state.project?.info.id;
-    if (!project) return false;
+    const view = this.state.project;
+    if (!view?.selectedChat) return false;
+    const chat = view.selectedChat;
+    const project = view.info.id;
     this.set({ busy: { ...this.state.busy, sending: true } });
     try {
-      const r = await this.run({ type: "send_user_message", project, text }, "accepted");
+      const r = await this.run({ type: "send_user_message", project, chat, text }, "accepted");
       return r !== null;
     } finally {
       this.set({ busy: { ...this.state.busy, sending: false } });
@@ -183,8 +189,49 @@ export class AppStore {
   }
 
   async cancelTurn(): Promise<void> {
+    const view = this.state.project;
+    if (!view?.selectedChat) return;
+    await this.run({ type: "cancel_orchestrator_turn", project: view.info.id, chat: view.selectedChat }, "accepted");
+  }
+
+  /** Shows another chat (no process is started); remembered for the project. */
+  selectChat(chat: string): void {
+    const view = this.state.project;
+    if (!view || view.selectedChat === chat || !view.chats.some((c) => c.id === chat)) return;
+    this.prefs.set(chatPrefKey(view.info.id), chat);
+    const { [chat]: _read, ...unread } = view.unread;
+    this.updateProject((v) => ({ ...v, selectedChat: chat, unread }));
+  }
+
+  /** A new chat on `branch` (no orchestrator yet); it becomes the selected one. Failures are shown as errors. */
+  async createChat(branch: string): Promise<boolean> {
     const project = this.state.project?.info.id;
-    if (project) await this.run({ type: "cancel_orchestrator_turn", project }, "accepted");
+    if (!project) return false;
+    const r = await this.run({ type: "create_chat", project, branch }, "chat");
+    if (!r) return false;
+    this.adoptChat(project, r.chat);
+    return true;
+  }
+
+  /**
+   * A new branch in Yhtye's worktree with its first chat (selected). `from`
+   * defaults to the main clone's HEAD. Rejects with the core's error (the
+   * form shows it next to the input).
+   */
+  async createBranch(name: string, from?: string): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (!project) return;
+    const r = await this.invoke({ type: "create_branch", project, name, from }, "chat");
+    // Git first: a chat shown before the overview has its branch reads as "deleted".
+    await this.refreshGit();
+    this.adoptChat(project, r.chat);
+  }
+
+  /** Lists a chat the core just created (its event may not have arrived yet) and selects it. */
+  private adoptChat(project: string, chat: ChatInfo): void {
+    if (this.state.project?.info.id !== project) return;
+    this.updateProject((v) => ({ ...v, chats: upsertChat(v.chats, chat) }));
+    this.selectChat(chat.id);
   }
 
   async cancelTask(task: string): Promise<void> {
@@ -285,7 +332,8 @@ export class AppStore {
     try {
       const snap = await this.invoke({ type: "get_snapshot", project: info.id }, "snapshot");
       if (token !== this.loadToken) return;
-      this.updateProject((v) => applySnapshot(v, snap.snapshot, this.historyWindow));
+      const remembered = this.prefs.get(chatPrefKey(info.id));
+      this.updateProject((v) => applySnapshot(v, snap.snapshot, this.historyWindow, remembered));
       await this.catchUp(token);
       if (token !== this.loadToken) return;
       this.updateProject((v) => ({ ...v, phase: "ready" }));
@@ -516,6 +564,8 @@ export class AppStore {
 function changesGit(ev: ApiEvent): boolean {
   if (ev.body.type !== "domain") return false;
   switch (ev.body.event.type) {
+    case "chat_created":
+    case "chat_branch_changed":
     case "group_created":
     case "group_merge_finished":
     case "group_cancelled":

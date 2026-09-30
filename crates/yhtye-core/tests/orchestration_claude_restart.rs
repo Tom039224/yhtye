@@ -5,6 +5,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use common::orch::{
     assert_gapless_from, assert_persisted, prompts_to, shutdown_and_check, summary, tool_calls,
     until,
@@ -13,7 +15,7 @@ use common::real::{REAL_TIMEOUT, assert_haiku, is_orchestrator_turn_end, real_co
 use yhtye_core::acp::{AgentEvent, AgentOutput};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, TaskStatus};
-use yhtye_core::runtime::{ORCHESTRATOR_SESSION, Orchestration};
+use yhtye_core::runtime::Orchestration;
 
 const IMPLEMENTER: &str = "T-1/implementer";
 const LINE: &str = "hello after restart";
@@ -66,10 +68,11 @@ async fn run_until_quit(dir: &std::path::Path) -> Vec<ApiEvent> {
         .await
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
-    orch.send_user_message(format!(
-        "Create a task that appends the line `{LINE}` to README.md."
-    ))
-    .expect("send");
+    common::orch::send(
+        &orch,
+        format!("Create a task that appends the line `{LINE}` to README.md."),
+    )
+    .await;
     // Quit once the implementer is working on its step (mid-turn).
     until(&mut rx, &mut events, REAL_TIMEOUT, prompted_implementer).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, implementer_turn_output).await;

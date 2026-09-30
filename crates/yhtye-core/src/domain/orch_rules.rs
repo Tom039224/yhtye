@@ -25,13 +25,19 @@ struct Settled {
 }
 
 impl Tx {
-    pub(super) fn orchestrator_turn_ended(&mut self, outcome: &TurnOutcome, queued: bool) {
+    pub(super) fn orchestrator_turn_ended(
+        &mut self,
+        chat: &str,
+        outcome: &TurnOutcome,
+        queued: bool,
+    ) {
         // Only a turn the orchestrator ended itself, with nothing more to tell it:
         // a queued prompt or inbox entry gives it another turn anyway.
-        if *outcome != TurnOutcome::EndTurn || queued || !self.state.inbox.is_empty() {
+        if *outcome != TurnOutcome::EndTurn || queued || self.state.inbox_of(chat).next().is_some()
+        {
             return;
         }
-        let Some(s) = self.settled_open_group() else {
+        let Some(s) = self.settled_open_group(chat) else {
             return;
         };
         if s.nudges < MAX_GROUP_FINISH_NUDGES {
@@ -39,11 +45,14 @@ impl Tx {
                 group: s.group.clone(),
             });
             let count = (s.nudges + 1).to_string();
-            self.queue_inbox(InboxItem::new(
-                InboxKind::GroupSettled,
-                &[("group", s.group.as_str()), ("reminder", count.as_str())],
-                group_finish_reminder(&s.group),
-            ));
+            self.queue_inbox(
+                chat,
+                InboxItem::new(
+                    InboxKind::GroupSettled,
+                    &[("group", s.group.as_str()), ("reminder", count.as_str())],
+                    group_finish_reminder(&s.group),
+                ),
+            );
         } else if s.finishable {
             self.auto_finish(&s.group);
         }
@@ -51,12 +60,12 @@ impl Tx {
         // the group stays open and the UI shows why.
     }
 
-    fn settled_open_group(&self) -> Option<Settled> {
+    fn settled_open_group(&self, chat: &str) -> Option<Settled> {
         let g = self
             .state
             .groups
             .iter()
-            .find(|g| g.status == GroupStatus::Active)?;
+            .find(|g| g.chat == chat && g.status == GroupStatus::Active)?;
         let mut tasks = self.state.tasks_of(&g.id).peekable();
         tasks.peek()?;
         let mut finishable = true;

@@ -14,8 +14,9 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use super::agent_args::{agents_status, choose_agents};
+use super::chats::Orchestrators;
 use super::emitter::{Emitter, Publisher};
-use super::orchestration::{ORCHESTRATOR_SESSION, OrchestrationConfig};
+use super::orchestration::OrchestrationConfig;
 use super::port::ToolRequest;
 use super::sessions::{AgentMsg, AgentPick, Sessions, Spawned, agent_ref, session_key};
 use super::transcript::Transcript;
@@ -24,21 +25,31 @@ use crate::acp::{AgentError, AgentEvent};
 use crate::agents::AgentRole;
 use crate::api::{ApiEventBody, Snapshot};
 use crate::domain::{
-    AgentRef, DomainCommand, Effect, OrchestratorResume, Role, State, TaskStatus, ToolError,
-    TurnOutcome, decide, render_batch,
+    AgentRef, Chat, DomainCommand, Effect, Role, State, TaskStatus, ToolError, TurnOutcome, decide,
+    orchestrator_session,
 };
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 use crate::prompts::workspace_changes_note;
-use crate::store::StoreError;
+use crate::store::{SessionRecord, StoreError};
 
 /// Session key of tool calls made by the user through the API (not an agent).
 pub const USER_SESSION: &str = "user";
 
 #[allow(clippy::large_enum_variant)] // `UserTool` carries a `create_task`-sized call
 pub(super) enum Cmd {
-    UserMessage(String),
-    CancelOrchestrator,
+    /// A message from the user to the orchestrator of a chat.
+    UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
+    /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
+    CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
+    /// A new chat on an existing branch.
+    CreateChat(String, oneshot::Sender<Result<Chat, ToolError>>),
+    /// A new branch (name, start point) and its first chat.
+    CreateBranch(
+        String,
+        Option<String>,
+        oneshot::Sender<Result<Chat, ToolError>>,
+    ),
     /// An orchestrator tool (`cancel_task` / `cancel_group`) invoked by the user.
     UserTool(ToolCall, oneshot::Sender<Reply>),
     /// The user retries the base merge of a `merge_blocked` group.
@@ -49,7 +60,10 @@ pub(super) enum Cmd {
 
 /// Set when the loop starts on a stored state (a restart).
 pub(super) struct Restarted {
-    pub(super) orchestrator: OrchestratorResume,
+    /// The chats whose orchestrators are started again (`orchestration-model.md` §10).
+    pub(super) chats: Vec<String>,
+    /// The stored sessions as they were when Yhtye stopped.
+    pub(super) records: Vec<SessionRecord>,
 }
 
 pub(super) struct Channels {
@@ -60,16 +74,18 @@ pub(super) struct Channels {
 }
 
 pub(super) struct Driver {
-    cfg: Arc<OrchestrationConfig>,
+    pub(super) cfg: Arc<OrchestrationConfig>,
     /// The current domain state; replaced only after its transition is stored.
-    state: State,
-    git: Arc<dyn GitService>,
+    pub(super) state: State,
+    pub(super) git: Arc<dyn GitService>,
     pub(super) sessions: Sessions,
-    publisher: Publisher,
+    pub(super) publisher: Publisher,
     emit: Emitter,
     transcript: Transcript,
     /// Sessions Yhtye stopped, reported as `SessionStopped` in order (§8, Stage 6a).
     stops: StopOrder,
+    /// The orchestrators being started and what they were sent (§17.3).
+    pub(super) orchestrators: Orchestrators,
 }
 
 /// Orders `SessionStopped` of a session Yhtye stopped after its last event.
@@ -129,6 +145,7 @@ impl Driver {
             emit,
             transcript: Transcript::default(),
             stops: StopOrder::default(),
+            orchestrators: Orchestrators::default(),
         }
     }
 
@@ -183,10 +200,15 @@ impl Driver {
         }
     }
 
-    /// Marks what was in flight as interrupted, then resumes each interrupted task.
+    /// Marks what was in flight as interrupted, resumes each interrupted task and
+    /// starts the orchestrators of the chats to restore.
     async fn restart(&mut self, r: Restarted) {
-        let orchestrator = r.orchestrator;
-        self.execute(DomainCommand::Restart { orchestrator }).await;
+        let plans = self.plan_restore(&r).await;
+        let orchestrators = plans
+            .iter()
+            .map(|(chat, plan)| (chat.clone(), plan.resume_info))
+            .collect();
+        self.execute(DomainCommand::Restart { orchestrators }).await;
         let interrupted: Vec<String> = self
             .state
             .tasks
@@ -197,20 +219,43 @@ impl Driver {
         for task in interrupted {
             self.execute(DomainCommand::ResumeTask { task }).await;
         }
+        for (chat, plan) in plans {
+            self.launch_orchestrator(&chat, plan);
+        }
     }
 
     /// Returns `false` when the loop must end.
     async fn on_cmd(&mut self, cmd: Option<Cmd>) -> bool {
         match cmd {
-            Some(Cmd::UserMessage(text)) => {
-                self.execute(DomainCommand::UserMessage { text }).await;
+            Some(Cmd::UserMessage(chat, text, tx)) => {
+                let _ = tx.send(self.user_message(chat, text).await);
             }
-            Some(Cmd::CancelOrchestrator) => self.sessions.cancel_turn(ORCHESTRATOR_SESSION),
+            Some(Cmd::CancelOrchestrator(chat, tx)) => {
+                let reply = match self.state.chat(&chat) {
+                    Some(_) => {
+                        self.sessions.cancel_turn(&orchestrator_session(&chat));
+                        Ok(())
+                    }
+                    None => Err(ToolError::not_found(format!("no chat {chat}"))),
+                };
+                let _ = tx.send(reply);
+            }
+            Some(Cmd::CreateChat(branch, tx)) => {
+                let _ = tx.send(self.create_chat(branch).await);
+            }
+            Some(Cmd::CreateBranch(name, from, tx)) => {
+                let _ = tx.send(self.create_branch(name, from).await);
+            }
             Some(Cmd::UserTool(call, tx)) => {
                 let reply = self.user_tool(call).await;
                 let _ = tx.send(reply);
             }
             Some(Cmd::RetryGroupMerge(group, tx)) => {
+                if let Some(chat) = self.state.chat_of_group(&group).map(str::to_string)
+                    && let Err(e) = self.follow_branch(&chat).await
+                {
+                    tracing::debug!("{e}");
+                }
                 let reply = self
                     .execute(DomainCommand::RetryGroupMerge { group })
                     .await
@@ -237,11 +282,14 @@ impl Driver {
     /// first, so the sessions read from the store match the same `seq`).
     async fn snapshot(&mut self) -> Result<Snapshot, StoreError> {
         self.publisher.flush().await;
-        let sessions = self.publisher.store().sessions(&self.cfg.project).await?;
+        let store = self.publisher.store();
+        let sessions = store.sessions(&self.cfg.project).await?;
+        let chats = store.chats(&self.cfg.project).await?;
         Ok(Snapshot {
             seq: self.publisher.seq(),
             state: self.state.clone(),
             sessions,
+            chats,
         })
     }
 
@@ -252,11 +300,13 @@ impl Driver {
             session: USER_SESSION.into(),
             role: crate::domain::Role::Orchestrator,
             project: self.cfg.project.clone(),
+            chat: None,
             group: None,
             task: None,
             step: None,
         };
         let note = user_action_note(&call);
+        let chat = self.chat_of_call(&call);
         let record_call = serde_json::to_value(&call).unwrap_or_default();
         let reply = self.tool_reply(binding.clone(), call).await;
         self.emit.send(ApiEventBody::ToolCalled {
@@ -270,8 +320,9 @@ impl Driver {
                 result: reply.clone(),
             },
         });
-        if let (Ok(_), Some(text)) = (&reply, note) {
-            self.execute(DomainCommand::UserMessage { text }).await;
+        if let (Ok(_), Some(text), Some(chat)) = (&reply, note, chat) {
+            self.execute(DomainCommand::UserMessage { chat, text })
+                .await;
         }
         reply
     }
@@ -293,10 +344,15 @@ impl Driver {
     async fn tool_reply(&mut self, binding: SessionBinding, call: ToolCall) -> Reply {
         let cmd = match call {
             ToolCall::CreateGroup(args) => {
-                let base_branch = self.git.current_branch().await.map_err(|e| {
-                    ToolError::internal(format!("could not read the current branch: {e}"))
+                let chat = binding.chat.clone().ok_or_else(|| {
+                    ToolError::forbidden("create_group needs an orchestrator chat")
                 })?;
-                DomainCommand::CreateGroup { args, base_branch }
+                self.follow_branch(&chat).await?;
+                self.realign_orchestrator(&chat).await;
+                let taken = self.git.highest_group_number().await.map_err(|e| {
+                    ToolError::internal(format!("could not list the group numbers in git: {e}"))
+                })?;
+                DomainCommand::CreateGroup { chat, args, taken }
             }
             ToolCall::CreateTask(args) => {
                 let args =
@@ -304,6 +360,18 @@ impl Driver {
                 DomainCommand::Tool {
                     binding,
                     call: ToolCall::CreateTask(args),
+                }
+            }
+            ToolCall::FinishGroup(args) => {
+                // The merge goes to the chat's branch: follow a rename first.
+                if let Some(chat) = &binding.chat
+                    && let Err(e) = self.follow_branch(chat).await
+                {
+                    tracing::debug!("{e}");
+                }
+                DomainCommand::Tool {
+                    binding,
+                    call: ToolCall::FinishGroup(args),
                 }
             }
             call => DomainCommand::Tool { binding, call },
@@ -331,7 +399,7 @@ impl Driver {
 
     /// Applies `cmd` and everything that follows from it (git results), and
     /// returns the last tool reply produced along the way.
-    async fn execute(&mut self, cmd: DomainCommand) -> Option<Reply> {
+    pub(super) async fn execute(&mut self, cmd: DomainCommand) -> Option<Reply> {
         let mut reply = None;
         let mut queue = VecDeque::from([cmd]);
         let mut first = true;
@@ -413,7 +481,7 @@ impl Driver {
                 let result = self.git.run(&op).await;
                 return Some(DomainCommand::GitDone { op, result });
             }
-            Effect::WakeOrchestrator => {} // the inbox is flushed after every loop turn
+            Effect::WakeOrchestrator { .. } => {} // the inbox is flushed after every loop turn
         }
         None
     }
@@ -455,6 +523,7 @@ impl Driver {
             session: session_key(agent),
             role: agent.role,
             project: self.cfg.project.clone(),
+            chat: None,
             group,
             task: Some(agent.task.clone()),
             step: Some(agent.step),
@@ -462,7 +531,10 @@ impl Driver {
     }
 
     async fn on_spawned(&mut self, spawned: Spawned) {
-        let Some((binding, error)) = self.sessions.on_spawned(spawned) else {
+        let key = spawned.binding.session.clone();
+        let failed = self.sessions.on_spawned(spawned);
+        self.orchestrator_spawned(&key).await;
+        let Some((binding, error)) = failed else {
             return;
         };
         if let Some(agent) = agent_ref(&binding) {
@@ -487,7 +559,9 @@ impl Driver {
         });
         match event {
             AgentEvent::TurnEnded(result) => {
-                let agent = self.sessions.binding(&key).and_then(agent_ref);
+                let binding = self.sessions.binding(&key);
+                let agent = binding.and_then(agent_ref);
+                let chat = binding.and_then(|b| b.chat.clone());
                 let outcome = turn_outcome(result);
                 let prompt_queued = self.sessions.has_queued(&key);
                 if let Some(agent) = agent {
@@ -497,12 +571,9 @@ impl Driver {
                         prompt_queued,
                     })
                     .await;
-                } else if key == ORCHESTRATOR_SESSION {
-                    self.execute(DomainCommand::OrchestratorTurnEnded {
-                        outcome,
-                        prompt_queued,
-                    })
-                    .await;
+                } else if let Some(chat) = chat {
+                    self.orchestrator_turn_ended(chat, outcome, prompt_queued)
+                        .await;
                 }
                 self.sessions.deliver(&key);
             }
@@ -521,21 +592,6 @@ impl Driver {
             self.execute(DomainCommand::AgentExited { agent, detail })
                 .await;
         }
-    }
-
-    /// Wakes the orchestrator with every undelivered inbox entry if it is idle.
-    async fn flush_inbox(&mut self) {
-        let inbox = &self.state.inbox;
-        let Some(up_to) = inbox.last().map(|e| e.id) else {
-            return;
-        };
-        if !self.sessions.is_idle(ORCHESTRATOR_SESSION) {
-            return;
-        }
-        let items: Vec<_> = inbox.iter().map(|e| e.item.clone()).collect();
-        self.sessions
-            .queue_and_deliver(ORCHESTRATOR_SESSION, render_batch(&items));
-        self.execute(DomainCommand::InboxDelivered { up_to }).await;
     }
 }
 

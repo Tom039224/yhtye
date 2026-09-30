@@ -1,7 +1,8 @@
 import { type ReactNode, useMemo } from "react";
 
 import type { GitCommit, GitOverview, State } from "../api/generated";
-import type { ProjectView } from "../store/project";
+import { scopeState } from "../store/chats";
+import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { type Graph, layoutGraph } from "./gitGraph";
 import { type Tone, TONE_LABEL, taskTone } from "./labels";
@@ -74,8 +75,10 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
   const git = useAppState((s) => (s.git?.project === view.info.id ? s.git : null));
   const overview = git?.overview ?? null;
   const state = view.state;
-  const group = state ? focusGroup(state) : null;
-  const base = group?.base_branch ?? overview?.head ?? null;
+  // The graph is repository-wide; the header and the base lane follow the selected chat.
+  const chatBranch = selectedChatInfo(view)?.branch ?? null;
+  const group = state ? focusGroup(scopeState(state, view.selectedChat)) : null;
+  const base = group?.base_branch ?? chatBranch ?? overview?.head ?? null;
   const graph = useMemo(() => (overview ? layoutGraph(overview.commits) : null), [overview]);
 
   return (
@@ -83,7 +86,7 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
       <header className="bottom-header">
         {tabs}
         <span className="bottom-meta">
-          {group ? `${group.group_branch} ← ${group.base_branch}` : (overview?.head ?? "")}
+          {group ? `${group.group_branch} ← ${group.base_branch}` : (chatBranch ?? overview?.head ?? "")}
         </span>
         <span className="spacer" />
         {git?.error ? <span className="bottom-meta error-text" title={git.error}>読み込み失敗</span> : null}

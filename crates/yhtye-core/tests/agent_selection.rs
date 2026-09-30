@@ -6,6 +6,8 @@
 
 mod common;
 
+use common::orch::ORCHESTRATOR_SESSION;
+
 use std::time::Duration;
 
 use common::fake_harness;
@@ -18,7 +20,7 @@ use yhtye_core::api::{
     AgentSettingsView, ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse, TextKind,
 };
 use yhtye_core::domain::DomainEvent;
-use yhtye_core::runtime::{Core, CoreConfig, ORCHESTRATOR_SESSION};
+use yhtye_core::runtime::{Core, CoreConfig};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MODELS: [&str; 3] = ["default", "haiku", "sonnet"];
@@ -71,10 +73,17 @@ async fn open(core: &Core, r: &TempRepo) -> String {
     let cmd = ApiCommand::OpenProject {
         path: r.repo.display().to_string(),
     };
-    match run(core, cmd).await {
+    let project = match run(core, cmd).await {
         ApiResponse::Project { project } => project.id,
         other => panic!("unexpected {other:?}"),
-    }
+    };
+    // The chat every test sends to (`C-1`, on `main`).
+    let cmd = ApiCommand::CreateChat {
+        project: project.clone(),
+        branch: "main".into(),
+    };
+    run(core, cmd).await;
+    project
 }
 
 async fn set(
@@ -235,6 +244,7 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
         &core,
         ApiCommand::SendUserMessage {
             project: project.clone(),
+            chat: "C-1".into(),
             text: "go".into(),
         },
     )
@@ -369,6 +379,7 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
         &core,
         ApiCommand::SendUserMessage {
             project: project.clone(),
+            chat: "C-1".into(),
             text: "first".into(),
         },
     )
@@ -395,6 +406,7 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
         &core,
         ApiCommand::SendUserMessage {
             project: project.clone(),
+            chat: "C-1".into(),
             text: "second".into(),
         },
     )
@@ -457,6 +469,7 @@ async fn a_restored_session_keeps_the_agent_it_ran() {
         &core,
         ApiCommand::SendUserMessage {
             project: project.clone(),
+            chat: "C-1".into(),
             text: "go".into(),
         },
     )
@@ -727,6 +740,7 @@ async fn a_vanished_harness_is_replaced_and_reported() {
         &core,
         ApiCommand::SendUserMessage {
             project,
+            chat: "C-1".into(),
             text: "go".into(),
         },
     )
@@ -894,6 +908,7 @@ async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
         &core,
         ApiCommand::SendUserMessage {
             project: project.clone(),
+            chat: "C-1".into(),
             text: "go".into(),
         },
     )

@@ -15,6 +15,22 @@ use yhtye_core::runtime::{Orchestration, OrchestrationConfig};
 use super::assert_group_gone;
 use super::repo::{PROJECT, TempRepo};
 
+/// The chat the tests talk to (created on `main` by [`send`]).
+pub const CHAT: &str = "C-1";
+
+/// Session key of the orchestrator of [`CHAT`].
+pub const ORCHESTRATOR_SESSION: &str = "orchestrator:C-1";
+
+/// Sends `text` to the orchestrator of chat [`CHAT`], creating that chat on
+/// `main` first if the project has none.
+pub async fn send(orch: &Orchestration, text: impl Into<String>) {
+    let snapshot = orch.snapshot().await.expect("snapshot");
+    if snapshot.state.chat(CHAT).is_none() {
+        orch.create_chat("main").await.expect("create the chat");
+    }
+    orch.send_user_message(CHAT, text).await.expect("send");
+}
+
 /// Where tests without git keep the database of a project directory
 /// (`dir/.yhtye/`; `dir` is not a repository). Tests on a git repository use
 /// [`git_config`], which keeps it outside the repository.

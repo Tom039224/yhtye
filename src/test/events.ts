@@ -1,6 +1,10 @@
 // Builders for constructed events in tests.
 
 import type { ApiEvent, ApiEventBody } from "../api/generated";
+import { orchestratorKey } from "../store/chats";
+
+/** Session key of chat `C-1`'s orchestrator (the chat of the recordings). */
+export const ORCHESTRATOR = orchestratorKey("C-1");
 
 export function ev(seq: number, body: ApiEventBody, live = false, project = "repo"): ApiEvent {
   return { seq, ts_ms: 1_700_000_000_000 + seq, project, live, body };
@@ -22,10 +26,10 @@ export function prompted(seq: number, session: string, text = "p"): ApiEvent {
   return ev(seq, { type: "prompted", session, text });
 }
 
-export function userMessage(seq: number, inboxId: number, text: string): ApiEvent {
-  return ev(seq, { type: "domain", event: { type: "inbox_queued", entry: { id: inboxId, item: { kind: "user_message", attrs: [], body: text } } } });
+export function userMessage(seq: number, inboxId: number, text: string, chat = "C-1"): ApiEvent {
+  return ev(seq, { type: "domain", event: { type: "inbox_queued", entry: { id: inboxId, chat, item: { kind: "user_message", attrs: [], body: text } } } });
 }
 
-export function delivered(seq: number, upTo: number): ApiEvent {
-  return ev(seq, { type: "domain", event: { type: "inbox_delivered", up_to: upTo } });
+export function delivered(seq: number, upTo: number, chat = "C-1"): ApiEvent {
+  return ev(seq, { type: "domain", event: { type: "inbox_delivered", chat, up_to: upTo } });
 }

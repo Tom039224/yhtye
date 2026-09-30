@@ -8,6 +8,7 @@ use super::*;
 impl Sim {
     fn orch_turn_ended(&mut self, outcome: TurnOutcome) -> Chain {
         self.run(DomainCommand::OrchestratorTurnEnded {
+            chat: "C-1".into(),
             outcome,
             prompt_queued: false,
         })
@@ -43,7 +44,7 @@ fn a_settled_group_left_open_gets_a_reminder_then_yhtye_finishes_it() {
     assert_eq!(sim.state.group("G-1").expect("G-1").finish_nudges, 1);
     assert!(has_effect(&chain, |e| matches!(
         e,
-        Effect::WakeOrchestrator
+        Effect::WakeOrchestrator { .. }
     )));
     let text = sim.state.inbox[0].item.render();
     assert!(
@@ -131,6 +132,7 @@ fn no_reminder_while_work_is_open_or_the_orchestrator_has_more_to_read() {
     );
     let chain = sim
         .run(DomainCommand::OrchestratorTurnEnded {
+            chat: "C-1".into(),
             outcome: TurnOutcome::EndTurn,
             prompt_queued: true,
         })
@@ -191,7 +193,7 @@ fn a_blocked_automatic_merge_is_reported_as_merge_result() {
 #[test]
 fn groups_logged_before_the_counter_existed_start_at_zero() {
     let old = json!({"type": "group_created", "group": {
-        "id": "G-1", "title": "g", "summary": null, "base_branch": "main",
+        "id": "G-1", "chat": "C-1", "title": "g", "summary": null, "base_branch": "main",
         "group_branch": "yhtye/G-1", "status": "active", "finish_summary": null, "detail": null}});
     let event: DomainEvent = serde_json::from_value(old).expect("old event parses");
     let mut state = State::new("P-1", DomainConfig::default());

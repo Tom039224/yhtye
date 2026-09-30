@@ -59,7 +59,7 @@ pub(super) async fn is_worktree(repo: &Path, path: &Path) -> Result<bool, String
 }
 
 /// Whether git has a worktree registered at `path` (its directory may be gone).
-async fn is_registered(repo: &Path, path: &Path) -> Result<bool, String> {
+pub(super) async fn is_registered(repo: &Path, path: &Path) -> Result<bool, String> {
     Ok(list(repo).await?.iter().any(|w| same_path(&w.path, path)))
 }
 
@@ -73,28 +73,47 @@ async fn worktree_branch(repo: &Path, path: &Path) -> Result<Option<String>, Str
         .and_then(|w| w.branch))
 }
 
-struct Worktree {
-    path: PathBuf,
-    branch: Option<String>,
+pub(super) struct Worktree {
+    pub(super) path: PathBuf,
+    pub(super) branch: Option<String>,
+    /// Locked with `git worktree lock` (git never removes or prunes it).
+    pub(super) locked: bool,
+    /// Git would prune it: its directory is gone.
+    pub(super) prunable: bool,
+}
+
+/// Whether `path` is inside `dir` (symlinks resolved as far as they exist).
+pub(super) fn is_under(path: &Path, dir: &Path) -> bool {
+    normalize(path).starts_with(normalize(dir))
 }
 
 /// `git worktree list --porcelain`.
-async fn list(repo: &Path) -> Result<Vec<Worktree>, String> {
+pub(super) async fn list(repo: &Path) -> Result<Vec<Worktree>, String> {
     let out = git(repo, &["worktree", "list", "--porcelain"]).await?;
     let text = out.into_result("git worktree list")?;
     let mut all = Vec::new();
     for block in text.split("\n\n") {
         let mut path = None;
         let mut branch = None;
+        let (mut locked, mut prunable) = (false, false);
         for line in block.lines() {
             if let Some(p) = line.strip_prefix("worktree ") {
                 path = Some(PathBuf::from(p));
             } else if let Some(b) = line.strip_prefix("branch refs/heads/") {
                 branch = Some(b.to_string());
+            } else if line == "locked" || line.starts_with("locked ") {
+                locked = true;
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                prunable = true;
             }
         }
         if let Some(path) = path {
-            all.push(Worktree { path, branch });
+            all.push(Worktree {
+                path,
+                branch,
+                locked,
+                prunable,
+            });
         }
     }
     Ok(all)

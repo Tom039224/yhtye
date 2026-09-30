@@ -7,7 +7,7 @@ import type { Snapshot, State } from "./api/generated";
 import { CommandError } from "./api/transport";
 import { AppStore } from "./store/app";
 import { emptyState } from "./store/domain";
-import { ORCHESTRATOR } from "./store/transcript";
+import { ORCHESTRATOR } from "./test/events";
 import { StoreContext } from "./store/useStore";
 import { agentText, chunk, delivered, prompted, turnEnded, userMessage } from "./test/events";
 import { durable, FULL_RUN, PROJECT } from "./test/fixtures";
@@ -35,7 +35,10 @@ async function openProject(store: AppStore) {
 }
 
 function emptySnapshot(state?: Partial<State>): Snapshot {
-  return { seq: 0, state: { ...emptyState("repo", { max_review_rounds: 2 }), ...state }, sessions: [] };
+  // The recordings' chat `C-1` (on `main`) exists and is selected.
+  const chat = { id: "C-1", branch: "main", title: null };
+  const info = { ...chat, created_ms: 1, last_used_ms: 1 };
+  return { seq: 0, state: { ...emptyState("repo", { max_review_rounds: 2 }), chats: [chat], ...state }, sessions: [], chats: [info] };
 }
 
 describe("App", () => {
@@ -56,10 +59,11 @@ describe("App", () => {
     const { user, transport } = setup();
     await user.type(screen.getByPlaceholderText("/path/to/git/repository"), "/tmp/repo");
     await user.click(screen.getByRole("button", { name: "開く" }));
-    await screen.findByText("Add hello.txt please");
+    const conversation = await screen.findByRole("region", { name: "orchestrator" });
+    await within(conversation).findByText(/^I will create a group for this\./);
     expect(transport.callsOf("open_project")[0].path).toBe("/tmp/repo");
-
-    const conversation = screen.getByRole("region", { name: "orchestrator" });
+    // The chat's title (its first message) heads the conversation and names its row.
+    expect(within(conversation).getByTestId("chat-title")).toHaveTextContent("Add hello.txt please");
     expect(within(conversation).getByText(/^I will create a group for this\./)).toBeInTheDocument();
     expect(within(conversation).getByText(/Done: hello.txt is on main\./)).toBeInTheDocument();
     const thought = within(conversation).getAllByText("thought")[0].closest("details");
