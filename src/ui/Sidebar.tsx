@@ -1,81 +1,22 @@
-import { type FormEvent, useState } from "react";
+import "./sidebar.css";
 
-import type { ProjectInfo } from "../api/generated";
-import type { ProjectView } from "../store/project";
-import { useAppState, useStore } from "../store/useStore";
+import { useAppState } from "../store/useStore";
+import { BackgroundProjects } from "./BackgroundProjects";
 import { BranchTree } from "./BranchTree";
+import { ProjectPicker } from "./ProjectPicker";
 import { useNow } from "./useNow";
 
-type Ring = "running" | "ready" | "stopped";
-
-/** Running: the open project's orchestrator or one of its agents is in a turn. */
-function projectRing(p: ProjectInfo, view: ProjectView | null): Ring {
-  if (!p.open) return "stopped";
-  if (view && view.info.id === p.id && view.sessions.some((s) => s.status === "live" && s.turn_running)) return "running";
-  return "ready";
-}
-
-const RING_LABEL: Record<Ring, string> = { running: "実行中", ready: "待機中", stopped: "停止" };
-
-/** PROJECTS / BRANCHES / core host (design §3.3), all from the core. */
+/** The open project as a pull-down, the ones running in the background, BRANCHES and the core host (design §3.3), all from the core. */
 export function Sidebar() {
   const project = useAppState((s) => s.project?.info.id);
   return (
     <aside className="sidebar" aria-label="projects">
-      <Projects />
+      <div className="section-title">PROJECT</div>
+      <ProjectPicker />
+      <BackgroundProjects />
       <BranchTree key={project ?? "none"} />
       <HostFooter />
     </aside>
-  );
-}
-
-function Projects() {
-  const store = useStore();
-  const projects = useAppState((s) => s.projects);
-  const view = useAppState((s) => s.project);
-  const opening = useAppState((s) => s.busy.opening);
-  const connected = useAppState((s) => s.connection.state === "open");
-  const [path, setPath] = useState("");
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (path.trim()) void store.openProject(path.trim());
-  };
-  return (
-    <>
-      <div className="section-title">PROJECTS</div>
-      {projects.length === 0 ? <p className="side-note">まだプロジェクトがありません。</p> : null}
-      <ul className="side-list">
-        {projects.map((p) => {
-          const ring = projectRing(p, view);
-          return (
-            <li key={p.id}>
-              <button
-                type="button"
-                className={`side-row ${p.id === view?.info.id ? "current" : ""}`}
-                title={`${p.path} · ${RING_LABEL[ring]}`}
-                disabled={!connected || opening}
-                onClick={() => void store.openProject(p.path)}
-              >
-                <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
-                <span className="name">{p.name}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <form className="open-form" onSubmit={submit}>
-        <input
-          aria-label="開くリポジトリのパス"
-          placeholder="/path/to/git/repository"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          disabled={!connected || opening}
-        />
-        <button type="submit" className="btn btn-small" disabled={!connected || opening || !path.trim()}>
-          {opening ? "…" : "開く"}
-        </button>
-      </form>
-    </>
   );
 }
 

@@ -57,6 +57,7 @@ describe("App", () => {
 
   it("opens a project from the form and renders the recorded run", async () => {
     const { user, transport } = setup();
+    await user.click(screen.getByRole("button", { name: "プロジェクトを開く" }));
     await user.type(screen.getByPlaceholderText("/path/to/git/repository"), "/tmp/repo");
     await user.click(screen.getByRole("button", { name: "開く" }));
     const conversation = await screen.findByRole("region", { name: "orchestrator" });
