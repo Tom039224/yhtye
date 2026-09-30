@@ -18,6 +18,7 @@ mod projection;
 mod sessions;
 mod settings;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -233,6 +234,21 @@ impl Store {
 
     pub async fn remove_secret_name(&self, name: &str) -> Result<(), StoreError> {
         settings::remove_secret_name(&self.pool, name).await
+    }
+
+    /// The manual executable paths of the harnesses, by harness id.
+    pub async fn harness_paths(&self) -> Result<HashMap<String, String>, StoreError> {
+        settings::harness_paths(&self.pool).await
+    }
+
+    /// Stores (or with `None` removes) the manual path of `harness`.
+    pub async fn set_harness_path(
+        &self,
+        harness: &str,
+        path: Option<&str>,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        settings::set_harness_path(&self.pool, harness, path, now_ms).await
     }
 }
 

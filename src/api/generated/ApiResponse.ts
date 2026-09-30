@@ -2,6 +2,7 @@
 import type { AgentSettingsView } from "./AgentSettingsView";
 import type { ChatInfo } from "./ChatInfo";
 import type { GitOverview } from "./GitOverview";
+import type { HarnessDetection } from "./HarnessDetection";
 import type { HarnessModels } from "./HarnessModels";
 import type { LoggedEvent } from "./LoggedEvent";
 import type { ModelEfforts } from "./ModelEfforts";
@@ -13,4 +14,4 @@ export type ApiResponse = { "type": "projects", projects: Array<ProjectInfo>, } 
 /**
  * More events follow (the page was full).
  */
-more: boolean, } | { "type": "accepted" } | { "type": "chats", chats: Array<ChatInfo>, } | { "type": "chat", chat: ChatInfo, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, };
+more: boolean, } | { "type": "accepted" } | { "type": "chats", chats: Array<ChatInfo>, } | { "type": "chat", chat: ChatInfo, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, };

@@ -184,6 +184,10 @@ pub enum AgentError {
         requested: String,
         available: String,
     },
+    /// The agent cannot be chosen (no harness is installed, a harness has no
+    /// model): the message says what to do.
+    #[error("{message}")]
+    Setup { message: String },
     #[error("a turn is already running on this session")]
     Busy,
     #[error("agent request `{method}` failed: {message}")]
