@@ -781,3 +781,20 @@ async fn nothing_opens_after_shutdown() {
         .expect_err("closed");
     assert!(err.message.contains("shutting down"), "{err}");
 }
+
+#[tokio::test]
+async fn ping_answers_with_the_name_of_this_machine() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, json!({}), json!({}), json!({})))
+        .await
+        .expect("core");
+    // No project is needed, and every call gets the same answer.
+    for _ in 0..2 {
+        let ApiResponse::Pong { host } = run(&core, ApiCommand::Ping).await else {
+            panic!("a pong");
+        };
+        assert!(!host.trim().is_empty());
+        assert_eq!(host, yhtye_core::runtime::host_name());
+    }
+    core.shutdown().await;
+}

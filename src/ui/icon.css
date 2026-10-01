@@ -1,0 +1,47 @@
+/*
+ * Icons and icon-only controls (src/ui/Icon.tsx). Values come from
+ * styles/tokens.css.
+ */
+
+.icon { flex: none; display: inline-block; vertical-align: middle; }
+.chip .icon { margin-right: 4px; vertical-align: -1px; }
+.meter-reset .icon { margin-right: 3px; vertical-align: -1px; }
+.icon-spin { animation: yspin 1.4s linear infinite; }
+
+/* A square button that holds one icon: quiet until hovered or focused. */
+.icon-button {
+  width: 24px; height: 24px; flex: none; padding: 0; border: 0; border-radius: 6px; background: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-muted); transition: background-color 0.12s, color 0.12s;
+}
+.icon-button:hover:not(:disabled) { background: var(--surface-hover-strong); color: var(--text-primary); }
+.icon-button:disabled { opacity: 0.4; }
+.icon-button-danger { color: var(--status-handling-fg); }
+.icon-button-danger:hover:not(:disabled) { color: var(--status-handling-fg); background: var(--status-handling-bg); }
+
+/* The one filled button (send): the accent colour, dimmed when it cannot be used. */
+.icon-button-primary { width: 28px; height: 28px; background: var(--accent); color: var(--surface-base); }
+.icon-button-primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--surface-base); }
+.icon-button-primary:disabled { opacity: 1; background: var(--surface-chip); color: var(--text-faint); }
+
+/* A state shown as a dot; the shape differs as well as the colour, and the words are in its tooltip. */
+.status-dot {
+  position: relative; width: 9px; height: 9px; flex: none; border-radius: 50%;
+  border: 1.5px solid var(--text-faint); background: none;
+}
+.status-dot-idle { border-color: var(--status-done-bar); background: var(--status-done-bar); }
+.status-dot-working {
+  border-color: var(--status-implementing-bar); background: var(--status-implementing-bar);
+  box-shadow: 0 0 0 3px var(--status-implementing-bg); animation: ybreathe 2s ease-in-out infinite;
+}
+@keyframes ybreathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+
+/* A status shown as an icon (the orchestrator's): its tone follows the state. */
+.status-icon { display: inline-flex; align-items: center; flex: none; color: var(--text-dim); }
+.status-icon-bad { color: var(--status-handling-bar); }
+
+/* A state as a small coloured square holding one icon (task / group status); its colours are the .tone-* / .group-status-* classes of App.css. */
+.status-chip-active .icon { animation: ybreathe 1.8s ease-in-out infinite; }
+.icon-button-outline { border: 1px solid var(--border-card); width: 28px; height: 28px; }
+.icon-button-outline:hover:not(:disabled) { border-color: var(--border-hover); }
+.graph-more { margin: 0; padding: 4px 0 0; text-align: center; color: var(--text-faintest); }

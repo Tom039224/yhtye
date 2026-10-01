@@ -44,6 +44,10 @@ pub(super) enum Cmd {
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
+    /// The user renames a chat (chat, title).
+    RenameChat(String, String, oneshot::Sender<Result<(), ToolError>>),
+    /// The user deletes a chat.
+    DeleteChat(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new branch (name, start point) and its first chat.
     CreateBranch(
         String,
@@ -242,6 +246,12 @@ impl Driver {
             }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);
+            }
+            Some(Cmd::RenameChat(chat, title, tx)) => {
+                let _ = tx.send(self.rename_chat(chat, title).await);
+            }
+            Some(Cmd::DeleteChat(chat, tx)) => {
+                let _ = tx.send(self.delete_chat(chat).await);
             }
             Some(Cmd::CreateBranch(name, from, tx)) => {
                 let _ = tx.send(self.create_branch(name, from).await);

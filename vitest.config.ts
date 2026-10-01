@@ -7,5 +7,7 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // Stylesheets are empty in tests, except the ones a test reads as text (`import css from "./x.css?raw"`).
+    css: { include: [/\.css\?raw$/] },
   },
 });
