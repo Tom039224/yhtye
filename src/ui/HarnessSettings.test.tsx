@@ -137,6 +137,37 @@ describe("harness settings", () => {
     expect((await within(dialog).findByRole("alert")).textContent).toContain("boom");
   });
 
+  it("retries with 再検出 after the first look failed, and fills in the stored manual paths", async () => {
+    const { user, dialog, transport } = await setup((c) => {
+      c.failures.set("get_harnesses", new CommandError("unavailable", "boom"));
+      c.harnesses.executables.add(OPENCODE_BIN);
+      c.harnesses.overrides = { opencode: OPENCODE_BIN };
+    });
+    await user.click(within(dialog).getByRole("button", { name: "ハーネス" }));
+    expect((await within(dialog).findByRole("alert")).textContent).toContain("boom");
+    expect(within(dialog).queryByRole("list", { name: "ハーネス" })).toBeNull();
+
+    const detect = within(dialog).getByRole("button", { name: "再検出" });
+    expect(detect).toHaveProperty("disabled", false);
+    await user.click(detect);
+
+    await within(dialog).findByRole("list", { name: "ハーネス" });
+    expect(transport.callsOf("detect_harnesses")).toHaveLength(1);
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    const opencode = row(dialog, "OpenCode");
+    expect(within(opencode).getByText("インストール済み")).toBeTruthy();
+    expect((within(opencode).getByRole("textbox") as HTMLInputElement).value).toBe(OPENCODE_BIN);
+    expect(within(opencode).getByRole("button", { name: "自動検出に戻す" })).toHaveProperty("disabled", false);
+  });
+
+  it("keeps what was typed when detecting again after a successful first look", async () => {
+    const { user, dialog } = await openHarnesses();
+    await user.type(within(row(dialog, "Codex")).getByRole("textbox"), "/opt/codex");
+    await user.click(within(dialog).getByRole("button", { name: "再検出" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "再検出" })).toHaveProperty("disabled", false));
+    expect((within(row(dialog, "Codex")).getByRole("textbox") as HTMLInputElement).value).toBe("/opt/codex");
+  });
+
   it("the agent settings offer a harness found in the harness tab", async () => {
     const { user, dialog } = await setup((c) => {
       c.agents.harnesses = [];
