@@ -31,6 +31,42 @@ jobs:
       - run: pnpm build
       - run: pnpm test
 
+  # The real-browser check that the page itself never scrolls (scripts/check-layout.mjs). It drives
+  # the Google Chrome that ubuntu-latest already has (YHTYE_CHROMIUM): playwright-core only talks to a
+  # browser over CDP, so this saves `playwright install --with-deps chromium` (a download of about
+  # 150 MB plus apt packages on every run) and one more thing that can fail. A missing Chrome fails
+  # at once with a clear message instead of falling back to a download. It is a job of its own so
+  # that it runs next to `frontend` and a failure shows what it is.
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check the layout
+        run: |
+          google-chrome --version
+          pnpm check:layout
+        env:
+          YHTYE_CHROMIUM: /usr/bin/google-chrome
+          # A screenshot of every state (about 10 MB), kept only when the check fails.
+          YHTYE_LAYOUT_SHOTS: layout-shots
+      - name: Upload the screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-shots
+          path: layout-shots
+          if-no-files-found: ignore
+          retention-days: 7
+
   rust:
     runs-on: ubuntu-latest
     env:

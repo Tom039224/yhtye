@@ -75,14 +75,36 @@ pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に
 
 ```sh
 pnpm dev:browser                              # ブリッジ (ws://127.0.0.1:1422/ws) + Vite (1420)
-pnpm dev:browser --data-dir /tmp/yhtye-dev    # 以降の引数はブリッジへ (--port / --model / --token)
+pnpm dev:browser --data-dir /tmp/yhtye-dev    # 以降の引数はブリッジへ (--model / --token など)
+pnpm dev:browser --port-base 15420            # Vite 15420 + ブリッジ 15422 (稼働中のアプリと並べる)
 ```
 
+- **ポートの指定**: 既定は Vite 1420 / ブリッジ 1422 (`pnpm tauri dev` も 1420 を使う)。`pnpm tauri dev` や別の
+  `pnpm dev:browser` と並べて動かすときは変える。コマンドラインの指定が環境変数に勝つ。
+
+  | コマンドライン | 環境変数 | 意味 |
+  |---|---|---|
+  | `--vite-port N` | `YHTYE_VITE_PORT` | Vite のポート |
+  | `--bridge-port N` (ブリッジ自身の `--port N` も同じ) | `YHTYE_BRIDGE_PORT` | ブリッジのポート |
+  | `--port-base N` | `YHTYE_PORT_BASE` | Vite を N、ブリッジを N+2 に (上の 2 つを個別に指定すればそちらが勝つ) |
+
+  ```sh
+  pnpm dev:browser --vite-port 15420 --bridge-port 15422 --data-dir /tmp/yhtye-dev   # → http://localhost:15420
+  YHTYE_PORT_BASE=15420 pnpm dev:browser
+  ```
+
+  スクリプトがブリッジの `--port` と、そのページの Origin (`--allow-origin http://localhost:N` /
+  `http://127.0.0.1:N`)、Vite の `--port` (`--strictPort`) と、ページがつなぐ WebSocket の URL
+  (`VITE_YHTYE_BRIDGE_URL`) を揃えて渡す。ポートが使用中なら、ビルドの前にどのポートかを示して終了する。
+  `pnpm tauri dev` が使う `vite.config.ts` の 1420 と `tauri.conf.json` の `devUrl` は変わらない。
+
 - ブリッジは 127.0.0.1 のみで待ち受け、`Origin` が `http://localhost:1420` / `http://127.0.0.1:1420`
-  (ブラウザからの接続) で、`?token=` が一致する接続だけ受け付ける。`pnpm dev:browser` はランダムな
+  (Vite のポートを変えたときはそのポート。ブラウザからの接続) で、`?token=` が一致する接続だけ受け付ける。`pnpm dev:browser` はランダムな
   トークンを作ってブリッジ (`YHTYE_BRIDGE_TOKEN`) と Vite (`VITE_YHTYE_BRIDGE_TOKEN`) の両方に渡す。
 - ブリッジのデータは既定で `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリとは別)。
-- 別々に起動する場合: `pnpm bridge -- --token T` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`。
+- 別々に起動する場合: `pnpm bridge -- --token T` と `VITE_YHTYE_BRIDGE_TOKEN=T pnpm dev`
+  (ブリッジのポートを変えたなら `VITE_YHTYE_BRIDGE_URL=ws://127.0.0.1:<ポート>/ws` も、
+  Vite のポートを変えたならブリッジに `--allow-origin http://localhost:<ポート>` も要る)。
 - **dev ブリッジは単一ユーザーのマシン専用。** トークンは Vite のバンドルに埋め込まれるため、同じマシンの
   他のユーザーは `localhost:1420` から読めてしまう (配布物には含まれない。Stage 7a でこの前提で決定)。
 
@@ -142,7 +164,12 @@ YHTYE_LAYOUT_SHOTS=/tmp/yhtye-shots pnpm check:layout     # 各状態のスク�
 ```
 
 失敗すると、どの状態で何がはみ出したか (例: `span.sr-only (absolute, in the page) down to y=113505`) を出す。
-新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す。CI には入れていない (Chromium が要る)。
+新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す。
 
 CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロントエンドのビルドとテスト、
-Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)。
+`pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)。
+`layout` ジョブは ubuntu-latest に入っている Google Chrome を `YHTYE_CHROMIUM=/usr/bin/google-chrome` で使う
+(playwright-core は CDP で動かすだけなので、`playwright install` のダウンロードと apt のパッケージが要らない)。
+ヘッドレスでディスプレイは無く、Vite のポートは空きから自動で選ぶ。失敗したときは全状態のスクリーンショットを
+アーティファクト `layout-shots` に残す (7 日)。手元で CI と同じ条件にするには
+`env -u DISPLAY -u WAYLAND_DISPLAY CI=1 YHTYE_LAYOUT_SHOTS=/tmp/yhtye-shots pnpm check:layout`。
