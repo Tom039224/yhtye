@@ -185,9 +185,21 @@ impl RoleSettings {
     /// Checks the settings against the registered harnesses; returns them with
     /// duplicate rows (same harness × model × effort, the first one wins) removed.
     pub fn validate(&self, harnesses: &[&str]) -> Result<Self, String> {
+        self.validate_keeping(harnesses, &[])
+    }
+
+    /// [`RoleSettings::validate`], except that a row of a harness that is not
+    /// registered passes when `kept` has a row with the same harness × model ×
+    /// effort: the settings stored earlier keep the rows of a harness that was
+    /// uninstalled since (to bring them back), and editing the others must not
+    /// fail because of them. A new row of an unknown harness is still refused.
+    pub fn validate_keeping(&self, harnesses: &[&str], kept: &[Candidate]) -> Result<Self, String> {
         let mut candidates: Vec<Candidate> = Vec::new();
         for c in &self.candidates {
-            check_candidate(c, harnesses)?;
+            check_candidate(c)?;
+            if !kept.iter().any(|k| k.choice() == c.choice()) {
+                check_registered(c, harnesses)?;
+            }
             if candidates.iter().all(|x| x.choice() != c.choice()) {
                 candidates.push(c.clone());
             }
@@ -249,7 +261,7 @@ impl RoleSettings {
     }
 }
 
-fn check_candidate(c: &Candidate, harnesses: &[&str]) -> Result<(), String> {
+fn check_candidate(c: &Candidate) -> Result<(), String> {
     if c.harness.trim().is_empty() {
         return Err("a candidate has an empty harness".into());
     }
@@ -265,6 +277,10 @@ fn check_candidate(c: &Candidate, harnesses: &[&str]) -> Result<(), String> {
             c.harness
         ));
     }
+    Ok(())
+}
+
+fn check_registered(c: &Candidate, harnesses: &[&str]) -> Result<(), String> {
     if !harnesses.contains(&c.harness.as_str()) {
         return Err(format!(
             "unknown harness {} (known: {})",
@@ -454,6 +470,44 @@ mod tests {
                 .unwrap_err()
                 .contains("model is empty")
         );
+    }
+
+    #[test]
+    fn validation_lets_the_rows_already_stored_keep_an_unknown_harness() {
+        let known = ["cc"];
+        let gone = c("oc", Some("x"));
+        let stored = settings(
+            &[gone.clone(), c("cc", Some("haiku"))],
+            &c("cc", Some("haiku")),
+        );
+        // Kept as they are, and edited around: the row of `oc` passes, a note
+        // on it is not a new harness either.
+        let edited = RoleSettings {
+            candidates: vec![
+                Candidate::from(gone.clone()).with_note("cheap"),
+                c("cc", Some("haiku")).into(),
+                c("cc", Some("sonnet")).into(),
+            ],
+            default: c("cc", Some("sonnet")),
+        };
+        assert!(edited.validate(&known).is_err(), "plain validation refuses");
+        let v = edited
+            .validate_keeping(&known, &stored.candidates)
+            .expect("the stored row stays");
+        assert_eq!(v.candidates.len(), 3);
+
+        // Another unknown harness, or the same harness with another model, is new.
+        for added in [c("zz", None), c("oc", Some("y"))] {
+            let mut more = edited.clone();
+            more.candidates.push(added.clone().into());
+            let e = more
+                .validate_keeping(&known, &stored.candidates)
+                .expect_err("a new row of an unknown harness");
+            assert!(
+                e.contains(&format!("unknown harness {}", added.harness)),
+                "{e}"
+            );
+        }
     }
 
     fn cand(h: &str, m: &str, e: Option<&str>) -> Candidate {

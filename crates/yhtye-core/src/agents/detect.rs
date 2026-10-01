@@ -147,38 +147,44 @@ pub fn known_dirs(env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The first executable regular file named `command` in the directories of
-/// `path` (a `PATH` value). Relative entries are ignored.
+/// The first usable executable named `command` in the directories of `path`
+/// (a `PATH` value): see [`is_usable`]. Relative entries are ignored.
 #[must_use]
 pub fn find_in_path(command: &str, path: Option<&OsStr>) -> Option<PathBuf> {
     std::env::split_paths(path?)
         .filter(|dir| dir.is_absolute())
         .map(|dir| dir.join(command))
-        .find(|p| is_executable(p))
+        .find(|p| is_usable(p))
 }
 
-/// `command` in `PATH` of `env`, else in `known_dirs`. A path that is not
-/// valid UTF-8 cannot be shown or passed on, so it does not count.
+/// `command` in `PATH` of `env`, else in `known_dirs`.
 pub fn find_command(
     command: &str,
     env: impl Fn(&str) -> Option<OsString>,
     known_dirs: &[PathBuf],
 ) -> Option<(PathBuf, PathSource)> {
-    let usable = |p: &PathBuf| p.to_str().is_some();
-    if let Some(path) = find_in_path(command, env("PATH").as_deref()).filter(usable) {
+    if let Some(path) = find_in_path(command, env("PATH").as_deref()) {
         return Some((path, PathSource::Path));
     }
     known_dirs
         .iter()
         .map(|dir| dir.join(command))
-        .find(|p| is_executable(p) && usable(p))
+        .find(|p| is_usable(p))
         .map(|p| (p, PathSource::KnownDir))
 }
 
+/// An executable regular file whose path is valid UTF-8. A path that is not
+/// cannot be shown or passed on, so the search goes on past it.
+fn is_usable(p: &Path) -> bool {
+    p.to_str().is_some() && is_executable(p)
+}
+
+/// A regular file this process can execute (`access(X_OK)`: a mode bit that
+/// applies to another user or group does not count).
 #[cfg(unix)]
 fn is_executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    std::fs::metadata(p).is_ok_and(|m| m.is_file())
+        && rustix::fs::access(p, rustix::fs::Access::EXEC_OK).is_ok()
 }
 
 #[cfg(not(unix))]
@@ -317,6 +323,63 @@ mod tests {
             "a directory is not a command"
         );
         assert_eq!(find_command("opencode", env(&[]), &[]), None, "no PATH");
+    }
+
+    #[test]
+    fn a_path_that_is_not_utf_8_is_skipped_in_favour_of_a_later_entry() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = tempfile::tempdir().expect("tempdir");
+        let bad_dir = root.path().join(OsStr::from_bytes(b"bad-\xff"));
+        std::fs::create_dir(&bad_dir).expect("mkdir");
+        fake_bin(&bad_dir, "opencode", 0o755);
+        let good_dir = tempfile::tempdir().expect("tempdir");
+        let good = fake_bin(good_dir.path(), "opencode", 0o755);
+
+        let path = std::env::join_paths([bad_dir.clone(), good_dir.path().to_path_buf()])
+            .expect("join_paths");
+        assert_eq!(
+            find_in_path("opencode", Some(&path)),
+            Some(good.clone()),
+            "the search goes on past the entry that cannot be used"
+        );
+        let env_path = path.clone();
+        let found = find_command("opencode", move |_| Some(env_path.clone()), &[]);
+        assert_eq!(found, Some((good.clone(), PathSource::Path)));
+
+        // The PATH is searched before the known directories, but a PATH that
+        // holds nothing usable falls through to them.
+        let only_bad = std::env::join_paths([bad_dir.clone()]).expect("join_paths");
+        let dirs = [bad_dir, good_dir.path().to_path_buf()];
+        let found = find_command("opencode", move |_| Some(only_bad.clone()), &dirs);
+        assert_eq!(found, Some((good, PathSource::KnownDir)));
+    }
+
+    #[test]
+    fn a_file_this_process_cannot_execute_is_not_a_command() {
+        if rustix::process::geteuid().is_root() {
+            return; // root passes access(X_OK) for any file with an execute bit
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        let later = tempfile::tempdir().expect("tempdir");
+        // Only the group may execute it: not this process, which owns it.
+        let group_only = fake_bin(dir.path(), "devin", 0o010);
+        let usable = fake_bin(later.path(), "devin", 0o700);
+        let path = std::env::join_paths([dir.path(), later.path()]).expect("join_paths");
+
+        assert_eq!(
+            find_in_path("devin", Some(&path)),
+            Some(usable.clone()),
+            "an execute bit that is not ours is passed over"
+        );
+        let only_dir = std::env::join_paths([dir.path()]).expect("join_paths");
+        assert_eq!(find_in_path("devin", Some(&only_dir)), None);
+        let error = check_executable_path(group_only.to_str().expect("utf-8"))
+            .expect_err("not executable for the owner");
+        assert!(error.contains("not executable"), "{error}");
+        assert_eq!(
+            check_executable_path(usable.to_str().expect("utf-8")),
+            Ok(())
+        );
     }
 
     #[test]

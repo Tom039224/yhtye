@@ -2,7 +2,9 @@
 //! API: they are found in a fake `PATH` (the directory of the test), a path set
 //! by hand is stored and wins, detecting again changes the catalog, and a
 //! harness that is not installed leaves the orchestrator's view (`get_status`,
-//! its prompt, `create_task`) while the stored settings keep it.
+//! its prompt, `create_task`) while the stored settings keep it. What was read
+//! from a harness (its models and efforts, Claude Code's usage) is forgotten
+//! when its executable changes, without waiting for a probe that is running.
 
 #![cfg(unix)]
 
@@ -11,17 +13,19 @@ mod common;
 use std::ffi::OsString;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use common::gate::Gate;
 use common::orch::ORCHESTRATOR_SESSION;
 use common::repo::TempRepo;
 use common::{fake_agent_bin, fake_harness};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
+use yhtye_core::acp::HarnessConfig;
 use yhtye_core::agents::{
-    AgentChoice, AgentRole, Candidate, HarnessDetection, HarnessPreset, ModelService,
-    OPENCODE_FALLBACK_MODEL, PathSource, RoleSettings,
+    AgentChoice, AgentRole, Candidate, HarnessDetection, HarnessModels, HarnessPreset,
+    ModelService, OPENCODE_FALLBACK_MODEL, PathSource, RoleSettings,
 };
 use yhtye_core::api::{
     AgentSettingsView, ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse, TextKind,
@@ -29,6 +33,7 @@ use yhtye_core::api::{
 use yhtye_core::domain::DomainEvent;
 use yhtye_core::runtime::{Core, CoreConfig, DetectionConfig};
 use yhtye_core::secrets::Secrets;
+use yhtye_core::usage::{UsageReport, UsageService, UsageWindowKind};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -183,6 +188,61 @@ async fn every_known_harness_is_reported_with_what_was_found() {
         settings_view(&core).await.builtin,
         AgentChoice::new("claude-code", Some("haiku"))
     );
+    core.shutdown().await;
+}
+
+/// The rows of a harness that is gone stay in the settings panel; saving the
+/// rows around them must not fail, while a new row of an unknown harness does.
+#[tokio::test]
+async fn rows_of_an_uninstalled_harness_do_not_block_editing_the_others() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("opencode");
+    bin.install("devin");
+    let core = Core::start(config(&r, &bin)).await.expect("core");
+    let set = |rows: &RoleSettings| {
+        core.command(ApiCommand::SetAgentSettings {
+            project: None,
+            role: AgentRole::Implementer,
+            settings: Some(rows.clone()),
+        })
+    };
+    let gone = AgentChoice::new("opencode", Some("x"));
+    let devin = AgentChoice::new("devin", None);
+    let rows = RoleSettings {
+        candidates: vec![
+            Candidate::from(gone.clone()).with_note("cheap"),
+            Candidate::from(devin.clone()),
+        ],
+        default: devin.clone(),
+    };
+    set(&rows).await.expect("both are installed");
+    bin.uninstall("opencode");
+    assert_eq!(installed(&detect(&core).await), ["devin"]);
+
+    // A note changes and a row is added; the row of OpenCode is sent back as is.
+    let edited = RoleSettings {
+        candidates: vec![
+            Candidate::from(gone.clone()).with_note("cheap"),
+            Candidate::from(devin.clone()).with_note("careful"),
+            Candidate::from(devin.clone().with_effort("high")),
+        ],
+        default: devin.clone(),
+    };
+    set(&edited).await.expect("the stored row is not new");
+    assert_eq!(settings_view(&core).await.effective.implementer, edited);
+
+    // Another model of the missing harness is a new row.
+    let mut added = edited.clone();
+    added
+        .candidates
+        .push(AgentChoice::new("opencode", Some("y")).into());
+    let e = set(&added)
+        .await
+        .expect_err("a new row of an unknown harness");
+    assert_eq!(e.code, ApiErrorCode::InvalidArgument, "{e}");
+    assert!(e.message.contains("unknown harness opencode"), "{e}");
+    assert_eq!(settings_view(&core).await.effective.implementer, edited);
     core.shutdown().await;
 }
 
@@ -392,16 +452,227 @@ async fn detecting_forgets_the_models_read_from_a_harness() {
     assert_eq!(values(first), ["a", "b"]);
     let cached = service.get(&preset(&["c"]), false).await.expect("cached");
     assert_eq!(values(cached), ["a", "b"], "read again only after a while");
-    service.invalidate("other").await;
+    service.invalidate("other");
     let cached = service.get(&preset(&["c"]), false).await.expect("cached");
     assert_eq!(
         values(cached),
         ["a", "b"],
         "another harness is not affected"
     );
-    service.invalidate("h").await;
+    service.invalidate("h");
     let fresh = service.get(&preset(&["c"]), false).await.expect("read");
     assert_eq!(values(fresh), ["c"]);
+    service.close().await;
+}
+
+fn model_values(models: HarnessModels) -> Vec<String> {
+    models.models.into_iter().map(|m| m.value).collect()
+}
+
+/// A model listing session of harness `h` that is held until the gate opens.
+fn gated_preset(gate: &Gate, script: Value) -> HarnessPreset {
+    let harness = gate.harness(script);
+    HarnessPreset::fixed("h", harness.clone(), harness.clone(), harness)
+}
+
+#[tokio::test]
+async fn invalidating_does_not_wait_for_a_probe_and_what_it_reads_is_dropped() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gate = Gate::new(dir.path());
+    let preset = |models: &[&str]| gated_preset(&gate, json!({"turns": [], "models": models}));
+    let service = Arc::new(ModelService::new(
+        dir.path().join("probe"),
+        Arc::new(Secrets::none()),
+    ));
+
+    // A probe of the executable that is about to be replaced is running.
+    let old = tokio::spawn({
+        let service = service.clone();
+        let preset = preset(&["old"]);
+        async move { service.get(&preset, false).await }
+    });
+    gate.started().await;
+    service.invalidate("h");
+    assert!(!old.is_finished(), "invalidate returned while it still ran");
+    gate.open();
+    let stale = old
+        .await
+        .expect("join")
+        .expect("the caller gets its answer");
+    assert_eq!(model_values(stale), ["old"]);
+
+    let fresh = service.get(&preset(&["new"]), false).await.expect("read");
+    assert_eq!(model_values(fresh), ["new"], "the old result was not kept");
+    let cached = service
+        .get(&preset(&["newer"]), false)
+        .await
+        .expect("cached");
+    assert_eq!(model_values(cached), ["new"], "a probe after it is kept");
+    service.close().await;
+}
+
+#[tokio::test]
+async fn invalidating_does_not_keep_the_efforts_a_running_probe_reads() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gate = Gate::new(dir.path());
+    let preset = |efforts: &[&str]| {
+        let script = json!({"turns": [], "models": ["m"], "efforts": {"m": efforts}});
+        gated_preset(&gate, script)
+    };
+    let values = |efforts: Vec<yhtye_core::agents::EffortOption>| -> Vec<String> {
+        efforts.into_iter().map(|e| e.value).collect()
+    };
+    let service = Arc::new(ModelService::new(
+        dir.path().join("probe"),
+        Arc::new(Secrets::none()),
+    ));
+    let old = tokio::spawn({
+        let service = service.clone();
+        let preset = preset(&["low"]);
+        async move { service.get_efforts(&preset, "m").await }
+    });
+    gate.started().await;
+    service.invalidate("h");
+    assert!(!old.is_finished(), "invalidate returned while it still ran");
+    gate.open();
+    let stale = old
+        .await
+        .expect("join")
+        .expect("the caller gets its answer");
+    assert_eq!(values(stale), ["low"]);
+
+    let fresh = service.get_efforts(&preset(&["high"]), "m").await;
+    assert_eq!(values(fresh.expect("read")), ["high"]);
+    service.close().await;
+}
+
+/// The core's detection looks in the directory `path` holds when it runs.
+fn detection_at(path: &Arc<Mutex<OsString>>) -> DetectionConfig {
+    let path = path.clone();
+    DetectionConfig::new("haiku", move |k| {
+        (k == "PATH").then(|| path.lock().expect("lock").clone())
+    })
+    .with_known_dirs(Vec::new())
+}
+
+async fn listed_models(core: &Core, harness: &str) -> Vec<String> {
+    let cmd = ApiCommand::ListHarnessModels {
+        harness: harness.into(),
+        refresh: None,
+    };
+    match run(core, cmd).await {
+        ApiResponse::HarnessModels { models } => model_values(models),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn opening_the_settings_forgets_the_models_of_a_harness_whose_executable_changed() {
+    let r = TempRepo::new();
+    let (first, second) = (Bin::new(), Bin::new());
+    fake_devin(&first, &json!({"models": ["a", "b"]}));
+    fake_devin(&second, &json!({"models": ["c"]}));
+    let path = Arc::new(Mutex::new(OsString::from(first.dir())));
+    let mut cfg = CoreConfig::claude_code(&r.data, "haiku");
+    cfg.usage = None;
+    cfg.detection = Some(detection_at(&path));
+    let core = Core::start(cfg).await.expect("core");
+    assert_eq!(listed_models(&core, "devin").await, ["a", "b"]);
+
+    // Found again at the same place: what was read is kept.
+    fake_devin(&first, &json!({"models": ["x"]}));
+    get(&core).await;
+    assert_eq!(listed_models(&core, "devin").await, ["a", "b"]);
+
+    // Another Devin comes first in the PATH: the settings opened are enough.
+    *path.lock().expect("lock") = OsString::from(second.dir());
+    get(&core).await;
+    assert_eq!(listed_models(&core, "devin").await, ["c"]);
+    core.shutdown().await;
+}
+
+/// `/usage` output with the 5-hour window at `five` percent.
+fn usage_script(five: u32) -> Value {
+    let text = format!(
+        "## Usage\n\n> Claude max subscription usage\n\n### Limits\n\n\
+**5-hour limit** — **{five}%** · Resets Sep 22, 10:50 PM UTC\n\n`███████████████░░░░░`\n\n\
+**Weekly · all models** — **40%** · Resets Sep 24, 5:00 PM UTC\n\n`████████░░░░░░░░░░░░`\n"
+    );
+    json!({"turns": [{"match": "/usage", "actions": [{"message": text}]}]})
+}
+
+fn five_hour_percent(report: &UsageReport) -> f64 {
+    report
+        .window(UsageWindowKind::FiveHour)
+        .expect("5h")
+        .percent
+}
+
+async fn usage(core: &Core) -> UsageReport {
+    let cmd = ApiCommand::GetUsage { refresh: None };
+    match run(core, cmd).await {
+        ApiResponse::Usage { usage } => usage,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn the_usage_probe_follows_the_npx_of_claude_code() {
+    let r = TempRepo::new();
+    let (none, a, b) = (Bin::new(), Bin::new(), Bin::new());
+    fake_wrapper(&a, "npx", &usage_script(55));
+    fake_wrapper(&b, "npx", &usage_script(20));
+    let mut cfg = config(&r, &none);
+    cfg.usage = Some(HarnessConfig::claude_code_usage_probe());
+    // No npx at start; the user gives one later.
+    let core = Core::start(cfg).await.expect("core");
+    assert!(!by_id(&get(&core).await, "claude-code").installed);
+
+    set_path(&core, "claude-code", Some(text(&a.dir().join("npx")))).await;
+    let report = usage(&core).await;
+    assert!((five_hour_percent(&report) - 55.0).abs() < f64::EPSILON);
+
+    // Changing the path drops the report that was read through the old one.
+    set_path(&core, "claude-code", Some(text(&b.dir().join("npx")))).await;
+    let report = usage(&core).await;
+    assert!((five_hour_percent(&report) - 20.0).abs() < f64::EPSILON);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn changing_the_usage_harness_does_not_wait_for_a_probe_and_its_report_is_dropped() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let gate = Gate::new(dir.path());
+    let service = Arc::new(UsageService::new(
+        Some(gate.harness(usage_script(55))),
+        dir.path().join("usage"),
+    ));
+    let old = tokio::spawn({
+        let service = service.clone();
+        async move { service.get(false).await }
+    });
+    gate.started().await;
+    let other = fake_harness(usage_script(20));
+    service.set_harness(other.clone());
+    assert!(
+        !old.is_finished(),
+        "set_harness returned while it still ran"
+    );
+    gate.open();
+    let stale = old
+        .await
+        .expect("join")
+        .expect("the caller gets its answer");
+    assert!((five_hour_percent(&stale) - 55.0).abs() < f64::EPSILON);
+
+    let fresh = service.get(false).await.expect("read");
+    assert!(
+        (five_hour_percent(&fresh) - 20.0).abs() < f64::EPSILON,
+        "the old report was not kept"
+    );
+    // The same harness again changes nothing: the report stays cached.
+    service.set_harness(other);
+    assert_eq!(service.get(false).await.expect("cached"), fresh);
     service.close().await;
 }
 
@@ -471,16 +742,21 @@ async fn starting_an_agent_with_nothing_installed_says_what_to_check() {
     core.shutdown().await;
 }
 
-/// The wrapper the detected Devin runs: the fake agent with `script`.
-fn fake_devin(bin: &Bin, script: &Value) {
-    let script_path = bin.dir().join("devin-script.json");
+/// The wrapper the detected `name` runs: the fake agent with `script`.
+fn fake_wrapper(bin: &Bin, name: &str, script: &Value) {
+    let script_path = bin.dir().join(format!("{name}-script.json"));
     std::fs::write(&script_path, script.to_string()).expect("write the script");
     let wrapper = format!(
         "#!/bin/sh\nYHTYE_FAKE_SCRIPT=\"$(cat '{}')\"\nexport YHTYE_FAKE_SCRIPT\nexec '{}' \"$@\"\n",
         script_path.display(),
         fake_agent_bin().display()
     );
-    write_executable(bin.dir(), "devin", &wrapper);
+    write_executable(bin.dir(), name, &wrapper);
+}
+
+/// The wrapper the detected Devin runs: the fake agent with `script`.
+fn fake_devin(bin: &Bin, script: &Value) {
+    fake_wrapper(bin, "devin", script);
 }
 
 fn tool_results(seen: &[ApiEvent], tool: &str) -> Vec<Result<Value, String>> {

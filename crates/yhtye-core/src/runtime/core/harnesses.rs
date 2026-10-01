@@ -106,7 +106,7 @@ impl Detected {
     }
 
     /// `usage` (Claude Code's `/usage` probe) runs the `npx` that was found,
-    /// like the Claude Code preset does.
+    /// like the Claude Code preset does (the literal `npx` when none was).
     pub(super) fn with_found_npx(&self, mut usage: HarnessConfig) -> HarnessConfig {
         let npx = self
             .detections
@@ -125,8 +125,10 @@ impl Detected {
 impl Core {
     /// Finds the harnesses again (`overrides` are read from the database now)
     /// and registers those that are installed. Concurrent detections are
-    /// serialized so the last one to finish also read the newest paths.
-    /// `None` without a detection config.
+    /// serialized so the last one to finish also read the newest paths. What
+    /// was read from a harness that now runs another executable (its models
+    /// and efforts) is forgotten, and Claude Code's usage probe follows the
+    /// `npx` that was found. `None` without a detection config.
     async fn detect_and_register(&self) -> Result<Option<Vec<HarnessDetection>>, ApiError> {
         let Some(detection) = &self.inner.cfg.detection else {
             return Ok(None);
@@ -135,11 +137,41 @@ impl Core {
         let overrides = self.inner.store.harness_paths().await?;
         let found = detection.detect(&overrides);
         found.log();
+        let changed = self.changed_harnesses(&found.presets);
+        let usage = self
+            .inner
+            .cfg
+            .usage
+            .clone()
+            .map(|u| found.with_found_npx(u));
         self.inner.agents.refresh(found.presets, found.builtin);
+        // After the registration: a request that reads a preset from now on
+        // gets the new one, and a probe of the old one that is still running
+        // does not fill the caches again.
+        for id in changed {
+            self.inner.models.invalidate(id);
+        }
+        if let Some(usage) = usage {
+            self.inner.usage.set_harness(usage);
+        }
         Ok(Some(found.detections))
     }
 
-    /// `GetHarnesses`: detects again (the settings were opened).
+    /// The harnesses whose registered preset is not the one in `presets`
+    /// (found again, no longer found, or newly found).
+    fn changed_harnesses(&self, presets: &[HarnessPreset]) -> Vec<&'static str> {
+        HARNESS_SPECS
+            .iter()
+            .filter(|spec| {
+                self.inner.agents.preset(spec.id).as_ref()
+                    != presets.iter().find(|p| p.id == spec.id)
+            })
+            .map(|spec| spec.id)
+            .collect()
+    }
+
+    /// `GetHarnesses`: detects again (the settings were opened). The models
+    /// of a harness whose executable changed are forgotten.
     pub(super) async fn get_harnesses(&self) -> Result<ApiResponse, ApiError> {
         let harnesses = self.detect_and_register().await?.unwrap_or_default();
         Ok(ApiResponse::Harnesses { harnesses })
@@ -150,13 +182,14 @@ impl Core {
     pub(super) async fn detect_harnesses(&self) -> Result<ApiResponse, ApiError> {
         let harnesses = self.detect_and_register().await?.unwrap_or_default();
         for spec in &HARNESS_SPECS {
-            self.inner.models.invalidate(spec.id).await;
+            self.inner.models.invalidate(spec.id);
         }
         Ok(ApiResponse::Harnesses { harnesses })
     }
 
     /// `SetHarnessPath`: checks, stores and applies the path of a harness's
-    /// main executable (`None` removes it).
+    /// main executable (`None` removes it). Detecting again forgets what was
+    /// read from the executable that is replaced.
     pub(super) async fn set_harness_path(
         &self,
         harness: String,
@@ -178,7 +211,6 @@ impl Core {
             .store
             .set_harness_path(&harness, path.as_deref(), now_ms())
             .await?;
-        self.inner.models.invalidate(&harness).await;
         let harnesses = self.detect_and_register().await?.unwrap_or_default();
         Ok(ApiResponse::Harnesses { harnesses })
     }

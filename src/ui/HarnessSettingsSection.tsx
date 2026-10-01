@@ -12,6 +12,11 @@ export const PATH_SOURCE_LABELS: Record<HarnessPathSource, string> = {
   none: "—",
 };
 
+/** The manual-path text boxes' contents: each harness's stored override, if any. */
+function draftsOf(list: HarnessDetection[]): Record<string, string> {
+  return Object.fromEntries(list.map((h) => [h.id, h.override_path ?? ""]));
+}
+
 /**
  * The settings' "ハーネス" section: whether each harness (Claude Code, OpenCode,
  * Codex, Devin) is installed, where its commands were found, and a manual path
@@ -33,7 +38,7 @@ export function HarnessSettingsSection() {
       (list) => {
         if (!live) return;
         setHarnesses(list);
-        setDrafts(Object.fromEntries(list.map((h) => [h.id, h.override_path ?? ""])));
+        setDrafts(draftsOf(list));
       },
       (e) => live && setError(toCommandError(e).message),
     );
@@ -47,7 +52,10 @@ export function HarnessSettingsSection() {
     setError(null);
     setRowErrors({});
     try {
-      setHarnesses(await store.detectHarnesses());
+      const list = await store.detectHarnesses();
+      // The first look failed: nothing filled the boxes yet. Otherwise keep what was typed.
+      if (harnesses === null) setDrafts(draftsOf(list));
+      setHarnesses(list);
     } catch (e) {
       setError(toCommandError(e).message);
     } finally {
@@ -78,7 +86,7 @@ export function HarnessSettingsSection() {
           ~/.bun/bin, /usr/local/bin) から探します。見つからないときは主実行ファイルの絶対パスを手動で指定できます
           (手動パスは自動検出より優先)。インストール済みのハーネスがエージェント設定で選べます。
         </p>
-        <button type="button" className="btn btn-small" disabled={busy || harnesses === null} onClick={detect}>
+        <button type="button" className="btn btn-small" disabled={busy || (harnesses === null && error === null)} onClick={detect}>
           再検出
         </button>
       </div>
