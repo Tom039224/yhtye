@@ -6,6 +6,19 @@ import { Icon, IconButton } from "./Icon";
 import { projectRing, RING_LABEL } from "./projectActivity";
 
 /**
+ * Scrolls `list` just far enough to show its `index`th row. Only the list moves: `scrollIntoView`
+ * would scroll every box around it as well, up to the page.
+ */
+function revealRow(list: HTMLElement, index: number): void {
+  const row = list.children[index];
+  if (!row) return;
+  const box = list.getBoundingClientRect();
+  const at = row.getBoundingClientRect();
+  if (at.top < box.top) list.scrollTop -= box.top - at.top;
+  else if (at.bottom > box.bottom) list.scrollTop += at.bottom - box.bottom;
+}
+
+/**
  * The project on screen as a pull-down: a listbox of the known projects
  * (↑↓ Home End move, Enter / click switch, Esc closes) and the form that opens
  * another repository. Focus moves into the popup while it is open and back to
@@ -37,7 +50,7 @@ export function ProjectPicker() {
   }, [open]);
 
   useEffect(() => {
-    if (open) listRef.current?.children[activeIndex]?.scrollIntoView?.({ block: "nearest" });
+    if (open && listRef.current) revealRow(listRef.current, activeIndex);
   }, [open, activeIndex]);
 
   const openPopup = () => {
