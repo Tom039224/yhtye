@@ -26,10 +26,20 @@ pub(crate) struct StartupParams {
 }
 
 impl StartupParams {
+    /// The role system prompt with the harness's
+    /// [`system_prompt_note`](HarnessConfig::system_prompt_note) appended.
+    fn role_prompt(&self) -> Option<String> {
+        let prompt = self.system_prompt.as_ref()?;
+        Some(match &self.harness.system_prompt_note {
+            Some(note) => format!("{prompt}\n\n{note}"),
+            None => prompt.clone(),
+        })
+    }
+
     /// System prompt to prepend to the first prompt (for [`SystemPromptStyle::FirstPrompt`]).
     pub fn first_prompt_preamble(&self, resumed: bool) -> Option<String> {
         match self.harness.system_prompt {
-            SystemPromptStyle::FirstPrompt if !resumed => self.system_prompt.clone(),
+            SystemPromptStyle::FirstPrompt if !resumed => self.role_prompt(),
             _ => None,
         }
     }
@@ -38,8 +48,8 @@ impl StartupParams {
     /// `systemPrompt.append` for [`SystemPromptStyle::MetaAppend`].
     fn session_meta(&self) -> Option<Meta> {
         let mut meta = self.harness.session_meta.clone().unwrap_or_default();
-        if let Some(text) = &self.system_prompt
-            && self.harness.system_prompt == SystemPromptStyle::MetaAppend
+        if self.harness.system_prompt == SystemPromptStyle::MetaAppend
+            && let Some(text) = self.role_prompt()
         {
             meta.insert("systemPrompt".into(), serde_json::json!({ "append": text }));
         }
@@ -245,6 +255,53 @@ mod tests {
             )],
         )
         .category(category)
+    }
+
+    fn params(harness: HarnessConfig, system_prompt: Option<&str>) -> StartupParams {
+        StartupParams {
+            harness,
+            cwd: PathBuf::from("/tmp"),
+            mcp: Vec::new(),
+            resume: None,
+            system_prompt: system_prompt.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn the_harness_note_follows_the_role_prompt_for_devin_only() {
+        let devin = params(HarnessConfig::devin("devin"), Some("ROLE"));
+        let preamble = devin.first_prompt_preamble(false).expect("preamble");
+        assert_eq!(
+            preamble,
+            format!("ROLE\n\n{}", crate::acp::config::DEVIN_MCP_NOTE)
+        );
+        assert_eq!(devin.first_prompt_preamble(true), None, "not after a load");
+        assert_eq!(
+            params(HarnessConfig::devin("devin"), None).first_prompt_preamble(false),
+            None,
+            "no note without a role prompt"
+        );
+
+        for harness in [
+            HarnessConfig::opencode("opencode/x"),
+            HarnessConfig::codex(None),
+        ] {
+            let p = params(harness, Some("ROLE"));
+            assert_eq!(p.first_prompt_preamble(false).as_deref(), Some("ROLE"));
+        }
+        let claude = params(HarnessConfig::claude_code("haiku"), Some("ROLE"));
+        let meta = serde_json::Value::Object(claude.session_meta().expect("meta"));
+        assert_eq!(meta.pointer("/systemPrompt/append"), Some(&"ROLE".into()));
+
+        // A note reaches a `_meta` system prompt too.
+        let mut noted = HarnessConfig::claude_code("haiku");
+        noted.system_prompt_note = Some("NOTE".into());
+        let meta =
+            serde_json::Value::Object(params(noted, Some("ROLE")).session_meta().expect("meta"));
+        assert_eq!(
+            meta.pointer("/systemPrompt/append"),
+            Some(&"ROLE\n\nNOTE".into())
+        );
     }
 
     #[test]

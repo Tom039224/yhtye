@@ -12,7 +12,7 @@ use common::{message_text, start, start_err};
 use serde_json::json;
 use yhtye_core::acp::schema::{PermissionOptionKind, StopReason};
 use yhtye_core::acp::{
-    AgentError, AgentEvent, ClientInfoOverride, DEVIN_BYPASS_MODE, SpawnOptions,
+    AgentError, AgentEvent, ClientInfoOverride, DEVIN_BYPASS_MODE, DEVIN_MCP_NOTE, SpawnOptions,
 };
 
 fn tmp() -> tempfile::TempDir {
@@ -43,10 +43,13 @@ async fn bypass_mode_is_set_and_the_role_prompt_rides_the_first_prompt() {
     s.handle.prompt_text("one").expect("prompt");
     let (events, stop) = s.turn().await;
     assert_eq!(stop, Ok(StopReason::EndTurn));
-    // No `_meta` hook: the prompt is prepended to the first prompt, once.
+    // No `_meta` hook: the prompt, with the note on Devin's MCP meta-tools, is
+    // prepended to the first prompt, once.
     assert_eq!(
         message_text(&events),
-        "state:mode=bypass;model=default;system_prompt=<none>;effort=default;prompt=ROLE|one"
+        format!(
+            "state:mode=bypass;model=default;system_prompt=<none>;effort=default;prompt=ROLE\n\n{DEVIN_MCP_NOTE}|one"
+        )
     );
     s.handle.prompt_text("two").expect("prompt");
     let (events, _) = s.turn().await;
