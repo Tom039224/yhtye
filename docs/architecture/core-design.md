@@ -818,6 +818,9 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 - **`available()` / `available_settings(project)`**: 実効値から**未登録ハーネスの行を除く** (既定が除かれたら、組み込みの既定が行に残っていればそれ、無ければ最初に残った行、
   行が 1 つも残らなければ組み込みの既定だけ)。オーケストレータのプロンプト (`runtime/launch.rs`)・`get_status.agents`・`create_task` の検証 (`runtime/driver.rs`) はこれを使う。
   保存データと設定パネル用の `AgentSettingsView` は変えない (行は残り、UI が「(見つからない)」を出す)。
+  セッション起動の解決 (`resolve`) も既定は同じ `available()` の既定を使う (プロンプトで既定と見せたものと、ハーネス省略のタスクが動くものを一致させる。
+  保存済みの既定と違えば `replaced` に載せる)。設定の保存 (`validate(settings, existing)`) は、いま実効の行 (`existing`) にある未登録ハーネスの行 (ハーネス × モデル × effort が同じもの)
+  はそのまま通し、新しく足した未知のハーネスの行だけを `unknown harness` で拒む (他の行の編集や note の変更が、戻せるよう残した行のせいで失敗しないように)。
 - **`Core` のコマンド** (`runtime/core/harnesses.rs`、`DetectionConfig { env, known_dirs, claude_model }` を `CoreConfig::detection` に持つ):
   - `Core::start` が `harness_paths` を読んで検出し、登録簿を作る (各ハーネスの検出結果を 1 行ずつログに出す)。
   - `GetHarnesses` (設定の「ハーネス」タブを開いたとき) は検出をやり直して登録簿を入れ替え、`HarnessDetection` の一覧を返す。
@@ -847,8 +850,8 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 1. `session/load` で復元するとき、`agent_sessions` に記録されたハーネス × モデルが登録簿にあればそれを使う
    (動いていた・中断したセッションは設定の変更に影響されない。記録の無い古い行は下の解決)。
 2. それ以外は `AgentCatalog::resolve(project, role, over)`: `over` があればそれ (create_task の時点で候補内と検査済み。
-   後で候補から外されても、そのタスクはそのまま使う)、無ければ**起動時点の**実効値の既定。`over` のハーネスが
-   登録簿から消えていたら既定に戻す (警告ログ)。
+   後で候補から外されても、そのタスクはそのまま使う)、無ければ**起動時点の**実効値の既定 (未登録ハーネスの行を除いた `available()` の既定)。
+   `over` のハーネスが登録簿から消えていたら既定に戻す (警告ログ)。
    **Stage 7c-2**: `resolve` は `Resolved { choice, harness, replaced }` を返し、登録簿に無くて飛ばした選択 (タスクの上書き・役割の既定・
    復元するセッションの記録) を `session_started.replaced` に載せる。UI は会話 / エージェント出力に
    「`<harness/model>` is not available (not installed?); started … instead」をエラー行で出し、設定パネルはその役割に

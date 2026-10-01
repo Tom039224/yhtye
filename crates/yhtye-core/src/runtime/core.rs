@@ -420,8 +420,11 @@ impl Core {
             self.known_project(p).await?;
         }
         let agents = &self.inner.agents;
+        // The rows of this scope as the UI shows them (the layer's own, else the
+        // inherited ones), which may include harnesses that are gone since.
+        let existing = agents.effective(project).get(role).clone();
         let settings = settings
-            .map(|s| agents.validate(&s))
+            .map(|s| agents.validate(&s, &existing))
             .transpose()
             .map_err(|e| ApiError::invalid_argument(format!("{}: {e}", role.as_str())))?;
         self.inner

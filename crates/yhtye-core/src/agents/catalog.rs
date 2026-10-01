@@ -506,11 +506,20 @@ impl AgentCatalog {
     }
 
     /// Checks `settings` against the registered harnesses
-    /// ([`RoleSettings::validate`]) and that every choice of a harness that
-    /// [requires a model](HarnessPreset::requires_model) names one.
-    pub fn validate(&self, settings: &RoleSettings) -> Result<RoleSettings, String> {
+    /// ([`RoleSettings::validate_keeping`]) and that every choice of a harness
+    /// that [requires a model](HarnessPreset::requires_model) names one.
+    /// `existing` is what the role has now: its rows of a harness that is not
+    /// registered (any more) may stay, but no such row can be added.
+    pub fn validate(
+        &self,
+        settings: &RoleSettings,
+        existing: &RoleSettings,
+    ) -> Result<RoleSettings, String> {
         let ids = self.harness_ids();
-        let valid = settings.validate(&ids.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let valid = settings.validate_keeping(
+            &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            &existing.candidates,
+        )?;
         if let Some(c) = valid.candidates.iter().find(|c| {
             c.model.is_none() && self.preset(&c.harness).is_some_and(|p| p.requires_model)
         }) {
@@ -521,9 +530,10 @@ impl AgentCatalog {
 
     /// What a new session of `role` in `project` runs: `over` (an allowed
     /// override of the task) if its harness is registered, else the role's
-    /// default in effect now, else the built-in default. A choice that was
-    /// skipped because its harness is not registered (any more) is reported
-    /// in [`Resolved::replaced`]. Fails with [`AgentError::Setup`] when no
+    /// default in effect now as far as the registered harnesses go
+    /// ([`AgentCatalog::available`]: the default the orchestrator is shown). A
+    /// choice that was skipped because its harness is not registered (any
+    /// more) is reported in [`Resolved::replaced`]. Fails with [`AgentError::Setup`] when no
     /// harness is registered, or the choice is of a harness that needs a model
     /// and names none (Codex as the built-in default).
     pub fn resolve(
@@ -578,29 +588,29 @@ impl AgentCatalog {
                 }
             }
         }
-        let default = self.effective(Some(project)).get(role).default.clone();
-        if let Some(harness) = self.launch_config(role, &default) {
-            return Ok(Resolved {
-                choice: default,
-                harness,
-                replaced,
-            });
+        // The default the orchestrator is shown ([`AgentCatalog::available`]),
+        // so a task that names no harness runs what the prompt and `get_status`
+        // call the default.
+        let settings = self.effective(Some(project));
+        let stored = &settings.get(role).default;
+        let default = self.available(settings.get(role)).default;
+        if &default != stored {
+            tracing::warn!(
+                "default harness {} of {} is not registered; using {}",
+                stored.harness,
+                role.as_str(),
+                default.harness
+            );
+            replaced = replaced.or_else(|| Some(stored.clone()));
         }
-        tracing::warn!(
-            "default harness {} of {} is not registered; using the built-in default",
-            default.harness,
-            role.as_str()
-        );
-        let replaced = replaced.or(Some(default));
-        let builtin = self.builtin();
-        self.launch_config(role, &builtin)
+        self.launch_config(role, &default)
             .map(|harness| Resolved {
-                choice: builtin.clone(),
+                choice: default.clone(),
                 harness,
                 replaced,
             })
             .ok_or_else(|| AgentError::Unsupported {
-                requested: format!("harness {}", builtin.harness),
+                requested: format!("harness {}", default.harness),
                 available: self.harness_ids().join(", "),
             })
     }
@@ -857,7 +867,85 @@ mod tests {
                 .is_none()
         );
         let s = RoleSettings::only(AgentChoice::new("other", None));
-        assert!(c.validate(&s).is_err(), "no longer a known harness");
+        let current = RoleSettings::only(AgentChoice::new("devin", None));
+        assert!(
+            c.validate(&s, &current).is_err(),
+            "no longer a known harness"
+        );
+    }
+
+    #[test]
+    fn a_default_that_is_gone_resolves_to_the_default_the_orchestrator_is_shown() {
+        // The built-in default (Claude Code) is not among the rows: the first
+        // row left is both what the prompt calls the default and what runs.
+        let c = catalog();
+        let gone = AgentChoice::new("gone", Some("x"));
+        let other = AgentChoice::new("other", None);
+        let rows = RoleSettings {
+            candidates: vec![gone.clone().into(), other.clone().into()],
+            default: gone.clone(),
+        };
+        c.set(None, AgentRole::Implementer, Some(rows));
+        assert_eq!(c.available_settings(None).implementer.default, other);
+        let r = c
+            .resolve("P", AgentRole::Implementer, None)
+            .expect("the row left");
+        assert_eq!((r.choice, r.harness.command.as_str()), (other, "i"));
+        assert_eq!(r.replaced, Some(gone), "the stored default is reported");
+        // A role without settings still runs the built-in default.
+        let r = c
+            .resolve("P", AgentRole::Reviewer, None)
+            .expect("no settings: the builtin default");
+        assert_eq!(
+            (r.choice.harness.as_str(), r.replaced),
+            ("claude-code", None)
+        );
+    }
+
+    #[test]
+    fn validation_keeps_the_rows_of_a_harness_that_is_gone_but_refuses_new_ones() {
+        let c = catalog();
+        let cc = AgentChoice::new("claude-code", Some("haiku"));
+        let gone = AgentChoice::new("gone", Some("x"));
+        let existing = RoleSettings {
+            candidates: vec![
+                Candidate::from(gone.clone()).with_note("cheap"),
+                cc.clone().into(),
+            ],
+            default: cc.clone(),
+        };
+        // Another row is added and a note is changed; the row of `gone` stays.
+        let edited = RoleSettings {
+            candidates: vec![
+                Candidate::from(gone.clone()).with_note("cheap"),
+                Candidate::from(cc.clone()).with_note("quick edits"),
+                AgentChoice::new("other", None).into(),
+            ],
+            default: cc.clone(),
+        };
+        assert_eq!(c.validate(&edited, &existing), Ok(edited.clone()));
+        assert!(
+            c.validate(&edited, &RoleSettings::only(cc.clone()))
+                .unwrap_err()
+                .contains("unknown harness gone"),
+            "a row that is not already there is new"
+        );
+        // A different row of an unregistered harness is new, kept ones or not.
+        let mut added = edited.clone();
+        added
+            .candidates
+            .push(AgentChoice::new("gone", Some("y")).into());
+        assert!(c.validate(&added, &existing).is_err());
+        // Registered harnesses are still checked for what a row needs.
+        let codex = AgentCatalog::new(
+            vec![HarnessPreset::codex(Some("/c/codex"))],
+            AgentChoice::new("codex", Some("m")),
+        );
+        let no_model = RoleSettings::only(AgentChoice::new("codex", None));
+        assert_eq!(
+            codex.validate(&no_model, &no_model),
+            Err("codex: a model is required".into())
+        );
     }
 
     #[test]
