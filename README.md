@@ -25,7 +25,7 @@ English: [README-EN.md](README-EN.md)
 - 作業ツリーごとの複数のチャット: BRANCHES のツリー (作業ツリーを今のブランチ名で表示) から新しいチャットを作る (ブランチはアプリから作成でき、専用の作業ツリーで動く)。
   チャットは並行して動かせ、過去のチャットも再開できる (グループは作成時に作業ツリーがチェックアウトしていたブランチへマージされ、マージ前にずれていればオーケストレータが対処する)
 - 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
-- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (**実機では未検証**)。
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)。
   実行ファイル (`npx` / `opencode` / `codex` / `devin`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる。
   設定の「ハーネス」タブで検出状態の確認、パスの手動指定、再検出ができる
 - 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
@@ -38,8 +38,9 @@ English: [README-EN.md](README-EN.md)
 - Codex はオーケストレータとして使えない
   ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
 - Codex は OpenRouter 経由でのみ実機確認している
-- Devin (`devin acp`) は偽エージェントでのテストだけで、Devin 本体では試していない。動かなければ、
-  [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 の手動検証チェックリストが手がかりになる
+- Devin (`devin acp`) は無料プラン (SWE-1.6 Slow) の実機で起動・1 ターン・MCP の接続までを確認した。実際のタスクの完了 (`report_step_done`)、
+  未ログイン時、再起動後の復元などは未確認。動かなければ、
+  [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめと手動検証チェックリスト) が手がかりになる
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
 
