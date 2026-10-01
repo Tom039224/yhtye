@@ -1,7 +1,7 @@
 //! Runs `/usage` in a short-lived agent session and caches the result.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Mutex, mpsc};
@@ -94,14 +94,26 @@ async fn reply_text(rx: &mut mpsc::UnboundedReceiver<AgentEvent>) -> Result<Stri
     Err(UsageError::Agent("the event channel closed".into()))
 }
 
+/// What the service probes and the last outcome.
+struct State {
+    harness: Option<HarnessConfig>,
+    /// Bumped when `harness` changes: a probe that started under an older
+    /// number ran the old command, so its report is not kept.
+    generation: u64,
+    /// The last outcome (a failure too, so waiting callers do not each start
+    /// another agent).
+    last: Option<(std::time::Instant, Result<UsageReport, UsageError>)>,
+}
+
 /// Single-flight, cached access to [`probe_usage`] for the API.
 pub struct UsageService {
-    harness: Option<HarnessConfig>,
     cwd: PathBuf,
     secrets: Arc<Secrets>,
-    /// The last outcome (a failure too, so waiting callers do not each start
-    /// another agent). Held while probing, so concurrent callers share one probe.
-    last: Mutex<Option<(std::time::Instant, Result<UsageReport, UsageError>)>>,
+    /// Never held across an await, so [`UsageService::set_harness`] does not
+    /// wait for a probe.
+    state: StdMutex<State>,
+    /// Held while probing, so concurrent callers share one probe.
+    probing: Mutex<()>,
     /// Fired by [`UsageService::close`]: a running probe stops its agent.
     cancel: CancellationToken,
 }
@@ -113,10 +125,14 @@ impl UsageService {
     #[must_use]
     pub fn new(harness: Option<HarnessConfig>, cwd: PathBuf) -> Self {
         Self {
-            harness,
             cwd,
             secrets: Arc::new(Secrets::none()),
-            last: Mutex::new(None),
+            state: StdMutex::new(State {
+                harness,
+                generation: 0,
+                last: None,
+            }),
+            probing: Mutex::new(()),
             cancel: CancellationToken::new(),
         }
     }
@@ -128,39 +144,64 @@ impl UsageService {
         self
     }
 
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Probes `harness` from now on (the executable it runs was found at
+    /// another path) and forgets the last outcome. Nothing changes when it is
+    /// the harness already probed. A probe that is running meanwhile is not
+    /// waited for, and what it reads is not kept.
+    pub fn set_harness(&self, harness: HarnessConfig) {
+        let mut state = self.state();
+        if state.harness.as_ref() == Some(&harness) {
+            return;
+        }
+        state.harness = Some(harness);
+        state.generation += 1;
+        state.last = None;
+    }
+
     /// Stops a running probe (its agent is shut down) and refuses new ones.
     /// Waits until no probe is running.
     pub async fn close(&self) {
         self.cancel.cancel();
-        drop(self.last.lock().await);
+        drop(self.probing.lock().await);
     }
 
     /// The latest usage: the cached report if fresh enough, otherwise a new probe.
     pub async fn get(&self, refresh: bool) -> Result<UsageReport, UsageError> {
-        let harness = self.harness.as_ref().ok_or(UsageError::NotConfigured)?;
-        let mut last = self.last.lock().await;
+        let _probing = self.probing.lock().await;
         if self.cancel.is_cancelled() {
             return Err(UsageError::Closed);
         }
-        if let Some((at, outcome)) = last.as_ref() {
-            // Failures are retried after MIN_REFRESH, reports kept for FRESH_FOR.
-            let max_age = if refresh || outcome.is_err() {
-                MIN_REFRESH
-            } else {
-                FRESH_FOR
-            };
-            if at.elapsed() < max_age {
-                return outcome.clone();
+        let (harness, generation) = {
+            let state = self.state();
+            let harness = state.harness.clone().ok_or(UsageError::NotConfigured)?;
+            if let Some((at, outcome)) = state.last.as_ref() {
+                // Failures are retried after MIN_REFRESH, reports kept for FRESH_FOR.
+                let max_age = if refresh || outcome.is_err() {
+                    MIN_REFRESH
+                } else {
+                    FRESH_FOR
+                };
+                if at.elapsed() < max_age {
+                    return outcome.clone();
+                }
             }
-        }
+            (harness, state.generation)
+        };
         let outcome = match std::fs::create_dir_all(&self.cwd) {
-            Ok(()) => probe_until(harness, &self.cwd, &self.secrets, &self.cancel).await,
+            Ok(()) => probe_until(&harness, &self.cwd, &self.secrets, &self.cancel).await,
             Err(e) => Err(UsageError::Start(format!(
                 "could not create {}: {e}",
                 self.cwd.display()
             ))),
         };
-        *last = Some((std::time::Instant::now(), outcome.clone()));
+        let mut state = self.state();
+        if state.generation == generation {
+            state.last = Some((std::time::Instant::now(), outcome.clone()));
+        }
         outcome
     }
 }

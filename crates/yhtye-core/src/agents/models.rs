@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -255,6 +255,25 @@ pub async fn probe_efforts(
 type Cached = (Instant, Result<HarnessModels, String>);
 type CachedEfforts = (Instant, Result<Vec<EffortOption>, String>);
 
+/// What was read from the harnesses. Never held across an await, so
+/// [`ModelService::invalidate`] does not wait for a probe.
+#[derive(Default)]
+struct Cache {
+    models: HashMap<String, Cached>,
+    /// Efforts read for one model on demand, by `(harness, model)`.
+    efforts: HashMap<(String, String), CachedEfforts>,
+    /// Per harness, bumped by `invalidate`: a probe that started under an older
+    /// number read from an executable that is no longer the harness's, so its
+    /// result is not kept.
+    generations: HashMap<String, u64>,
+}
+
+impl Cache {
+    fn generation(&self, harness: &str) -> u64 {
+        self.generations.get(harness).copied().unwrap_or(0)
+    }
+}
+
 /// Cached, one-at-a-time access to [`probe_models`] for the API.
 pub struct ModelService {
     cwd: PathBuf,
@@ -263,10 +282,11 @@ pub struct ModelService {
     env: EnvLookup,
     /// Where the OpenRouter model list is downloaded from.
     openrouter_url: String,
-    /// Held while probing, so concurrent callers share the result.
-    cache: Mutex<HashMap<String, Cached>>,
-    /// Efforts read for one model on demand, by `(harness, model)`.
-    efforts: Mutex<HashMap<(String, String), CachedEfforts>>,
+    cache: StdMutex<Cache>,
+    /// Held while probing the models, so concurrent callers share the result.
+    models_probe: Mutex<()>,
+    /// Held while probing the efforts of a model.
+    efforts_probe: Mutex<()>,
     cancel: CancellationToken,
 }
 
@@ -279,8 +299,9 @@ impl ModelService {
             secrets,
             env: Arc::new(|k| std::env::var_os(k)),
             openrouter_url: OPENROUTER_MODELS_URL.to_string(),
-            cache: Mutex::new(HashMap::new()),
-            efforts: Mutex::new(HashMap::new()),
+            cache: StdMutex::new(Cache::default()),
+            models_probe: Mutex::new(()),
+            efforts_probe: Mutex::new(()),
             cancel: CancellationToken::new(),
         }
     }
@@ -327,18 +348,26 @@ impl ModelService {
         })
     }
 
+    fn cache(&self) -> MutexGuard<'_, Cache> {
+        self.cache.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Stops a running probe and refuses new ones; waits until none runs.
     pub async fn close(&self) {
         self.cancel.cancel();
-        drop(self.cache.lock().await);
-        drop(self.efforts.lock().await);
+        drop(self.models_probe.lock().await);
+        drop(self.efforts_probe.lock().await);
     }
 
     /// Forgets what was read from `harness` (its models and the efforts of its
-    /// models), so the next request asks it again: its executable changed.
-    pub async fn invalidate(&self, harness: &str) {
-        self.cache.lock().await.remove(harness);
-        self.efforts.lock().await.retain(|(h, _), _| h != harness);
+    /// models), so the next request asks it again: its executable changed. A
+    /// probe that is running meanwhile is not waited for, and what it reads is
+    /// not kept.
+    pub fn invalidate(&self, harness: &str) {
+        let mut cache = self.cache();
+        *cache.generations.entry(harness.to_string()).or_insert(0) += 1;
+        cache.models.remove(harness);
+        cache.efforts.retain(|(h, _), _| h != harness);
     }
 
     /// The models of `preset`: cached if fresh enough, otherwise probed.
@@ -347,25 +376,34 @@ impl ModelService {
         preset: &HarnessPreset,
         refresh: bool,
     ) -> Result<HarnessModels, String> {
-        let mut cache = self.cache.lock().await;
+        let _probing = self.models_probe.lock().await;
         if self.cancel.is_cancelled() {
             return Err("Yhtye is shutting down".into());
         }
-        if let Some((at, outcome)) = cache.get(&preset.id) {
-            let max_age = if refresh || outcome.is_err() {
-                MIN_REFRESH
-            } else {
-                FRESH_FOR
-            };
-            if at.elapsed() < max_age {
-                return outcome.clone();
+        let generation = {
+            let cache = self.cache();
+            if let Some((at, outcome)) = cache.models.get(&preset.id) {
+                let max_age = if refresh || outcome.is_err() {
+                    MIN_REFRESH
+                } else {
+                    FRESH_FOR
+                };
+                if at.elapsed() < max_age {
+                    return outcome.clone();
+                }
             }
-        }
+            cache.generation(&preset.id)
+        };
         let outcome = match std::fs::create_dir_all(&self.cwd) {
             Ok(()) => self.load(preset).await,
             Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
         };
-        cache.insert(preset.id.clone(), (Instant::now(), outcome.clone()));
+        let mut cache = self.cache();
+        if cache.generation(&preset.id) == generation {
+            cache
+                .models
+                .insert(preset.id.clone(), (Instant::now(), outcome.clone()));
+        }
         outcome
     }
 }
@@ -389,36 +427,48 @@ impl ModelService {
                 .and_then(|m| m.efforts)
                 .unwrap_or_default());
         }
-        if let Some((at, Ok(listed))) = self.cache.lock().await.get(&preset.id)
-            && at.elapsed() < FRESH_FOR
-            && let Some(e) = listed
-                .models
-                .iter()
-                .find(|m| m.value == model)
-                .and_then(|m| m.efforts.clone())
-        {
-            return Ok(e);
+        let listed = self
+            .cache()
+            .models
+            .get(&preset.id)
+            .and_then(|(at, outcome)| {
+                let listed = outcome.as_ref().ok().filter(|_| at.elapsed() < FRESH_FOR)?;
+                listed
+                    .models
+                    .iter()
+                    .find(|m| m.value == model)
+                    .and_then(|m| m.efforts.clone())
+            });
+        if let Some(efforts) = listed {
+            return Ok(efforts);
         }
-        let mut cache = self.efforts.lock().await;
+        let _probing = self.efforts_probe.lock().await;
         if self.cancel.is_cancelled() {
             return Err("Yhtye is shutting down".into());
         }
         let key = (preset.id.clone(), model.to_string());
-        if let Some((at, outcome)) = cache.get(&key) {
-            let max_age = if outcome.is_err() {
-                MIN_REFRESH
-            } else {
-                FRESH_FOR
-            };
-            if at.elapsed() < max_age {
-                return outcome.clone();
+        let generation = {
+            let cache = self.cache();
+            if let Some((at, outcome)) = cache.efforts.get(&key) {
+                let max_age = if outcome.is_err() {
+                    MIN_REFRESH
+                } else {
+                    FRESH_FOR
+                };
+                if at.elapsed() < max_age {
+                    return outcome.clone();
+                }
             }
-        }
+            cache.generation(&preset.id)
+        };
         let outcome = match std::fs::create_dir_all(&self.cwd) {
             Ok(()) => probe_efforts(&self.secrets, preset, model, &self.cwd, &self.cancel).await,
             Err(e) => Err(format!("could not create {}: {e}", self.cwd.display())),
         };
-        cache.insert(key, (Instant::now(), outcome.clone()));
+        let mut cache = self.cache();
+        if cache.generation(&preset.id) == generation {
+            cache.efforts.insert(key, (Instant::now(), outcome.clone()));
+        }
         outcome
     }
 }
