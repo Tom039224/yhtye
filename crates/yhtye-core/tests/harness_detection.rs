@@ -186,6 +186,61 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     core.shutdown().await;
 }
 
+/// The rows of a harness that is gone stay in the settings panel; saving the
+/// rows around them must not fail, while a new row of an unknown harness does.
+#[tokio::test]
+async fn rows_of_an_uninstalled_harness_do_not_block_editing_the_others() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("opencode");
+    bin.install("devin");
+    let core = Core::start(config(&r, &bin)).await.expect("core");
+    let set = |rows: &RoleSettings| {
+        core.command(ApiCommand::SetAgentSettings {
+            project: None,
+            role: AgentRole::Implementer,
+            settings: Some(rows.clone()),
+        })
+    };
+    let gone = AgentChoice::new("opencode", Some("x"));
+    let devin = AgentChoice::new("devin", None);
+    let rows = RoleSettings {
+        candidates: vec![
+            Candidate::from(gone.clone()).with_note("cheap"),
+            Candidate::from(devin.clone()),
+        ],
+        default: devin.clone(),
+    };
+    set(&rows).await.expect("both are installed");
+    bin.uninstall("opencode");
+    assert_eq!(installed(&detect(&core).await), ["devin"]);
+
+    // A note changes and a row is added; the row of OpenCode is sent back as is.
+    let edited = RoleSettings {
+        candidates: vec![
+            Candidate::from(gone.clone()).with_note("cheap"),
+            Candidate::from(devin.clone()).with_note("careful"),
+            Candidate::from(devin.clone().with_effort("high")),
+        ],
+        default: devin.clone(),
+    };
+    set(&edited).await.expect("the stored row is not new");
+    assert_eq!(settings_view(&core).await.effective.implementer, edited);
+
+    // Another model of the missing harness is a new row.
+    let mut added = edited.clone();
+    added
+        .candidates
+        .push(AgentChoice::new("opencode", Some("y")).into());
+    let e = set(&added)
+        .await
+        .expect_err("a new row of an unknown harness");
+    assert_eq!(e.code, ApiErrorCode::InvalidArgument, "{e}");
+    assert!(e.message.contains("unknown harness opencode"), "{e}");
+    assert_eq!(settings_view(&core).await.effective.implementer, edited);
+    core.shutdown().await;
+}
+
 #[tokio::test]
 async fn the_harnesses_are_found_again_when_asked() {
     let r = TempRepo::new();
