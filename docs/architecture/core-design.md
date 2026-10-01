@@ -757,8 +757,10 @@ pub struct AgentSettingsLayer { orchestrator, implementer, investigator, reviewe
   (候補と既定は一緒に上書き・継承する)。
 - **検査** (`RoleSettings::validate`): 候補が 1 つ以上・既定が候補のどれかと (ハーネス × モデル × effort で) 完全一致・
   ハーネスが登録簿にある・モデル / effort が空文字でない・用途メモは 400 文字まで。同じ組 (ハーネス × モデル × effort) の行は
-  最初のものを残して取り除く。モデル名・effort の値は検査しない (一覧は遅れて取るため。UI は一覧にあるものだけを選ばせる。
-  実際にそのモデルが effort を持たなければ**セッション起動が失敗する** (§15.4))。
+  最初のものを残して取り除く。モデル名は検査しない (一覧は遅れて取るため。UI は一覧にあるものだけを選ばせる)。
+  effort は、保存 (`SetAgentSettings`) のときに**新しい行**だけを読み取り済みの effort 一覧と照合する (`RoleSettings::check_efforts`、T-21): 一覧に無い値・
+  effort の無いモデル (一覧が空。Devin の無料プランなど) の effort・モデル未指定の行の effort は拒否する。一覧をまだ読んでいなければ受け付け、
+  そのモデルが effort を持たなければ**セッション起動が失敗する** (§15.4)。保存済みの行は照合しない (ハーネスが消えた行と同じ扱い)。
 - **上書きの選び方** (`RoleSettings::pick(harness?, model?, effort?)`): すべて省略なら既定。指定があれば一致する行
   (省略したものは任意) を探す: 0 行 → `PickError::NoMatch` (全行を返す)。1 行 → それ。複数行で、すべて同じハーネス × モデルで
   effort が省略されている → `PickError::NeedsEffort` (その行を返し、effort の指定を求める)。それ以外の複数行 →

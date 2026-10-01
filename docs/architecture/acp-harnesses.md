@@ -29,7 +29,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | Claude Code | **採用** (`@agentclientprotocol/claude-agent-acp` 経由、§4) |
 | OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` が見つかれば全役割で選べる (7c-2、§7.6) |
 | Codex | **採用 (Stage 7e)** — `@agentclientprotocol/codex-acp` 2.0.0 (npx、Codex 本体はユーザーの `codex`)、§9。`codex` と `npx` が見つかれば全役割で選べる。調査: [`research/codex-acp.md`](research/codex-acp.md) |
-| Devin | **実装済み・実機未検証 (T-5〜T-10)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。テストは偽エージェントだけで、Devin 本体では一度も動かしていない。手動検証チェックリストは §10.9 |
+| Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続を確認 (§10.0)。実際の `report_step_done`、未ログイン時、`session/load`、cancel は未確認 (§10.9) |
 | Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -557,12 +557,12 @@ Yhtye はこれを「エージェントがエラーを喋った」と「作業�
 MCP ツールスキーマの `$defs` / `$ref` が解決されずモデルに崩れたスキーマが渡る (`steps` を `{"item": …}` や文字列で送る)。
 Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude のため当面放置 (ユーザー決定、2026-09-29)。
 
-## 10. Devin: `devin acp` (T-5〜T-10、**未検証**)
+## 10. Devin: `devin acp` (T-5〜T-10、T-21 で**基本動作を実機確認**、一部未検証)
 
-> **これは実機で確認していない。** Devin (Cognition の Devin CLI) を動かせる環境が無く、実装は**偽エージェントを Devin 風に振る舞わせたテスト**
-> (`tests/acp_fake_devin.rs`) と単体テストだけで確認している。以下のラベル: **[文書]** = 公式ドキュメント・レジストリ、**[他実装]** = 他の ACP クライアント
-> (acpx、RepoPrompt) の実装・PR から読み取れること、**[Yhtye]** = このリポジトリの実装。**[実測]** は 1 つも無い。実機で確かめたら、この節に [実測] として書き足す。
-> Devin を持つ人向けの検証手順は §10.9。
+> 実装は偽エージェントを Devin 風に振る舞わせたテスト (`tests/acp_fake_devin.rs`) と単体テストで作り、T-21 で **devin 3000.11.3 (9c803229faa4)・無料プラン
+> (使えるモデルは SWE-1.6 Slow だけ)** の実機で確かめた (2026-10-01、プロンプト 2 回)。結果は §10.0 にまとめ、各項目にも書き足した。以下のラベル: **[文書]** = 公式ドキュメント・レジストリ、
+> **[他実装]** = 他の ACP クライアント (acpx、RepoPrompt) の実装・PR から読み取れること、**[Yhtye]** = このリポジトリの実装、**[実測]** = T-21 で実機で見たこと。
+> 実機を呼ぶテストはリポジトリに置いていない (無料プランの枠が小さいため。確認は一時的なスクリプトで行った)。未確認の項目は §10.9。
 
 一次情報:
 
@@ -574,22 +574,50 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
 - acpx: [`agents/Devin.md`](https://github.com/openclaw/acpx/blob/main/agents/Devin.md)、[PR #560](https://github.com/openclaw/acpx/pull/560) (組み込みエージェントとして追加)
 - RepoPrompt: [PR #1029](https://github.com/repoprompt/repoprompt-ce/pull/1029) (権限モードと選択肢の除外)、[PR #1057](https://github.com/repoprompt/repoprompt-ce/pull/1057) (権限レベルとモデルごとの推論 effort)
 
+### 10.0 実測のまとめ (T-21、devin 3000.11.3、無料プラン)
+
+すべて **[実測]**。Yhtye の実際の起動経路 (`HarnessPreset::devin(..).config(Implementer, Some("swe-1-6-slow"), None)`、Yhtye の `McpHost` の HTTP MCP を渡す) と、
+`devin acp` に直接 JSON-RPC を送るスクリプトの両方で見た。
+
+| 項目 | 結果 |
+|---|---|
+| 検出 | `~/.local/bin/devin` が `PATH` から見つかる (`PATH` から外すと既知の場所 `KnownDir` として見つかる) |
+| `initialize` | `clientInfo` は **`yhtye` のままで通る** (上書き不要、§10.4)。`agentInfo` = `affogato` / "Devin Agent" / `0.0.0-dev`。`authMethods` = `[{id: "devin-browser"}]` だが、ログイン済みなら `authenticate` 無しで使える |
+| `agentCapabilities` | `loadSession: true`、`mcpCapabilities {http: true, sse: true}`、`promptCapabilities {image: true, audio: false, embeddedContext: true}`、`sessionCapabilities {list, delete, additionalDirectories}`、`_meta` に多数の `cognition.ai/*`。応答の `_meta.mcpConfigPath` = `~/.config/devin/mcp_config.json` |
+| モード | `session/new` 直後は `accept-edits`。一覧は `accept-edits` (Code) / `smart` / `ask` / `plan` / **`bypass`** ("Bypass Permissions")。`session/set_mode bypass` が通り、`current_mode` が `bypass` になる |
+| config options | `mode` (category `mode`) と **`model`** (id `model`・category `model`・select) の 2 つだけ。モデルの値は **`swe-1-6-slow`** ("SWE-1.6 Slow") の 1 つ (このプラン)。**`thought_level` (effort) の option は無い** |
+| モデル一覧 (`ModelService`) | 約 0.35 秒で `swe-1-6-slow` (effort 一覧は空 `Some([])`)、current = `swe-1-6-slow`。プロンプトを送らないプローブのセッションは Devin のセッション DB に残らない |
+| 起動 → 1 ターン | 起動 約 0.2 秒、`bypass` と `model = swe-1-6-slow` が `Ready` に反映。極小プロンプトが `EndTurn` まで 3.7 秒 (入力 約 14k トークン) |
+| HTTP MCP | `session/new` の HTTP MCP (`yhtye`) は受け付けられる。接続は**遅延** (最初に使うとき)。Devin は MCP のツールを自分のツールとして並べず、**メタツール `mcp_list_tools` (と呼び出し用のメタツール) 経由**で使う。`mcp_list_tools {server_name: "yhtye"}` で Yhtye の MCP につながり、`report_step_done`・`help` が見えた (§10.7) |
+| 許可要求 | `bypass` では MCP のツール呼び出し (`mcp_list_tools`) でも `session/request_permission` は来なかった |
+| ベンダー拡張 | `_cognition.ai/request_diagnostics` は**送られてこない** (Devin のログ上、クライアント能力 `request_diagnostics=false`)。通知 `_cognition.ai/mcp/serversChanged`・`_cognition.ai/output`・`_cognition.ai/thinking_complete`・`_cognition.ai/turn_stats`・`_cognition.ai/agent_stopped` が来るが、Yhtye は無視して問題ない |
+| ユーザーの MCP 設定 | Devin は `~/.config/devin/mcp_config.json` のサーバーも (Yhtye の MCP と並べて) つなぐ。ユーザーの設定を残す方針は他のハーネスと同じ |
+| 後始末 | 終了後に `devin acp` のプロセスは残らない |
+
+T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに Devin 専用の注記 (`DEVIN_MCP_NOTE`、MCP ツールはメタツールで一覧・呼び出しする) を付ける (§10.7)、
+継承した `RUST_LOG` を Devin の環境から除く (Yhtye 用の `RUST_LOG` で Devin 自身のログ `~/.local/share/devin/cli/logs` が空になっていた)、
+読み取り済みの effort 一覧に無い effort (effort の無いモデルの effort を含む) を設定の保存時に拒否する (§10.3)。
+
 ### 10.1 起動と認証 (`HarnessConfig::devin` / `HarnessPreset::devin`)
 
 - **起動**: `devin acp` (stdio の ACP サーバー) **[文書]**。Yhtye は検出で見つけた `devin` の絶対パスを `command` にし、引数は `acp` だけ **[Yhtye]**。
-  `npx` は要らない。起動のタイムアウトは他と同じ 120 秒。環境の追加・削除は無い (ユーザーの環境を継承)。
+  `npx` は要らない。起動のタイムアウトは他と同じ 120 秒。環境の追加は無く、継承した `RUST_LOG` だけを除く (Devin も `tracing` でログを出すので、
+  Yhtye 用の値が Devin 自身のログを空にする。**[実測]** で空になっていた)。ほかはユーザーの環境を継承する。
 - **認証**: `devin auth login` (`devin auth status` / `logout` もある) で保存した認証情報を使う **[文書]**。環境変数 **`WINDSURF_API_KEY`** が設定されていると
   「ACP サーバーの認証情報として、保存済みの認証情報より優先」される **[文書]**。Yhtye の**秘密の環境変数** (§9.5、`core-design.md` §16) に `WINDSURF_API_KEY` を
   登録すれば、起動するエージェントの環境に渡る (ただし**すべてのエージェント**に渡る)。
 - **未認証のとき**: acpx の PR #560 は、未認証の `devin acp` がセッションを作りプロンプトを受けて "login-required" の ACP エラーを返したと書いている **[他実装]**。
   エラーが `session/new` で返るのか `session/prompt` で返るのかは、この記述だけでは分からない (→ §10.9)。
   Yhtye は ACP の `authenticate` を呼ばない (Devin の `authMethods` を使わない) **[Yhtye]**: 保存済みの認証情報か `WINDSURF_API_KEY` が前提。
+  ログイン済み (`devin auth login`) なら `authMethods` (`devin-browser`) があっても `authenticate` 無しで `session/new` から最初のターンまで通る **[実測]**。
+  未ログインのときのエラーの出方は**未確認** (ログアウトが要るため試していない)。
   `session/new` の失敗なら「agent startup failed at `session/new`: Authentication required …」として起動エラーになる (偽エージェントで確認、`an_authentication_error_reads_as_a_startup_error`)。
   `session/prompt` の失敗なら `agent request `session/prompt` failed: …` のターンのエラーになる。
 
 ### 10.2 モード: `session/set_mode bypass`
 
 - Devin が出すモードは `accept-edits` / `smart` / `ask` / `plan` / `bypass` (RepoPrompt PR #1029 が「Devin advertises modes」として挙げている) **[他実装]**。
+  実機でもこの 5 つ (`session/new` 直後は `accept-edits`)。`set_mode bypass` が通り、現在のモードが `bypass` になる **[実測]**。
 - Yhtye は全役割を **`bypass`** (権限確認なし) で動かし、`session/new` / `session/load` の後に **`session/set_mode {modeId: "bypass"}`** を送る **[Yhtye]**
   (`DEVIN_BYPASS_MODE`。他のハーネスと同じ、Claude Code の `bypassPermissions`・OpenCode の `build`・Codex の `agent-full-access` 相当)。
   応答の `modes.availableModes` に `bypass` が無ければ、起動を失敗させる (`Unsupported`、利用できるモード名を並べたメッセージ)。
@@ -603,16 +631,19 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
 
 - **モデル**: 「Devin の ACP のモデル設定オプション (advertised ACP model config option)」で選ぶ (acpx の `--model`) **[他実装]**。Yhtye は Claude Code と同じ形で扱う:
   `HarnessPreset::devin` は `requires_model = false` (選ばなければ Devin の既定モデル)、モデル一覧は `session/new` の `configOptions` (プローブのセッション、プロンプトなし、§8 と同じ)、
-  選んだモデルは `session/set_config_option` で `model` に設定して「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。オプションの id が `model` かどうかは**未確認**
-  (Yhtye は `category: model` の select、無ければ id `model` の select を探す)。
+  選んだモデルは `session/set_config_option` で `model` に設定して「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。オプションは id `model`・category `model` の select で、
+  無料プランの値は `swe-1-6-slow` だけ。設定と検証が通る **[実測]**。
 - **effort**: Devin はモデルごとの推論の強さ (reasoning effort) を持つ (RepoPrompt PR #1057) **[他実装]**。ACP では config option (category `thought_level`) として出ると想定しているが、
-  option の id や category は**確認できていない**。`effort` と同じとは限らないので、Yhtye は effort を設定するとき (起動手順・effort 一覧の読み取りとも) **`effort_option`** で option を探す **[Yhtye]**: id が `effort` の select があればそれ、無ければ
+  **無料プラン (SWE-1.6 Slow) には `thought_level` の option が無い** (effort 一覧は空) **[実測]**。有料プランのモデルで出るか、その id・category は**未確認**。`effort` と同じとは限らないので、Yhtye は effort を設定するとき (起動手順・effort 一覧の読み取りとも) **`effort_option`** で option を探す **[Yhtye]**: id が `effort` の select があればそれ、無ければ
   `category: thought_level` の select が**ちょうど 1 つ**のときそれ (複数あるときは推測しない)。見つからなければ id `effort` のまま送って Devin に拒否させ、起動が見える形で失敗する。
   偽エージェントで「id `reasoning`・category `thought_level` の option に `effort` の値が設定できる」ことを確認 (`effort_is_set_on_the_thought_level_option_whatever_its_id`)。
   モデルごとに effort の選択肢が変わるか、`default` のような「指定なし」の行があるかは**未確認** (Claude Code のように先頭の `default` を除く処理が Devin にも当たる)。
 - 順序は §8 と同じ (モデル → effort)。
+- effort の無いモデル (一覧が空) に effort を付けた行は、UI では選べず (effort の欄が無効)、設定の保存でも拒否する **[Yhtye]** (T-21): 新しい行の effort を
+  `ModelService` が読み取り済みの一覧と照合する (`RoleSettings::check_efforts`)。一覧がまだ無ければ受け付ける (起動時に Devin が拒否して見える形で失敗する)。
+  モデル未指定 (ハーネスの既定) の行の effort も拒否する。保存済みの行はそのまま残せる。
 
-### 10.4 `clientInfo` (未解決)
+### 10.4 `clientInfo` (`yhtye` で通る、[実測])
 
 - **既定は正直に `yhtye`** を名乗る (`initialize` の `clientInfo`)。他社製品の名前を無断で名乗らない。バージョンは Yhtye の crate のもの **[Yhtye]**。
 - **acpx は `windsurf` を名乗っている**: 「`clientInfo.name` は互換のため `windsurf` のまま」、バージョンは既定 `1.110.1` (環境変数 `ACPX_DEVIN_WINDSURF_VERSION` で変えられる)、
@@ -622,6 +653,8 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
   試すには `HarnessConfig::devin` (`acp/config.rs`) の `client_info` に `Some(ClientInfoOverride { name: "windsurf".into(), version: "1.110.1".into() })` を入れて再ビルドする。
   偽エージェントで「既定は `yhtye`、上書きするとその名前が `initialize` に載る」を確認 (`the_client_introduces_itself_as_yhtye_unless_overridden`)。
   名前を偽ることの是非は、`yhtye` で通らないと分かってから決める (ユーザー判断)。
+- **[実測] `yhtye` のままで通る**: `initialize` → `session/new` (HTTP MCP 付き) → `set_mode` → `set_config_option` → プロンプト → `EndTurn` まで問題なし。上書きは要らない
+  (受け口は残す)。他社名に変えた試行はしていない。
 
 ### 10.5 ベンダー拡張 `_cognition.ai/request_diagnostics`
 
@@ -629,8 +662,9 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
   (`_cognition.ai/…`) は method-not-found にせず受け付ける。クライアントの能力として `_meta["cognition.ai/requestDiagnostics"] = true` も送る **[他実装]**。
 - Yhtye は `_cognition.ai/request_diagnostics` に **`{}`** で応答する (`acp/session.rs`、報告する診断が無い) **[Yhtye]**。それ以外の未知のリクエストは接続層が返す
   method-not-found、未知の通知は無視する。偽エージェントで「応答後もセッションが続く」ことを確認 (`diagnostics_requests_are_answered_with_an_empty_object_and_the_session_goes_on`)。
-- Yhtye は `_meta["cognition.ai/requestDiagnostics"]` を**送らない** (`ClientCapabilities::default()`)。そのため Devin が診断を求めてこないかもしれない (問題ではない)。
-  逆に、送らないと困るなら (Devin が応答を待って止まる、など) 追加を検討する (→ §10.9)。
+- Yhtye は `_meta["cognition.ai/requestDiagnostics"]` を**送らない** (`ClientCapabilities::default()`)。
+- **[実測]** `request_diagnostics` は送られてこない (Devin のログ上もクライアント能力 `request_diagnostics=false`)。送らなくても止まらない。応答の受け口はそのまま残す。
+  `_cognition.ai/*` の通知 (`mcp/serversChanged`、`output`、`thinking_complete`、`turn_stats`、`agent_stopped`) は無視して問題ない。
 
 ### 10.6 許可の自動応答: `PermissionPolicy::OnceOnly`
 
@@ -641,26 +675,40 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
   無ければ `Cancelled`。位置ではなく kind で選ぶ点は他と同じ。偽エージェントで確認 (`permissions_never_pick_mode_switches_plans_or_standing_grants`)。
   RepoPrompt が除く `*_global` は id では見ない (kind が `allow_once` のものだけを選ぶので、通常は同じ結果。`allow_once` の kind で `_global` の id が来たら選んでしまう)。
 - 他のハーネス (Claude Code・OpenCode・Codex) は従来の方針のまま (`PermissionPolicy::Default`)。
+- **[実測]** `bypass` では、MCP のツール呼び出し (`mcp_list_tools`) を含めて `session/request_permission` は来なかった。ファイル作成・シェル実行では試していない。
 
-### 10.7 MCP (HTTP) — 対応が不明で、最初の失敗点になりうる
+### 10.7 MCP (HTTP) — 接続は通る。ツールはメタツール経由
 
 - Yhtye のオーケストレーションは、Yhtye がホストする **HTTP の MCP サーバー**をエージェントの `session/new` (`mcpServers` の `Http`) に渡し、エージェントがそのツール
   (`report_step_done` など) を呼ぶことで進む ([`mcp-tools.md`](mcp-tools.md))。これが通らないと Devin は**タスクを報告できない** (実装者は報告なしのターン、オーケストレータは `create_group` を呼べない)。
 - Devin が `initialize` で `mcpCapabilities.http` を出すか、`session/new` の HTTP MCP を使えるかは、調べた範囲の文書・PR のどれにも書かれていない (**不明**)。Yhtye は能力を見ずに HTTP のサーバーを渡す
   (Claude Code の `mcpCapabilities {http, sse}`、OpenCode の `{http: true, sse: false}` と違い、確かめていない) **[Yhtye]**。
-- 対応していなければ、stdio の MCP (Yhtye の MCP サーバーへつなぐブリッジ) を渡す設計変更が要る。Devin が実機で最初に失敗する場所はここか、認証か、`clientInfo` (§10.4) のどれかだと見ている。
+- **[実測]** `mcpCapabilities` は `{http: true, sse: true}`。`session/new` の HTTP MCP はそのまま受け付けられ、stdio のブリッジは要らない。接続は遅延で、最初に使うときに
+  つながる (トークン付きの URL・状態なし・JSON 応答の Yhtye の MCP で問題なし)。
+- **[実測] Devin は MCP のツールを自分のツールとして並べない**。モデルにはサーバー名 (`yhtye`) だけが見えていて、ツールはメタツール **`mcp_list_tools`** (`{server_name}`) で
+  一覧し、別のメタツールで呼ぶ。`mcp_list_tools {server_name: "yhtye"}` で `report_step_done`・`help` (実装者の道具) が見えた。役割プロンプトの
+  `mcp__yhtye__report_step_done` という名前は Devin には無いので、Yhtye は役割プロンプトの後ろに注記 `DEVIN_MCP_NOTE`
+  (`HarnessConfig::system_prompt_note`) を付ける **[Yhtye]**: 「Yhtye のツールは MCP サーバー `yhtye` にある、MCP の一覧ツールで一覧し、MCP の呼び出しツールで呼ぶ、
+  `mcp__yhtye__xxx` は `yhtye` の `xxx`」。全役割 (オーケストレータも) に付き、Devin 以外には付かない。
+- 実際に `report_step_done` を呼んでタスクが完了まで進むかは**未確認** (プロンプト枠を節約したため、§10.9)。
+- Devin はユーザーの `~/.config/devin/mcp_config.json` のサーバーも並べてつなぐ **[実測]** (つながらないサーバーは警告をログに出すだけ)。
 
 ### 10.8 検出と UI
 
 - 検出は `devin` の実行ファイルを `PATH` → 既知の場所の順に探すだけ (実行はしない)。手動パス・再検出は設定 › ハーネス ([`core-design.md`](core-design.md) §15.2)。
 - 組み込みの既定の順は claude-code > opencode > **devin** > codex (Devin は、モデルの指定が要る Codex より先。モデルは未指定で Devin の既定)。
-- システムプロンプト (役割の指示) は `SystemPromptStyle::FirstPrompt`: 最初のプロンプトの前にテキストとして付ける **[Yhtye]**。Devin が `_meta` の system prompt を受け付けるかは調べていない。
-  `session/load` で復元したセッションには付けない (履歴に残る前提)。Devin が `loadSession` を出すか、履歴を再生するかは**未確認**。出さなければ Yhtye は新しいセッションで始める。
+- システムプロンプト (役割の指示) は `SystemPromptStyle::FirstPrompt`: 最初のプロンプトの前にテキストとして付ける (後ろに §10.7 の注記) **[Yhtye]**。Devin が `_meta` の system prompt を受け付けるかは調べていない。
+  `session/load` で復元したセッションには付けない (履歴に残る前提)。Devin は `loadSession: true` を出す **[実測]** が、`session/load` で履歴を再生するか・復元が通るかは**未確認**。
 
 ### 10.9 手動検証チェックリスト (Devin を持つ人向け)
 
 前提: `devin auth login` 済みで、Yhtye の設定 › ハーネスで Devin が「インストール済み」。設定 › エージェント で Devin の行を implementer などに足して、小さなタスクを流す。
 結果 (成否・観察・Devin のバージョン `devin --version`) を、この節に **[実測]** として書き足す。
+
+**T-21 の状況** (devin 3000.11.3、無料プラン): **済** = 1 (起動・`initialize`)、3 (`bypass`。許可要求は MCP のメタツールでは来ない。ファイル作成・シェルは未)、
+4 (`model` / `swe-1-6-slow`、effort の option は無い)、5 (`yhtye` で通る)、6 (`request_diagnostics` は来ない)、7 のうち `mcpCapabilities.http` と MCP の接続・ツール一覧 (§10.0)。
+**未** = 2 (未ログイン時のエラー)、7 のうち実際の `report_step_done` の呼び出しとタスクの完了、8 のうち `session/load`・`session/cancel`・`WINDSURF_API_KEY`
+(子プロセスが残らないこと、プローブのセッションが Devin の DB に残らないことは確認済み)。
 
 1. **`devin acp` が起動する**: 端末で `devin acp` を起動し、標準入力に `initialize` (`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"yhtye","version":"0"}}}`)
    を送って応答を見る。記録するもの: `agentInfo`、`agentCapabilities` の `loadSession` / `mcpCapabilities` / `promptCapabilities`、`authMethods`。Yhtye から起動したとき、エージェント出力に起動エラーが出ないか。
@@ -681,6 +729,9 @@ Yhtye 側で `$ref` を展開すれば回避できるが、メインは Claude �
    終了後に `devin` の子プロセスが残らないか / Devin のセッションの履歴が残る場所と量 (Yhtye のプローブのセッションも残るか) / `WINDSURF_API_KEY` を秘密の環境変数に登録して認証が通るか。
 
 ### 10.10 自動テストで確認したこと (偽エージェント、Devin 本体ではない)
+
+- 役割プロンプトの後ろの注記 `DEVIN_MCP_NOTE` が Devin にだけ付くこと (`acp/startup.rs` の単体テスト、`tests/acp_fake_devin.rs` の最初のプロンプト)、
+  `RUST_LOG` を除くこと (`acp/config.rs`)、読み取り済みの一覧に無い effort を保存で拒否すること (`agents/settings.rs`、`tests/agent_selection.rs`) は T-21 で追加。
 
 - `tests/acp_fake_devin.rs`: `bypass` の設定と役割の指示が最初のプロンプトに 1 回だけ付くこと、effort が id の違う `thought_level` の option に設定されること (と未知の値で起動が失敗すること)、
   `clientInfo` が既定 `yhtye`・上書きで変わること、`request_diagnostics` に `{}` で応答してセッションが続くこと、`switch_*` / `plan_*` / `*_always` の選択肢を選ばないこと、認証エラーが起動エラーとして読めること。
