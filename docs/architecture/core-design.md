@@ -614,8 +614,12 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   `YHTYE_BRIDGE_URL=ws://...?token=...` を 1 行出す。データディレクトリは `--data-dir` /
   `YHTYE_DATA_DIR`、無ければ `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリの DB とは分ける)。
   SIGINT / SIGTERM で `Core::shutdown` してから終了。起動後に `resume_unfinished`。
-- `pnpm dev:browser [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
+- `pnpm dev:browser [ポートの指定] [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
   起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
+  ポートは既定 Vite 1420 / ブリッジ 1422 で、`--vite-port` / `--bridge-port` / `--port-base` (環境変数
+  `YHTYE_VITE_PORT` / `YHTYE_BRIDGE_PORT` / `YHTYE_PORT_BASE`) で変えられる。変えたときは、ブリッジに `--port` と
+  ページの Origin (`--allow-origin`)、Vite に `--port` と `VITE_YHTYE_BRIDGE_URL` を渡して揃える
+  (`tauri dev` が使う `vite.config.ts` の 1420 と `tauri.conf.json` の `devUrl` は変えない)。
 
 ## 11. フロントエンドの transport 抽象
 
