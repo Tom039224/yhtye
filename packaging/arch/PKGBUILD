@@ -1,0 +1,63 @@
+# Maintainer: Kirsikka (GitHub: Tom039224)
+pkgname=yhtye-git
+_pkgname=yhtye
+pkgver=0.1.0.r30.g70c90d5
+pkgrel=1
+pkgdesc='Desktop orchestrator that runs coding agents over ACP in parallel git worktrees'
+arch=('x86_64')
+url='https://github.com/Tom039224/yhtye'
+license=('BSD-3-Clause')
+depends=('webkit2gtk-4.1' 'gtk3' 'libsoup3' 'dbus' 'glib2' 'cairo' 'gdk-pixbuf2' 'git' 'nodejs')
+makedepends=('cargo' 'pnpm')
+optdepends=(
+  'opencode: OpenCode harness'
+  'codex: Codex harness'
+  'org.freedesktop.secrets: store secret environment variables in the keyring'
+)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+# The release profile already enables Rust LTO; keep makepkg's C LTO flags out of the native deps.
+options=('!lto' '!debug')
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  local ver
+  ver=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+  printf '%s.r%s.g%s' "$ver" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export CARGO_HOME="$srcdir/cargo-home"
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+  pnpm install --frozen-lockfile
+}
+
+build() {
+  cd "$_pkgname"
+  export CARGO_HOME="$srcdir/cargo-home"
+  pnpm tauri build --no-bundle -- --frozen
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/yhtye "$pkgdir/usr/bin/yhtye"
+  install -Dm644 src-tauri/icons/32x32.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/yhtye.png"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/yhtye.png"
+  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/yhtye.png"
+  install -Dm644 src-tauri/icons/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/yhtye.png"
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/yhtye.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Yhtye
+Comment=$pkgdesc
+Exec=yhtye
+Icon=yhtye
+Terminal=false
+Categories=Development;
+StartupWMClass=yhtye
+DESKTOP
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
