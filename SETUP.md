@@ -43,7 +43,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | Claude Code | Node 22+ (`npx`) だけ。`claude` CLI は不要 (アダプタが SDK 同梱のバイナリを使う) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく |
 | OpenCode | `opencode` | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
 | Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
-| Devin (**未検証**) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
+| Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
 - Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
@@ -67,15 +67,20 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 - **再検出**: タブを開いたとき、「再検出」ボタン、手動パスの保存のたびに見つけ直す。「再検出」はモデル一覧のキャッシュも捨てる。
   すでに動いているエージェントには影響せず、新しく起動するエージェントから反映される。
 
-### Devin (未検証)
+### Devin (基本動作は実機確認済み、一部未検証)
 
-Devin は ACP で動かす実装を入れたが、**Devin を持つ環境で実際に試していない** (偽エージェントを使ったテストだけ)。
-うまく動かないときは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 の手動検証チェックリストが手がかりになる。
+Devin は **devin 3000.11.3・無料プラン (モデルは SWE-1.6 Slow だけ) の実機で基本動作を確認した**: 起動、権限確認なしのモード (`bypass`)、モデルの設定、
+1 ターンの応答、Yhtye の MCP への接続とツールの一覧。**まだ確かめていない**のは、実際のタスクで `report_step_done` を呼んで完了まで進むこと、
+未ログイン時のエラー、再起動後の復元 (`session/load`)、ターンの中断、`WINDSURF_API_KEY` での認証。
+うまく動かないときは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめ §10.0、手動検証チェックリスト §10.9) が手がかりになる。
 
 - 認証は `devin auth login` (保存された認証情報) が基本。環境変数 `WINDSURF_API_KEY` があれば Devin はそちらを優先する。使うときは、設定 ›
   「秘密の環境変数」に `WINDSURF_API_KEY` を登録する (下記。**すべてのエージェント**の環境に渡る)。
 - Yhtye は Devin を権限確認なしのモード (`bypass`) で動かす。ほかのハーネスと同様、サンドボックスは無い。
 - 未認証のときは、起動時に認証を求めるエラーが返り、エージェントの起動エラーとして出るはず (偽エージェントでの確認のみ)。
+- Devin は MCP のツールを自分のツールとして並べず、MCP の一覧・呼び出し用のツールを通して使う。Yhtye は役割の指示に、その旨の短い注記を Devin にだけ付ける。
+- Devin はあなたの `~/.config/devin/mcp_config.json` の MCP サーバーも読み込む (Yhtye の MCP と並んで使える)。
+- 無料プランのモデル (SWE-1.6 Slow) には effort が無いので、設定 › エージェント の effort は選べない。
 
 ### Codex (OpenRouter)
 
@@ -106,7 +111,7 @@ OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、
 | 全ハーネス共通 | オーケストレータも書き込める (検証のいらない小さな変更は自分でコミットし、それ以外はタスクに渡す。システムプロンプトでの指示のみ) |
 | Codex | オーケストレータとしては使えない ([openai/codex#13746](https://github.com/openai/codex/issues/13746) で `create_task` が呼べない)。実装・調査・レビュー役で使う |
 | Codex / OpenCode 共通 | 権限確認なしで動く (Codex は `agent-full-access`)。OpenRouter の無料モデルは 429 や遅延が多く、失敗が普通の応答として返ることがある |
-| Devin | **実機で未検証**。権限確認なしの `bypass` モードで動かす。Yhtye は HTTP の MCP サーバーを渡すが、Devin がそれを受け付けるかは不明で、最初に失敗しうる。Yhtye は自分を `yhtye` と名乗るので、Devin がそれを受け付けない可能性もある |
+| Devin | 基本動作は実機 (無料プラン) で確認済み、実際のタスクの完了 (`report_step_done`) までは未確認。権限確認なしの `bypass` モードで動かす。Yhtye の HTTP の MCP にはつながるが、Devin はツールを MCP の一覧・呼び出し用のツール経由で使う (Yhtye が指示に注記を付ける) |
 
 ## ビルドとインストール
 
@@ -166,7 +171,7 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 | 手動パスを保存したのに使えない | 表示された理由を確認する。絶対パスの実行可能な通常ファイルでなければならない (ディレクトリやシンボリックリンク先が無い、実行権限が無い、など)。壊れた手動パスは自動検出に戻らないので、直すか「自動検出に戻す」 |
 | Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する |
 | OpenCode で認証エラー | `opencode auth login` を済ませる |
-| Devin が認証エラーになる / 起動しない | `devin auth login` を済ませる (`devin auth status` で確認)。`WINDSURF_API_KEY` を使うなら「秘密の環境変数」に登録する。Devin は未検証なので、それでも動かないときは `docs/architecture/acp-harnesses.md` §10 の手動検証チェックリストを参照して報告してほしい |
+| Devin が認証エラーになる / 起動しない | `devin auth login` を済ませる (`devin auth status` で確認)。`WINDSURF_API_KEY` を使うなら「秘密の環境変数」に登録する。Devin は一部未検証なので、それでも動かないときは `docs/architecture/acp-harnesses.md` §10 の手動検証チェックリストを参照して報告してほしい |
 | Codex が空のトークンで失敗する | 「秘密の環境変数」に `config.toml` が参照している変数を登録する |
 | 秘密の登録やエージェント起動が「キーリングが使えない」で失敗する | Secret Service (gnome-keyring / KeePassXC など) を起動してロックを解除する |
 | グループが「マージ待ち」で止まる | base ブランチをチェックアウトし、作業ツリーを clean にして再試行する |

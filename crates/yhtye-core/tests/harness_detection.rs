@@ -225,7 +225,7 @@ async fn rows_of_an_uninstalled_harness_do_not_block_editing_the_others() {
         candidates: vec![
             Candidate::from(gone.clone()).with_note("cheap"),
             Candidate::from(devin.clone()).with_note("careful"),
-            Candidate::from(devin.clone().with_effort("high")),
+            Candidate::from(AgentChoice::new("devin", Some("swe-1-6-slow"))),
         ],
         default: devin.clone(),
     };

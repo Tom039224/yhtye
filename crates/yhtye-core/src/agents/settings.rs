@@ -219,6 +219,52 @@ impl RoleSettings {
         })
     }
 
+    /// Checks the effort of every row that is not in `kept` against what is
+    /// known of its model: `known(harness, model)` gives the efforts read from
+    /// the harness, `None` while they are not known (the row then passes:
+    /// starting it fails visibly if the harness refuses the effort). A row
+    /// without a model has no effort to choose (the harness's default model is
+    /// not listed), like a model whose list is empty. Rows in `kept` (stored
+    /// earlier) are left alone, as in [`RoleSettings::validate_keeping`].
+    pub fn check_efforts(
+        &self,
+        kept: &[Candidate],
+        known: impl Fn(&str, &str) -> Option<Vec<String>>,
+    ) -> Result<(), String> {
+        for c in &self.candidates {
+            let Some(effort) = c.effort.as_deref() else {
+                continue;
+            };
+            if kept.iter().any(|k| k.choice() == c.choice()) {
+                continue;
+            }
+            let Some(model) = c.model.as_deref() else {
+                return Err(format!(
+                    "{}: effort {effort} needs a model (its default model has no effort to choose)",
+                    c.harness
+                ));
+            };
+            let Some(efforts) = known(&c.harness, model) else {
+                continue;
+            };
+            if efforts.iter().all(|e| e != effort) {
+                return Err(if efforts.is_empty() {
+                    format!(
+                        "{}/{model}: this model has no effort (got {effort})",
+                        c.harness
+                    )
+                } else {
+                    format!(
+                        "{}/{model}: unknown effort {effort} (efforts: {})",
+                        c.harness,
+                        efforts.join(", ")
+                    )
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// The candidate row selected by `harness` / `model` / `effort` (each may
     /// be omitted; an omitted one matches anything). Nothing omitted: an exact
     /// match. When several rows match: the default if it is one of them, unless
@@ -387,6 +433,54 @@ mod tests {
             candidates: candidates.iter().cloned().map(Candidate::from).collect(),
             default: default.clone(),
         }
+    }
+
+    #[test]
+    fn efforts_are_checked_against_the_known_ones_except_for_kept_rows() {
+        let row = |h: &str, m: Option<&str>, e: &str| Candidate::from(c(h, m).with_effort(e));
+        let known = |h: &str, m: &str| match (h, m) {
+            ("cc", "sonnet") => Some(vec!["low".to_string(), "high".to_string()]),
+            ("devin", "swe") => Some(Vec::new()),
+            _ => None,
+        };
+        let check = |rows: Vec<Candidate>, kept: &[Candidate]| {
+            let default = rows[0].choice();
+            RoleSettings {
+                candidates: rows,
+                default,
+            }
+            .check_efforts(kept, known)
+        };
+        assert_eq!(check(vec![row("cc", Some("sonnet"), "high")], &[]), Ok(()));
+        assert_eq!(
+            check(vec![Candidate::from(c("devin", Some("swe")))], &[]),
+            Ok(()),
+            "no effort, nothing to check"
+        );
+        assert_eq!(
+            check(vec![row("devin", Some("swe"), "high")], &[]),
+            Err("devin/swe: this model has no effort (got high)".into())
+        );
+        assert_eq!(
+            check(vec![row("cc", Some("sonnet"), "max")], &[]),
+            Err("cc/sonnet: unknown effort max (efforts: low, high)".into())
+        );
+        assert!(
+            check(vec![row("devin", None, "high")], &[])
+                .is_err_and(|e| e.contains("needs a model")),
+            "the default model has no effort to choose"
+        );
+        assert_eq!(
+            check(vec![row("oc", Some("x"), "max")], &[]),
+            Ok(()),
+            "not read yet: starting the row tells"
+        );
+        let stored = row("devin", Some("swe"), "high");
+        assert_eq!(
+            check(vec![stored.clone()], &[stored]),
+            Ok(()),
+            "a row stored earlier stays"
+        );
     }
 
     #[test]

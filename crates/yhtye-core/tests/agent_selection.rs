@@ -649,6 +649,59 @@ async fn models_are_read_from_the_harness() {
     core.shutdown().await;
 }
 
+/// An effort the model does not offer cannot be saved once the model's efforts
+/// were read (Devin's models offer none); before that the row is accepted.
+#[tokio::test]
+async fn an_effort_the_model_does_not_offer_is_refused() {
+    let r = TempRepo::new();
+    let idle = json!({"turns": []});
+    let core = Core::start(config(&r, idle.clone(), idle))
+        .await
+        .expect("core");
+    let row = |h: &str, m: &str, e: &str| c(h, Some(m)).with_effort(e);
+    let save = |choice: AgentChoice| ApiCommand::SetAgentSettings {
+        project: None,
+        role: AgentRole::Implementer,
+        settings: Some(RoleSettings::only(choice)),
+    };
+    // Not read yet: accepted.
+    set(
+        &core,
+        None,
+        AgentRole::Reviewer,
+        Some(RoleSettings::only(row("fake", "haiku", "high"))),
+    )
+    .await;
+
+    let cmd = ApiCommand::ListHarnessModels {
+        harness: "fake".into(),
+        refresh: None,
+    };
+    run(&core, cmd).await;
+    for (choice, why) in [
+        (
+            row("fake", "haiku", "high"),
+            "fake/haiku: this model has no effort (got high)",
+        ),
+        (
+            row("fake", "sonnet", "max"),
+            "fake/sonnet: unknown effort max (efforts: low, high)",
+        ),
+    ] {
+        let err = core.command(save(choice)).await.expect_err(why);
+        assert_eq!(err.code, ApiErrorCode::InvalidArgument);
+        assert!(err.message.contains(why), "{}", err.message);
+    }
+    let ok = RoleSettings::only(row("fake", "sonnet", "high"));
+    let view = set(&core, None, AgentRole::Implementer, Some(ok.clone())).await;
+    assert_eq!(view.effective.implementer, ok);
+    // The row stored before the efforts were known can still be saved again.
+    let kept = RoleSettings::only(row("fake", "haiku", "high"));
+    let view = set(&core, None, AgentRole::Reviewer, Some(kept.clone())).await;
+    assert_eq!(view.effective.reviewer, kept);
+    core.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_harness_that_requires_a_model_rejects_a_choice_without_one() {
     let r = TempRepo::new();

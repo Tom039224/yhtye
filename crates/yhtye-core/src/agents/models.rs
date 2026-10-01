@@ -370,6 +370,29 @@ impl ModelService {
         cache.efforts.retain(|(h, _), _| h != harness);
     }
 
+    /// The efforts of `model` of `harness` as far as they were read and are
+    /// still fresh (from the model list, else from a per-model listing), without
+    /// asking the harness; `None` when they are not known.
+    #[must_use]
+    pub fn cached_efforts(&self, harness: &str, model: &str) -> Option<Vec<EffortOption>> {
+        let cache = self.cache();
+        let listed = cache
+            .models
+            .get(harness)
+            .and_then(|(at, outcome)| outcome.as_ref().ok().filter(|_| at.elapsed() < FRESH_FOR))
+            .and_then(|listed| listed.models.iter().find(|m| m.value == model))
+            .and_then(|m| m.efforts.clone());
+        listed.or_else(|| {
+            cache
+                .efforts
+                .get(&(harness.to_string(), model.to_string()))
+                .and_then(|(at, outcome)| {
+                    outcome.as_ref().ok().filter(|_| at.elapsed() < FRESH_FOR)
+                })
+                .cloned()
+        })
+    }
+
     /// The models of `preset`: cached if fresh enough, otherwise probed.
     pub async fn get(
         &self,

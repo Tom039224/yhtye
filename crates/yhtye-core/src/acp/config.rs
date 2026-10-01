@@ -51,6 +51,12 @@ pub struct HarnessConfig {
     /// How `session/request_permission` is answered automatically.
     #[serde(default, skip_serializing_if = "PermissionPolicy::is_default")]
     pub permission_policy: PermissionPolicy,
+    /// Harness-specific text appended to the role system prompt (however it is
+    /// delivered), for what the role prompt cannot say for every harness (Devin
+    /// reaches MCP tools only through its own meta-tools). Nothing is sent when
+    /// the session has no role prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt_note: Option<String>,
 }
 
 /// The Claude Code ACP adapter run through `npx` (an exact version).
@@ -82,6 +88,24 @@ pub const CODEX_PATH_ENV: &str = "CODEX_PATH";
 /// Devin's built-in mode without permission prompts (`devin acp` ignores
 /// `--permission-mode`, so the mode is switched with `session/set_mode`).
 pub const DEVIN_BYPASS_MODE: &str = "bypass";
+
+/// Appended to every role prompt of Devin ([`HarnessConfig::system_prompt_note`]):
+/// Devin does not list MCP tools among its own tools, it reaches them through
+/// its MCP meta-tools (`mcp_list_tools` was seen with Devin 3000.11.3), so the
+/// tool names of the role prompts (`mcp__yhtye__report_step_done`) are not
+/// found as such (`docs/architecture/acp-harnesses.md` §10.7).
+pub const DEVIN_MCP_NOTE: &str = "\
+Note for Devin: Yhtye's tools (`report_step_done`, `help`, `create_group`, ...) \
+are on the MCP server named `yhtye`; they are not among your built-in tools. \
+List them with your MCP tool-listing tool (`mcp_list_tools`, server `yhtye`) \
+and call them with your MCP tool-calling tool. A name like \
+`mcp__yhtye__report_step_done` means the tool `report_step_done` of the MCP \
+server `yhtye`.";
+
+/// Inherited variables removed from Devin's environment: Devin logs with
+/// `tracing` too, so a `RUST_LOG` meant for Yhtye would filter Devin's own log
+/// (`~/.local/share/devin/cli/logs`) down to nothing.
+pub const DEVIN_ENV_REMOVE: [&str; 1] = ["RUST_LOG"];
 
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +192,7 @@ impl HarnessConfig {
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             client_info: None,
             permission_policy: PermissionPolicy::Default,
+            system_prompt_note: None,
         }
     }
 
@@ -218,6 +243,7 @@ impl HarnessConfig {
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             client_info: None,
             permission_policy: PermissionPolicy::Default,
+            system_prompt_note: None,
         }
     }
 
@@ -250,6 +276,7 @@ impl HarnessConfig {
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             client_info: None,
             permission_policy: PermissionPolicy::Default,
+            system_prompt_note: None,
         }
     }
 
@@ -259,16 +286,17 @@ impl HarnessConfig {
     /// `--permission-mode` has no effect on `devin acp`. No model or effort is
     /// set here ([`crate::agents::HarnessPreset::config`] adds the chosen ones as
     /// config options; Devin's own default applies otherwise), and the role
-    /// prompt is prepended to the first prompt (there is no `_meta` hook). The
-    /// permission requests that still arrive are answered
-    /// [`PermissionPolicy::OnceOnly`].
+    /// prompt is prepended to the first prompt (there is no `_meta` hook), with
+    /// [`DEVIN_MCP_NOTE`] appended. The permission requests that still arrive are
+    /// answered [`PermissionPolicy::OnceOnly`]. An inherited `RUST_LOG` is
+    /// removed ([`DEVIN_ENV_REMOVE`]).
     #[must_use]
     pub fn devin(command: &str) -> Self {
         Self {
             command: command.into(),
             args: vec!["acp".into()],
             env: BTreeMap::new(),
-            env_remove: Vec::new(),
+            env_remove: DEVIN_ENV_REMOVE.iter().map(|v| (*v).to_string()).collect(),
             mode_after_new: Some(DEVIN_BYPASS_MODE.into()),
             model: None,
             effort: None,
@@ -277,6 +305,7 @@ impl HarnessConfig {
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             client_info: None,
             permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
         }
     }
 
@@ -296,6 +325,7 @@ impl HarnessConfig {
             startup_timeout: DEFAULT_STARTUP_TIMEOUT,
             client_info: None,
             permission_policy: PermissionPolicy::Default,
+            system_prompt_note: None,
         }
     }
 }
@@ -400,13 +430,16 @@ mod tests {
         assert_eq!(h.mode_after_new.as_deref(), Some("bypass"));
         assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
         assert!(h.model.is_none() && h.effort.is_none() && h.session_meta.is_none());
-        assert!(h.env.is_empty() && h.env_remove.is_empty());
+        assert!(h.env.is_empty());
+        assert_eq!(h.env_remove, ["RUST_LOG"], "Devin's own log stays readable");
         assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+        let note = h.system_prompt_note.expect("the MCP note");
+        assert!(note.contains("`yhtye`") && note.contains("mcp_list_tools"));
         assert_eq!(h.client_info, None, "no other product's name is claimed");
     }
 
     #[test]
-    fn other_harnesses_keep_the_default_client_info_and_permission_policy() {
+    fn other_harnesses_keep_the_default_client_info_permission_policy_and_prompt() {
         for h in [
             HarnessConfig::claude_code("haiku"),
             HarnessConfig::opencode("opencode/x"),
@@ -415,6 +448,11 @@ mod tests {
         ] {
             assert_eq!(h.client_info, None);
             assert_eq!(h.permission_policy, PermissionPolicy::Default);
+            assert_eq!(
+                h.system_prompt_note, None,
+                "only Devin adds to the role prompt"
+            );
+            assert!(!h.env_remove.iter().any(|v| v == "RUST_LOG"));
         }
     }
 
@@ -433,7 +471,11 @@ mod tests {
         );
         assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
         let json = serde_json::to_value(HarnessConfig::plain("x", vec![])).expect("serialize");
-        assert!(json.get("client_info").is_none() && json.get("permission_policy").is_none());
+        assert!(
+            ["client_info", "permission_policy", "system_prompt_note"]
+                .iter()
+                .all(|k| json.get(k).is_none())
+        );
         let back: HarnessConfig = serde_json::from_value(
             serde_json::to_value(HarnessConfig::devin("devin")).expect("serialize"),
         )

@@ -424,7 +424,16 @@ impl Core {
         // inherited ones), which may include harnesses that are gone since.
         let existing = agents.effective(project).get(role).clone();
         let settings = settings
-            .map(|s| agents.validate(&s, &existing))
+            .map(|s| {
+                let valid = agents.validate(&s, &existing)?;
+                // An effort the model does not offer (Devin's models offer none)
+                // is refused when its efforts were read; see `check_efforts`.
+                valid.check_efforts(&existing.candidates, |harness, model| {
+                    let efforts = self.inner.models.cached_efforts(harness, model)?;
+                    Some(efforts.into_iter().map(|e| e.value).collect())
+                })?;
+                Ok::<_, String>(valid)
+            })
             .transpose()
             .map_err(|e| ApiError::invalid_argument(format!("{}: {e}", role.as_str())))?;
         self.inner
