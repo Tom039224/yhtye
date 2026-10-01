@@ -108,12 +108,41 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/debug/yhtye
 ```sh
 pnpm build                                         # tsc + vite build
 pnpm test                                          # Vitest
+pnpm check:layout                                  # 実ブラウザで「ページ全体がスクロールしない」ことを検査
 cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
 cargo test -p yhtye-core -- --ignored --test-threads=1   # 実エージェント (Claude Code は Haiku)
 cargo clippy --workspace --all-targets && cargo fmt --check
 pnpm tauri build --debug --no-bundle               # アプリのデバッグビルド (target/debug/yhtye)
 pnpm tauri build                                   # 配布用バイナリ
 ```
+
+### レイアウトの検査 (`pnpm check:layout`)
+
+Yhtye は画面全体を 1 枚の固定レイアウト (`.app`) で使い、スクロールするのは各パネルの内側だけ。
+html / body / `#root` は `height: 100%` + `overflow: hidden` で固定してあるが、それは最後の砦にすぎない。
+はみ出す要素がそもそも無いことを、次の 2 つで守る。
+
+- **`src/ui/pageFrame.test.ts` (Vitest)**: jsdom はレイアウトを計算しないので、CSS の規則だけを見る
+  (html / body / `#root` の高さと overflow、`.app` の位置と `min-width` が無いこと、`min-height: 0` / `min-width: 0`、
+  スクロール領域がすべて `position` を持つこと)。
+- **`pnpm check:layout` (`scripts/check-layout.mjs`)**: playwright-core + Chromium (headless) で、
+  `layout-harness.html` (本物の `App` をメモリ上のコアで動かす開発専用ページ。`src/test/layoutHarness.tsx`) を
+  画面の状態ごとに開き、`document.scrollingElement` の `scrollHeight <= innerHeight`、`scrollWidth <= innerWidth`、
+  `scrollX / scrollY == 0`、枠 (`.app` `.body` `.sidebar` `.conversation` `.right` など) の中身がはみ出していないこと、
+  ポップアップ (⋯ メニュー・プロジェクトのプルダウン・モデル一覧) がウィンドウ内に収まっていることを確かめる。
+  状態は、プロジェクト無し・記録した実行・大量の会話/タスク/ブランチ・ホイール操作・各ポップアップ・設定・
+  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる、を 1060x600 から 1920x1080 まで。
+  Rust のコアは要らない (Vite だけを空いているポートで起動する)。画面を足す・直すときは実行しておく。
+
+```sh
+pnpm check:layout
+YHTYE_CHROMIUM=/usr/bin/google-chrome pnpm check:layout   # ブラウザの指定 (既定: /usr/bin/chromium など。無ければ Playwright の)
+YHTYE_LAYOUT_URL=http://localhost:1420 pnpm check:layout  # 起動中の Vite を使う (既定: 空きポートで新しく起動)
+YHTYE_LAYOUT_SHOTS=/tmp/yhtye-shots pnpm check:layout     # 各状態のスクリーンショットも保存する
+```
+
+失敗すると、どの状態で何がはみ出したか (例: `span.sr-only (absolute, in the page) down to y=113505`) を出す。
+新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す。CI には入れていない (Chromium が要る)。
 
 CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロントエンドのビルドとテスト、
 Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)。
