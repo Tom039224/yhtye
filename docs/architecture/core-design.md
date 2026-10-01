@@ -726,6 +726,9 @@ Stage 4 の構成 (`src/`):
   年は表示されないので「今に最も近い年」。読めない行は捨て、何も読めなければ `Unreadable` (**推測しない**)。
   書式はアダプタのバージョン (固定) に依存する。実機テスト `acp_claude_real::real_usage_command_reports_the_subscription` で検知。
 - `UsageService`: 単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
+  プローブするハーネスは `set_harness` で差し替えられる (ハーネスの再検出で `npx` の解決済みパスが変わったとき。変わらなければ何もしない)。
+  差し替えるとキャッシュ済みの結果を捨てる。状態は await をまたいでロックしないので、実行中のプローブを待たず、
+  差し替え前に始まったプローブの結果は (呼び出し元には返るが) キャッシュしない (世代番号)。
 - UI: 接続時と 5 分ごとに `get_usage`、メーターのクリックで `refresh: true`。
 
 ## 15. エージェント (ハーネス × モデル × effort) の選択 (Stage 7b、7d で effort と用途メモを追加)
@@ -821,9 +824,11 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 - **`Core` のコマンド** (`runtime/core/harnesses.rs`、`DetectionConfig { env, known_dirs, claude_model }` を `CoreConfig::detection` に持つ):
   - `Core::start` が `harness_paths` を読んで検出し、登録簿を作る (各ハーネスの検出結果を 1 行ずつログに出す)。
   - `GetHarnesses` (設定の「ハーネス」タブを開いたとき) は検出をやり直して登録簿を入れ替え、`HarnessDetection` の一覧を返す。
-  - `DetectHarnesses` (「再検出」ボタン) は同じことに加えて、全ハーネスのモデル一覧のキャッシュ (`ModelService::invalidate`) を捨てる。
+    入れ替えの前後でプリセットが変わった (起動する実行ファイルが変わった・新しく見つかった・見つからなくなった) ハーネスのモデル / effort のキャッシュ
+    (`ModelService::invalidate`) を捨て、Claude Code の使用量プローブの `npx` を見つかったものに更新する (`UsageService::set_harness`)。変わっていなければキャッシュは残る。
+  - `DetectHarnesses` (「再検出」ボタン) は同じことに加えて、全ハーネスのモデル一覧のキャッシュを捨てる。
   - `SetHarnessPath{harness, path?}` は未知のハーネスを `not_found`、絶対パスの実行可能な通常ファイルでないものを `invalid_argument` で拒み、`harness_paths` に保存 (`None` は削除) して
-    そのハーネスのモデルのキャッシュを捨て、再検出して一覧を返す。
+    再検出し (そのハーネスのキャッシュは上のとおり捨てられる)、一覧を返す。
   - 並行する検出は `Inner::detecting` (`tokio::sync::Mutex`) で直列化する (最後に終わる検出が最新の手動パスを読んでいる)。
   - `CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses` / `default_agent` を登録し、3 つのコマンドは空の一覧を返す (`set_harness_path` は保存して検査する)。
 
@@ -878,6 +883,8 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
   グループ付きの選択肢は平らにする。見つからなければ `models: []` (そのハーネスはモデルを選べない = 既定だけ)。
 - 応答 `HarnessModels { harness, models: [{value, name, description?, efforts}], current (ハーネスの既定値), fetched_at_ms }`。
 - キャッシュ: 成功 10 分・失敗 10 秒、`refresh` でも 10 秒以内の結果は再利用。1 度に 1 プローブ。終了時に実行中のプローブを止める (使用量と同じ)。
+  `invalidate` (実行ファイルが変わったハーネスのモデルと effort を捨てる) はキャッシュ (await をまたいでロックしない) とハーネスごとの世代番号を更新するだけで、
+  実行中のプローブを待たない。無効化より前に始まったプローブの結果は (呼び出し元には返るが) キャッシュしない。
 - **effort 一覧 (7d)**: effort の選択肢 (`id: effort` の select、無ければ `category: thought_level`) は**現在のモデルによって変わる**
   (Claude Code アダプタは `supportedEffortLevels` から作り、先頭に古いクライアント用の `default` を足す。モデルを変えると作り直す。
   OpenCode は variant)。そこで同じプローブのセッションで**モデルを 1 つずつ `set_config_option` で選び、返ってきた
