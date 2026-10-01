@@ -70,7 +70,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 ### Devin (基本動作は実機確認済み、一部未検証)
 
 Devin は **devin 3000.11.3・無料プラン (モデルは SWE-1.6 Slow だけ) の実機で基本動作を確認した**: 起動、権限確認なしのモード (`bypass`)、モデルの設定、
-1 ターンの応答、Yhtye の MCP への接続とツールの一覧。**まだ確かめていない**のは、実際のタスクで `report_step_done` を呼んで完了まで進むこと、
+1 ターンの応答、Yhtye の MCP への接続とツールの一覧、実装エージェントとしてタスクを `report_step_done` で完了まで進めること。**まだ確かめていない**のは、
 未ログイン時のエラー、再起動後の復元 (`session/load`)、ターンの中断、`WINDSURF_API_KEY` での認証。
 うまく動かないときは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめ §10.0、手動検証チェックリスト §10.9) が手がかりになる。
 
@@ -111,7 +111,7 @@ OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、
 | 全ハーネス共通 | オーケストレータも書き込める (検証のいらない小さな変更は自分でコミットし、それ以外はタスクに渡す。システムプロンプトでの指示のみ) |
 | Codex | オーケストレータとしては使えない ([openai/codex#13746](https://github.com/openai/codex/issues/13746) で `create_task` が呼べない)。実装・調査・レビュー役で使う |
 | Codex / OpenCode 共通 | 権限確認なしで動く (Codex は `agent-full-access`)。OpenRouter の無料モデルは 429 や遅延が多く、失敗が普通の応答として返ることがある |
-| Devin | 基本動作は実機 (無料プラン) で確認済み、実際のタスクの完了 (`report_step_done`) までは未確認。権限確認なしの `bypass` モードで動かす。Yhtye の HTTP の MCP にはつながるが、Devin はツールを MCP の一覧・呼び出し用のツール経由で使う (Yhtye が指示に注記を付ける) |
+| Devin | 基本動作は実機 (無料プラン) で確認済み、実装エージェントとしてタスクの完了 (`report_step_done`) まで確認済み。権限確認なしの `bypass` モードで動かす。Yhtye の HTTP の MCP にはつながるが、Devin はツールを MCP の一覧・呼び出し用のツール経由で使う (Yhtye が指示に注記を付ける) |
 
 ## ビルドとインストール
 

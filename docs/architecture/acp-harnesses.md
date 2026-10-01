@@ -29,7 +29,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | Claude Code | **採用** (`@agentclientprotocol/claude-agent-acp` 経由、§4) |
 | OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` が見つかれば全役割で選べる (7c-2、§7.6) |
 | Codex | **採用 (Stage 7e)** — `@agentclientprotocol/codex-acp` 2.0.0 (npx、Codex 本体はユーザーの `codex`)、§9。`codex` と `npx` が見つかれば全役割で選べる。調査: [`research/codex-acp.md`](research/codex-acp.md) |
-| Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続を確認 (§10.0)。実際の `report_step_done`、未ログイン時、`session/load`、cancel は未確認 (§10.9) |
+| Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続、実装エージェントとしての `report_step_done` を確認 (§10.0、§10.9)。未ログイン時、`session/load`、cancel は未確認 (§10.9) |
 | Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -690,7 +690,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
   `mcp__yhtye__report_step_done` という名前は Devin には無いので、Yhtye は役割プロンプトの後ろに注記 `DEVIN_MCP_NOTE`
   (`HarnessConfig::system_prompt_note`) を付ける **[Yhtye]**: 「Yhtye のツールは MCP サーバー `yhtye` にある、MCP の一覧ツールで一覧し、MCP の呼び出しツールで呼ぶ、
   `mcp__yhtye__xxx` は `yhtye` の `xxx`」。全役割 (オーケストレータも) に付き、Devin 以外には付かない。
-- 実際に `report_step_done` を呼んでタスクが完了まで進むかは**未確認** (プロンプト枠を節約したため、§10.9)。
+- 実際に `report_step_done` を呼んでタスクが完了まで進むこと **[実測]**: 注記 `DEVIN_MCP_NOTE` を入れた版で、`devin` / `swe-1-6-slow` の実装エージェントに
+  「何もせず完了を報告する」タスク (T-22、`code`) を流し、Yhtye に完了報告と結果が届いた (§10.9)。
 - Devin はユーザーの `~/.config/devin/mcp_config.json` のサーバーも並べてつなぐ **[実測]** (つながらないサーバーは警告をログに出すだけ)。
 
 ### 10.8 検出と UI
@@ -706,8 +707,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 結果 (成否・観察・Devin のバージョン `devin --version`) を、この節に **[実測]** として書き足す。
 
 **T-21 の状況** (devin 3000.11.3、無料プラン): **済** = 1 (起動・`initialize`)、3 (`bypass`。許可要求は MCP のメタツールでは来ない。ファイル作成・シェルは未)、
-4 (`model` / `swe-1-6-slow`、effort の option は無い)、5 (`yhtye` で通る)、6 (`request_diagnostics` は来ない)、7 のうち `mcpCapabilities.http` と MCP の接続・ツール一覧 (§10.0)。
-**未** = 2 (未ログイン時のエラー)、7 のうち実際の `report_step_done` の呼び出しとタスクの完了、8 のうち `session/load`・`session/cancel`・`WINDSURF_API_KEY`
+4 (`model` / `swe-1-6-slow`、effort の option は無い)、5 (`yhtye` で通る)、6 (`request_diagnostics` は来ない)、7 のうち `mcpCapabilities.http` と MCP の接続・ツール一覧 (§10.0)。T-22 で 7 の `report_step_done` の呼び出しとタスクの完了も済 (ファイル変更を伴うタスクは未)。
+**未** = 2 (未ログイン時のエラー)、8 のうち `session/load`・`session/cancel`・`WINDSURF_API_KEY`
 (子プロセスが残らないこと、プローブのセッションが Devin の DB に残らないことは確認済み)。
 
 1. **`devin acp` が起動する**: 端末で `devin acp` を起動し、標準入力に `initialize` (`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"yhtye","version":"0"}}}`)

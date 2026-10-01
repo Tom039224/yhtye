@@ -38,7 +38,7 @@ English: [README-EN.md](README-EN.md)
 - Codex はオーケストレータとして使えない
   ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
 - Codex は OpenRouter 経由でのみ実機確認している
-- Devin (`devin acp`) は無料プラン (SWE-1.6 Slow) の実機で起動・1 ターン・MCP の接続までを確認した。実際のタスクの完了 (`report_step_done`)、
+- Devin (`devin acp`) は無料プラン (SWE-1.6 Slow) の実機で起動・MCP の接続・実装エージェントとしてのタスクの完了 (`report_step_done`) までを確認した。
   未ログイン時、再起動後の復元などは未確認。動かなければ、
   [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめと手動検証チェックリスト) が手がかりになる
 
