@@ -707,7 +707,7 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 結果 (成否・観察・Devin のバージョン `devin --version`) を、この節に **[実測]** として書き足す。
 
 **T-21 の状況** (devin 3000.11.3、無料プラン): **済** = 1 (起動・`initialize`)、3 (`bypass`。許可要求は MCP のメタツールでは来ない。ファイル作成・シェルは未)、
-4 (`model` / `swe-1-6-slow`、effort の option は無い)、5 (`yhtye` で通る)、6 (`request_diagnostics` は来ない)、7 のうち `mcpCapabilities.http` と MCP の接続・ツール一覧 (§10.0)。T-22 で 7 の `report_step_done` の呼び出しとタスクの完了も済 (ファイル変更を伴うタスクは未)。
+4 (`model` / `swe-1-6-slow`、effort の option は無い)、5 (`yhtye` で通る)、6 (`request_diagnostics` は来ない)、7 のうち `mcpCapabilities.http` と MCP の接続・ツール一覧 (§10.0)。T-22 で 7 の `report_step_done` の呼び出しとタスクの完了も済。T-23 で Devin 自身がこの行を書き換えてコミットし、ファイル変更を伴うタスクも済。
 **未** = 2 (未ログイン時のエラー)、8 のうち `session/load`・`session/cancel`・`WINDSURF_API_KEY`
 (子プロセスが残らないこと、プローブのセッションが Devin の DB に残らないことは確認済み)。
 
