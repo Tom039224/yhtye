@@ -41,8 +41,9 @@ English: [README-EN.md](README-EN.md)
 - Devin (`devin acp`) は無料プラン (SWE-1.6 Slow) の実機で起動・MCP の接続・実装エージェントとしてのタスクの完了 (`report_step_done`) までを確認した。
   未ログイン時、再起動後の復元などは未確認。動かなければ、
   [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめと手動検証チェックリスト) が手がかりになる
-- MiniMax Code (`mcode acp`) は mcode 0.6.2 の実機で、起動・モデル一覧・モデルと effort の設定・1 ターンの応答までを確認した (プロンプトは 1 回だけ)。
-  Yhtye の MCP 経由のタスク完了、許可要求が来る操作、再開は未確認
+- MiniMax Code (`mcode acp`) は mcode 0.6.2 の実機で、起動・モデル一覧・モデルと effort の設定・1 ターンの応答までを確認した (クレジットの都合でプロンプトは少数だけ)。
+  既定の `auto` では、作業ディレクトリ外へのシェルの書き込みや削除でも許可要求は来なかったため、許可要求への「1 回だけ許可」の自動応答は実機では未確認 (`permissionMode` が `default` のときに要求が来る)。
+  Yhtye の MCP 経由のタスク完了と再開も未確認
   ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11)。`permissionMode` はあなたの全体設定に書き込まれてしまうので、Yhtye は変えない
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
@@ -59,7 +60,7 @@ English: [README-EN.md](README-EN.md)
 - エージェントはあなたのリポジトリのコピー (git worktree) でコードとシェルコマンドを承認なしで実行する。
   Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
 - エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`、Devin は `bypass`)。
-  MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし、それ以外は確認を自動で 1 回だけ許可) で動かす。サンドボックスは無い。
+  MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし。作業ディレクトリ外へのシェルの書き込み・削除も実機では確認なしで通った。確認が来たときは自動で 1 回だけ許可) で動かす。サンドボックスは無い。
 - Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。

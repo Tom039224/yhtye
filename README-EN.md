@@ -43,8 +43,10 @@ What is not done, and limitations:
   cancellation are still unverified. If it does not work, the measured results and the manual verification checklist in [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (Japanese)
   is the place to start.
 - MiniMax Code (`mcode acp`) has been verified against mcode 0.6.2: startup, the model list, setting the model and effort,
-  and one prompt (only one was sent). An implementer task through the Yhtye MCP, operations that raise permission
-  requests, and resuming are unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11, Japanese). Yhtye never changes `permissionMode`: setting it writes to your global
+  and one prompt (only a few were sent). On the default `auto`, shell writes and deletes outside the working directory
+  raised no permission request on the real mcode, so the automatic "allow once" answer is unverified against the real agent
+  (requests do arrive when `permissionMode` is `default`). An implementer task through the Yhtye MCP and resuming are also
+  unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11, Japanese). Yhtye never changes `permissionMode`: setting it writes to your global
   MiniMax settings.
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
@@ -62,7 +64,7 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
   **merges the result into your base branch**. Back up or push before trying it on a repository you care about.
 - Agents run without permission prompts (Claude Code with `bypassPermissions`-equivalent, Codex with
   `agent-full-access`, Devin with `bypass`; MiniMax Code runs on mcode's own default `auto`: writes inside the working
-  directory and MCP need no confirmation, and the other confirmations are answered "allow once" automatically). There is no sandbox.
+  directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; a confirmation that does arrive is answered "allow once" automatically). There is no sandbox.
 - Claude Code, OpenCode, Codex (OpenRouter), Devin and MiniMax Code usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database

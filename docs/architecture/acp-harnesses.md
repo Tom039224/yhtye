@@ -743,7 +743,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 
 > 実装は Devin (§10) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) で、**mcode 0.6.2** の実機調査 (JSON-RPC を直接送る調査、2026-10-02) で分かったことに合わせた。
 > その後 Yhtye 自身の acp 層 (`HarnessPreset::minimax_code(..).config(Implementer, Some(既定のモデル), Some("low"))`) から、プロンプトなしの起動とモデル一覧、
-> **プロンプト 1 回**だけを実機で確かめた (§11.8)。利用クレジットが少ないので、実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
+> **プロンプト 1 回**を実機で確かめた (§11.8)。その後 T-28 で、許可要求と `allow-once` の自動応答を見るために**プロンプトをさらに 2 回**送った (§11.8 の「許可要求の確認」。`auto` では要求が来なかった)。
+> 利用クレジットが少ないので、実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
 > ラベル: **[調査]** = 実機を直接調べて分かったこと、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
 
 ### 11.0 調査のまとめ (mcode 0.6.2)
@@ -759,7 +760,7 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 | effort | `thinkingEffort` の値は `default` / `low` / `medium` / `high` / `xhigh` / `max`。モデルを切り替えるとこの option は消える (消えるのは Flash Preview thinking 以外のモデル) **[調査][実測]** |
 | システムプロンプト | `_meta.systemPrompt` は**無視される** → 最初のプロンプトの前に付ける (`FirstPrompt`) **[調査]** |
 | MCP | HTTP の `mcpServers` を受け付け、ツールは **`mcp__yhtye__<tool>` の名前のまま**見える (Devin のようなメタツールの注記は要らない) **[調査]** |
-| 許可要求 | 選択肢は `allow-once` (kind `allow_once`)、`allow-always` (`allow_always`)、`deny` (`reject_once`)。既定の `auto` では、作業ディレクトリ内の書き込みと MCP は許可要求なしで通り、それ以外は要求が来る **[調査]** |
+| 許可要求 | 選択肢は `allow-once` (kind `allow_once`)、`allow-always` (`allow_always`)、`deny` (`reject_once`)。既定の `auto` では、作業ディレクトリ内の書き込みと MCP は許可要求なしで通る **[調査]**。シェルによる作業ディレクトリ外への書き込み・削除も要求なしで通った **[実測]** (§11.8)。要求が来たのは `permissionMode` = `default` のときに、シェルで作業ディレクトリ外へ書き込んだ場合 **[調査]**。`auto` で要求が来る操作は見つかっていない |
 | ベンダー拡張 | ベンダー独自の**リクエスト**は来ない。通知 `$/cancel_request` が来るが、Yhtye は未知の通知を無視するので問題ない **[調査]** |
 | キャンセル | `session/cancel` を送ると `stopReason: cancelled` で終わる **[調査]** |
 
@@ -781,7 +782,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
   Yhtye が 1 回の起動のために変えると、ユーザーが普段 `mcode` を使うときの権限モードまで変わってしまう。だから Yhtye は `permissionMode` を設定しない。
   モード (`default` / `plan`) も同じ扱いにして `session/set_mode` を送らない (`mode_after_new = None`)。
 - 既定の `auto` でも、作業ディレクトリ内の書き込みと MCP は許可要求なしで通る **[調査]**。つまり Yhtye の使い方 (エージェントはワークツリーの中で作業し、MCP で報告する) に足りる。
-  それ以外の操作 (作業ディレクトリ外・シェルなど) は `session/request_permission` で来る → §11.4 の自動応答が `allow-once` で通す。
+  シェルによる作業ディレクトリ外への書き込みと削除も、`auto` では要求なしで通った **[実測]** (§11.8)。`auto` で `session/request_permission` が来る操作はまだ見つかっていない。
+  来たときは §11.4 の自動応答が `allow-once` で通す (実機では未確認)。`permissionMode` を `default` にしているユーザーでは、作業ディレクトリ外へのシェルの書き込みで要求が来る **[調査]**。
   README / SETUP の注意 (エージェントはあなたのリポジトリのコピーで何でも実行する。サンドボックスは無い) は MiniMax Code にも当てはまる。
 - **[実測]** Yhtye から起動・モデル設定・effort 設定・1 ターンを行っても、`~/.minimax/config.yaml` のハッシュは変わらなかった
   (モデルと effort の `set_config_option` は、このファイルには書き込まない。`defaultModel` はそのまま)。
@@ -814,7 +816,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
   `allow-always` は kind が `allow_always` なので kind で選ばれず、`allow-once` (kind `allow_once`、id はどの除外にも当たらない) が選ばれる。
   **ハイフン形の id でも正しく動く**ことを偽エージェントで確認 (`permissions_pick_the_hyphenated_allow_once_and_never_allow_always`): `allow-always` / `deny` / `allow-once` の並びから `allow-once`、
   `allow-always` と `deny` だけのときは `Cancelled`。位置ではなく kind で選ぶ点は他と同じ。
-- **[未検証]** 実際に許可要求が来る操作 (作業ディレクトリ外への書き込み・シェルなど) は、1 回のプロンプトの制約で試していない。
+- **[実測]** 既定の `auto` では、作業ディレクトリ外へのシェルの書き込みと削除でも許可要求は来なかった (§11.8、2026-10-02)。そのため、実機の mcode が出す許可要求に対して
+  `allow-once` が選ばれるところは**未確認** (偽エージェントでの確認だけ)。`auto` を変えずに確かめられる操作は、今のところ見つかっていない。
 
 ### 11.5 システムプロンプトと MCP
 
@@ -853,9 +856,33 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 | 設定ファイル | 一覧の読み取り・起動・1 ターンの前後で `~/.minimax/config.yaml` のハッシュは同じ (`permissionMode` も `defaultModel` も変わっていない) |
 | 後始末 | 終了コード 0。`mcode` のプロセスは残らない |
 
-**未検証** (クレジットの都合でプロンプトは 1 回に限った): 許可要求が来る操作と `allow-once` の応答、Yhtye の MCP (`McpHost`) 経由の `report_step_done` (実装エージェントとしてのタスク完了)、
+**未検証** (クレジットの都合でプロンプトは少数に限った): 許可要求が来る操作と `allow-once` の応答 (下の「許可要求の確認」で 2 回試したが、`auto` では要求が来なかった)、
+Yhtye の MCP (`McpHost`) 経由の `report_step_done` (実装エージェントとしてのタスク完了)、
 `session/load`、`session/cancel` を Yhtye 経由で、thinking なしの Flash Preview を選んだときの拒否の見え方、未ログイン時のエラー (調査の結果はあるが Yhtye 経由では未)。
 Devin の §10.9 にならい、mcode を使える人は小さなタスクを流して、この節に **[実測]** として書き足す。
+
+#### 許可要求の確認 (T-28、2026-10-02、mcode 0.6.2、プロンプト 2 回)
+
+すべて **[実測]**。§11.4 の自動応答 (`allow-once` を選び `allow-always` を選ばない) が実機の許可要求で働くかを確かめた。条件は上の表と同じ (Flash Preview thinking、effort `low`、
+`permissionMode` = `auto` のまま、モードも `permissionMode` も変えない)。作業ディレクトリと書き込み先は、別々の `mktemp -d` で作った一時ディレクトリ。
+mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC の両方向を記録した (`AgentEvent::PermissionAutoAnswered` と、ワイヤ上の `session/request_permission` の両方で見るため)。
+
+| 操作 (プロンプト) | 結果 |
+|---|---|
+| 1. 「シェルで `date > <作業ディレクトリ外の一時ディレクトリ>/outside.txt` を実行して」 | `bash` (kind `execute`) が `in_progress` → `completed` (終了コード 0)。**ファイルは書かれた** (日付の 1 行)。**許可要求は来なかった**。`stopReason` = `EndTurn`、約 11 秒 |
+| 2. 「シェルで `rm <作業ディレクトリ外の一時ディレクトリ>/victim.txt` を実行して」 (自分で作った一時ファイル) | 同じく `completed`、**許可要求は来なかった**。mcode の `rm` は `mavis-trash: moved to trash: …` と出て、ファイルをユーザーのごみ箱 (`~/.local/share/Trash`) へ移した (後でそのエントリを消した)。`EndTurn`、約 7 秒 |
+
+- **許可要求は 2 回とも 0 件**: `AgentEvent::PermissionAutoAnswered` は出ず、記録したワイヤにもエージェント → クライアントの**リクエストは 1 つも無かった** (`session/update` の通知だけ)。
+  したがって **`allow-once` の自動選択は実機では確認できていない** (「`auto` では要求が来ず未確認」)。
+- 結論: `auto` では、**シェルによる作業ディレクトリ外への書き込みも削除も許可なしで通る**。§11.0 の調査にあった「作業ディレクトリ内の書き込みと MCP 以外は要求が来る」は、
+  シェルについては `auto` では当てはまらない (要求が来たのは `permissionMode` = `default` のとき、**[調査]**)。`auto` で要求が来る操作 (ほかのツール、ネットワーク、機密のパスなど) は見つけていない。
+  Yhtye の使い方 (`auto` のまま) では、許可要求がほとんど (あるいは全く) 来ない可能性がある。
+- **設定ファイル**: 2 回のプロンプトの前後で `~/.minimax/config.yaml` の sha256 は同じ (`234e4e7c…a7e`、`permissionMode: auto`)。`set_config_option` の `permissionMode` も `session/set_mode` も送っていない。
+  `permissionMode` を `default` にすれば要求は来るはずだが、それは**ユーザーの全体設定を書き換える**ので、この確認ではやっていない。
+- 副作用: mcode は自分の記録 (`~/.minimax/background-tasks/bg_*/` にシェルの出力、`~/.minimax/v2/sessions/`、`~/.minimax/v2/observability/logs/`) をいつもどおり `~/.minimax/` に書いた (設定ファイルではない)。
+  Yhtye やこの確認が `~/.minimax/` に書いたものではなく、mcode 自身の状態。
+- 後始末: 終了コード 0、`mcode` のプロセスは残らなかった。一時テスト (ラッパーと一時ディレクトリ) はリポジトリに残していない。
+- 確かめるには: `permissionMode` を自分で `default` (Ask) にしている人が、同じ操作 (作業ディレクトリ外へのシェルの書き込み) を Yhtye から流して、選ばれた選択肢の id (`allow-once`) を見る (§11.10 の 2)。
 
 ### 11.9 自動テストで確認したこと (偽エージェント、mcode 本体ではない)
 
@@ -876,7 +903,8 @@ Devin の §10.9 にならい、mcode を使える人は小さなタスクを流
    `McpHost` 経由で `report_step_done` が呼ばれ、タスクが完了状態まで進むか。ツール名が `mcp__yhtye__report_step_done` のまま見えるか、`tool_called` の記録があるか。
 2. **許可要求が来る操作で `allow-once` が自動で選ばれる**: 作業ディレクトリ外 (`mktemp -d` で作った一時ディレクトリなど。`~/.minimax/` や他の作業ツリーは使わない) への書き込み・シェル実行を含むタスクを流す。
    `session/request_permission` が来るか、来たときに選ばれた選択肢の id が `allow-once` かどうか、`allow-always` を選ばないこと (`allow-once` しか無ければ `Cancelled` になる)。
-   あと、選ばれた許可が次のターンに残らないこと (§11.4)。
+   あと、選ばれた許可が次のターンに残らないこと (§11.4)。**未** (2026-10-02、T-28: 既定の `auto` では、作業ディレクトリ外へのシェルの書き込みも削除も許可要求が来なかったので `allow-once` の自動選択は実機で見られていない。
+   許可要求が来るのは `permissionMode` を `default` にしているときなので、`permissionMode` を自分で `default` にしている人の確認を待つ。§11.8)
 3. **`session/load` と `session/cancel` を Yhtye 経由で**: タスクを 1 つ流して Yhtye を再起動し、そのタスクのセッションが再開できるか
    (履歴の再生、`loadSession` の能力の扱い、cwd が制約されるか)。実行中に `session/cancel` をするとターンが `stopReason: cancelled` で止まるか。
 4. **thinking なしの Flash Preview を選んだときの拒否の見え方**: 設定の行のモデルに `m:minimax:MiniMax-M3.1-Flash-Preview:v:` (thinking なし、§11.3 で一覧から除くモデル) を指定してタスクを流してから、
