@@ -35,7 +35,6 @@ import {
   newProjectView,
   prependHistory,
   type ProjectView,
-  removeChatNow,
 } from "./project";
 
 export const EVENT_PAGE = 500;
@@ -54,10 +53,6 @@ export const chatPrefKey = (project: string): string => `yhtye.chat.${project}`;
 const MAX_ERRORS = 5;
 /** How often the usage meters are re-read while connected (the core caches for a minute). */
 export const USAGE_REFRESH_MS = 5 * 60_000;
-/** How often the core is pinged while connected (the sidebar's host footer). */
-export const PING_INTERVAL_MS = 3_000;
-/** A ping without an answer after this long counts as missed. */
-export const PING_TIMEOUT_MS = 5_000;
 
 /** The git panel's data for the open project. */
 export interface GitView {
@@ -74,14 +69,6 @@ export interface UsageView {
   /** Why the last read failed (the meters then stay empty). */
   error: string | null;
   loading: boolean;
-}
-
-/** The machine the core runs on, as its last answer to a ping told. */
-export interface HostView {
-  /** Its host name (`null` until the first answer). */
-  name: string | null;
-  /** When the core last answered a ping (ms since the epoch). */
-  lastPingAt: number | null;
 }
 
 export interface AppStoreOptions {
@@ -105,7 +92,8 @@ export interface AppState {
   busy: { opening: boolean; sending: boolean };
   git: GitView | null;
   usage: UsageView;
-  host: HostView;
+  /** When the last event of any project arrived (ms since the epoch). */
+  lastEventAt: number | null;
 }
 
 type Expect<T extends ApiResponse["type"]> = Extract<ApiResponse, { type: T }>;
@@ -122,10 +110,7 @@ export class AppStore {
   private gitTimer: ReturnType<typeof setTimeout> | null = null;
   private gitToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
-  private pingTimer: ReturnType<typeof setInterval> | null = null;
-  private pinging = false;
-  /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
-  readonly prefs: Prefs;
+  private readonly prefs: Prefs;
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
@@ -145,7 +130,7 @@ export class AppStore {
       busy: { opening: false, sending: false },
       git: null,
       usage: { report: null, error: null, loading: false },
-      host: { name: null, lastPingAt: null },
+      lastEventAt: null,
     };
   }
 
@@ -159,7 +144,6 @@ export class AppStore {
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
     this.stopUsagePolling();
-    this.stopPinging();
   }
 
   getState = (): AppState => this.state;
@@ -255,32 +239,6 @@ export class AppStore {
     if (this.state.project?.info.id !== project) return;
     this.updateProject((v) => ({ ...v, chats: upsertChat(v.chats, chat) }));
     this.selectChat(chat.id);
-  }
-
-  /**
-   * The user's own title for a chat. Rejects with the core's error (an empty
-   * or too long title, an unknown chat) for the editor to show.
-   */
-  async renameChat(chat: string, title: string): Promise<void> {
-    const project = this.state.project?.info.id;
-    if (!project) return;
-    const r = await this.invoke({ type: "rename_chat", project, chat, title }, "chat");
-    if (this.state.project?.info.id !== project) return;
-    // The core's `chat_titled` follows; showing the answer now avoids a flash of the old title.
-    this.updateProject((v) => ({ ...v, chats: v.chats.map((c) => (c.id === chat ? { ...c, title: r.chat.title } : c)) }));
-  }
-
-  /**
-   * Deletes a chat (its worktree stays). Rejects with the core's refusal
-   * (its orchestrator is working, a group is unfinished) for the confirmation
-   * to show. Another chat is shown if this one was.
-   */
-  async deleteChat(chat: string): Promise<void> {
-    const project = this.state.project?.info.id;
-    if (!project) return;
-    await this.invoke({ type: "delete_chat", project, chat }, "accepted");
-    if (this.state.project?.info.id !== project) return;
-    this.updateProject((v) => removeChatNow(v, chat));
   }
 
   async cancelTask(task: string): Promise<void> {
@@ -432,8 +390,12 @@ export class AppStore {
   }
 
   private onEvent(ev: ApiEvent): void {
+    this.state = { ...this.state, lastEventAt: Date.now() };
     const view = this.state.project;
-    if (!view || ev.project !== view.info.id || view.phase === "error") return;
+    if (!view || ev.project !== view.info.id || view.phase === "error") {
+      this.notify();
+      return;
+    }
     if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) this.scheduleGitRefresh();
     if (this.syncing) {
       this.buffer.push(ev);
@@ -462,11 +424,9 @@ export class AppStore {
     if (status.state !== "open") {
       if (wasOpen) this.updateProject(clearStreaming);
       this.stopUsagePolling();
-      this.stopPinging();
       return;
     }
     this.startUsagePolling();
-    this.startPinging();
     const reconnect = this.everOpen;
     this.everOpen = true;
     const view = this.state.project;
@@ -496,34 +456,6 @@ export class AppStore {
   private stopUsagePolling(): void {
     if (this.usageTimer) clearInterval(this.usageTimer);
     this.usageTimer = null;
-  }
-
-  private startPinging(): void {
-    void this.ping();
-    if (this.pingTimer) return;
-    this.pingTimer = setInterval(() => void this.ping(), PING_INTERVAL_MS);
-  }
-
-  private stopPinging(): void {
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.pingTimer = null;
-  }
-
-  /**
-   * One liveness check of the core. A miss is not an error to show: the footer
-   * counts the time since the last answer.
-   */
-  private async ping(): Promise<void> {
-    if (this.pinging) return;
-    this.pinging = true;
-    try {
-      const r = await withTimeout(this.invoke({ type: "ping" }, "pong"), PING_TIMEOUT_MS);
-      this.set({ host: { name: r.host, lastPingAt: Date.now() } });
-    } catch {
-      // Missed; the next ping tries again.
-    } finally {
-      this.pinging = false;
-    }
   }
 
   private scheduleGitRefresh(): void {
@@ -680,15 +612,6 @@ function changesGit(ev: ApiEvent): boolean {
     default:
       return false;
   }
-}
-
-/** `promise`, or a rejection if it takes longer than `ms`. */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function upsertProject(list: ProjectInfo[], p: ProjectInfo): ProjectInfo[] {

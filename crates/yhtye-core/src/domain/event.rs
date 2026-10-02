@@ -25,16 +25,10 @@ pub enum DomainEvent {
     ChatCreated {
         chat: Chat,
     },
-    /// The chat got its title: from its first user message, or the user's own
-    /// (`rename_chat`).
+    /// The chat got its title (from its first user message).
     ChatTitled {
         chat: String,
         title: String,
-    },
-    /// The user deleted the chat. Its groups, their tasks and helps, and its
-    /// inbox go with it; the counters stay (ids are never reused).
-    ChatDeleted {
-        chat: String,
     },
     GroupCreated {
         group: Group,
@@ -171,34 +165,12 @@ impl State {
                     c.title = Some(title.clone());
                 }
             }
-            DomainEvent::ChatDeleted { chat } => self.remove_chat(chat),
             DomainEvent::TaskCreated { task } => {
                 self.counters.tasks += 1;
                 self.tasks.push(task.clone());
             }
             _ => self.apply_task(event),
         }
-    }
-
-    /// Drops `chat` with everything that belongs to it.
-    fn remove_chat(&mut self, chat: &str) {
-        let groups: Vec<String> = self
-            .groups
-            .iter()
-            .filter(|g| g.chat == chat)
-            .map(|g| g.id.clone())
-            .collect();
-        let tasks: Vec<String> = self
-            .tasks
-            .iter()
-            .filter(|t| groups.contains(&t.group))
-            .map(|t| t.id.clone())
-            .collect();
-        self.chats.retain(|c| c.id != chat);
-        self.groups.retain(|g| g.chat != chat);
-        self.tasks.retain(|t| !groups.contains(&t.group));
-        self.helps.retain(|h| !tasks.contains(&h.task));
-        self.inbox.retain(|e| e.chat != chat);
     }
 
     fn apply_group(&mut self, event: &DomainEvent) {

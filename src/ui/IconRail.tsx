@@ -1,5 +1,3 @@
-import { Icon } from "./Icon";
-
 export type View = "work" | "runs";
 
 /**
@@ -27,29 +25,29 @@ export function IconRail({
         aria-pressed={view === "work"}
         onClick={() => onChange("work")}
       >
-        <Icon name="code" size={18} />
+        &lt;/&gt;
       </button>
       <button
         type="button"
-        className={`rail-button ${view === "runs" ? "active" : ""}`}
+        className={`rail-button runs ${view === "runs" ? "active" : ""}`}
         title="履歴"
         aria-label="履歴"
         aria-pressed={view === "runs"}
         onClick={() => onChange("runs")}
       >
-        <Icon name="history" size={18} />
+        ▤
       </button>
       <span className="spacer" />
       <button
         type="button"
-        className={`rail-button ${settingsOpen ? "active" : ""}`}
+        className={`rail-button settings ${settingsOpen ? "active" : ""}`}
         title="設定"
         aria-label="設定"
         aria-haspopup="dialog"
         aria-expanded={settingsOpen}
         onClick={onOpenSettings}
       >
-        <Icon name="sliders" size={18} />
+        ⚙
       </button>
     </nav>
   );

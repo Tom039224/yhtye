@@ -4,7 +4,6 @@ import type { AgentRole, AgentSettingsView, Candidate, RoleSettings } from "../a
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { CandidateTable } from "./CandidateTable";
-import { Icon, IconButton, type IconName } from "./Icon";
 import {
   type Edit,
   type EffortsState,
@@ -118,30 +117,25 @@ export function AgentSettingsSection({ project, scope }: Props) {
     else void save(role, edit.ok);
   };
 
-  const loadingModels = Object.values(models).some((m) => m?.loading);
-
   return (
     <div className="agent-section">
       <div className="settings-toolbar">
-        <p
-          className="agent-panel-note"
-          title="役割ごとに、使えるハーネス × モデル × effort の行を並べます。★ の行が既定で、オーケストレータは各行の用途メモを読んでタスクごとに行を選べます (行と完全に一致するものだけ)。変更はすぐ保存され、新しく起動するエージェントから有効です。"
-        >
-          <Icon name="info" size={14} />
-          <span>
-            <Icon name="star" size={12} className="inline-icon" /> が既定の行。用途メモを手がかりに、オーケストレータがタスクごとに行を選びます。
-          </span>
+        <p className="agent-panel-note">
+          役割ごとに、使える <b>ハーネス × モデル × effort</b> の行を並べます。<b>★</b> の行が既定で、オーケストレータは各行の
+          <b>用途メモ</b> を読んでタスクごとに行を選べます (行と完全に一致するものだけ)。変更はすぐ保存され、
+          新しく起動するエージェントから有効です。
         </p>
-        <IconButton
-          icon="refresh"
-          label="モデル一覧を再取得"
-          spin={loadingModels}
-          disabled={!view || loadingModels}
+        <button
+          type="button"
+          className="btn btn-small"
+          disabled={!view || Object.values(models).some((m) => m?.loading)}
           onClick={() => {
             setEfforts({});
             view?.harnesses.forEach((h) => loadModels(h.id, true));
           }}
-        />
+        >
+          モデル一覧を再取得
+        </button>
       </div>
       {view?.harnesses.map((h) => {
         const m = models[h.id];
@@ -164,13 +158,12 @@ export function AgentSettingsSection({ project, scope }: Props) {
       {error ? <p className="agent-panel-status error-text" role="alert">{error}</p> : null}
       {view ? (
         <div className="agent-roles">
-          {ROLES.map(({ role, label, hint, icon }) => (
+          {ROLES.map(({ role, label, hint }) => (
             <RoleEditor
               key={role}
               role={role}
               label={label}
               hint={hint}
-              icon={icon}
               view={view}
               scope={scope}
               models={models}
@@ -206,7 +199,6 @@ function RoleEditor({
   role,
   label,
   hint,
-  icon,
   view,
   scope,
   models,
@@ -219,7 +211,6 @@ function RoleEditor({
   role: AgentRole;
   label: string;
   hint: string;
-  icon: IconName;
   view: AgentSettingsView;
   scope: Scope;
   models: Record<string, ModelsState | undefined>;
@@ -245,9 +236,9 @@ function RoleEditor({
 
   return (
     <fieldset className="agent-role" aria-label={label}>
-      <legend title={hint}>
-        <Icon name={icon} size={15} />
+      <legend>
         <span className="agent-role-name">{label}</span>
+        <span className="agent-role-hint">{hint}</span>
       </legend>
       <label className="agent-inherit" title={scope === "global" ? `組み込みの既定: ${builtin}` : undefined}>
         <input type="checkbox" checked={inherits} disabled={saving} onChange={(e) => onSave(e.target.checked ? null : shown)} />
@@ -255,11 +246,8 @@ function RoleEditor({
       </label>
       {missing.length > 0 ? (
         <p className="agent-warning" role="alert">
-          <Icon name="alert" size={14} />
-          <span>
-            {missing.join(" / ")} が見つかりません (インストールされていない)。該当する候補は使えず、
-            代わりに既定 ({builtin}) で起動します。
-          </span>
+          ⚠ {missing.join(" / ")} が見つかりません (インストールされていない)。該当する候補は使えず、
+          代わりに既定 ({builtin}) で起動します。
         </p>
       ) : null}
       <CandidateTable
@@ -277,7 +265,9 @@ function RoleEditor({
         }}
       />
       <div>
-        <IconButton icon="plus" size={15} className="icon-button-outline" label="行を追加" disabled={locked} onClick={add} />
+        <button type="button" className="btn btn-small" disabled={locked} onClick={add}>
+          + 行を追加
+        </button>
       </div>
     </fieldset>
   );

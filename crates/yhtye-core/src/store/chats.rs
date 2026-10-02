@@ -77,25 +77,15 @@ pub(super) async fn load(
         .collect())
 }
 
-/// Writes the chats of `after` that differ from `before` and deletes the ones
-/// that are gone (a chat created by an event was inserted with its time
-/// already; this only keeps the table equal to the state).
+/// Writes the chats of `after` that differ from `before` (a chat created by an
+/// event was inserted with its time already; this only keeps the table equal to
+/// the state).
 pub(super) async fn write(
     tx: &mut Transaction<'static, Sqlite>,
     project: &str,
     before: &[Chat],
     after: &[Chat],
 ) -> Result<(), StoreError> {
-    for gone in before
-        .iter()
-        .filter(|b| !after.iter().any(|a| a.id == b.id))
-    {
-        sqlx::query("DELETE FROM chats WHERE project_id = ? AND id = ?")
-            .bind(project)
-            .bind(&gone.id)
-            .execute(&mut **tx)
-            .await?;
-    }
     let now = now_ms();
     for (ord, c) in after.iter().enumerate() {
         if before.iter().any(|b| b == c) {
@@ -131,7 +121,7 @@ pub(super) async fn apply(
         } => {
             sqlx::query(
                 "INSERT INTO chats (project_id, id, ord, worktree, title, created_ms, last_used_ms) \
-                 VALUES (?, ?, (SELECT COALESCE(MAX(ord) + 1, 0) FROM chats WHERE project_id = ?), ?, ?, ?, ?) \
+                 VALUES (?, ?, (SELECT COUNT(*) FROM chats WHERE project_id = ?), ?, ?, ?, ?) \
                  ON CONFLICT (project_id, id) DO NOTHING",
             )
             .bind(project)

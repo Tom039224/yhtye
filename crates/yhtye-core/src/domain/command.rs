@@ -131,17 +131,6 @@ pub enum DomainCommand {
     CreateChat {
         worktree: PathBuf,
     },
-    /// The user renames `chat` (`invalid_argument` for an empty or too long
-    /// title, `not_found` for an unknown chat).
-    RenameChat {
-        chat: String,
-        title: String,
-    },
-    /// The user deletes `chat` with its finished groups. Refused
-    /// (`invalid_state`) while it has a group that is not finished.
-    DeleteChat {
-        chat: String,
-    },
     /// `create_group` by the orchestrator of `chat`, merging into `base_branch`:
     /// the branch the chat's worktree has checked out now (read by the runtime).
     CreateGroup {

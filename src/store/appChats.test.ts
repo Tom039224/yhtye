@@ -1,14 +1,14 @@
 // The store's chat handling (Stage 8b): selection and its memory, sending to
 // the selected chat, creating chats and branches, per-chat transcripts.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CommandError } from "../api/transport";
 import { CHAT_INFOS, CHAT_LOG, chatSnapshot, MAIN_WT } from "../test/chats";
 import { ev, prompted, userMessage } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { AppStore, chatPrefKey, PING_INTERVAL_MS, PING_TIMEOUT_MS } from "./app";
+import { AppStore, chatPrefKey } from "./app";
 import { orchestratorKey } from "./chats";
 import { memoryPrefs, type Prefs } from "./prefs";
 
@@ -192,105 +192,5 @@ describe("commands", () => {
     core.branchError = new CommandError("conflict", "branch feat/x already exists");
     await expect(s.createBranch("feat/x")).rejects.toMatchObject({ message: "branch feat/x already exists" });
     expect(view(s).selectedChat).toBe("C-2");
-  });
-});
-
-describe("renaming and deleting chats", () => {
-  it("renames a chat through the core and shows the title at once", async () => {
-    const s = newStore();
-    await open(s);
-    await s.renameChat("C-1", "  Checkout\nwork ");
-    expect(transport.callsOf("rename_chat")).toEqual([
-      { type: "rename_chat", project: "repo", chat: "C-1", title: "  Checkout\nwork " },
-    ]);
-    expect(view(s).chats.find((c) => c.id === "C-1")?.title).toBe("Checkout work");
-    expect(view(s).chats.find((c) => c.id === "C-2")?.title).toBe("Add feature x");
-    // The core's event says the same and changes nothing more.
-    transport.emit(ev(5, { type: "domain", event: { type: "chat_titled", chat: "C-1", title: "Checkout work" } }));
-    expect(view(s).chats.find((c) => c.id === "C-1")?.title).toBe("Checkout work");
-    expect(view(s).state?.chats.find((c) => c.id === "C-1")?.title).toBe("Checkout work");
-  });
-
-  it("rejects with the core's error so the editor can show it, and shows no app error", async () => {
-    const s = newStore();
-    await open(s);
-    core.failures.set("rename_chat", new CommandError("invalid_argument", "the title must not be empty"));
-    await expect(s.renameChat("C-1", " ")).rejects.toMatchObject({ code: "invalid_argument" });
-    expect(view(s).chats.find((c) => c.id === "C-1")?.title).toBe("Refactor checkout");
-    expect(s.getState().errors).toEqual([]);
-  });
-
-  it("deletes a chat: it leaves the list and another chat is shown if it was on screen", async () => {
-    const s = newStore();
-    await open(s);
-    expect(view(s).selectedChat).toBe("C-2");
-    await s.deleteChat("C-2");
-    expect(transport.callsOf("delete_chat")).toEqual([{ type: "delete_chat", project: "repo", chat: "C-2" }]);
-    expect(view(s).chats.map((c) => c.id)).toEqual(["C-1"]);
-    expect(view(s).selectedChat).toBe("C-1");
-    // The event that follows finds nothing left to do.
-    transport.emit(ev(5, { type: "domain", event: { type: "chat_deleted", chat: "C-2" } }));
-    expect(view(s).chats.map((c) => c.id)).toEqual(["C-1"]);
-    expect(view(s).state?.groups.map((g) => g.id)).toEqual(["G-1"]);
-    expect(view(s).transcripts[orchestratorKey("C-2")]).toBeUndefined();
-  });
-
-  it("keeps the chat and rejects with the refusal when the core will not delete it", async () => {
-    const s = newStore();
-    await open(s);
-    core.failures.set("delete_chat", new CommandError("invalid_state", "chat C-2 still has group G-2"));
-    await expect(s.deleteChat("C-2")).rejects.toMatchObject({ code: "invalid_state", message: "chat C-2 still has group G-2" });
-    expect(view(s).chats.map((c) => c.id)).toEqual(["C-2", "C-1"]);
-    expect(view(s).selectedChat).toBe("C-2");
-  });
-});
-
-describe("pinging the core", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("pings when the connection opens and keeps the host name and the time of the answer", async () => {
-    const s = newStore();
-    expect(s.getState().host).toEqual({ name: null, lastPingAt: null });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(transport.callsOf("ping")).toHaveLength(1);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: Date.now() });
-    s.stop();
-  });
-
-  it("pings every few seconds, and stops while the connection is closed", async () => {
-    const s = newStore();
-    await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 2);
-    expect(transport.callsOf("ping")).toHaveLength(3);
-    const answered = s.getState().host.lastPingAt;
-    transport.setStatus({ state: "closed", reason: "gone", retryInMs: null });
-    await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3);
-    expect(transport.callsOf("ping")).toHaveLength(3);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: answered });
-    // It picks up again on reconnecting.
-    transport.setStatus({ state: "open" });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(transport.callsOf("ping")).toHaveLength(4);
-    s.stop();
-  });
-
-  it("counts a failed ping as missed without showing an error, and keeps the last answer", async () => {
-    const s = newStore();
-    await vi.advanceTimersByTimeAsync(0);
-    const answered = s.getState().host.lastPingAt;
-    core.failures.set("ping", new CommandError("internal", "boom"));
-    await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 2);
-    expect(s.getState().host.lastPingAt).toBe(answered);
-    expect(s.getState().errors).toEqual([]);
-    s.stop();
-  });
-
-  it("gives up on a ping nobody answers and asks again", async () => {
-    core.before = (cmd) => (cmd.type === "ping" ? new Promise<void>(() => {}) : undefined);
-    const s = newStore();
-    await vi.advanceTimersByTimeAsync(PING_TIMEOUT_MS + PING_INTERVAL_MS);
-    expect(transport.callsOf("ping").length).toBeGreaterThanOrEqual(2);
-    expect(s.getState().host.lastPingAt).toBeNull();
-    s.stop();
   });
 });

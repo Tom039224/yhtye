@@ -52,7 +52,7 @@ function withGroup(patch: Partial<Group>): Snapshot {
 
 function expectFinishedLook() {
   const card = screen.getByRole("article", { name: "task T-1" });
-  expect(within(card).queryByTitle(WAITING_FOR_OTHERS)).not.toBeInTheDocument();
+  expect(within(card).queryByText(WAITING_FOR_OTHERS)).not.toBeInTheDocument();
   expect(within(card).queryByText(/待ち/)).not.toBeInTheDocument();
   expect(screen.queryByTestId("wait-banner")).not.toBeInTheDocument();
 }
@@ -69,11 +69,10 @@ describe("a finished group", () => {
     const { store } = setup(UNFINISHED_RUN.start, BEFORE_REMINDER);
     await open(store);
     const card = await screen.findByRole("article", { name: "task T-1" });
-    expect(within(card).queryByTitle(WAITING_FOR_OTHERS)).not.toBeInTheDocument();
-    // Short text on the card, the sentence in its tooltip.
-    expect(within(card).getByTitle("全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち")).toHaveTextContent("グループの完了待ち");
+    expect(within(card).queryByText(WAITING_FOR_OTHERS)).not.toBeInTheDocument();
+    expect(within(card).getByText("全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち")).toBeInTheDocument();
     expect(screen.getByTestId("group-status-G-1")).toHaveTextContent("完了待ち");
-    expect(screen.getByTestId("wait-banner")).toHaveAccessibleName("グループ「greeting」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています");
+    expect(screen.getByTestId("wait-banner")).toHaveTextContent("全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています");
   });
 
   it("shows the group as done once Yhtye finished it (live stream)", async () => {
@@ -128,7 +127,7 @@ describe("a finished group", () => {
     core.log = [...LOG, finishing, merged];
     act(() => transport.emit(finishing));
     await waitFor(() => expect(screen.getByTestId("group-status-G-1")).toHaveTextContent("マージ中"));
-    expect(screen.getByTestId("wait-banner")).toHaveAccessibleName("グループ「greeting」を base ブランチへマージ中");
+    expect(screen.getByText("グループを base ブランチへマージ中")).toBeInTheDocument();
     act(() => transport.emit(merged));
     await waitFor(() => expect(screen.getByTestId("group-status-G-1")).toHaveTextContent("完了"));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

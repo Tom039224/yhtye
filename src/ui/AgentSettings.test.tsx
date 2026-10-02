@@ -101,7 +101,7 @@ describe("settings modal", () => {
     expect(within(dialog).getByRole("button", { name: /このプロジェクト/ })).toHaveAttribute("aria-pressed", "true");
     expect(transport.callsOf("get_agent_settings")[0].project).toBe(PROJECT.id);
     expect(transport.callsOf("list_harness_models")).toEqual([{ type: "list_harness_models", harness: "claude-code", refresh: false }]);
-    expect(within(dialog).getByTitle(/新しく起動するエージェントから有効/)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("新しく起動するエージェントから有効");
   });
 
   it("adds rows with the same model and different efforts, a note, and moves the default", async () => {
@@ -110,11 +110,11 @@ describe("settings modal", () => {
     const implementer = () => role(dialog, "実装");
     await waitFor(() => expect(rowsOf(implementer())).toHaveLength(1));
     // Inherited settings cannot be edited until the role stops inheriting.
-    expect(within(implementer()).getByRole("button", { name: "行を追加" })).toBeDisabled();
+    expect(within(implementer()).getByRole("button", { name: "+ 行を追加" })).toBeDisabled();
 
     await user.click(within(implementer()).getByRole("checkbox", { name: "全体の設定を使う" }));
-    await waitFor(() => expect(within(implementer()).getByRole("button", { name: "行を追加" })).toBeEnabled());
-    await user.click(within(implementer()).getByRole("button", { name: "行を追加" }));
+    await waitFor(() => expect(within(implementer()).getByRole("button", { name: "+ 行を追加" })).toBeEnabled());
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
     await waitFor(() => expect(rowsOf(implementer())).toHaveLength(2));
     // The new row is the first model nobody uses yet; switch it to Sonnet.
     await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 候補2 のモデル" }), "sonnet");
@@ -126,7 +126,7 @@ describe("settings modal", () => {
     await user.tab();
     await user.click(within(implementer()).getByRole("radio", { name: "実装 候補2 を既定にする" }));
     // A second Sonnet row with another effort is a different row.
-    await user.click(within(implementer()).getByRole("button", { name: "行を追加" }));
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
     await waitFor(() => expect(rowsOf(implementer())).toHaveLength(3));
 
     const saved = core.agents.projects.get(PROJECT.id)?.implementer;
@@ -193,7 +193,7 @@ describe("settings modal", () => {
     await waitFor(() => expect(transport.callsOf("list_harness_models").map((c) => c.harness)).toEqual(["claude-code", "opencode"]));
     await user.click(within(implementer()).getByRole("checkbox", { name: "組み込みの既定を使う" }));
     await waitFor(() => expect(core.agents.global.implementer).not.toBeNull());
-    await user.click(within(implementer()).getByRole("button", { name: "行を追加" }));
+    await user.click(within(implementer()).getByRole("button", { name: "+ 行を追加" }));
     await waitFor(() => expect(rowsOf(implementer())).toHaveLength(2));
     // Row 2: switch to OpenCode; its first (long-list) model has no effort list yet.
     await user.selectOptions(within(implementer()).getByRole("combobox", { name: "実装 候補2 のハーネス" }), "opencode");

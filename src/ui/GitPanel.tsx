@@ -1,15 +1,12 @@
 import { type ReactNode, useMemo } from "react";
 
-import type { GitCommit, GitOverview, Group, State } from "../api/generated";
+import type { GitCommit, GitOverview, State } from "../api/generated";
 import { scopeState } from "../store/chats";
 import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { placeOf } from "./branchTree";
 import { type Graph, layoutGraph } from "./gitGraph";
-import { EmptyState } from "./EmptyState";
-import { Icon, IconButton, type IconName } from "./Icon";
 import { type Tone, TONE_LABEL, taskTone } from "./labels";
-import { toneIcon } from "./statusIcons";
 import { focusGroup } from "./taskInfo";
 
 /** Lane x positions and row height of the design (§3.6: 19 / 41 / 63 px, 28 px rows). */
@@ -25,26 +22,22 @@ type BranchTone = Tone | "base" | "other";
 interface BranchLabel {
   text: string;
   tone: BranchTone;
-  /** The full name of the badge (its tooltip). */
-  title: string;
-  /** The task's status icon, for a task branch. */
-  icon?: IconName;
 }
 
 /** `yhtye/G-1-T-2` → T-2's tone; `yhtye/G-1` → the group; the base branch → base. */
 function branchLabel(name: string, state: State | null, base: string | null): BranchLabel {
-  if (name === base) return { text: name, tone: "base", title: name };
+  if (name === base) return { text: name, tone: "base" };
   const task = /^yhtye\/(G-\d+)-(T-\d+)$/.exec(name);
   if (task && state) {
     const t = state.tasks.find((x) => x.id === task[2]);
     if (t) {
       const tone = taskTone(t);
-      return { text: t.id, tone, title: `${t.id} ${TONE_LABEL[tone]}`, icon: toneIcon(tone, t.kind) };
+      return { text: `${t.id} ${TONE_LABEL[tone]}`, tone };
     }
   }
   const group = /^yhtye\/(G-\d+)$/.exec(name);
-  if (group) return { text: group[1], tone: "other", title: name };
-  return { text: name, tone: "other", title: name };
+  if (group) return { text: group[1], tone: "other" };
+  return { text: name, tone: "other" };
 }
 
 function laneClass(tone: BranchTone | undefined): string {
@@ -95,51 +88,26 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
     <>
       <header className="bottom-header">
         {tabs}
-        <RangeMeta group={group} branch={chatBranch ?? overview?.head ?? null} />
+        <span className="bottom-meta">
+          {group ? `${group.group_branch} ← ${group.base_branch}` : (chatBranch ?? overview?.head ?? "")}
+        </span>
         <span className="spacer" />
-        {git?.error ? (
-          <span className="bottom-meta error-text" title={`git を読み込めませんでした: ${git.error}`}>
-            <Icon name="alert" size={14} />
-            <span className="sr-only">読み込み失敗</span>
-          </span>
-        ) : null}
-        <IconButton icon="refresh" label="git を読み直す" spin={git?.loading} onClick={() => void store.refreshGit()} disabled={git?.loading} />
+        {git?.error ? <span className="bottom-meta error-text" title={git.error}>読み込み失敗</span> : null}
+        <button type="button" className="tab" title="git を読み直す" onClick={() => void store.refreshGit()} disabled={git?.loading}>
+          {git?.loading ? "…" : "graph ↻"}
+        </button>
       </header>
       <div className="scroll">
         {!overview ? (
-          git?.error ? (
-            <EmptyState icon="alert" tone="error" text={`git を読めませんでした: ${git.error}`} />
-          ) : (
-            <EmptyState icon="loader" text="読み込み中…" />
-          )
+          <p className="empty">{git?.error ? `git を読めませんでした: ${git.error}` : "読み込み中…"}</p>
         ) : overview.commits.length === 0 ? (
-          <EmptyState icon="git-branch" text="コミットはまだありません。" />
+          <p className="empty">コミットはまだありません。</p>
         ) : graph ? (
           <GraphRows graph={graph} overview={overview} state={state} base={base} />
         ) : null}
       </div>
     </>
   );
-}
-
-/** The branch the header is about: `group ← base` while a group is open, else the branch itself. */
-function RangeMeta({ group, branch }: { group: Group | null; branch: string | null }) {
-  if (group) {
-    return (
-      <span className="bottom-meta" title={`${group.group_branch} ← ${group.base_branch}`}>
-        <Icon name="git-branch" size={12} />
-        {group.group_branch}
-        <Icon name="arrow-left" size={11} />
-        {group.base_branch}
-      </span>
-    );
-  }
-  return branch ? (
-    <span className="bottom-meta" title={branch}>
-      <Icon name="git-branch" size={12} />
-      {branch}
-    </span>
-  ) : null;
 }
 
 function GraphRows({ graph, overview, state, base }: { graph: Graph; overview: GitOverview; state: State | null; base: string | null }) {
@@ -197,12 +165,7 @@ function GraphRows({ graph, overview, state, base }: { graph: Graph; overview: G
           </div>
         );
       })}
-      {overview.truncated ? (
-        <p className="graph-more" title="これより前のコミットは省略しています">
-          <Icon name="chevrons-up" size={12} className="graph-more-icon" />
-          <span className="sr-only">これより前のコミットは省略しています。</span>
-        </p>
-      ) : null}
+      {overview.truncated ? <p className="empty">これより前のコミットは省略しています。</p> : null}
     </div>
   );
 }
@@ -216,8 +179,7 @@ function Badges({ commit, isHead, state, base, head }: { commit: GitCommit; isHe
         const label = branchLabel(b, state, base);
         const cls = label.tone === "base" || label.tone === "other" || label.tone === "waiting" || label.tone === "cancelled" ? "" : `git-badge-${label.tone}`;
         return (
-          <span key={b} className={`git-badge ${cls}`} title={label.title}>
-            {label.icon ? <Icon name={label.icon} size={10} /> : null}
+          <span key={b} className={`git-badge ${cls}`} title={b}>
             {label.text}
           </span>
         );

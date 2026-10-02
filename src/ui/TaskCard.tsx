@@ -1,20 +1,7 @@
-import { Fragment } from "react";
-
-import type { State, Task } from "../api/generated";
+import type { State, StepStatus, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
 import { useStore } from "../store/useStore";
-import { Icon, IconButton } from "./Icon";
 import { HELP_LABEL, isTerminal, TONE_LABEL, taskTone } from "./labels";
-import {
-  HELP_ICON,
-  KIND_LABEL,
-  STEP_LABEL,
-  STEP_STATUS_LABEL,
-  StatusChip,
-  stepIcon,
-  ToolStatus,
-  toneIcon,
-} from "./statusIcons";
 import {
   formatElapsed,
   isActiveTone,
@@ -36,14 +23,13 @@ interface Props {
   onMention: () => void;
 }
 
-const LOG_ICON = { message: "message", tool: "wrench", error: "alert" } as const;
+const STEP_MARK: Record<StepStatus, string> = { done: "✓", running: "●", pending: "·" };
 
 /**
- * A task card (design §3.5): the status as an icon chip, id, title (click:
- * agent output), icon buttons to quote it into the composer and to cancel it
- * (not on finished tasks), a progress bar while an agent works, the open help
- * as the handling note, the agent's latest activity, the steps as a row of
- * icons, and the agent / elapsed time.
+ * A task card (design §3.5): status badge, id, title (click: agent output),
+ * `@` (quote into the composer) and ■ (cancel the task; not on finished
+ * tasks), a progress bar while an agent works, the open help as the handling
+ * note, the agent's latest activity, the steps, and the agent / elapsed time.
  */
 export function TaskCard({ task, state, view, now, selected, onSelect, onMention }: Props) {
   const store = useStore();
@@ -52,114 +38,75 @@ export function TaskCard({ task, state, view, now, selected, onSelect, onMention
   const agent = taskAgent(view, task);
   const log = taskLog(view, task.id);
   const elapsed = taskElapsedMs(view, task, now);
-  const meta = taskMeta(state, task);
+  const meta = taskMeta(state, task, agent);
   const active = isActiveTone(tone);
-  const percent = Math.round(taskProgress(task) * 100);
   return (
     <article className={`task task-card-${tone} ${selected ? "selected" : ""}`} aria-label={`task ${task.id}`}>
       <div className="task-header">
-        <StatusChip className={`tone-${tone}`} icon={toneIcon(tone, task.kind)} label={TONE_LABEL[tone]} active={active} />
-        <span className="task-id" title={KIND_LABEL[task.kind]}>
-          {task.id}
+        <span className={`badge tone-${tone}`}>
+          {active ? <span className="badge-dot" /> : null}
+          {TONE_LABEL[tone]}
         </span>
+        <span className="task-id">{task.id}</span>
         <button type="button" className="task-title linklike" onClick={onSelect} title="エージェントの出力を見る">
           {task.title}
         </button>
         <span className="spacer" />
         <div className="task-actions">
-          <IconButton icon="at" title="オーケストレータへ引用" label={`${task.id} をオーケストレータへ引用`} onClick={onMention} />
+          <button type="button" className="icon-btn" title="オーケストレータへ引用" aria-label={`${task.id} をオーケストレータへ引用`} onClick={onMention}>
+            @
+          </button>
           {!isTerminal(task) ? (
-            <IconButton
-              icon="stop"
+            <button
+              type="button"
+              className="icon-btn"
               title="エージェントを停止 (タスクを中止)"
-              label={`${task.id} を中止`}
+              aria-label={`${task.id} を中止`}
               onClick={() => void store.cancelTask(task.id)}
-            />
+            >
+              <span className="stop-square" />
+            </button>
           ) : null}
         </div>
       </div>
       {active ? (
-        <div className={`progress progress-${tone}`} role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
-          <div className="progress-fill" style={{ width: `${percent}%` }} />
+        <div className={`progress progress-${tone}`} role="progressbar" aria-valuenow={Math.round(taskProgress(task) * 100)} aria-valuemin={0} aria-valuemax={100}>
+          <div className="progress-fill" style={{ width: `${Math.round(taskProgress(task) * 100)}%` }} />
           <div className="progress-sheen" />
         </div>
       ) : null}
-      {task.status === "interrupted" ? (
-        <div className="task-note">
-          <Icon name="refresh" size={13} />
-          再起動で中断されました。自動で再開します。
-        </div>
-      ) : null}
+      {task.status === "interrupted" ? <div className="task-note">再起動で中断されました。自動で再開します。</div> : null}
       {helps.map((h) => (
         <div key={h.id} className="task-note" role="alert">
-          <span className="help-kind" title={`${h.id} · ${HELP_LABEL[h.kind]}`}>
-            <Icon name={HELP_ICON[h.kind]} size={13} />
-            <span className="sr-only">{HELP_LABEL[h.kind]}</span>
+          <span className="kind">
+            {h.id} · {HELP_LABEL[h.kind]}
+            {h.agent_lost ? " · エージェント喪失" : ""}
           </span>
-          {h.agent_lost ? (
-            <span className="help-kind" title="エージェントの処理が失われました">
-              <Icon name="plug-off" size={13} />
-              <span className="sr-only">エージェント喪失</span>
-            </span>
-          ) : null}
           {h.message}
         </div>
       ))}
-      {task.cancel_reason ? (
-        <div className="task-meta" title="中止した理由">
-          <Icon name="ban" size={12} />
-          {task.cancel_reason}
-        </div>
-      ) : null}
+      {task.cancel_reason ? <div className="task-meta">中止: {task.cancel_reason}</div> : null}
       {log.length > 0 && !isTerminal(task) ? (
         <div className="task-log" data-testid={`log-${task.id}`}>
           {log.map((l, i) => (
-            <div key={i} className={`log-line log-${l.kind}`}>
-              <Icon name={LOG_ICON[l.kind]} size={11} />
-              <span className="log-text">{l.text}</span>
-              {l.kind === "tool" ? <ToolStatus status={l.status ?? null} /> : null}
-            </div>
+            <div key={i}>{l}</div>
           ))}
         </div>
       ) : null}
-      <div className="task-foot">
-        <ol className="steps" aria-label="steps">
-          {task.steps.map((s, i) => {
-            const label = `${STEP_LABEL[s.kind]} · ${STEP_STATUS_LABEL[s.status]}`;
-            const running = s.status === "running";
-            return (
-              <Fragment key={i}>
-                {i > 0 ? <li className="step-link" aria-hidden="true" /> : null}
-                <li
-                  className={`step is-${s.status} kind-${s.kind} ${s.verdict ? `verdict-${s.verdict}` : ""}`}
-                  aria-label={`${s.kind} ${s.status}${s.verdict ? ` (${s.verdict})` : ""}`}
-                  title={[label, s.verdict ? verdictLabel(s.verdict) : null, s.result].filter(Boolean).join("\n")}
-                >
-                  <Icon name={stepIcon(s.kind, task.kind)} size={13} className={running ? "step-pulse" : ""} />
-                </li>
-              </Fragment>
-            );
-          })}
-        </ol>
-        <span className="spacer" />
-        {agent ? (
-          <span className="task-agent" title="エージェントのセッション · 作業時間">
-            <Icon name="bot" size={12} />
-            {agent}
-            {elapsed !== null ? ` · ${formatElapsed(elapsed)}` : ""}
+      <div className="task-steps" aria-label="steps">
+        {task.steps.map((s, i) => (
+          <span key={i} className={s.status} title={s.result ?? undefined}>
+            {i > 0 ? " → " : ""}
+            {s.kind} {STEP_MARK[s.status]}
+            {s.verdict ? ` (${s.verdict})` : ""}
           </span>
-        ) : null}
+        ))}
       </div>
-      {meta ? (
-        <div className="task-meta" title={meta.title}>
-          <Icon name={meta.icon} size={12} />
-          {meta.text}
-        </div>
-      ) : null}
+      {meta ? <div className="task-meta">{meta}</div> : null}
+      <div className="task-footer">
+        {agent ?? "エージェント未起動"}
+        {elapsed !== null ? ` · ${formatElapsed(elapsed)}` : ""}
+      </div>
     </article>
   );
-}
-
-function verdictLabel(verdict: string): string {
-  return verdict === "approve" ? "承認" : "要修正";
 }

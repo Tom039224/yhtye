@@ -8,7 +8,7 @@ use sqlx::{FromRow, Sqlite, SqliteConnection, Transaction};
 
 use super::codec::{from_json, int, json, name, parse, parse_opt, uint};
 use super::{StoreError, chats};
-use crate::domain::{Group, Help, InboxEntry, InboxItem, State, Step, Task, orchestrator_session};
+use crate::domain::{Group, Help, InboxEntry, InboxItem, State, Step, Task};
 
 type Tx = Transaction<'static, Sqlite>;
 
@@ -46,7 +46,6 @@ pub(super) async fn write(tx: &mut Tx, before: &State, after: &State) -> Result<
             .await?;
     }
     chats::write(tx, project, &before.chats, &after.chats).await?;
-    delete_removed(tx, project, before, after).await?;
     for (ord, g) in after.groups.iter().enumerate() {
         if before.group(&g.id) != Some(g) {
             upsert_group(tx, project, ord, g).await?;
@@ -63,101 +62,6 @@ pub(super) async fn write(tx: &mut Tx, before: &State, after: &State) -> Result<
         }
     }
     write_inbox(tx, project, &before.inbox, &after.inbox).await
-}
-
-/// Deletes what `before` had and `after` no longer has: the groups, tasks and
-/// helps of a deleted chat, and the agent sessions that belong to them and to
-/// the chat (its orchestrator's). The survivors are numbered again, so a row
-/// inserted later cannot end up with the same `ord`.
-async fn delete_removed(
-    tx: &mut Tx,
-    project: &str,
-    before: &State,
-    after: &State,
-) -> Result<(), StoreError> {
-    for chat in before.chats.iter().filter(|c| after.chat(&c.id).is_none()) {
-        let key = orchestrator_session(&chat.id);
-        delete_where(tx, DELETE_SESSION, project, &key).await?;
-    }
-    let gone_tasks = before.tasks.iter().filter(|t| after.task(&t.id).is_none());
-    let mut removed_tasks = false;
-    for t in gone_tasks {
-        for sql in [DELETE_STEPS, DELETE_DEPS, DELETE_TASK_SESSIONS, DELETE_TASK] {
-            delete_where(tx, sql, project, &t.id).await?;
-        }
-        removed_tasks = true;
-    }
-    let mut removed_groups = false;
-    for g in before
-        .groups
-        .iter()
-        .filter(|g| after.group(&g.id).is_none())
-    {
-        delete_where(tx, DELETE_GROUP, project, &g.id).await?;
-        removed_groups = true;
-    }
-    let mut removed_helps = false;
-    for h in before.helps.iter().filter(|h| after.help(&h.id).is_none()) {
-        delete_where(tx, DELETE_HELP, project, &h.id).await?;
-        removed_helps = true;
-    }
-    if removed_groups {
-        let ids = after.groups.iter().map(|g| g.id.as_str());
-        renumber(tx, RENUMBER_GROUP, project, ids).await?;
-    }
-    if removed_tasks {
-        let ids = after.tasks.iter().map(|t| t.id.as_str());
-        renumber(tx, RENUMBER_TASK, project, ids).await?;
-    }
-    if removed_helps {
-        let ids = after.helps.iter().map(|h| h.id.as_str());
-        renumber(tx, RENUMBER_HELP, project, ids).await?;
-    }
-    Ok(())
-}
-
-const DELETE_SESSION: &str = "DELETE FROM agent_sessions WHERE project_id = ? AND session_key = ?";
-const DELETE_TASK_SESSIONS: &str =
-    "DELETE FROM agent_sessions WHERE project_id = ? AND task_id = ?";
-const DELETE_STEPS: &str = "DELETE FROM steps WHERE project_id = ? AND task_id = ?";
-const DELETE_DEPS: &str = "DELETE FROM task_deps WHERE project_id = ? AND task_id = ?";
-const DELETE_TASK: &str = "DELETE FROM tasks WHERE project_id = ? AND id = ?";
-const DELETE_GROUP: &str = "DELETE FROM task_groups WHERE project_id = ? AND id = ?";
-const DELETE_HELP: &str = "DELETE FROM helps WHERE project_id = ? AND id = ?";
-const RENUMBER_GROUP: &str = "UPDATE task_groups SET ord = ? WHERE project_id = ? AND id = ?";
-const RENUMBER_TASK: &str = "UPDATE tasks SET ord = ? WHERE project_id = ? AND id = ?";
-const RENUMBER_HELP: &str = "UPDATE helps SET ord = ? WHERE project_id = ? AND id = ?";
-
-async fn delete_where(
-    tx: &mut Tx,
-    sql: &'static str,
-    project: &str,
-    value: &str,
-) -> Result<(), StoreError> {
-    sqlx::query(sql)
-        .bind(project)
-        .bind(value)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
-
-/// Gives the rows `ids` (in this order) `ord` 0, 1, 2, ... with `sql`.
-async fn renumber<'a>(
-    tx: &mut Tx,
-    sql: &'static str,
-    project: &str,
-    ids: impl Iterator<Item = &'a str>,
-) -> Result<(), StoreError> {
-    for (ord, id) in ids.enumerate() {
-        sqlx::query(sql)
-            .bind(int(ord)?)
-            .bind(project)
-            .bind(id)
-            .execute(&mut **tx)
-            .await?;
-    }
-    Ok(())
 }
 
 async fn upsert_group(tx: &mut Tx, project: &str, ord: usize, g: &Group) -> Result<(), StoreError> {

@@ -79,8 +79,6 @@ export class FakeCore {
   log: ApiEvent[] = [];
   snapshot: Snapshot;
   info: ProjectInfo;
-  /** Other projects the core knows (listed after `info`; `open_project` finds them by path). */
-  others: ProjectInfo[] = [];
   /** Commands that should fail, by type. */
   failures = new Map<ApiCommand["type"], CommandError>();
   /** Largest page the fake returns (whatever the client asks for). */
@@ -107,8 +105,6 @@ export class FakeCore {
   secretError: string | null = null;
   /** Makes `create_branch` fail (an invalid or existing name). */
   branchError: CommandError | null = null;
-  /** The host name `ping` answers with. */
-  host = "test-host";
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -156,12 +152,10 @@ export class FakeCore {
     const failure = this.failures.get(cmd.type);
     if (failure) throw failure;
     switch (cmd.type) {
-      case "ping":
-        return { type: "pong", host: this.host };
       case "list_projects":
-        return { type: "projects", projects: [this.info, ...this.others] };
+        return { type: "projects", projects: [this.info] };
       case "open_project":
-        return { type: "project", project: { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true } };
+        return { type: "project", project: { ...this.info, open: true } };
       case "get_snapshot":
         return { type: "snapshot", snapshot: this.snapshot };
       case "list_events": {
@@ -174,16 +168,6 @@ export class FakeCore {
         return { type: "git_overview", git: this.git };
       case "create_chat":
         return { type: "chat", chat: this.newChat(cmd.worktree ?? this.worktreeOf(cmd.branch ?? "")) };
-      case "rename_chat": {
-        const chat = this.snapshot.chats.find((c) => c.id === cmd.chat);
-        if (!chat) throw new CommandError("not_found", `no chat ${cmd.chat}`);
-        const title = cmd.title.trim().replace(/\s+/g, " ");
-        if (!title) throw new CommandError("invalid_argument", "the title must not be empty");
-        return { type: "chat", chat: { ...chat, title } };
-      }
-      case "delete_chat":
-        if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
-        return { type: "accepted" };
       case "create_branch":
         if (this.branchError) throw this.branchError;
         this.git = { ...this.git, branches: [...this.git.branches, { name: cmd.name, sha: "n".repeat(40) }] };

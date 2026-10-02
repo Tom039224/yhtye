@@ -5,8 +5,6 @@ import { orchestratorKey, scopeState } from "../store/chats";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
-import { EmptyState } from "./EmptyState";
-import { Icon, IconButton } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
 import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
@@ -21,7 +19,7 @@ interface Props {
 }
 
 export const NEW_CHAT_TITLE = "新しいチャット";
-const NO_CHAT_HINT = "サイドバーの「新しいチャット」から始めます";
+const NO_CHAT_HINT = "BRANCHES の「+ 新しいチャット」から始めます";
 
 /** Where the chat's worktree is now (its branch, detached, gone; unknown until git is read). */
 function chatPlace(overview: GitOverview | null, chat: ChatInfo | null): Place {
@@ -67,14 +65,12 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   return (
     <section className="conversation" aria-label="orchestrator">
       <header className="panel-header">
-        <Icon name="message" size={14} className="panel-icon" />
         <span className="panel-title" data-testid="chat-title" title={chat?.title ?? undefined}>
           {chat ? (chat.title ?? NEW_CHAT_TITLE) : "orchestrator"}
         </span>
         {chat && placeText ? (
           <span className="chip branch-chip" title={`このチャットの作業ツリー: ${chat.worktree}`} data-testid="chat-branch">
-            <Icon name={place.kind === "missing" ? "alert" : "git-branch"} size={11} />
-            {placeText}
+            {place.kind === "missing" ? placeText : `⎇ ${placeText}`}
           </span>
         ) : null}
         <span className="spacer" />
@@ -82,7 +78,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
       </header>
       <div className="scroll" ref={scroller}>
         {!chat ? (
-          <EmptyState icon="message-plus" testId="no-chat" text={NO_CHAT_HINT} />
+          <p className="empty" data-testid="no-chat">{NO_CHAT_HINT}</p>
         ) : items?.length || streaming || view.historyStart > 1 ? (
           <TranscriptView
             items={items ?? []}
@@ -93,14 +89,14 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             before={<OlderHistory view={view} />}
           />
         ) : (
-          <EmptyState icon="message" text="会話はまだありません" />
+          <p className="empty">まだ会話はありません。下の欄からオーケストレータに依頼してください。</p>
         )}
       </div>
       {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
         key={chat?.id ?? "none"}
         disabled={disabledReason !== null}
-        disabledReason={chat ? disabledReason : null}
+        disabledReason={disabledReason}
         sending={sending}
         turnRunning={session?.turn_running ?? false}
         starting={queued.size > 0 && session?.status !== "live"}
@@ -117,77 +113,48 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
 export function OlderHistory({ view }: { view: ProjectView }) {
   const store = useStore();
   if (view.historyStart <= 1) return null;
-  const loading = view.loadingOlder;
   return (
-    <IconButton
-      icon={loading ? "loader" : "chevrons-up"}
-      spin={loading}
-      className="load-older"
-      label={loading ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
-      disabled={loading || view.phase !== "ready"}
+    <button
+      type="button"
+      className="btn btn-small load-older"
+      disabled={view.loadingOlder || view.phase !== "ready"}
       onClick={() => void store.loadOlderHistory()}
-    />
+    >
+      {view.loadingOlder ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
+    </button>
   );
 }
 
 /**
  * The design's group-wait banner (§3.4): while a group runs, results reach the
- * orchestrator only when every task has settled. The sentence is its tooltip;
- * on screen: the group, how far it is, and how many tasks need handling.
+ * orchestrator only when every task has settled.
  */
 function WaitBanner({ state }: { state: State }) {
   const group = focusGroup(state);
   if (!group || !isOpenGroup(group)) return null;
   const p = groupProgress(state, group.id);
-  const finishing = group.status === "finishing";
-  const awaiting = awaitingFinish(state, group);
-  const text = finishing
-    ? `グループ「${group.title}」を base ブランチへマージ中`
-    : awaiting
-      ? `グループ「${group.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
-      : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
-  const share = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+  const text =
+    group.status === "finishing"
+      ? `グループ「${group.title}」を base ブランチへマージ中`
+      : awaitingFinish(state, group)
+        ? `グループ「${group.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
+        : `グループ「${group.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling > 0 ? ` · ${p.handling} 件 対処中` : ""}`;
   return (
-    <div className="wait-banner" role="status" data-testid="wait-banner" title={text} aria-label={text}>
-      <Icon name={finishing ? "git-merge" : awaiting ? "hourglass" : "layers"} size={14} className={finishing ? "wait-busy" : ""} />
-      <span className="wait-title">{group.title}</span>
-      <span className="wait-progress" aria-hidden="true">
-        <span style={{ width: `${share}%` }} />
-      </span>
-      <span className="wait-count">
-        {p.done}/{p.total}
-      </span>
-      {p.handling > 0 ? (
-        <span className="wait-handling">
-          <Icon name="alert" size={12} />
-          {p.handling}
-        </span>
-      ) : null}
+    <div className="wait-banner" role="status" data-testid="wait-banner">
+      <span className="dot dot-accent" />
+      {text}
     </div>
   );
 }
 
-/**
- * The orchestrator's state, by shape as well as colour: a hollow ring not
- * started, a filled green dot idle, a blue dot with a halo working, and the
- * alert icon when the session needs attention. The words are the tooltip.
- */
 function SessionBadge({ status, running }: { status: string | undefined; running: boolean }) {
-  const label = !status ? "not started" : status === "live" ? (running ? "working" : "idle") : status;
-  const title = `オーケストレータ: ${label}`;
-  const words = <span className="sr-only">{label}</span>;
-  if (status && status !== "live") {
-    return (
-      <span className="status-icon status-icon-bad" title={title} data-testid="orchestrator-status">
-        <Icon name="alert" size={14} />
-        {words}
-      </span>
-    );
-  }
-  const tone = !status ? "" : running ? " status-dot-working" : " status-dot-idle";
+  if (!status) return <span className="badge tone-waiting" data-testid="orchestrator-status">not started</span>;
+  const label = status === "live" ? (running ? "working" : "idle") : status;
+  const tone = status === "live" ? (running ? "tone-implementing" : "tone-done") : "tone-handling";
   return (
-    <span className={`status-dot${tone}`} title={title} data-testid="orchestrator-status">
-      {words}
+    <span className={`badge ${tone}`} data-testid="orchestrator-status">
+      {running ? <span className="badge-dot" /> : null}
+      {label}
     </span>
   );
 }

@@ -59,7 +59,6 @@
 | `--accent` | `#d9a066` | オーケストレータの発話ラベル、アクティブアイコン、リンク |
 | `--accent-hover` | `#e8b884` | リンクのホバー |
 | `--accent-strong` | `#e0a45c` | 本文中の強調、`@` ボタンのホバー |
-| `--accent-soft` | `accent` の 14% 透過 | エージェントの発話アイコンの地 (原本に無い。実装で追加) |
 
 ### ステータス (oklch)
 
@@ -147,26 +146,3 @@ reduce のときはすべてのアニメーション (spin / sheen / pulse) と�
 **発明した値** (原本に無い。ステータス色の流儀 = 色相固定で明度/彩度を振る、に従った):
 `--git-lane-reviewing` `oklch(0.55 0.09 300)` / `--git-node-reviewing` `oklch(0.62 0.11 300)` /
 `--git-{lane,node,badge-bg,badge-fg}-done` (色相 150、実装中の明度・彩度と同じ)。
-
-## アイコン (`src/ui/Icon.tsx`)
-
-文字ボタン・英字の見出し・状態の文言はアイコンに置き換えた。**言葉は消さずに、ツールチップ (`title`) と
-`aria-label` (または視覚的に隠した `sr-only` の文字) に移す** — 意味が明確でないものは置き換えない。
-
-- 自作のインライン SVG (外部ライブラリなし)。`viewBox="0 0 24 24"`、`stroke="currentColor"`、線幅 1.75、角と端は丸。
-  追加するときも線だけで描く (塗りは停止の四角だけ)。大きさは 12–14px (行の中)、16px (ボタン)、18px (レール)。
-- 状態は形と色の両方で伝える (`src/ui/statusIcons.tsx`):
-
-| 状態 | アイコン | 色 (トークン) |
-|---|---|---|
-| 待機 (waiting) | `hourglass` | `--surface-chip` / `--text-muted` |
-| 実装中 (implementing) | `code` (調査タスクは `search`) | `--status-implementing-*` |
-| レビュー中 (reviewing) | `eye` | `--status-reviewing-*` |
-| 対処中 (handling) | `alert` | `--status-handling-*` |
-| 完了 (done) | `check` | `--status-done-*` |
-| 中止 (cancelled) | `ban` | `--surface-chip-dim` / `--text-faint` |
-
-- ステップ (implement / review / checkpoint / done) は `code` / `eye` / `flag` / `check` の一列。完了は緑、実行中は
-  種別の色 + 呼吸、要修正のレビューは対処中の色、待機は `--text-faintest`。
-- 発話者は左の余白のアイコン (あなた = `user`、エージェント = `bot`)。時刻はホバーで出る。
-- ツール呼び出しの結果は `check` / `x` / 回る `loader`。エージェントのツールは `wrench`、Yhtye のツールは `bolt`。

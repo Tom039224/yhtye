@@ -14,11 +14,7 @@ export interface GraphRow {
   incoming: number[];
   /** Lanes the commit's parents continue in (first parent first). */
   outgoing: number[];
-  /**
-   * Lanes passing by in the top half / bottom half of the row. A lane that
-   * the commit's parent line merges into stays in both (it runs on through
-   * the row); `outgoing` only adds the lines that start at the commit.
-   */
+  /** Lanes passing by in the top half / bottom half of the row. */
   throughTop: number[];
   throughBottom: number[];
   /**
@@ -87,9 +83,7 @@ export function layoutGraph(commits: GitCommit[]): Graph {
     // A first parent already expected by a lane to the left: this lane ends in it.
 
     const throughTop = before.flatMap((sha, i) => (sha !== null && sha !== commit.sha ? [i] : []));
-    // A lane that was already waiting for a parent of this commit keeps running
-    // through the row (the commit's own line only joins it at the bottom edge).
-    const throughBottom = before.flatMap((sha, i) => (sha !== null && sha !== commit.sha && after[i] === sha ? [i] : []));
+    const throughBottom = after.flatMap((sha, i) => (sha !== null && !outgoing.includes(i) ? [i] : []));
     const joined = joins.map((j) => j.from);
     const rowIds = new Map<number, number>();
     for (const i of [...throughTop, ...throughBottom, ...incoming, ...outgoing, ...joined, lane]) {

@@ -6,7 +6,6 @@
 import type { Group, Help, State, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
 import type { TranscriptItem } from "../store/transcript";
-import type { IconName } from "./Icon";
 import { GROUP_LABEL, isTerminal, type Tone, taskTone } from "./labels";
 
 /** Session keys of a task (`T-1/implementer`, `T-1/review-2`, ...) in start order. */
@@ -89,38 +88,30 @@ function firstLine(text: string, max = 90): string {
   return line.length > max ? `${line.slice(0, max)}…` : line;
 }
 
-/** One line of the card's activity log: what happened, and how it went. */
-export interface LogLine {
-  kind: "message" | "tool" | "error";
-  text: string;
-  /** A tool call's outcome (`completed`, `failed`, `in_progress`...). */
-  status?: string | null;
-}
-
-function logLine(item: TranscriptItem): LogLine | null {
+function logLine(item: TranscriptItem): string | null {
   switch (item.kind) {
     case "tool":
-      return { kind: "tool", text: `${item.title}${item.calls.length > 0 ? ` → ${item.calls.join(", ")}` : ""}`, status: item.status };
+      return `${item.title}${item.calls.length > 0 ? ` → ${item.calls.join(", ")}` : ""}${item.status ? ` · ${item.status}` : ""}`;
     case "yhtye_tool":
-      return { kind: "tool", text: item.tool, status: item.ok ? "completed" : "failed" };
+      return `${item.tool} · ${item.ok ? "ok" : "error"}`;
     case "text":
-      return item.textKind === "message" ? { kind: "message", text: firstLine(item.text) } : null;
+      return item.textKind === "message" ? firstLine(item.text) : null;
     case "lifecycle":
     case "turn":
-      return item.error ? { kind: "error", text: item.kind === "turn" ? `turn ended: ${item.outcome}` : item.text } : null;
+      return item.error ? (item.kind === "turn" ? `turn ended: ${item.outcome}` : item.text) : null;
     default:
       return null;
   }
 }
 
 /** The latest activity lines of the task's newest session (at most `n`). */
-export function taskLog(view: ProjectView, task: string, n = 2): LogLine[] {
+export function taskLog(view: ProjectView, task: string, n = 2): string[] {
   const sessions = taskSessions(view, task);
   const key = sessions[sessions.length - 1];
   if (!key) return [];
-  const lines: LogLine[] = [];
+  const lines: string[] = [];
   const streamed = view.streaming[key]?.message;
-  if (streamed) lines.push({ kind: "message", text: firstLine(streamed) });
+  if (streamed) lines.push(firstLine(streamed));
   const items = view.transcripts[key] ?? [];
   for (let i = items.length - 1; i >= 0 && lines.length < n; i--) {
     const line = logLine(items[i]);
@@ -158,30 +149,19 @@ export function openHelps(state: State, task: string): Help[] {
   return state.helps.filter((h) => h.task === task && h.state === "open");
 }
 
-/** The grey meta line under a card: an icon, a short text, and the full sentence as its tooltip. */
-export interface TaskMeta {
-  icon: IconName;
-  text: string;
-  title?: string;
-}
-
 /** The design's grey meta line under a card, from the real state (or null). */
-export function taskMeta(state: State, task: Task): TaskMeta | null {
+export function taskMeta(state: State, task: Task, agent: string | null): string | null {
   const group = state.groups.find((g) => g.id === task.group);
   if (task.status === "done" && group && isOpenGroup(group)) {
-    if (group.status === "finishing") return { icon: "git-merge", text: "マージ中", title: "グループを base ブランチへマージ中" };
-    if (awaitingFinish(state, group)) {
-      return { icon: "hourglass", text: "グループの完了待ち", title: "全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち" };
-    }
-    return { icon: "hourglass", text: "他タスクの完了待ち", title: "同グループの他タスク完了を待機 — 送信保留" };
+    if (group.status === "finishing") return "グループを base ブランチへマージ中";
+    if (awaitingFinish(state, group)) return "全タスク完了 — オーケストレータのグループ完了 (マージ) 待ち";
+    return "同グループの他タスク完了を待機 — 送信保留";
   }
   if (openHelps(state, task.id).length > 0) {
-    return { icon: "hourglass", text: "対処待ち", title: "エージェントは待機中 · オーケストレータが対処中" };
+    return `${agent ?? "エージェント"} 待機 · orchestrator 対処中`;
   }
-  if (task.status === "awaiting_instruction") return { icon: "hourglass", text: "指示待ち", title: "オーケストレータの指示待ち" };
-  if (task.status === "pending" && task.depends_on.length > 0) {
-    return { icon: "hourglass", text: task.depends_on.join(", "), title: `${task.depends_on.join(", ")} の完了待ち` };
-  }
+  if (task.status === "awaiting_instruction") return "オーケストレータの指示待ち";
+  if (task.status === "pending" && task.depends_on.length > 0) return `待機: ${task.depends_on.join(", ")} の完了`;
   return null;
 }
 

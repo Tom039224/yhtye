@@ -43,20 +43,6 @@ function mapStep(state: State, task: string, index: number, f: (s: Step) => Step
   );
 }
 
-/** Drops a chat with its groups, their tasks and helps, and its inbox (`State::remove_chat`). */
-function removeChat(state: State, chat: string): State {
-  const groups = new Set(state.groups.filter((g) => g.chat === chat).map((g) => g.id));
-  const tasks = new Set(state.tasks.filter((t) => groups.has(t.group)).map((t) => t.id));
-  return {
-    ...state,
-    chats: state.chats.filter((c) => c.id !== chat),
-    groups: state.groups.filter((g) => g.chat !== chat),
-    tasks: state.tasks.filter((t) => !groups.has(t.group)),
-    helps: state.helps.filter((h) => !tasks.has(h.task)),
-    inbox: state.inbox.filter((e) => e.chat !== chat),
-  };
-}
-
 function unreachable(event: never): never {
   throw new Error(`unknown domain event ${JSON.stringify(event)}`);
 }
@@ -127,8 +113,6 @@ export function applyDomainEvent(state: State, event: DomainEvent): State {
       };
     case "chat_titled":
       return { ...state, chats: state.chats.map((c) => (c.id === event.chat ? { ...c, title: event.title } : c)) };
-    case "chat_deleted":
-      return removeChat(state, event.chat);
     case "task_created":
       return {
         ...state,
@@ -158,7 +142,6 @@ type TaskEvent = Exclude<
       | "inbox_delivered"
       | "chat_created"
       | "chat_titled"
-      | "chat_deleted"
       | "task_created";
   }
 >;

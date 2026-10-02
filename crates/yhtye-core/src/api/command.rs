@@ -27,9 +27,6 @@ pub const MAX_EVENT_PAGE: u32 = 2000;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApiCommand {
-    /// A liveness check of the core: answers with the name of the machine it
-    /// runs on (the host footer of the sidebar). The UI sends it periodically.
-    Ping,
     /// Every project known to the database, and whether it is open.
     ListProjects,
     /// Opens (registering it on first use) the git repository at `path`: starts
@@ -82,26 +79,6 @@ pub enum ApiCommand {
         #[serde(default)]
         #[ts(optional)]
         worktree: Option<String>,
-    },
-    /// Gives a chat the user's own title (whitespace is flattened; at most
-    /// [`crate::domain::MAX_RENAMED_TITLE_CHARS`] characters), which the first
-    /// message no longer replaces. `invalid_argument` for an empty or too long
-    /// title, `not_found` for an unknown chat. The project must be open.
-    RenameChat {
-        project: String,
-        chat: String,
-        title: String,
-    },
-    /// Deletes a chat: its stored conversation state, its finished groups with
-    /// their tasks, its inbox and its orchestrator's stored session. Its
-    /// worktree and branch are not touched, and the event log keeps the history
-    /// (the log is append-only). `not_found` for an unknown chat,
-    /// `invalid_state` while its orchestrator is working or it has a group that
-    /// is not finished (`active`, `finishing`, `merge_blocked`); an idle
-    /// orchestrator process is stopped. The project must be open.
-    DeleteChat {
-        project: String,
-        chat: String,
     },
     /// Creates a branch in a Yhtye worktree (the main clone keeps its checkout)
     /// and its first chat. `from` defaults to the main worktree's HEAD.
@@ -283,10 +260,6 @@ impl LoggedEvent {
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiResponse {
-    /// The core is alive; `host` is the name of the machine it runs on.
-    Pong {
-        host: String,
-    },
     Projects {
         projects: Vec<ProjectInfo>,
     },
