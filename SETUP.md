@@ -86,14 +86,14 @@ Devin は **devin 3000.11.3・無料プラン (モデルは SWE-1.6 Slow だけ)
 
 ### MiniMax Code (基本動作は実機確認済み、一部未検証)
 
-MiniMax Code は **mcode 0.6.2 の実機で、起動、モデル一覧、モデルと effort の設定、1 ターンの応答を確認した** (プロンプトは 1 回だけ。利用クレジットの都合)。
-**まだ確かめていない**のは、Yhtye の MCP 経由でのタスクの完了 (`report_step_done`)、許可確認が来る操作、再開 (`session/load`)、ターンの中断、未ログイン時のエラーを Yhtye 経由で見ること。
+MiniMax Code は **mcode 0.6.2 の実機で、起動、モデル一覧、モデルと effort の設定、1 ターンの応答を確認した** (プロンプトは少数だけ。利用クレジットの都合)。
+**まだ確かめていない**のは、Yhtye の MCP 経由でのタスクの完了 (`report_step_done`)、許可確認への自動応答 (`auto` では、作業ディレクトリ外へのシェルの書き込み・削除でも確認が来なかった)、再開 (`session/load`)、ターンの中断、未ログイン時のエラーを Yhtye 経由で見ること。
 実測のまとめは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11。
 
 - 認証は `mcode login` で先に済ませておく。未ログインだと、起動時に「Authentication required: Run `mcode login` …」がエージェントの起動エラーとして出る。
 - 標準のインストール先は `~/.minimax-code/bin/mcode`。fish などでは `PATH` に入らないが、Yhtye はその場所も探す (環境変数 `MCODE_INSTALL_ROOT` で場所を変えたなら、その `bin` も探す)。
 - **Yhtye は `permissionMode` もモードも変えない**: `permissionMode` を変えると、あなたの全体設定 `~/.minimax/config.yaml` に永続的に書き込まれ、普段の `mcode` の権限モードまで変わってしまうため。
-  既定の `auto` では、作業ディレクトリ内の書き込みと MCP は確認なしで通り、それ以外は許可確認になる。Yhtye はその確認を「1 回だけ許可」で自動的に通す (「常に許可」は選ばない。あなたの設定に残る恐れがあるため)。
+  既定の `auto` では、作業ディレクトリ内の書き込みと MCP は確認なしで通り、実機では作業ディレクトリ外へのシェルの書き込み・削除も確認なしで通った。許可確認が来たときは、Yhtye はそれを「1 回だけ許可」で自動的に通す (「常に許可」は選ばない。あなたの設定に残る恐れがあるため。実機では未確認)。
   ほかのハーネスと同様、サンドボックスは無い。
 - モデルの値は `m:minimax:<モデル>:v:<variant>` の形。既定は `m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking` (クレジット節約のため。設定 › エージェント でモデルを選ばなかったときもこれで動く。あなたの `~/.minimax/config.yaml` の既定モデルは使わない)。
   thinking なしの Flash Preview は mcode が選択を拒否するので、モデル一覧から除いている。
