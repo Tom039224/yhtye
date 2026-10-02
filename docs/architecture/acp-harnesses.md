@@ -866,3 +866,22 @@ Devin の §10.9 にならい、mcode を使える人は小さなタスクを流
 - `agents/catalog.rs` の preset の単体テスト (`minimax_code_preset_never_touches_the_mode_and_defaults_to_its_cheapest_model`)、
   `agents/detect.rs` の単体テスト (`mcode_is_found_in_its_own_install_directory_and_in_the_root_the_environment_names`: `~/.minimax-code/bin`、`MCODE_INSTALL_ROOT`、`PATH` が先、ほかのハーネスは探さない)、
   `agents/installed.rs` (登録と既定の順)、`tests/harness_detection.rs` (Core 経由で `mcode` が見つかり登録される)。
+
+### 11.10 手動検証チェックリスト (mcode を持つ人向け)
+
+前提: `mcode login` 済みで、Yhtye の設定 › ハーネスで MiniMax Code が「インストール済み」。設定 › エージェント で MiniMax Code の行を implementer などに足して、小さなタスクを流す。
+結果 (成否・観察・mcode のバージョン `mcode --version`) を、この節に **[実測]** として書き足す。**済** / **未** を各項目の末尾に書いて、進んだ形を残す。
+
+1. **実装エージェントとしてタスクを完了できる**: 実装エージェント (kind `code`) の行に MiniMax Code を足して、小さな変更 (1 ファイル) のタスクを流す。
+   `McpHost` 経由で `report_step_done` が呼ばれ、タスクが完了状態まで進むか。ツール名が `mcp__yhtye__report_step_done` のまま見えるか、`tool_called` の記録があるか。
+2. **許可要求が来る操作で `allow-once` が自動で選ばれる**: 作業ディレクトリ外 (`~/.minimax/config.yaml` や別の作業ツリー) への書き込み・シェル実行を含むタスクを流す。
+   `session/request_permission` が来るか、来たときに選ばれた選択肢の id が `allow-once` かどうか、`allow-always` を選ばないこと (`allow-once` しか無ければ `Cancelled` になる)。
+   あと、選ばれた許可が次のターンに残らないこと (§11.4)。
+3. **`session/load` と `session/cancel` を Yhtye 経由で**: タスクを 1 つ流して Yhtye を再起動し、そのタスクのセッションが再開できるか
+   (履歴の再生、`loadSession` の能力の扱い、cwd が制約されるか)。実行中に `session/cancel` をするとターンが `stopReason: cancelled` で止まるか。
+4. **thinking なしの Flash Preview を選んだときの拒否の見え方**: 設定の行のモデルに `m:minimax:MiniMax-M3.1-Flash-Preview:v:` (thinking なし、§11.3 で一覧から除くモデル) を指定してタスクを流してから、
+   一覧から選択して除外されているか、または拒否されたときに `-32603 "Invalid model reasoning"` が読みやすい形でどこに出るか。
+5. **未ログイン時のエラー表示**: `mcode logout` の状態で implementer のタスクを流す。`session/new` の起動エラーとして出るか、ターンのエラーとして出るか、
+   メッセージに「ログインが必要」 (`mcode login` を含む) が読める形で出るか (§11.7)。
+6. **設定ファイルが変わらない**: 1 〜 5 をやる前後で `~/.minimax/config.yaml` のハッシュを比較する。特に `permissionMode` が `auto` のままであること、`defaultModel` も変わらないこと
+   (Yhtye はモードと `permissionMode` に一切触れない、§11.2。起動・モデル一覧の読み取り・1 ターン・許可要求のいずれでも変わらないことを確かめる)。
