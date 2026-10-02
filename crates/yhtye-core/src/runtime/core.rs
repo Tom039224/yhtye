@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tokio::sync::broadcast;
 
 use super::chats::ChatTarget;
+use super::host::host_name;
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
 use crate::agents::{
@@ -178,6 +179,7 @@ impl Core {
 
     pub async fn command(&self, cmd: ApiCommand) -> Result<ApiResponse, ApiError> {
         match cmd {
+            ApiCommand::Ping => Ok(ApiResponse::Pong { host: host_name() }),
             ApiCommand::ListProjects => Ok(ApiResponse::Projects {
                 projects: self.list_projects().await?,
             }),
@@ -232,6 +234,25 @@ impl Core {
                     .await
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Chat { chat })
+            }
+            ApiCommand::RenameChat {
+                project,
+                chat,
+                title,
+            } => {
+                let chat = self
+                    .orchestration(&project)?
+                    .rename_chat(chat, title)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Chat { chat })
+            }
+            ApiCommand::DeleteChat { project, chat } => {
+                self.orchestration(&project)?
+                    .delete_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
             }
             ApiCommand::CreateBranch {
                 project,

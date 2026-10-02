@@ -270,6 +270,28 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
+    /// Gives `chat` the user's title (`not_found` for an unknown chat,
+    /// `invalid_argument` for an empty or too long title); returns the chat as
+    /// listed afterwards.
+    pub async fn rename_chat(
+        &self,
+        chat: impl Into<String>,
+        title: impl Into<String>,
+    ) -> Result<ChatInfo, UserActionError> {
+        let chat = chat.into();
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::RenameChat(chat.clone(), title.into(), tx))?;
+        rx.await.map_err(|_| OrchError::Closed)??;
+        self.chat_info(chat).await
+    }
+
+    /// Deletes `chat` (see [`crate::api::ApiCommand::DeleteChat`]).
+    pub async fn delete_chat(&self, chat: impl Into<String>) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::DeleteChat(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     /// A new chat in the worktree of the existing local branch `branch`: where
     /// it is checked out, else a new Yhtye worktree (nothing is started).
     pub async fn create_chat(

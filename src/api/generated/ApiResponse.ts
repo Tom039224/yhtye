@@ -10,7 +10,7 @@ import type { ProjectInfo } from "./ProjectInfo";
 import type { Snapshot } from "./Snapshot";
 import type { UsageReport } from "./UsageReport";
 
-export type ApiResponse = { "type": "projects", projects: Array<ProjectInfo>, } | { "type": "project", project: ProjectInfo, } | { "type": "snapshot", snapshot: Snapshot, } | { "type": "events", events: Array<LoggedEvent>, 
+export type ApiResponse = { "type": "pong", host: string, } | { "type": "projects", projects: Array<ProjectInfo>, } | { "type": "project", project: ProjectInfo, } | { "type": "snapshot", snapshot: Snapshot, } | { "type": "events", events: Array<LoggedEvent>, 
 /**
  * More events follow (the page was full).
  */

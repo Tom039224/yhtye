@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DomainEvent, Help, State, Task } from "../api/generated";
+import { chatState } from "../test/chats";
 import { CANCEL_RUN, durable, FULL_RUN, type Recording, UNFINISHED_RUN } from "../test/fixtures";
 import { applyDomainEvent, emptyState } from "./domain";
 import { applySessionEvent } from "./sessions";
@@ -151,6 +152,28 @@ describe("constructed domain events", () => {
       ["G-1", "feature"],
       ["G-2", "renamed"],
     ]);
+  });
+
+  it("deletes a chat with its groups, their tasks and helps, and its inbox, and keeps the rest", () => {
+    const help: Help = {
+      id: "H-1", task: "T-1", step: 0, kind: "blocked", message: "stuck", source: { by: "agent", role: "implementer" },
+      state: "open", agent_lost: false, reply: null,
+    };
+    const entry = (id: number, chat: string) => ({ id, chat, item: { kind: "user_message" as const, attrs: [], body: "hi" } });
+    const state: State = {
+      ...chatState(),
+      helps: [help],
+      inbox: [entry(1, "C-1"), entry(2, "C-2")],
+      counters: { chats: 2, groups: 2, tasks: 2, helps: 1, inbox: 2 },
+    };
+    const after = applyDomainEvent(state, { type: "chat_deleted", chat: "C-1" });
+    expect(after.chats.map((c) => c.id)).toEqual(["C-2"]);
+    expect(after.groups.map((g) => g.id)).toEqual(["G-2"]);
+    expect(after.tasks.map((t) => t.id)).toEqual(["T-2"]);
+    expect(after.helps).toEqual([]);
+    expect(after.inbox.map((e) => e.chat)).toEqual(["C-2"]);
+    expect(after.counters).toEqual(state.counters);
+    expect(applyDomainEvent(after, { type: "chat_deleted", chat: "C-1" })).toEqual(after);
   });
 
   it("ignores events for unknown ids", () => {
