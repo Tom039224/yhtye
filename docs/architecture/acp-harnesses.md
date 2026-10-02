@@ -30,7 +30,8 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` が見つかれば全役割で選べる (7c-2、§7.6) |
 | Codex | **採用 (Stage 7e)** — `@agentclientprotocol/codex-acp` 2.0.0 (npx、Codex 本体はユーザーの `codex`)、§9。`codex` と `npx` が見つかれば全役割で選べる。調査: [`research/codex-acp.md`](research/codex-acp.md) |
 | Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続、実装エージェントとしての `report_step_done` を確認 (§10.0、§10.9)。未ログイン時、`session/load`、cancel は未確認 (§10.9) |
-| Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
+| Grok Build | **実装済み・基本動作は実機確認済み (T-29)** — xAI の Grok Build CLI の `grok agent --no-leader stdio`、§12 (§11 は MiniMax Code、`support/minimax-code` ブランチ)。`grok` が見つかれば全役割で選べる (`PATH` に無くても `~/.grok/bin` を探す)。grok 1.0.46・grok.com の Free プラン (モデルは `grok-4.7` だけ) で起動・モデル一覧・モデルと effort の設定、実装エージェントとしての `report_step_done` (Yhtye の MCP 経由) まで確認。許可要求の自動応答 (実機では要求が来なかった)、`session/load`、cancel は未確認 (§12.8) |
+| Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
 ## 4. Rust クライアント: `agent-client-protocol` 2.2
@@ -396,7 +397,7 @@ Claude Code では「`~/.claude` は常に有効、MCP サーバーだけ隔離�
   (無ければ UI に出ない)。当初 (7c-2) は「`PATH` に実行可能な `opencode` があるときだけ登録、Claude Code は常に登録」だったが、
   Devin 対応 (T-6) で全ハーネスに一般化した: 検索は `PATH` (絶対パスの項目) → 既知の場所 (`~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`) の順、
   Claude Code は `npx` が見つかったときだけ登録される (常には登録されない)。手動パスと再検出 (設定 › ハーネス) もある。詳細は
-  [`core-design.md`](core-design.md) §15.2。組み込みの既定は claude-code > opencode > devin > codex の最初の見つかったもの。
+  [`core-design.md`](core-design.md) §15.2。組み込みの既定は claude-code > opencode > devin > grok-build > codex の最初の見つかったもの。
 - **モデルは必須**: preset の `requires_model = true`。設定の検査 (`AgentCatalog::validate`) が OpenCode の `model: null` を
   `invalid_argument` で拒否し、UI も「既定のモデル」の候補を出さない。それでも model 無しで起動される場合 (古い設定など) は
   preset の設定に入っている `OPENCODE_FALLBACK_MODEL` (= 無料の `opencode/muse-spark-1.3-contributor-free`) を set_config_option する —
@@ -671,7 +672,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 - `bypass` でも `session/request_permission` は来うる。Devin の選択肢には、モードやプランを切り替えるもの (`switch_*`、`plan_*`) と、現在のリクエストを超えて効く許可
   (`*_always`、`*_global`) がある **[他実装]** (RepoPrompt PR #1029 はこれらを自動でも代替でも選ばない)。Yhtye の既定の方針 (`allow_always` を優先) だと、セッションの動き方を
   変えてしまう選択肢を選びかねない。
-- Devin の preset は **`PermissionPolicy::OnceOnly`** **[Yhtye]** (`acp/permission.rs`): kind が **`allow_once`** で、id が `switch_` / `plan_` で始まらず `_always` で終わらないものだけを選ぶ。
+- Devin の preset は **`PermissionPolicy::OnceOnly`** **[Yhtye]** (`acp/permission.rs`): kind が **`allow_once`** で、id が `switch_` / `plan_` で始まらず `_always` で終わらないものだけを選ぶ
+  (T-29 で、id の除外を `always` / `for_session` を**含む**ものへ広げた。Grok Build の `allow_always_bash`・`allow_edits_for_session` のため、§12.2)。
   無ければ `Cancelled`。位置ではなく kind で選ぶ点は他と同じ。偽エージェントで確認 (`permissions_never_pick_mode_switches_plans_or_standing_grants`)。
   RepoPrompt が除く `*_global` は id では見ない (kind が `allow_once` のものだけを選ぶので、通常は同じ結果。`allow_once` の kind で `_global` の id が来たら選んでしまう)。
 - 他のハーネス (Claude Code・OpenCode・Codex) は従来の方針のまま (`PermissionPolicy::Default`)。
@@ -697,7 +699,7 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 ### 10.8 検出と UI
 
 - 検出は `devin` の実行ファイルを `PATH` → 既知の場所の順に探すだけ (実行はしない)。手動パス・再検出は設定 › ハーネス ([`core-design.md`](core-design.md) §15.2)。
-- 組み込みの既定の順は claude-code > opencode > **devin** > codex (Devin は、モデルの指定が要る Codex より先。モデルは未指定で Devin の既定)。
+- 組み込みの既定の順は claude-code > opencode > **devin** > grok-build > codex (Devin は、モデルの指定が要る Codex より先。モデルは未指定で Devin の既定)。
 - システムプロンプト (役割の指示) は `SystemPromptStyle::FirstPrompt`: 最初のプロンプトの前にテキストとして付ける (後ろに §10.7 の注記) **[Yhtye]**。Devin が `_meta` の system prompt を受け付けるかは調べていない。
   `session/load` で復元したセッションには付けない (履歴に残る前提)。Devin は `loadSession: true` を出す **[実測]** が、`session/load` で履歴を再生するか・復元が通るかは**未確認**。
 
@@ -737,3 +739,135 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 - `tests/acp_fake_devin.rs`: `bypass` の設定と役割の指示が最初のプロンプトに 1 回だけ付くこと、effort が id の違う `thought_level` の option に設定されること (と未知の値で起動が失敗すること)、
   `clientInfo` が既定 `yhtye`・上書きで変わること、`request_diagnostics` に `{}` で応答してセッションが続くこと、`switch_*` / `plan_*` / `*_always` の選択肢を選ばないこと、認証エラーが起動エラーとして読めること。
 - `crates/yhtye-core/src/agents/detect.rs` の単体テスト、`tests/harness_detection.rs`: 検出 (`PATH` / 既知の場所 / 手動パス)、再検出、手動パスの検査と保存、壊れた手動パス、未インストールの行の非表示。
+
+## 12. Grok Build: `grok agent --no-leader stdio` (T-29、grok 1.0.46 で**基本動作を実機確認**)
+
+> 実装は Devin (§10)・MiniMax Code (§11) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント)。§11 (MiniMax Code) は `support/minimax-code` ブランチにあり、
+> このブランチにはまだ無い (合わせたときに埋まるので番号を空けている)。**grok 1.0.46 (2765805b9442、stable)・grok.com の Free プラン**の実機を調べ (2026-10-02、
+> JSON-RPC を直接送るスクリプト。`initialize` → `session/new` を数回と、**プロンプト 1 回**)、その後 Yhtye の acp 層から、プロンプトなしのモデル一覧と、
+> Yhtye の MCP をつないだ実装エージェントの 1 ターン (**プロンプト 1 回**) を確かめた (§12.6)。プロンプトは合計 2 回。実機を呼ぶテストはリポジトリに置いていない
+> (利用枠を使うため。確認は一時的なテストで行い、消した)。
+> ラベル: **[調査]** = 実機を直接調べて分かったこと、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装、**[推測]** = 確かめていない推論。
+
+### 12.0 調査のまとめ (grok 1.0.46)
+
+| 項目 | 結果 |
+|---|---|
+| 起動 | **`grok agent stdio` が ACP (JSON-RPC over stdio) を話す**。`grok agent` のサブコマンドは `stdio` / `headless` / `serve` / `leader`、オプションは `--no-leader` / `--leader` / `--always-approve` / `-m` / `--reasoning-effort` / `--agent-profile` / `--plugin-dir` など。`grok agent stdio` 自身のオプションは `--debug` / `--debug-file` / `--leader-socket` だけ。`--permission-mode` はトップレベル (TUI) のオプションで、`grok agent` は `unexpected argument` で受け付けない。実体は `~/.grok/bin/grok` (`~/.grok/downloads/grok-1.0.46-linux-x86_64` へのシンボリックリンク) **[調査]** |
+| `initialize` | `protocolVersion` 1。**`agentInfo` は返さない**。`agentCapabilities`: `loadSession: true`、`promptCapabilities {image: false, audio: false, embeddedContext: true}`、`mcpCapabilities {http: true, sse: true}`、`sessionCapabilities {list, resume, close}`、`_meta` に `x.ai/*`。`authMethods` = `cached_token` ("Cached token from ~/.grok/auth.json") / `grok.com`。ログイン済みなら `authenticate` 無しで使える。`clientInfo` は `yhtye` のままで通る **[調査][実測]** |
+| `session/new` | 約 0.1〜0.3 秒。**`modes` は無い**。`configOptions` は 2 つ: **`model`** (category `model`、値は `grok-4.7` だけ) と **`reasoning_effort`** (category `thought_level`、値 `xhigh` / `high` / `medium` / `low`、既定 `high`)。ほかに `models` (model state、current `grok-4.7`) と `_meta` (`x.ai/sessionConfig` など)。応答の前後にベンダーの**通知** `_x.ai/session/setup` (段階 auth → resolve_workspace → folder_trust → plugin_registry → mcp_merge → … → response_ready) が並ぶ **[調査]** |
+| `grok models` / `grok inspect` | "You are logged in with grok.com."、既定 `grok-4.7`、一覧も `grok-4.7` だけ (Free プラン)。`inspect` は、ユーザーの `~/.claude/rules/*.md` (Claude Code の規則) を Project Instructions として、スキル約 400 (ユーザー・同梱・Claude Code のプラグイン) を読み込むと出す **[調査]** |
+| ベンダー拡張 | クライアントへの**リクエストは来ない**。通知: `_x.ai/session/setup`、`_x.ai/mcp/servers_updated`・`init_progress`・`server_status`、`_x.ai/models/update`、`_x.ai/settings/update`、`_x.ai/announcements/update`、`_x.ai/session_notification` (`hook_execution`、`model_changed`、`pending_interaction`、`interaction_resolved`、`response_completed`、`turn_completed` など) **[調査]**。Yhtye の acp 層は未知の通知を無視する |
+| ターン中の `session/update` | 標準の `agent_message_chunk`・`agent_thought_chunk`・`tool_call`・`tool_call_update`・`config_option_update`・`session_info_update`・`available_commands_update` に加え、標準外の `tool_call_delta_chunk`・`hook_run_started` も来る **[調査]** (Yhtye では `AgentOutput::Unknown` としてそのまま残る) |
+| 許可要求 | 調査のプロンプト (作業ディレクトリにファイルを作らせた) で、`session/request_permission` は**来なかった**。grok 自身が `_x.ai/session_notification` の `pending_interaction` (kind `permission`) → `interaction_resolved` で解決し、ファイルは書かれた **[調査]**。このマシンの `~/.grok/config.toml` に `[ui] permission_mode = "always-approve"` があるためと考えられる **[推測]**。選択肢の id は実行ファイル中の文字列から `allow_once` / `allow_always` / `allow_edits_for_session` / `allow_always_bash` / `allow_always_bash_glob` / `allow_always_domain` / `allow_always_mcp_tool` / `allow_always_mcp_server` / `reject_once` / `reject_always_bash` / `reject_always_mcp_tool` / `reject_always_domain` と読める (それぞれの ACP の kind は**未確認**) **[調査]** |
+| ユーザーの設定の読み込み | ユーザーの MCP サーバー (このマシンでは `avatar`・`fusion`)、hooks (`~/.grok` のグローバルなものと、Claude Code のプラグインのもの。`session_start` で走った)、Claude Code の規則とスキルも読み込む **[調査]** |
+| `RUST_LOG` | grok は `tracing` で `RUST_LOG` に従う。`RUST_LOG=trace` だと `initialize` → `session/new` の 3 秒で stderr に 2.6 MB 出た。設定しなければ stderr はほぼ空 (つながらない MCP サーバーの ERROR 1 行) **[調査]** |
+| セッションの記録 | **プロンプトを送らないセッションも** `~/.grok/sessions/<URL エンコードした cwd>/<session id>/` に残る (Yhtye のモデル一覧のプローブも残る) **[調査][実測]** |
+| 設定ファイル | 調査と実測の前後で `~/.grok/config.toml`・`~/.grok/trusted_folders.toml` の sha256 は同じ。変わったのは grok 自身のキャッシュ (`models_cache.json`・`settings_cache.json`) とセッションの記録だけ **[調査][実測]** |
+
+### 12.1 起動と検出 (`HarnessConfig::grok_build` / `HarnessPreset::grok_build`)
+
+- **起動**: `grok agent --no-leader stdio` (`GROK_BUILD_ARGS`) **[Yhtye]**。検出で見つけた `grok` の絶対パスを `command` にする。`npx` は要らない。起動のタイムアウトは他と同じ 120 秒。
+- **`--no-leader` を付ける理由**: `grok agent --help` によると、`--leader` は「新しいエージェントを起動せず、共有の leader プロセスにつなぐ。既定は config.toml の `[cli] use_leader`」、
+  `--no-leader` は「config が leader モードを有効にしていても新しいエージェントを起動する」**[調査]**。Yhtye はエージェントごとにプロセス (グループ)・作業ディレクトリ・環境を持たせ、
+  終了時にグループごと止めるので、共有の leader につながるとそれが成り立たない。ユーザーの設定によらず常に付ける。このマシンの設定では leader は有効でない
+  (付けなくても同じ動き) ので、leader を有効にした設定での挙動は**未確認** (§12.8)。
+- **`--always-approve` は付けない** **[Yhtye]**: 許可要求は Yhtye の方針 (§12.2) で応答し、`AgentEvent::PermissionAutoAnswered` として記録に残す。
+- **環境**: 継承した `RUST_LOG` だけを除く (`GROK_BUILD_ENV_REMOVE`、Devin の §10.1 と同じ理由。§12.0 の表) **[Yhtye]**。ほかはユーザーの環境をそのまま継承する (`GROK_HOME` なども)。
+- **認証**: `grok login` 済み (`~/.grok/auth.json`) が前提。Yhtye は ACP の `authenticate` を呼ばない。ログイン済みなら `authMethods` があっても `session/new` から最初のターンまで通る **[実測]**。
+  未ログインのときのエラーの出方は**未確認** (ログアウトが要るため試していない)。`session/new` の失敗なら既存の起動エラー (step = `session/new`) として出る。
+- **検出** (`agents/detect.rs`): `PATH` → **`$GROK_HOME/bin`** (絶対パスのときだけ) → 共通の既知の場所 (`~/.local/bin` など) → **`~/.grok/bin`** の順 **[Yhtye]**。
+  ハーネス専用の探す場所は `HarnessSpec::root_env` / `extra_dirs` で、`support/minimax-code` ブランチの MiniMax Code (§11) と同じ名前・同じ形で足した。見つかった場所は `known_dir` として出る。
+  `~/.grok/bin` はインストーラの標準の場所で、fish などでは `PATH` に入らないことがある。`GROK_HOME` が grok のホーム (`~/.grok`) を移すことは確かめた
+  (`GROK_HOME=/tmp/x grok du` が "Disk usage for $GROK_HOME" を出す) **[調査]** が、インストーラがそのとき `$GROK_HOME/bin` に置くかは**未確認** **[推測]**。
+- **同名の別コマンドに注意**: `grok` という名前の別のコマンド (サードパーティ製の Grok 向け CLI など) が `PATH` の先にあると、そちらが見つかって起動に失敗する (`grok agent` が無い)。
+  そのときは設定 › ハーネス で `~/.grok/bin/grok` を手動パスにする。
+- **ハーネスの id は `grok-build`、表示名は `Grok Build`**。組み込みの既定の順は claude-code > opencode > devin > **grok-build** > codex
+  (モデルは未指定で grok の既定。MiniMax Code のブランチと合わせたら claude-code > opencode > devin > minimax-code > grok-build > codex にする)。
+
+### 12.2 モードと許可
+
+- **モードは無い** (`session/new` に `modes` が無い) ので、`session/set_mode` は送らない (`mode_after_new = None`) **[調査][Yhtye]**。
+- grok の権限モード (`--permission-mode`: `default` / `acceptEdits` / `auto` / `dontAsk` / `bypassPermissions` / `plan`) は TUI のトップレベルのオプションで、`grok agent` は受け付けない。
+  ACP からも変えられない (モードも、権限の config option も無い) **[調査]**。ユーザーの `~/.grok/config.toml` の `[ui] permission_mode` が ACP のセッションにも効くと考えられる **[推測]**
+  (このマシンは `always-approve` で、許可要求は 2 回のプロンプトとも 1 つも来なかった)。Yhtye はこの設定を書き換えない。セッションの `/always-approve` コマンドも使わない。
+- **許可要求が来たときは `PermissionPolicy::OnceOnly`** **[Yhtye]** (`acp/permission.rs`): kind が `allow_once` で、id が除外に当たらないものだけを選ぶ (無ければ `Cancelled`)。
+  grok の選択肢には現在の要求を超えて効くもの (`allow_always_bash` などの永続する許可、`allow_edits_for_session` のセッション全体の許可) がある。kind が分からないので、
+  **T-29 で除外を id に `always` / `for_session` を含むものへ広げた** (以前は `_always` で終わるもの。Devin の `*_always`・`allow_always` もそのまま除かれる)。
+  偽エージェントで、これらに kind `allow_once` を付けて前に並べても `allow_once` が選ばれ、`allow_once` が無ければ `Cancelled` になることを確認
+  (`permissions_pick_allow_once_and_never_a_standing_or_session_wide_grant`、単体テスト `once_only_skips_grok_builds_scoped_and_session_wide_grants_whatever_their_kind`)。
+- 権限確認の既定 (ask) を使っているユーザーで要求が来るか、来たときの選択肢の kind は**未確認** (ユーザーの設定を書き換える必要があるので試していない、§12.8)。
+  README / SETUP の注意 (エージェントはあなたのリポジトリのコピーで何でも実行する。サンドボックスは無い) は Grok Build にも当てはまる。
+
+### 12.3 モデルと effort
+
+- **モデル**: 一覧は `session/new` の `configOptions` の `model` (プローブのセッション、プロンプトなし、§8 と同じ)。選んだモデルは `session/set_config_option` で `model` に設定して
+  「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。`requires_model = false` (選ばなければ grok の既定。Free プランでは `grok-4.7` しか無い)。
+- **effort**: `reasoning_effort` (category `thought_level`) に設定する。preset の `effort_config_id` は実際の id の `reasoning_effort` (`GROK_BUILD_EFFORT_CONFIG_ID`。
+  category で見つけるロジック `effort_option` (§10.3) もそのまま効く) **[Yhtye]**。値は `xhigh` / `high` / `medium` / `low` (「指定なし」の `default` 行は無い)、既定 `high`。順序は §8 と同じモデル → effort。
+  **[実測]** `low` を設定でき、`Ready` の `configOptions` に反映された (grok は応答に加えて `config_option_update` と `_x.ai/session_notification` の `model_changed` も送る)。
+- **[実測] モデル一覧** (`ModelService`): 約 2.2 秒、`grok-4.7` ("Grok 4.7") と effort 4 つ (説明付き)、current = `grok-4.7`。プロンプトなし。
+
+### 12.4 システムプロンプトと MCP
+
+- システムプロンプトは `SystemPromptStyle::FirstPrompt` (最初のプロンプトの前にテキストとして付ける。`session/load` で復元したセッションには付けない) **[Yhtye]**。
+  grok が `_meta.systemPrompt` を受け付けるかは調べていない (`--system-prompt-override` / `--rules` は TUI のトップレベルのオプションで、`grok agent` には無い)。
+- Yhtye の HTTP の MCP は `session/new` の `mcpServers` に渡す (stdio のブリッジは要らない)。MCP の接続は `session/new` の応答の後に非同期で進む (`_x.ai/mcp/init_progress`) が、
+  最初のターンで Yhtye の MCP を使えた **[実測]**。
+- **[実測] grok は MCP のツールを自分のツールとして並べない** (モデルに見えるツールは `run_terminal_command`・`read_file`・`search_replace`・…・`search_tool`・`use_tool` などの 26 個)。
+  MCP のツールは**遅延ツール**で、`search_tool` (`{"query": "yhtye report_step_done", "limit": 5}`) で探し、`use_tool` (`{"tool_name": "yhtye__report_step_done", "tool_input": {…}}`) で呼ぶ。
+  名前は **`yhtye__<tool>`** (`mcp__` の接頭辞なし)。役割プロンプトの `mcp__yhtye__report_step_done` とは名前が違うが、**注記なしで grok は自分で探して呼べた** (1 回の実測)。
+- そのため役割プロンプトへの注記 (`system_prompt_note`、Devin の §10.7 と同じ仕組み) は**付けていない** **[Yhtye]**: 注記を付けた版は実機で確かめていないので、確かめた形のまま出す。
+  オーケストレータ (`create_group` などツールが多い) や別のタスクで見つけ損なう (報告なしのターンになる) ようなら、注記
+  (「Yhtye のツールは MCP サーバー `yhtye` にある。`search_tool` で探して `use_tool` で呼ぶ。`mcp__yhtye__xxx` は `yhtye__xxx`」) を足すのが次の手 (§12.8)。
+- grok はユーザーの MCP サーバー (`~/.grok` や Claude Code の設定のもの) も並べてつなぐ **[調査]**。ユーザーの設定を残す方針は他のハーネスと同じ。
+
+### 12.5 そのほか
+
+- **`clientInfo`**: 既定の `yhtye` で通る (上書き不要) **[調査][実測]**。
+- **ベンダー拡張**: 独自のリクエストは来ない。`_x.ai/*` の通知と標準外の `session/update` は無視してよい (§12.0) **[調査]**。偽エージェントで「`session/new` の応答の前とターンの頭に未知のメソッドの通知が来ても、
+  起動もターンも続く」ことを確認 (`no_mode_is_set_vendor_notifications_are_ignored_and_the_role_prompt_rides_the_first_prompt`)。
+- **入力の大きさ**: grok はユーザーの Claude Code の規則・スキルなども読み込むので、1 ターンの入力が大きい。調査のプロンプト (ファイル作成、モデル呼び出し 2 回) は入力 約 109k トークン
+  (キャッシュ 55k)、実装エージェントの 1 ターン (モデル呼び出し 6 回) は入力 約 340k トークン (キャッシュ 284k) **[調査][実測]**。利用は grok.com の利用枠から。
+- **hooks**: ユーザーのグローバル hooks と Claude Code のプラグインの hooks が `session_start` などで走る **[調査]**。
+- **セッションの記録**: Yhtye が起動したセッション (モデル一覧のプローブを含む) は `~/.grok/sessions/` に残る **[調査][実測]**。grok は `sessionCapabilities.close` を出すが、Yhtye は使っていない。
+
+### 12.6 実機の結果 (Yhtye の acp 層から、grok 1.0.46、2026-10-02、プロンプト 1 回)
+
+すべて **[実測]**。モデル一覧は `ModelService::get(&HarnessPreset::grok_build("~/.grok/bin/grok"), false)`。1 ターンは
+`HarnessPreset::grok_build(..).config(Implementer, Some("grok-4.7"), Some("low"))` に、Yhtye の `McpHost` (受けたツール呼び出しを記録する `ToolPort`) の HTTP MCP と
+実装者の役割プロンプト (`system_prompt(Role::Implementer)`) を付け、`step_prompt` の実装ステップ (「README.md に `hello from yhtye` の行を足す」) を送った。作業ディレクトリは一時ディレクトリの git リポジトリ。
+
+| 項目 | 結果 |
+|---|---|
+| 検出 | `~/.grok/bin/grok` を見つけて起動できる |
+| モデル一覧 | §12.3 のとおり。約 2.2 秒、プロンプトなし |
+| 起動 | 約 0.32 秒で `Ready`。`agent` = なし (grok は `agentInfo` を返さない)、`modes` = なし、`model` = `grok-4.7`、`reasoning_effort` = `low` |
+| 1 ターン | `EndTurn`、約 29.7 秒。ツール呼び出しは `grep` → `search_tool` → `run_terminal_command` → `read_file` → `search_replace` → `use_tool`。README.md に行が足され、**`report_step_done` (`result`: "Appended the line `hello from yhtye` to README.md. No other files were changed.") が Yhtye の MCP に届いた**。許可要求は 0 件、`Stderr` のイベントも 0 件 |
+| 後始末 | `grok agent` のプロセスは残らない |
+| 設定ファイル | 前後で `~/.grok/config.toml`・`~/.grok/trusted_folders.toml` の sha256 は同じ |
+
+### 12.7 自動テストで確認したこと (偽エージェント、grok 本体ではない)
+
+- `tests/acp_fake_grok_build.rs` (4 本。偽エージェントは `"modes": []` と `vendor_notifications` で grok 風に振る舞う): モードを設定せず (`session/set_mode` を送ると偽エージェントが拒否する)、
+  `_x.ai/...` の通知を無視して起動とターンが続き、役割プロンプトが最初のプロンプトにだけ付き注記が無い / モデルの後に `reasoning_effort` が設定され、無い値は起動失敗として見える /
+  許可の自動応答が `allow_once` を選び `allow_always*`・`allow_edits_for_session` を選ばない (選べなければ `Cancelled`) / モデル一覧が `grok-4.7` と effort 4 つを読む。
+- `acp/config.rs` (`grok_build_runs_its_own_stdio_agent_without_modes_or_always_approve`)、`acp/permission.rs` (上記)、`agents/catalog.rs`
+  (`grok_build_preset_runs_every_role_the_same_and_sets_reasoning_effort`)、`agents/detect.rs`
+  (`grok_is_found_in_its_own_install_directory_and_in_the_home_the_environment_names`: `~/.grok/bin`、`GROK_HOME`、`PATH` が先、ほかのハーネスは探さない)、
+  `agents/installed.rs` (登録と既定の順)、`tests/harness_detection.rs` (Core 経由で `grok` が見つかり登録される)、フロントエンドの `HarnessSettings.test.tsx` (設定 › ハーネス に Grok Build の行が出る)。
+
+### 12.8 未検証の項目と手動検証チェックリスト (grok を持つ人向け)
+
+前提: `grok login` 済みで、Yhtye の設定 › ハーネスで Grok Build が「インストール済み」。設定 › エージェント で Grok Build の行を足して、小さなタスクを流す。
+結果 (成否・観察・`grok --version`) を、この節に **[実測]** として書き足す。
+
+1. **許可要求と `allow_once` の自動応答**: `~/.grok/config.toml` の `[ui] permission_mode` を自分で既定 (確認する設定) にしている人が、作業ディレクトリ外への書き込みやシェル実行を含むタスクを流す。
+   `session/request_permission` が来るか、選択肢の id と **kind** (特に `allow_edits_for_session`・`allow_always_*`) を記録し、選ばれたのが `allow_once` か (§12.2)。**未** (T-29: このマシンは `always-approve` で要求が来なかった)
+2. **オーケストレータとしての MCP**: オーケストレータに Grok Build を割り当て、`create_group` / `create_task` を `search_tool` → `use_tool` で呼べるか。見つけ損なうなら、§12.4 の注記を
+   `HarnessConfig::grok_build` の `system_prompt_note` に入れて再試行する。**未** (実装エージェントの `report_step_done` は済、§12.6)
+3. **未ログイン時のエラー**: `grok logout` の状態でタスクを流す。`session/new` の起動エラーか、ターンのエラーか、`grok login` が読める文言か。**未**
+4. **`session/load` と `session/cancel`**: タスクを流して Yhtye を再起動し、セッションが再開できるか (`loadSession: true`)。実行中の中止で `stopReason: cancelled` で止まるか。**未**
+5. **leader を有効にした設定**: `[cli] use_leader = true` の人が、`--no-leader` で独立したプロセスとして動き、終了時に残らないか。**未**
+6. **`$GROK_HOME/bin`**: `GROK_HOME` を変えてインストールした人の `grok` がそこにあるか (検出が見つけるか)。**未**
+7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.grok/config.toml` のハッシュを比べる (Yhtye は grok の設定に書き込まない)。T-29 の範囲 (§12.6) では**済**。

@@ -253,8 +253,9 @@ pub enum AgentOutput {
 `fn outcome_for(Option<&PermissionOption>) -> RequestPermissionOutcome` は純粋関数。
 `allow_always` → `allow_once` の順に kind で選び、どちらも無ければ `Cancelled`。
 **配列の先頭を選ぶことはしない。** ハンドラ内で即応答する (ブロックしない)。
-**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin) は kind が `allow_once` で
-id が `switch_` / `plan_` で始まらず `_always` で終わらないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6)。
+**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin、Grok Build) は kind が `allow_once` で
+id が `switch_` / `plan_` で始まらず `always` / `for_session` を含まないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6・§12.2。
+`always` / `for_session` を含む、への拡張は T-29。以前は `_always` で終わるもの)。
 
 ### 3.4 `HarnessConfig`
 
@@ -804,21 +805,28 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 `PermissionPolicy::OnceOnly`)、`requires_model = false`、`model_source = Acp`、effort の config id は既定の `effort` (実際の option の id は `acp::effort_option` が
 `category: thought_level` から解決する)。probe は mode の切り替えなし。**実機未検証**。
 
+**T-29 (Grok Build)**: `HarnessPreset::grok_build(command)` ([`acp-harnesses.md`](acp-harnesses.md) §12): 全役割 `HarnessConfig::grok_build` (`grok agent --no-leader stdio`、
+**モードは設定しない** (grok はモードを出さない)、`--always-approve` なし、`FirstPrompt`、`PermissionPolicy::OnceOnly`、注記なし、継承した `RUST_LOG` を除く)、
+`requires_model = false`、`model_source = Acp`、effort の config id は実際の `reasoning_effort`。probe はモデルの切り替えなし。grok 1.0.46 の実機で、実装エージェントとして
+Yhtye の MCP 経由の `report_step_done` まで確認した。
+
 **ハーネス検出の一般化と登録簿の動的化 (Devin 対応, T-6、`agents/detect.rs` / `agents/installed.rs` / `runtime/core/harnesses.rs`)**:
 登録は「インストール済みのものだけ」に一般化した。
 
 - **検出** (`detect_harnesses`、純粋関数): 実行ファイルの検索だけで `--version` は実行しない。`PATH` (絶対パスの項目、実行可能な通常ファイル) →
   既知の場所 (`KNOWN_DIRS` = `~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは `HARNESS_SPECS`:
-  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin` (claude CLI は不要)。UTF-8 でないパスは数えない。
+  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin`、grok-build = `grok` (claude CLI は不要)。UTF-8 でないパスは数えない。
+  `HarnessSpec` の `root_env` / `extra_dirs` でハーネス専用の探す場所を足せる (T-29。`support/minimax-code` の T-26 と同じ形): grok-build は `PATH` → `$GROK_HOME/bin` (絶対パスのとき) →
+  共通の既知の場所 → `~/.grok/bin` (インストーラの標準の場所で、fish などでは `PATH` に入らない)。ほかのハーネスは足さない。
 - **`HarnessDetection { id, label, installed, resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }`**
   (ts-rs で `src/api/generated/`)。`installed` = 必要なコマンドがすべて見つかった (手動パスがあるならそれが使える)。`resolved_path` は主実行ファイル (`HarnessSpec::main`)。
 - **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code / codex は npx のパス、
-  opencode / devin は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
+  opencode / devin / grok-build は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
   (`Detected::with_found_npx`。使用量のプローブは起動時に 1 回だけ作り、再検出では作り直さない)。
 - **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx) **だけ**を置き換える (codex の `npx` は自動検出のみ)。
   保存時に「絶対パスかつ実行可能な通常ファイル」を検査する (`check_executable_path`、`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは
   未インストール扱い (`override_error` に理由。検索にはフォールバックしない)。
-- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin = 未指定、
+- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > grok-build > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
   codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。1 つも無くても Core は起動し、エージェント開始時に
   「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`、`NO_HARNESS_MESSAGE`)。
 - **登録簿の動的化**: `AgentCatalog` の登録簿 (`Registry { presets, builtin }`) は `RwLock` に入り、`AgentCatalog::refresh(presets, builtin)` が**丸ごと入れ替える**
