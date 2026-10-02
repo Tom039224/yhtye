@@ -5,9 +5,10 @@
 
 use std::ffi::OsString;
 
-use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, HarnessPreset, OPENCODE};
+use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, HarnessPreset, MINIMAX_CODE, OPENCODE};
 use super::detect::HarnessDetection;
 use super::settings::AgentChoice;
+use crate::acp::MINIMAX_CODE_DEFAULT_MODEL;
 
 /// Model OpenCode runs if a setting without a model ever reaches it (settings
 /// are validated to name one): a free model, never OpenCode's own last-used
@@ -17,7 +18,7 @@ pub const OPENCODE_FALLBACK_MODEL: &str = "opencode/muse-spark-1.3-contributor-f
 /// The harnesses the built-in default prefers, first installed first. Codex is
 /// last: it cannot run without a chosen model, so it is the default only when
 /// nothing else is there.
-const DEFAULT_ORDER: [&str; 4] = [CLAUDE_CODE, OPENCODE, DEVIN, CODEX];
+const DEFAULT_ORDER: [&str; 5] = [CLAUDE_CODE, OPENCODE, DEVIN, MINIMAX_CODE, CODEX];
 
 /// Inherited variables to drop from OpenCode's environment. The user's OpenCode
 /// configuration stays in effect (`acp-harnesses.md` §7.2), so an
@@ -36,7 +37,7 @@ pub fn inherited_opencode_env_remove(env: impl Fn(&str) -> Option<OsString>) -> 
 }
 
 /// One preset per installed harness in `detections`, in their order: Claude
-/// Code with `claude_model`, OpenCode, Codex and Devin, each launched through
+/// Code with `claude_model`, OpenCode, Codex, Devin and MiniMax Code, each launched through
 /// the absolute path that was found (Claude Code and Codex run `npx`; Codex also
 /// gets the user's `codex` as the adapter's `CODEX_PATH`). A harness that is not
 /// installed is not registered.
@@ -72,15 +73,17 @@ fn preset_of(
         ),
         CODEX => Some(HarnessPreset::codex(Some(main)).with_command(d.found("npx")?)),
         DEVIN => Some(HarnessPreset::devin(main)),
+        MINIMAX_CODE => Some(HarnessPreset::minimax_code(main)),
         _ => None,
     }
 }
 
 /// What a role runs when its settings do not say: the first of Claude Code,
-/// OpenCode, Devin and Codex that is in `presets`, with Claude Code's
-/// `claude_model`, OpenCode's [`OPENCODE_FALLBACK_MODEL`] and no model for the
-/// others (Codex has no usable default: choosing its model is asked for in the
-/// settings when it is started). With none installed the choice names Claude
+/// OpenCode, Devin, MiniMax Code and Codex that is in `presets`, with Claude
+/// Code's `claude_model`, OpenCode's [`OPENCODE_FALLBACK_MODEL`], MiniMax Code's
+/// [`MINIMAX_CODE_DEFAULT_MODEL`] and no model for the others (Codex has no
+/// usable default: choosing its model is asked for in the settings when it is
+/// started). With none installed the choice names Claude
 /// Code, which starting an agent reports as unavailable.
 #[must_use]
 pub fn default_choice(presets: &[HarnessPreset], claude_model: &str) -> AgentChoice {
@@ -94,6 +97,7 @@ pub fn default_choice(presets: &[HarnessPreset], claude_model: &str) -> AgentCho
     match *id {
         CLAUDE_CODE => claude,
         OPENCODE => AgentChoice::new(OPENCODE, Some(OPENCODE_FALLBACK_MODEL)),
+        MINIMAX_CODE => AgentChoice::new(MINIMAX_CODE, Some(MINIMAX_CODE_DEFAULT_MODEL)),
         other => AgentChoice::new(other, None),
     }
 }
@@ -147,6 +151,7 @@ mod tests {
             detection("opencode", true, Some("/o/opencode"), None),
             detection("codex", true, Some("/c/codex"), Some("/n/npx")),
             detection("devin", true, Some("/d/devin"), None),
+            detection("minimax-code", true, Some("/m/mcode"), None),
         ]
     }
 
@@ -162,11 +167,14 @@ mod tests {
     #[test]
     fn only_installed_harnesses_are_registered_through_the_paths_that_were_found() {
         let presets = presets_from(&all_installed(), "haiku", env(&[]));
-        assert_eq!(ids(&presets), ["claude-code", "opencode", "codex", "devin"]);
+        assert_eq!(
+            ids(&presets),
+            ["claude-code", "opencode", "codex", "devin", "minimax-code"]
+        );
         let commands: Vec<String> = presets.iter().map(command).collect();
         assert_eq!(
             commands,
-            ["/n/npx", "/o/opencode", "/n/npx", "/d/devin"],
+            ["/n/npx", "/o/opencode", "/n/npx", "/d/devin", "/m/mcode"],
             "claude-code and codex run npx; the others their own executable"
         );
         let codex = &presets[2];
@@ -182,6 +190,7 @@ mod tests {
                     match p.id.as_str() {
                         "claude-code" | "codex" => "/n/npx",
                         "opencode" => "/o/opencode",
+                        "minimax-code" => "/m/mcode",
                         _ => "/d/devin",
                     }
                 );
@@ -205,6 +214,7 @@ mod tests {
         let mut some = all_installed();
         some[1].installed = false;
         some[3].installed = false;
+        some[4].installed = false;
         assert_eq!(
             ids(&presets_from(&some, "haiku", env(&[]))),
             ["claude-code", "codex"]
@@ -244,6 +254,7 @@ mod tests {
             "claude-code" => HarnessPreset::claude_code("haiku"),
             "opencode" => HarnessPreset::opencode("m", Vec::new()),
             "codex" => HarnessPreset::codex(None),
+            "minimax-code" => HarnessPreset::minimax_code("mcode"),
             _ => HarnessPreset::devin("devin"),
         };
         let choice = |installed: &[&str]| {
@@ -259,6 +270,14 @@ mod tests {
             AgentChoice::new("opencode", Some(OPENCODE_FALLBACK_MODEL))
         );
         assert_eq!(choice(&["codex", "devin"]), AgentChoice::new("devin", None));
+        assert_eq!(
+            choice(&["codex", "minimax-code"]),
+            AgentChoice::new(
+                "minimax-code",
+                Some("m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking")
+            ),
+            "before Codex, and on the cheapest model rather than the user's own"
+        );
         assert_eq!(
             choice(&["codex"]),
             AgentChoice::new("codex", None),

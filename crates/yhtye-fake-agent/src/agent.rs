@@ -23,6 +23,10 @@ use crate::scenario::{Action, FailKind, PermissionChoice, Scenario};
 /// The id of the effort option unless the scenario names another.
 const DEFAULT_EFFORT_ID: &str = "effort";
 
+/// The id and category of the option the scenario's `permission_modes` adds.
+const PERMISSION_MODE_ID: &str = "permissionMode";
+const PERMISSION_MODE_CATEGORY: &str = "_permission";
+
 /// Raw `session/update` so any update JSON can be sent.
 #[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcNotification)]
 #[notification(method = "session/update")]
@@ -40,6 +44,12 @@ struct State {
     model: String,
     /// Current value of the `effort` option (when the model has one).
     effort: String,
+    /// Current value of the `permissionMode` option (when the scenario has one).
+    permission_mode: String,
+    /// Mode ids of the `session/set_mode` requests received, in order.
+    set_modes: Vec<String>,
+    /// Config ids of the `session/set_config_option` requests received, in order.
+    set_options: Vec<String>,
     system_prompt: Option<String>,
     /// `clientInfo` of `initialize` as `(name, version)`.
     client_info: Option<(String, String)>,
@@ -66,6 +76,11 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         mode: scenario.modes.first().cloned().unwrap_or_default(),
         model: scenario.models.first().cloned().unwrap_or_default(),
         effort: "default".into(),
+        permission_mode: scenario
+            .permission_modes
+            .first()
+            .cloned()
+            .unwrap_or_default(),
         ..State::default()
     };
     let fake: Shared = Arc::new(Fake {
@@ -139,6 +154,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             async move |req: SetSessionModeRequest, responder, _cx| {
                 gate(&f4, "session/set_mode").await?;
                 let mode = req.mode_id.0.to_string();
+                f4.lock().set_modes.push(mode.clone());
                 if !f4.scenario.modes.contains(&mode) {
                     return responder.respond_with_error(
                         Error::invalid_params().data(json!(format!("unknown mode {mode}"))),
@@ -157,8 +173,10 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                     .as_value_id()
                     .map(|v| v.0.to_string())
                     .unwrap_or_default();
+                f5.lock().set_options.push(req.config_id.0.to_string());
                 let known = match &*req.config_id.0 {
                     "model" => f5.scenario.models.contains(&value),
+                    PERMISSION_MODE_ID => f5.scenario.permission_modes.contains(&value),
                     id if id == f5.effort_id() => f5.effort_values().contains(&value),
                     _ => false,
                 };
@@ -173,6 +191,8 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                         st.model = value;
                         // The efforts depend on the model: back to the default.
                         st.effort = "default".into();
+                    } else if &*req.config_id.0 == PERMISSION_MODE_ID {
+                        st.permission_mode = value;
                     } else {
                         st.effort = value;
                     }
@@ -267,10 +287,14 @@ impl Fake {
         SessionModeState::new(self.lock().mode.clone(), available)
     }
 
-    /// The config options now: the model, plus the effort when the current
-    /// model has efforts.
+    /// The config options now: the permission mode when the scenario has one,
+    /// the model, plus the effort when the current model has efforts.
     fn options(&self) -> Vec<SessionConfigOption> {
-        let mut options = vec![self.model_option()];
+        let mut options = Vec::new();
+        if let Some(permission) = self.permission_mode_option() {
+            options.push(permission);
+        }
+        options.push(self.model_option());
         let values = self.effort_values();
         if !values.is_empty() {
             let rows: Vec<_> = values
@@ -288,6 +312,29 @@ impl Fake {
             );
         }
         options
+    }
+
+    fn permission_mode_option(&self) -> Option<SessionConfigOption> {
+        if self.scenario.permission_modes.is_empty() {
+            return None;
+        }
+        let rows: Vec<_> = self
+            .scenario
+            .permission_modes
+            .iter()
+            .map(|m| SessionConfigSelectOption::new(m.clone(), m.clone()))
+            .collect();
+        Some(
+            SessionConfigOption::select(
+                PERMISSION_MODE_ID,
+                "Permission mode",
+                self.lock().permission_mode.clone(),
+                rows,
+            )
+            .category(SessionConfigOptionCategory::Other(
+                PERMISSION_MODE_CATEGORY.into(),
+            )),
+        )
     }
 
     fn effort_id(&self) -> &str {
@@ -479,6 +526,17 @@ async fn run_action(
         }
         Action::McpCall { tool, args } => {
             let report = mcp_call(fake, &tool, &args).await;
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
+        Action::ReportWrites => {
+            let report = {
+                let st = fake.lock();
+                format!(
+                    "writes:modes={};options={}",
+                    st.set_modes.join(","),
+                    st.set_options.join(",")
+                )
+            };
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
         Action::ReportClientInfo => {

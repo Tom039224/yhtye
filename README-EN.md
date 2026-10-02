@@ -24,9 +24,9 @@ What works:
   tasks; sub-agents implement them in git worktrees, review, and the result is merged into the base branch.
 - Per-role harness / model / effort settings (orchestrator, implementation, investigation, review), globally
   and per project.
-- Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), and Devin (basic operation verified against the
-  real Devin on the free plan). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin`) are found on
-  `PATH` or in `~/.local/bin` etc.; the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
+- Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), Devin (basic operation verified against the
+  real Devin on the free plan), and MiniMax Code (basic operation verified against mcode 0.6.2). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode`) are found on
+  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
   path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
 - Secret environment variables (API keys), stored in the OS keyring.
@@ -42,6 +42,12 @@ What is not done, and limitations:
   connection, and an implementer task completing through `report_step_done`. The logged-out error, `session/load` and
   cancellation are still unverified. If it does not work, the measured results and the manual verification checklist in [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (Japanese)
   is the place to start.
+- MiniMax Code (`mcode acp`) has been verified against mcode 0.6.2: startup, the model list, setting the model and effort,
+  and one prompt (only a few were sent). On the default `auto`, shell writes and deletes outside the working directory
+  raised no permission request on the real mcode, so the automatic "allow once" answer is unverified against the real agent
+  (requests do arrive when `permissionMode` is `default`). An implementer task through the Yhtye MCP and resuming are also
+  unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11, Japanese). Yhtye never changes `permissionMode`: setting it writes to your global
+  MiniMax settings.
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
@@ -57,8 +63,9 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 - Agents run code and shell commands in worktrees of your repository without asking for permission, and Yhtye
   **merges the result into your base branch**. Back up or push before trying it on a repository you care about.
 - Agents run without permission prompts (Claude Code with `bypassPermissions`-equivalent, Codex with
-  `agent-full-access`, Devin with `bypass`). There is no sandbox.
-- Claude Code, OpenCode, Codex (OpenRouter) and Devin usage is billed to you, or counted against your quota, by
+  `agent-full-access`, Devin with `bypass`; MiniMax Code runs on mcode's own default `auto`: writes inside the working
+  directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; a confirmation that does arrive is answered "allow once" automatically). There is no sandbox.
+- Claude Code, OpenCode, Codex (OpenRouter), Devin and MiniMax Code usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
   keeps only the names. A registered variable is passed to **every** agent.
@@ -78,9 +85,11 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    | OpenCode | `opencode`, logged in with `opencode auth login` | `opencode acp` |
    | Codex | `codex` and `npx`, configured in `~/.codex/config.toml` | `npx -y @agentclientprotocol/codex-acp@2.0.0` |
    | Devin (partly verified) | Devin CLI (`devin`), logged in with `devin auth login`; optionally `WINDSURF_API_KEY` | `devin acp` |
+   | MiniMax Code (partly verified) | MiniMax Code CLI (`mcode`), logged in with `mcode login` | `mcode acp` |
 
    At least one harness is needed. Yhtye registers only the harnesses whose executables it finds: on `PATH`, then in
-   `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin`. Claude Code is registered when `npx` is found; the
+   `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin` (`mcode` is also looked for in `~/.minimax-code/bin`,
+   or `$MCODE_INSTALL_ROOT/bin`). Claude Code is registered when `npx` is found; the
    others are optional. If you installed something elsewhere, or after starting Yhtye, open the settings' "ハーネス" tab
    to see what was found, give an absolute path by hand, and press "再検出" (detect again); no restart is needed.
    If your Codex config gets its OpenRouter key from an environment variable, register that variable under

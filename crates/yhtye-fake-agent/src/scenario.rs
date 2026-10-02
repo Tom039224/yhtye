@@ -7,6 +7,7 @@
 //!   "models": ["default", "haiku"],
 //!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
 //!   "effort_id": "reasoning",   // id of that option (default "effort"; category stays thought_level)
+//!   "permission_modes": ["auto", "default"],  // adds a `permissionMode` option (the first is current)
 //!   "fail_at": null,            // "initialize" | "session/new" | ... → JSON-RPC error
 //!   "fail_kind": "internal",    // the error: "internal" (default) | "auth_required"
 //!   "fail_message": null,       // its data (default "fake: scripted failure at <step>")
@@ -28,6 +29,11 @@
 //! `"report_client_info"` reports the `clientInfo` of `initialize`
 //! (`client_info:name=<n>;version=<v>`), and `fail_kind` + `fail_message` make
 //! `fail_at` an authentication error (`"login required"`).
+//!
+//! MiniMax-Code-like behaviour: `permission_modes` adds the option `permissionMode`
+//! (category `_permission`) that a client must not write (it would reach the user's
+//! global settings), and `"report_writes"` reports every `session/set_mode` and
+//! `session/set_config_option` received, in order, as `writes:modes=<ids>;options=<ids>`.
 //!
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
@@ -55,6 +61,10 @@ pub struct Scenario {
     /// client that looks the option up by category finds it under any id).
     #[serde(default)]
     pub effort_id: Option<String>,
+    /// The values of a `permissionMode` select option (category `_permission`),
+    /// the first being current; none: the agent has no such option.
+    #[serde(default)]
+    pub permission_modes: Vec<String>,
     #[serde(default)]
     pub fail_at: Option<String>,
     /// What `fail_at` answers with.
@@ -131,6 +141,11 @@ pub enum Action {
     SpawnChild,
     /// Reports `state:mode=<m>;model=<v>;system_prompt=<s>;prompt=<text>`.
     ReportState,
+    /// Reports `writes:modes=<ids>;options=<ids>`: the mode ids of the
+    /// `session/set_mode` requests and the config ids of the
+    /// `session/set_config_option` requests received so far (comma-separated,
+    /// in order).
+    ReportWrites,
     /// Reports `client_info:name=<n>;version=<v>` (the `clientInfo` of `initialize`,
     /// `<none>` when the client sent none).
     ReportClientInfo,

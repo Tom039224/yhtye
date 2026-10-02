@@ -36,7 +36,7 @@ Debian / Ubuntu のパッケージ名は CI (`.github/workflows/ci.yml`) のも�
 Yhtye は自前でエージェントを実装せず、既存のハーネスを [ACP](https://agentclientprotocol.com) で起動する。
 使うハーネスを先に入れてログインしておく。**ハーネスは 1 つ以上必要**。Yhtye は実行ファイルが見つかったハーネスだけを登録するので、
 どれも見つからないとエージェントを起動できない (「使えるハーネスがありません (設定 › ハーネス を確認)」)。
-Claude Code は `npx` が見つかれば登録される (最初に試すならこれ)。OpenCode・Codex・Devin は任意。
+Claude Code は `npx` が見つかれば登録される (最初に試すならこれ)。OpenCode・Codex・Devin・MiniMax Code は任意。
 
 | ハーネス | 入れるもの | Yhtye の起動方法 | 認証 |
 |---|---|---|---|
@@ -44,6 +44,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | OpenCode | `opencode` | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
 | Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
 | Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
+| MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
 - Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
@@ -55,12 +56,13 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 設定画面 (アイコンレール下部の歯車) の「ハーネス」タブで、各ハーネスの状態を確認し、パスを指定し、見つけ直せる。
 
 - **状態**: ハーネスごとに「インストール済み / 未インストール」と、必要なコマンドがどこで見つかったか (`PATH` / 既知の場所 / 手動) を出す。
-  必要なコマンドは、Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`。
+  必要なコマンドは、Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`。
   すべて見つかったハーネスだけが、設定の「エージェント」タブの候補になる。
 - **自動検出の範囲**: 実行ファイルを、まず `PATH` (絶対パスの項目) から、次に既知の場所
   `~/.local/bin` → `~/.cargo/bin` → `~/.bun/bin` → `/usr/local/bin` の順に探す。デスクトップのランチャーから起動した Yhtye はシェルの設定を
-  読まず `PATH` が短いことがあるので、`~/.local/bin` などを別に見ている。実行ファイルは走らせず (`--version` なし)、実行可能な通常ファイルかどうかだけを見る。
-- **手動パス**: 上の範囲に無い場所に入れたときは、そのハーネスの主実行ファイル (Claude Code は `npx`、他は `opencode` / `codex` / `devin`) の
+  読まず `PATH` が短いことがあるので、`~/.local/bin` などを別に見ている。MiniMax Code (`mcode`) だけは、インストーラの標準の場所
+  `~/.minimax-code/bin` (環境変数 `MCODE_INSTALL_ROOT` があれば、その `bin`) も見る (fish などでは `PATH` に入らないことが多いため)。実行ファイルは走らせず (`--version` なし)、実行可能な通常ファイルかどうかだけを見る。
+- **手動パス**: 上の範囲に無い場所に入れたときは、そのハーネスの主実行ファイル (Claude Code は `npx`、他は `opencode` / `codex` / `devin` / `mcode`) の
   **絶対パス**を入力して「保存」する。保存すると自動検出より優先される。実行可能な通常ファイルでなければ保存できない。
   後でそのファイルが壊れたり消えたりすると、そのハーネスは未インストール扱いになり、理由が表示される (自動検出には**戻らない**)。「自動検出に戻す」で消せる。
   手動パスで置き換えるのは主実行ファイルだけで、Codex の `npx` は常に自動検出。
@@ -81,6 +83,22 @@ Devin は **devin 3000.11.3・無料プラン (モデルは SWE-1.6 Slow だけ)
 - Devin は MCP のツールを自分のツールとして並べず、MCP の一覧・呼び出し用のツールを通して使う。Yhtye は役割の指示に、その旨の短い注記を Devin にだけ付ける。
 - Devin はあなたの `~/.config/devin/mcp_config.json` の MCP サーバーも読み込む (Yhtye の MCP と並んで使える)。
 - 無料プランのモデル (SWE-1.6 Slow) には effort が無いので、設定 › エージェント の effort は選べない。
+
+### MiniMax Code (基本動作は実機確認済み、一部未検証)
+
+MiniMax Code は **mcode 0.6.2 の実機で、起動、モデル一覧、モデルと effort の設定、1 ターンの応答を確認した** (プロンプトは少数だけ。利用クレジットの都合)。
+**まだ確かめていない**のは、Yhtye の MCP 経由でのタスクの完了 (`report_step_done`)、許可確認への自動応答 (`auto` では、作業ディレクトリ外へのシェルの書き込み・削除でも確認が来なかった)、再開 (`session/load`)、ターンの中断、未ログイン時のエラーを Yhtye 経由で見ること。
+実測のまとめは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11。
+
+- 認証は `mcode login` で先に済ませておく。未ログインだと、起動時に「Authentication required: Run `mcode login` …」がエージェントの起動エラーとして出る。
+- 標準のインストール先は `~/.minimax-code/bin/mcode`。fish などでは `PATH` に入らないが、Yhtye はその場所も探す (環境変数 `MCODE_INSTALL_ROOT` で場所を変えたなら、その `bin` も探す)。
+- **Yhtye は `permissionMode` もモードも変えない**: `permissionMode` を変えると、あなたの全体設定 `~/.minimax/config.yaml` に永続的に書き込まれ、普段の `mcode` の権限モードまで変わってしまうため。
+  既定の `auto` では、作業ディレクトリ内の書き込みと MCP は確認なしで通り、実機では作業ディレクトリ外へのシェルの書き込み・削除も確認なしで通った。許可確認が来たときは、Yhtye はそれを「1 回だけ許可」で自動的に通す (「常に許可」は選ばない。あなたの設定に残る恐れがあるため。実機では未確認)。
+  ほかのハーネスと同様、サンドボックスは無い。
+- モデルの値は `m:minimax:<モデル>:v:<variant>` の形。既定は `m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking` (クレジット節約のため。設定 › エージェント でモデルを選ばなかったときもこれで動く。あなたの `~/.minimax/config.yaml` の既定モデルは使わない)。
+  thinking なしの Flash Preview は mcode が選択を拒否するので、モデル一覧から除いている。
+- effort (`thinkingEffort`) があるのは Flash Preview の thinking だけ。ほかのモデルでは effort は選べない。
+- 利用料金は MiniMax のクレジットから使われる。Yhtye は課金を管理しない。
 
 ### Codex (OpenRouter)
 
@@ -142,7 +160,7 @@ makepkg -si
 1. 起動する。左の欄でプロジェクトのディレクトリ (git リポジトリ) を入力して「開く」。
 2. 歯車 (アイコンレール下部) で、役割ごと (オーケストレータ / 実装 / 調査 / レビュー) のハーネス・モデル・effort を選ぶ。
    「全体」と「このプロジェクト」で切り替えられる。変更はすぐ保存され、新しく起動するエージェントから有効になる。
-   設定していない役割の組み込みの既定は、見つかったハーネスのうち Claude Code → OpenCode → Devin → Codex の順で最初のもの
+   設定していない役割の組み込みの既定は、見つかったハーネスのうち Claude Code → OpenCode → Devin → MiniMax Code → Codex の順で最初のもの
    (Codex はモデルの指定が要るので、ほかに無いときだけ。そのときは設定でモデルを選ぶよう案内が出る)。
    Claude Code のモデルは環境変数 `YHTYE_MODEL` (未設定なら `haiku`)。
    試すときは Haiku で安く済ませ、本格的に使うときにモデルを上げるとよい。
@@ -177,11 +195,12 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 |---|---|
 | Wayland + NVIDIA で起動直後に `Error 71 ... dispatching to Wayland display` を出して落ちる | 起動時に自動で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定して回避する。効かないときは `WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/release/yhtye` で起動する (この変数を自分で設定済みなら Yhtye は触らない) |
 | 「使えるハーネスがありません」と出てエージェントが起動しない | 設定 › ハーネス で、どのハーネスも「未インストール」になっていないか確認する。Claude Code は `npx` が必要 (Node 22+ を入れる)。入れたら「再検出」 |
-| ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
+| ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` (`mcode` は `~/.minimax-code/bin` も) のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
 | 手動パスを保存したのに使えない | 表示された理由を確認する。絶対パスの実行可能な通常ファイルでなければならない (ディレクトリやシンボリックリンク先が無い、実行権限が無い、など)。壊れた手動パスは自動検出に戻らないので、直すか「自動検出に戻す」 |
 | Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する |
 | OpenCode で認証エラー | `opencode auth login` を済ませる |
 | Devin が認証エラーになる / 起動しない | `devin auth login` を済ませる (`devin auth status` で確認)。`WINDSURF_API_KEY` を使うなら「秘密の環境変数」に登録する。Devin は一部未検証なので、それでも動かないときは `docs/architecture/acp-harnesses.md` §10 の手動検証チェックリストを参照して報告してほしい |
+| MiniMax Code が認証エラー (`Authentication required`) になる | `mcode login` を済ませる。それでも動かないときは `docs/architecture/acp-harnesses.md` §11 を参照して報告してほしい (一部未検証) |
 | Codex が空のトークンで失敗する | 「秘密の環境変数」に `config.toml` が参照している変数を登録する |
 | 秘密の登録やエージェント起動が「キーリングが使えない」で失敗する | Secret Service (gnome-keyring / KeePassXC など) を起動してロックを解除する |
 | グループが「マージ待ち」で止まる | base ブランチをチェックアウトし、作業ツリーを clean にして再試行する |

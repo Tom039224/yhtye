@@ -20,10 +20,11 @@ function draftsOf(list: HarnessDetection[]): Record<string, string> {
 
 /**
  * The settings' "ハーネス" section: whether each harness (Claude Code, OpenCode,
- * Codex, Devin) is installed, where its commands were found, and a manual path
- * for its main executable that replaces the automatic search (PATH, then
- * ~/.local/bin, ~/.cargo/bin, ~/.bun/bin, /usr/local/bin). Opening it makes the
- * core look again; the agent settings offer the installed harnesses.
+ * Codex, Devin, MiniMax Code) is installed, where its commands were found, and a
+ * manual path for its main executable that replaces the automatic search (PATH,
+ * then ~/.local/bin, ~/.cargo/bin, ~/.bun/bin, /usr/local/bin, and MiniMax
+ * Code's own ~/.minimax-code/bin). Opening it makes the core look again; the
+ * agent settings offer the installed harnesses.
  */
 export function HarnessSettingsSection() {
   const store = useStore();
