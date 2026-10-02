@@ -146,13 +146,20 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let bin = Bin::new();
     let npx = bin.install("npx");
     let devin = bin.install("devin");
+    let grok = bin.install("grok");
     bin.install("opencode");
     let core = Core::start(config(&r, &bin)).await.expect("core");
 
     let all = get(&core).await;
     let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
-    assert_eq!(ids, ["claude-code", "opencode", "codex", "devin"]);
-    assert_eq!(installed(&all), ["claude-code", "opencode", "devin"]);
+    assert_eq!(
+        ids,
+        ["claude-code", "opencode", "codex", "devin", "grok-build"]
+    );
+    assert_eq!(
+        installed(&all),
+        ["claude-code", "opencode", "devin", "grok-build"]
+    );
 
     let claude = by_id(&all, "claude-code");
     assert_eq!(claude.label, "Claude Code");
@@ -179,9 +186,12 @@ async fn every_known_harness_is_reported_with_what_was_found() {
         by_id(&all, "devin").resolved_path.as_deref(),
         Some(text(&devin))
     );
+    let grok_build = by_id(&all, "grok-build");
+    assert_eq!(grok_build.label, "Grok Build");
+    assert_eq!(grok_build.resolved_path.as_deref(), Some(text(&grok)));
     assert_eq!(
         offered(&core).await,
-        ["claude-code", "opencode", "devin"],
+        ["claude-code", "opencode", "devin", "grok-build"],
         "a harness that is not installed is not offered"
     );
     assert_eq!(

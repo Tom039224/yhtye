@@ -14,7 +14,8 @@ mod startup;
 pub use config::{
     CODEX_ACP, CODEX_CONFIG_ENV, CODEX_FULL_ACCESS_MODE, CODEX_PATH_ENV, ClientInfoOverride,
     DEFAULT_STARTUP_TIMEOUT, DEVIN_BYPASS_MODE, DEVIN_ENV_REMOVE, DEVIN_MCP_NOTE, EFFORT_CONFIG_ID,
-    HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE, PermissionPolicy, SystemPromptStyle,
+    GROK_BUILD_ARGS, GROK_BUILD_EFFORT_CONFIG_ID, GROK_BUILD_ENV_REMOVE, HarnessConfig,
+    ModelSelect, OPENCODE_BUILD_MODE, PermissionPolicy, SystemPromptStyle,
 };
 pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value, effort_option};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};

@@ -19,8 +19,11 @@ const PREFERRED_KINDS: [PermissionOptionKind; 2] = [
 /// Option id prefixes that change how the session runs (mode / plan switches).
 const SESSION_CHANGING_PREFIXES: [&str; 2] = ["switch_", "plan_"];
 
-/// Suffix of the options that grant a standing permission.
-const ALWAYS_SUFFIX: &str = "_always";
+/// Id fragments of the options that grant more than the request at hand: a
+/// standing permission (Devin's `*_always`, Grok Build's `allow_always_bash`,
+/// `allow_always_mcp_server`, ...) or one for the rest of the session (Grok
+/// Build's `allow_edits_for_session`).
+const STANDING_GRANT_MARKERS: [&str; 2] = ["always", "for_session"];
 
 /// Picks the option to auto-approve under `policy`, or `None` when no
 /// acceptable option exists.
@@ -39,14 +42,16 @@ pub fn choose_permission(
     }
 }
 
-/// Whether the id of `option` names a mode / plan switch or a standing
-/// permission, whatever its `kind` says.
+/// Whether the id of `option` names a mode / plan switch or a standing (or
+/// session-wide) permission, whatever its `kind` says.
 fn changes_session_or_persists(option: &PermissionOption) -> bool {
     let id = &*option.option_id.0;
     SESSION_CHANGING_PREFIXES
         .iter()
         .any(|prefix| id.starts_with(prefix))
-        || id.ends_with(ALWAYS_SUFFIX)
+        || STANDING_GRANT_MARKERS
+            .iter()
+            .any(|marker| id.contains(marker))
 }
 
 /// The protocol outcome for a choice made by [`choose_permission`].
@@ -157,5 +162,21 @@ mod tests {
             outcome_for(choose_permission(&options, PermissionPolicy::OnceOnly)),
             RequestPermissionOutcome::Cancelled
         );
+    }
+
+    #[test]
+    fn once_only_skips_grok_builds_scoped_and_session_wide_grants_whatever_their_kind() {
+        // The option ids of grok 1.0.46; a kind that does not say what the id
+        // grants must not get a standing or session-wide grant chosen.
+        let options = [
+            opt("allow_always_bash", PermissionOptionKind::AllowOnce),
+            opt("allow_always_mcp_server", PermissionOptionKind::AllowOnce),
+            opt("allow_edits_for_session", PermissionOptionKind::AllowOnce),
+            opt("allow_always", PermissionOptionKind::AllowAlways),
+            opt("reject_once", PermissionOptionKind::RejectOnce),
+            opt("allow_once", PermissionOptionKind::AllowOnce),
+        ];
+        assert_eq!(once_only_id(&options).as_deref(), Some("allow_once"));
+        assert!(choose_permission(&options[..5], PermissionPolicy::OnceOnly).is_none());
     }
 }
