@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, OPENCODE};
+use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, OPENCODE};
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -24,6 +24,17 @@ pub const NPX_COMMAND: &str = "npx";
 
 /// The Devin executable.
 pub const DEVIN_COMMAND: &str = "devin";
+
+/// The Grok Build executable.
+pub const GROK_BUILD_COMMAND: &str = "grok";
+
+/// Where Grok Build's installer puts `grok` (`~/.grok/bin`, a link into
+/// `~/.grok/downloads`), which a shell such as fish does not have in its `PATH`.
+pub const GROK_BUILD_INSTALL_DIR: &str = "~/.grok/bin";
+
+/// The environment variable that moves Grok Build's home (`~/.grok`), so its
+/// `bin` directory is where `grok` is.
+pub const GROK_BUILD_ROOT_ENV: &str = "GROK_HOME";
 
 /// Directories searched after `PATH` (a desktop app often starts with a shorter
 /// `PATH` than the user's shell has). `~` is the `HOME` of the environment.
@@ -45,34 +56,57 @@ pub struct HarnessSpec {
     pub main: &'static str,
     /// Further commands it needs (found automatically only).
     pub also: &'static [&'static str],
+    /// An environment variable naming the root of the harness's own install
+    /// directory, whose `bin` is searched after `PATH` and before
+    /// [`KNOWN_DIRS`] (an absolute path only).
+    pub root_env: Option<&'static str>,
+    /// Directories only this harness's installer uses (`~` is the `HOME` of the
+    /// environment), searched after [`KNOWN_DIRS`].
+    pub extra_dirs: &'static [&'static str],
 }
 
 /// The known harnesses, in the order the built-in default prefers them
 /// ([`super::default_choice`] has the rule).
-pub const HARNESS_SPECS: [HarnessSpec; 4] = [
+pub const HARNESS_SPECS: [HarnessSpec; 5] = [
     HarnessSpec {
         id: CLAUDE_CODE,
         label: "Claude Code",
         main: NPX_COMMAND,
         also: &[],
+        root_env: None,
+        extra_dirs: &[],
     },
     HarnessSpec {
         id: OPENCODE,
         label: "OpenCode",
         main: OPENCODE_COMMAND,
         also: &[],
+        root_env: None,
+        extra_dirs: &[],
     },
     HarnessSpec {
         id: CODEX,
         label: "Codex",
         main: CODEX_COMMAND,
         also: &[NPX_COMMAND],
+        root_env: None,
+        extra_dirs: &[],
     },
     HarnessSpec {
         id: DEVIN,
         label: "Devin",
         main: DEVIN_COMMAND,
         also: &[],
+        root_env: None,
+        extra_dirs: &[],
+    },
+    HarnessSpec {
+        id: GROK_BUILD,
+        label: "Grok Build",
+        main: GROK_BUILD_COMMAND,
+        also: &[],
+        root_env: Some(GROK_BUILD_ROOT_ENV),
+        extra_dirs: &[GROK_BUILD_INSTALL_DIR],
     },
 ];
 
@@ -137,13 +171,38 @@ pub fn harness_spec(id: &str) -> Option<&'static HarnessSpec> {
 /// [`KNOWN_DIRS`] with `~` expanded to the `HOME` of `env` (those under `~`
 /// are left out without one).
 pub fn known_dirs(env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    expand_home(&KNOWN_DIRS, env)
+}
+
+/// `dirs` with `~` expanded to the `HOME` of `env` (those under `~` are left
+/// out without one).
+fn expand_home(dirs: &[&str], env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
     let home = env("HOME").map(PathBuf::from).filter(|h| h.is_absolute());
-    KNOWN_DIRS
-        .iter()
+    dirs.iter()
         .filter_map(|dir| match dir.strip_prefix("~/") {
             Some(rest) => home.as_ref().map(|h| h.join(rest)),
             None => Some(PathBuf::from(dir)),
         })
+        .collect()
+}
+
+/// Where the main executable of `spec` is looked for after `PATH`: the `bin` of
+/// its install root (when the environment names one), the well-known
+/// directories, then the directories only its installer uses.
+fn search_dirs(
+    spec: &HarnessSpec,
+    env: &impl Fn(&str) -> Option<OsString>,
+    known_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let root = spec
+        .root_env
+        .and_then(env)
+        .map(PathBuf::from)
+        .filter(|root| root.is_absolute());
+    root.map(|root| root.join("bin"))
+        .into_iter()
+        .chain(known_dirs.iter().cloned())
+        .chain(expand_home(spec.extra_dirs, env))
         .collect()
 }
 
@@ -237,7 +296,7 @@ fn detect(
             Ok(()) => (Some(path.clone()), PathSource::Override, None),
             Err(e) => (None, PathSource::None, Some(e)),
         },
-        None => match find_command(spec.main, env, known_dirs) {
+        None => match find_command(spec.main, env, &search_dirs(spec, env, known_dirs)) {
             Some((path, source)) => (path.to_str().map(str::to_string), source, None),
             None => (None, PathSource::None, None),
         },
@@ -424,12 +483,15 @@ mod tests {
     #[test]
     fn every_harness_is_reported_with_what_it_needs() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["npx", "opencode", "codex", "devin"] {
+        for name in ["npx", "opencode", "codex", "devin", "grok"] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
         let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
-        assert_eq!(ids, ["claude-code", "opencode", "codex", "devin"]);
+        assert_eq!(
+            ids,
+            ["claude-code", "opencode", "codex", "devin", "grok-build"]
+        );
         assert!(all.iter().all(|d| d.installed));
 
         let cc = by_id(&all, "claude-code");
@@ -479,7 +541,7 @@ mod tests {
     #[test]
     fn a_missing_npx_takes_claude_code_and_codex_with_it() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["opencode", "codex", "devin"] {
+        for name in ["opencode", "codex", "devin", "grok"] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
@@ -490,6 +552,74 @@ mod tests {
         assert_eq!(codex.found("npx"), None);
         assert!(by_id(&all, "opencode").installed);
         assert!(by_id(&all, "devin").installed);
+        assert!(by_id(&all, "grok-build").installed);
+    }
+
+    #[test]
+    fn grok_is_found_in_its_own_install_directory_and_in_the_home_the_environment_names() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let grok_home = tempfile::tempdir().expect("tempdir");
+        let empty = tempfile::tempdir().expect("tempdir");
+        let install = home.path().join(".grok/bin");
+        std::fs::create_dir_all(&install).expect("mkdir");
+        std::fs::create_dir_all(grok_home.path().join("bin")).expect("mkdir");
+        let default = fake_bin(&install, "grok", 0o755);
+        let find = |vars: &[(&str, &str)]| {
+            let found = detect_harnesses(env(vars), &[], &HashMap::new());
+            let d = by_id(&found, "grok-build").clone();
+            (d.installed, d.resolved_path, d.path_source)
+        };
+        let home_var = path_of(&home);
+        let path_var = path_of(&empty);
+        let base = [("HOME", home_var.as_str()), ("PATH", path_var.as_str())];
+
+        // The shell's PATH (fish) does not have it: the installer's directory does.
+        assert_eq!(
+            find(&base),
+            (
+                true,
+                default.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        assert_eq!(
+            find(&[("PATH", &path_var)]),
+            (false, None, PathSource::None),
+            "without a HOME there is nowhere to look"
+        );
+
+        // A grok home the environment names is searched first; a relative one is not.
+        let moved = fake_bin(&grok_home.path().join("bin"), "grok", 0o755);
+        let root_var = path_of(&grok_home);
+        let with_root = [base[0], base[1], ("GROK_HOME", root_var.as_str())];
+        assert_eq!(
+            find(&with_root),
+            (
+                true,
+                moved.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        let relative = [base[0], base[1], ("GROK_HOME", "relative/home")];
+        assert_eq!(find(&relative).1, default.to_str().map(str::to_string));
+
+        // The other harnesses do not look there, and `PATH` still comes first.
+        fake_bin(&install, "devin", 0o755);
+        let found = detect_harnesses(env(&base), &[], &HashMap::new());
+        assert!(!by_id(&found, "devin").installed);
+        let on_path = tempfile::tempdir().expect("tempdir");
+        let first = fake_bin(on_path.path(), "grok", 0o755);
+        let path_var = path_of(&on_path);
+        let found = detect_harnesses(
+            env(&[("HOME", home_var.as_str()), ("PATH", path_var.as_str())]),
+            &[],
+            &HashMap::new(),
+        );
+        let d = by_id(&found, "grok-build");
+        assert_eq!(d.label, "Grok Build");
+        assert_eq!(d.resolved_path.as_deref(), first.to_str());
+        assert_eq!(d.path_source, PathSource::Path);
+        assert_eq!(d.requirements.len(), 1, "grok alone, no npx");
     }
 
     #[test]
@@ -613,7 +743,9 @@ mod tests {
             HarnessPreset::opencode("m", Vec::new()),
             HarnessPreset::codex(None),
             HarnessPreset::devin("devin"),
+            HarnessPreset::grok_build("grok"),
         ];
+        assert_eq!(presets.len(), HARNESS_SPECS.len());
         for (spec, preset) in HARNESS_SPECS.iter().zip(&presets) {
             assert_eq!(
                 (spec.id, spec.label),

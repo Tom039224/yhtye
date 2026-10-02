@@ -81,6 +81,16 @@ describe("harness settings", () => {
     expect(within(codex).getByRole("button", { name: "自動検出に戻す" })).toHaveProperty("disabled", true);
   });
 
+  it("shows Grok Build found in its own install directory", async () => {
+    const { dialog } = await openHarnesses((c) => {
+      c.harnesses.found.grok = { path: "/home/u/.grok/bin/grok", source: "known_dir" };
+    });
+    const grok = row(dialog, "Grok Build");
+    expect(within(grok).getByText("インストール済み")).toBeTruthy();
+    expect(requirements(grok)).toEqual(["grok/home/u/.grok/bin/grok既知の場所"]);
+    expect(within(grok).getByRole("textbox", { name: "Grok Build の grok のパス" })).toBeTruthy();
+  });
+
   it("saves a manual path, then goes back to the automatic search", async () => {
     const { user, dialog, core } = await openHarnesses((c) => c.harnesses.executables.add(OPENCODE_BIN));
     const opencode = row(dialog, "OpenCode");
