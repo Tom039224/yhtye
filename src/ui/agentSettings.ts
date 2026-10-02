@@ -3,12 +3,13 @@
 // a note, one of them the default) and the edits of those rows.
 
 import type { AgentChoice, AgentRole, Candidate, EffortOption, HarnessInfo, HarnessModels, ModelOption, RoleSettings } from "../api/generated";
+import type { IconName } from "./Icon";
 
-export const ROLES: { role: AgentRole; label: string; hint: string }[] = [
-  { role: "orchestrator", label: "オーケストレータ", hint: "あなたと話し、タスクを組む" },
-  { role: "implementer", label: "実装", hint: "code タスク" },
-  { role: "investigator", label: "調査", hint: "investigate タスク" },
-  { role: "reviewer", label: "レビュー", hint: "review Step" },
+export const ROLES: { role: AgentRole; label: string; hint: string; icon: IconName }[] = [
+  { role: "orchestrator", label: "オーケストレータ", hint: "あなたと話し、タスクを組む", icon: "message" },
+  { role: "implementer", label: "実装", hint: "code タスク", icon: "code" },
+  { role: "investigator", label: "調査", hint: "investigate タスク", icon: "search" },
+  { role: "reviewer", label: "レビュー", hint: "review Step", icon: "eye" },
 ];
 
 /** Longest note (characters) the core accepts. */

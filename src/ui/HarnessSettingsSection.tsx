@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { HarnessDetection, HarnessPathSource } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
+import { Icon, IconButton } from "./Icon";
 
 /** Where the main executable was found, as shown. */
 export const PATH_SOURCE_LABELS: Record<HarnessPathSource, string> = {
@@ -31,6 +32,7 @@ export function HarnessSettingsSection() {
   const [rowErrors, setRowErrors] = useState<Record<string, string | undefined>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [detecting, setDetecting] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -49,6 +51,7 @@ export function HarnessSettingsSection() {
 
   const detect = async () => {
     setBusy(true);
+    setDetecting(true);
     setError(null);
     setRowErrors({});
     try {
@@ -60,6 +63,7 @@ export function HarnessSettingsSection() {
       setError(toCommandError(e).message);
     } finally {
       setBusy(false);
+      setDetecting(false);
     }
   };
 
@@ -81,14 +85,21 @@ export function HarnessSettingsSection() {
   return (
     <div className="agent-section harness-section">
       <div className="settings-toolbar">
-        <p className="agent-panel-note">
-          エージェントを動かす <b>ハーネス</b> の検出状態です。実行ファイルは <b>PATH</b> と既知の場所 (~/.local/bin, ~/.cargo/bin,
-          ~/.bun/bin, /usr/local/bin) から探します。見つからないときは主実行ファイルの絶対パスを手動で指定できます
-          (手動パスは自動検出より優先)。インストール済みのハーネスがエージェント設定で選べます。
+        <p
+          className="agent-panel-note"
+          title="エージェントを動かすハーネスの検出状態です。実行ファイルは PATH と既知の場所 (~/.local/bin, ~/.cargo/bin, ~/.bun/bin, /usr/local/bin) から探します。見つからないときは主実行ファイルの絶対パスを手動で指定できます (手動パスは自動検出より優先)。インストール済みのハーネスがエージェント設定で選べます。"
+        >
+          <Icon name="info" size={14} />
+          <span>PATH と既知の場所から探します。見つからなければ絶対パスを手動で指定できます (自動検出より優先)。</span>
         </p>
-        <button type="button" className="btn btn-small" disabled={busy || (harnesses === null && error === null)} onClick={detect}>
-          再検出
-        </button>
+        <IconButton
+          icon="refresh"
+          label="再検出"
+          title="ハーネスを再検出"
+          spin={detecting || (harnesses === null && error === null)}
+          disabled={busy || (harnesses === null && error === null)}
+          onClick={detect}
+        />
       </div>
       {error ? (
         <p className="agent-warning" role="alert">
@@ -147,7 +158,10 @@ function HarnessRow({
       <div className="harness-head">
         <span className="secret-name">{h.label}</span>
         <code className="harness-id">{h.id}</code>
-        <span className={`chip ${h.installed ? "tone-done" : "tone-handling"}`}>{h.installed ? "インストール済み" : "未インストール"}</span>
+        <span className={`chip ${h.installed ? "tone-done" : "tone-handling"}`}>
+          <Icon name={h.installed ? "check" : "alert"} size={12} />
+          {h.installed ? "インストール済み" : "未インストール"}
+        </span>
       </div>
       <ul className="harness-reqs" aria-label={`${h.label} の必要なコマンド`}>
         {h.requirements.map((r, i) => (
@@ -164,7 +178,10 @@ function HarnessRow({
       </ul>
       {h.override_error ? (
         <p className="agent-warning" role="alert">
-          手動パス {h.override_path} を使えません: {h.override_error}
+          <Icon name="alert" size={14} />
+          <span>
+            手動パス {h.override_path} を使えません: {h.override_error}
+          </span>
         </p>
       ) : null}
       {error ? (
@@ -181,12 +198,16 @@ function HarnessRow({
           spellCheck={false}
           onChange={(e) => onDraft(e.target.value)}
         />
-        <button type="submit" className="btn btn-small" disabled={busy}>
-          保存
-        </button>
-        <button type="button" className="btn btn-small" disabled={busy || h.override_path === null} onClick={() => onSetPath(null)}>
-          自動検出に戻す
-        </button>
+        <IconButton type="submit" icon="check" size={15} className="icon-button-outline" label="保存" disabled={busy} />
+        <IconButton
+          icon="x"
+          size={15}
+          className="icon-button-outline"
+          label="自動検出に戻す"
+          title="手動パスを消して自動検出に戻す"
+          disabled={busy || h.override_path === null}
+          onClick={() => onSetPath(null)}
+        />
       </form>
     </li>
   );

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { agentText, chunk, ev, turnEnded } from "../test/events";
-import { applyDurable, applyLive, applySnapshot, newProjectView, type ProjectView } from "./project";
+import { applyDurable, applyLive, applySnapshot, forgetChat, newProjectView, type ProjectView, removeChatNow } from "./project";
 import { ORCHESTRATOR } from "../test/events";
+import { CHAT_INFOS, chatSnapshot } from "../test/chats";
+import { orchestratorKey } from "./chats";
 
 function fold(view: ProjectView, events = FULL_RUN.events): ProjectView {
   return events.reduce((v, e) => (e.live ? applyLive(v, e) : e.seq === v.cursor + 1 ? applyDurable(v, e) : v), view);
@@ -64,5 +66,62 @@ describe("project view", () => {
       expect.objectContaining({ kind: "turn", outcome: "cancelled", error: false }),
       expect.objectContaining({ kind: "turn", outcome: "error (closed)", error: true }),
     ]);
+  });
+});
+
+describe("a deleted chat", () => {
+  const deleted = (seq: number, chat: string) => ev(seq, { type: "domain", event: { type: "chat_deleted", chat } });
+
+  /** Both chats loaded, C-2 selected, C-1 with a notification, a sub-agent session and text of each. */
+  function twoChats(): ProjectView {
+    let v = applySnapshot(newProjectView(PROJECT), chatSnapshot());
+    v = {
+      ...v,
+      unread: { "C-1": true },
+      sessions: [
+        { session_key: orchestratorKey("C-1"), role: "orchestrator", task: null, acp_session_id: "a", status: "live", turn_running: false, agent: null, cwd: null },
+        { session_key: "T-1/implementer", role: "implementer", task: "T-1", acp_session_id: "b", status: "stopped", turn_running: false, agent: null, cwd: null },
+        { session_key: "T-2/implementer", role: "implementer", task: "T-2", acp_session_id: "c", status: "live", turn_running: false, agent: null, cwd: null },
+      ],
+      transcripts: {
+        [orchestratorKey("C-1")]: [{ seq: 1, ts: 1, kind: "prompt", text: "x" }],
+        "T-1/implementer": [{ seq: 2, ts: 2, kind: "prompt", text: "y" }],
+        [orchestratorKey("C-2")]: [{ seq: 3, ts: 3, kind: "prompt", text: "z" }],
+      },
+      streaming: { [orchestratorKey("C-1")]: { message: "par", thought: "" } },
+    };
+    return v;
+  }
+
+  it("takes its conversation, its tasks' sessions and its notification mark with it", () => {
+    const v = applyDurable({ ...twoChats(), stateSeq: 0, cursor: 4 }, deleted(5, "C-1"));
+    expect(v.chats.map((c) => c.id)).toEqual(["C-2"]);
+    expect(v.state?.chats.map((c) => c.id)).toEqual(["C-2"]);
+    expect(v.state?.groups.map((g) => g.id)).toEqual(["G-2"]);
+    expect(v.sessions.map((s) => s.session_key)).toEqual(["T-2/implementer"]);
+    expect(Object.keys(v.transcripts)).toEqual([orchestratorKey("C-2")]);
+    expect(v.streaming).toEqual({});
+    expect(v.unread).toEqual({});
+    expect(v.selectedChat).toBe("C-2");
+  });
+
+  it("shows the most recently used other chat when the shown one is deleted", () => {
+    const v = applyDurable({ ...twoChats(), selectedChat: "C-2", stateSeq: 0, cursor: 4 }, deleted(5, "C-2"));
+    expect(v.selectedChat).toBe("C-1");
+    const last = applyDurable(v, deleted(6, "C-1"));
+    expect(last.selectedChat).toBeNull();
+    expect(last.chats).toEqual([]);
+  });
+
+  it("can be dropped before its event arrives, and the event then changes nothing more", () => {
+    const early = removeChatNow(twoChats(), "C-1");
+    expect(early.chats).toEqual(CHAT_INFOS.filter((c) => c.id !== "C-1"));
+    expect(early.state?.chats.map((c) => c.id)).toContain("C-1");
+    expect(early.sessions.map((s) => s.session_key)).toEqual(["T-2/implementer"]);
+    const later = applyDurable({ ...early, stateSeq: 0, cursor: 4 }, deleted(5, "C-1"));
+    expect(later.state?.chats.map((c) => c.id)).toEqual(["C-2"]);
+    expect(later.sessions).toEqual(early.sessions);
+    expect(later.transcripts).toEqual(early.transcripts);
+    expect(forgetChat(later, null, "C-1")).toEqual(later);
   });
 });

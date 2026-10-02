@@ -127,6 +127,16 @@ pnpm tauri build
   (環境によっては一部のバンドルが失敗することがある)。実行ファイルだけでよければ `pnpm tauri build --no-bundle`。
 - ビルドせず試すだけなら `pnpm tauri dev` (初回は Rust のコンパイルに時間がかかる)。
 
+### Arch / CachyOS (PKGBUILD)
+
+`packaging/arch/PKGBUILD` は GitHub の `main` をビルドする `yhtye-git` パッケージ。
+実行ファイル・`.desktop`・アイコンが入る。
+
+```sh
+cd packaging/arch
+makepkg -si
+```
+
 ## 初回の使い方
 
 1. 起動する。左の欄でプロジェクトのディレクトリ (git リポジトリ) を入力して「開く」。
