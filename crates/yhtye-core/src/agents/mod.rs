@@ -12,14 +12,15 @@ mod openrouter;
 mod settings;
 
 pub use catalog::{
-    AgentCatalog, CLAUDE_CODE, CODEX, DEVIN, HarnessInfo, HarnessPreset, MODEL_CONFIG_ID,
-    ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved,
+    AgentCatalog, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, HarnessInfo, HarnessPreset,
+    MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved,
 };
 pub use codex_config::{codex_home, configured_provider, model_provider};
 pub use detect::{
-    CODEX_COMMAND, DEVIN_COMMAND, HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec,
-    KNOWN_DIRS, NPX_COMMAND, OPENCODE_COMMAND, PathSource, check_executable_path, detect_harnesses,
-    find_command, find_in_path, harness_spec, known_dirs,
+    CODEX_COMMAND, DEVIN_COMMAND, GROK_BUILD_COMMAND, GROK_BUILD_INSTALL_DIR, GROK_BUILD_ROOT_ENV,
+    HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec, KNOWN_DIRS, NPX_COMMAND,
+    OPENCODE_COMMAND, PathSource, check_executable_path, detect_harnesses, find_command,
+    find_in_path, harness_spec, known_dirs,
 };
 pub use installed::{
     OPENCODE_FALLBACK_MODEL, default_choice, inherited_opencode_env_remove, presets_from,

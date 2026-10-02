@@ -12,7 +12,7 @@ use agent_client_protocol::schema::v1::{
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
     SetSessionModeResponse, StopReason, ToolCallUpdate, ToolCallUpdateFields,
 };
-use agent_client_protocol::{Agent, Client, ConnectionTo, Error, Stdio};
+use agent_client_protocol::{Agent, Client, ConnectionTo, Error, Stdio, UntypedMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::watch;
@@ -101,12 +101,13 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_request(
-            async move |req: NewSessionRequest, responder, _cx| {
+            async move |req: NewSessionRequest, responder, cx| {
                 gate(&f2, "session/new").await?;
                 enter_session_dir(&req.cwd)?;
                 let id = format!("fake-{}", std::process::id());
                 f2.remember_session(&id, req.meta.as_ref());
                 f2.remember_mcp(&req.mcp_servers);
+                send_vendor_notifications(&f2, &cx)?;
                 responder.respond(
                     NewSessionResponse::new(id)
                         .modes(f2.modes())
@@ -121,6 +122,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 enter_session_dir(&req.cwd)?;
                 f3.remember_session(&req.session_id.0, req.meta.as_ref());
                 f3.remember_mcp(&req.mcp_servers);
+                send_vendor_notifications(&f3, &cx)?;
                 let replay = format!("replayed history of {}", req.session_id.0);
                 send_update(
                     &cx,
@@ -257,14 +259,18 @@ impl Fake {
         });
     }
 
-    fn modes(&self) -> SessionModeState {
+    /// The modes, `None` when the scenario has none (the field is left out).
+    fn modes(&self) -> Option<SessionModeState> {
+        if self.scenario.modes.is_empty() {
+            return None;
+        }
         let available = self
             .scenario
             .modes
             .iter()
             .map(|m| SessionMode::new(m.clone(), m.clone()))
             .collect();
-        SessionModeState::new(self.lock().mode.clone(), available)
+        Some(SessionModeState::new(self.lock().mode.clone(), available))
     }
 
     /// The config options now: the model, plus the effort when the current
@@ -333,6 +339,14 @@ fn send_update(
     ))
 }
 
+/// Sends the scenario's `vendor_notifications` (methods the client does not know).
+fn send_vendor_notifications(fake: &Fake, cx: &ConnectionTo<Client>) -> Result<(), Error> {
+    for n in &fake.scenario.vendor_notifications {
+        cx.send_notification(UntypedMessage::new(&n.method, &n.params)?)?;
+    }
+    Ok(())
+}
+
 fn prompt_text(req: &PromptRequest) -> String {
     req.prompt
         .iter()
@@ -353,6 +367,10 @@ async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -
         fake.scenario.pick(&prompt, &mut st.next_seq)
     };
     let session = req.session_id.0.to_string();
+    if let Err(e) = send_vendor_notifications(fake, cx) {
+        eprintln!("fake: action failed: {e}");
+        return StopReason::Refusal;
+    }
     if fake.scenario.vendor_requests {
         let report = request_diagnostics(cx).await;
         if let Err(e) = send_update(
