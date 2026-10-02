@@ -30,6 +30,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | OpenCode | **採用 (Stage 7c)** — 組み込みの `opencode acp` (2.0.12)、§7。`opencode` が見つかれば全役割で選べる (7c-2、§7.6) |
 | Codex | **採用 (Stage 7e)** — `@agentclientprotocol/codex-acp` 2.0.0 (npx、Codex 本体はユーザーの `codex`)、§9。`codex` と `npx` が見つかれば全役割で選べる。調査: [`research/codex-acp.md`](research/codex-acp.md) |
 | Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続、実装エージェントとしての `report_step_done` を確認 (§10.0、§10.9)。未ログイン時、`session/load`、cancel は未確認 (§10.9) |
+| MiniMax Code | **実装済み・基本動作は実機確認済み (T-26)** — MiniMax Code CLI の `mcode acp`、§11。`mcode` が見つかれば全役割で選べる (`PATH` に無くても `~/.minimax-code/bin` を探す)。mcode 0.6.2 で起動・モデル一覧・モデルと effort の設定・1 ターンを確認。`permissionMode` はユーザーの全体設定に書き込まれるので**触らない** (§11.2) |
 | Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI / Grok Build | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -737,3 +738,131 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
 - `tests/acp_fake_devin.rs`: `bypass` の設定と役割の指示が最初のプロンプトに 1 回だけ付くこと、effort が id の違う `thought_level` の option に設定されること (と未知の値で起動が失敗すること)、
   `clientInfo` が既定 `yhtye`・上書きで変わること、`request_diagnostics` に `{}` で応答してセッションが続くこと、`switch_*` / `plan_*` / `*_always` の選択肢を選ばないこと、認証エラーが起動エラーとして読めること。
 - `crates/yhtye-core/src/agents/detect.rs` の単体テスト、`tests/harness_detection.rs`: 検出 (`PATH` / 既知の場所 / 手動パス)、再検出、手動パスの検査と保存、壊れた手動パス、未インストールの行の非表示。
+
+## 11. MiniMax Code: `mcode acp` (T-26、mcode 0.6.2 で**基本動作を実機確認**)
+
+> 実装は Devin (§10) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) で、**mcode 0.6.2** の実機調査 (JSON-RPC を直接送る調査、2026-10-02) で分かったことに合わせた。
+> その後 Yhtye 自身の acp 層 (`HarnessPreset::minimax_code(..).config(Implementer, Some(既定のモデル), Some("low"))`) から、プロンプトなしの起動とモデル一覧、
+> **プロンプト 1 回**だけを実機で確かめた (§11.8)。利用クレジットが少ないので、実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
+> ラベル: **[調査]** = 実機を直接調べて分かったこと、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
+
+### 11.0 調査のまとめ (mcode 0.6.2)
+
+| 項目 | 結果 |
+|---|---|
+| 起動 | `mcode acp` (引数はこれだけ、stdio)。標準のパスは **`~/.minimax-code/bin/mcode`** (シェルスクリプトの起動ラッパー。環境変数 `MCODE_INSTALL_ROOT` でルートを変えられる)。**`PATH` に入らない**ことが多い (fish など)。`mcode --version` は `0.6.2` (番号だけ) **[調査]** |
+| `initialize` | `authMethods` は無い。`clientInfo` は `yhtye` のままで通る (`client_info: None`)。`loadSession: true`。`agentInfo` = `minimax-code` / "MiniMax Code" / `0.6.2` **[調査][実測]** |
+| 未認証 | `session/new` が `-32000 "Authentication required: Run \`mcode login\` and try again."` を返す **[調査]**。Yhtye では起動エラー (step = `session/new`) として読める (§11.7) |
+| モード | `default` と `plan` だけ。bypass は無い (`session/new` 直後は `default`) **[調査][実測]** |
+| config options | `permissionMode` (category `_permission`、値 `default` / `auto` / `bypassPermissions`、既定 `auto`)、`model` (category `model`)、`thinkingEffort` (category `thought_level`) の 3 つ。`thinkingEffort` は effort のあるモデル (Flash Preview の thinking) を選んでいるときだけ出る **[調査][実測]** |
+| モデル | `models` フィールドは無く、`model` の config option で選ぶ。値は **`m:minimax:<Model>:v:<variant>`**: `m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking` (既定)、`m:minimax:MiniMax-M3:v:`、`m:minimax:MiniMax-M3:v:thinking`、`m:minimax:MiniMax-M2.7:v:thinking`、`m:minimax:MiniMax-M2.7-highspeed:v:thinking`。`m:minimax:MiniMax-M3.1-Flash-Preview:v:` (thinking なし) は**一覧に出るが、選ぶと `-32603 "Invalid model reasoning"` で拒否される** **[調査]** |
+| effort | `thinkingEffort` の値は `default` / `low` / `medium` / `high` / `xhigh` / `max`。モデルを切り替えるとこの option は消える (消えるのは Flash Preview thinking 以外のモデル) **[調査][実測]** |
+| システムプロンプト | `_meta.systemPrompt` は**無視される** → 最初のプロンプトの前に付ける (`FirstPrompt`) **[調査]** |
+| MCP | HTTP の `mcpServers` を受け付け、ツールは **`mcp__yhtye__<tool>` の名前のまま**見える (Devin のようなメタツールの注記は要らない) **[調査]** |
+| 許可要求 | 選択肢は `allow-once` (kind `allow_once`)、`allow-always` (`allow_always`)、`deny` (`reject_once`)。既定の `auto` では、作業ディレクトリ内の書き込みと MCP は許可要求なしで通り、それ以外は要求が来る **[調査]** |
+| ベンダー拡張 | ベンダー独自の**リクエスト**は来ない。通知 `$/cancel_request` が来るが、Yhtye は未知の通知を無視するので問題ない **[調査]** |
+| キャンセル | `session/cancel` を送ると `stopReason: cancelled` で終わる **[調査]** |
+
+### 11.1 起動と検出 (`HarnessConfig::minimax_code` / `HarnessPreset::minimax_code`)
+
+- **起動**: `mcode acp` **[調査]**。Yhtye は検出で見つけた `mcode` の絶対パスを `command` にし、引数は `acp` だけ **[Yhtye]**。`npx` は要らない。環境の追加・除去は無い
+  (ユーザーの環境をそのまま継承する。`MCODE_INSTALL_ROOT` もそのまま渡る)。起動のタイムアウトは他と同じ 120 秒。
+- **検出** (`agents/detect.rs`): ほかのハーネスと同じ `PATH` → 既知の場所の順に加え、MiniMax Code には**自分用の探す場所**がある **[Yhtye]**
+  (`HarnessSpec::root_env` / `extra_dirs`): `PATH` → **`$MCODE_INSTALL_ROOT/bin`** (絶対パスのときだけ) → 共通の既知の場所 (`~/.local/bin` など) → **`~/.minimax-code/bin`**。
+  見つかった場所は `known_dir` として出る。`mcode` の実行ファイル 1 つだけを要求する (`mcode --version` は実行しない)。ほかのハーネスはこの場所を探さない。
+  `~/.minimax-code/bin/mcode` は `current` ファイルの指すリリースの実体を `exec` するラッパーなので、`PATH` に無くてもそのまま起動できる **[調査]**。
+- **ハーネスの id は `minimax-code`、表示名は `MiniMax Code`**。組み込みの既定の順は claude-code > opencode > devin > **minimax-code** > codex
+  (MiniMax Code は、モデルの指定が要る Codex より先。モデルは下の既定 `MINIMAX_CODE_DEFAULT_MODEL`)。
+- **認証**: `mcode login` で済ませておく **[調査]**。Yhtye は ACP の `authenticate` を呼ばない (`authMethods` が無い)。
+
+### 11.2 モードと `permissionMode` には**一切触れない** (ユーザーの全体設定に書き込まれるため)
+
+- **`permissionMode` を `session/set_config_option` で変えると、ユーザーのグローバル設定 `~/.minimax/config.yaml` に永続的に書き込まれる** **[調査]**。
+  Yhtye が 1 回の起動のために変えると、ユーザーが普段 `mcode` を使うときの権限モードまで変わってしまう。だから Yhtye は `permissionMode` を設定しない。
+  モード (`default` / `plan`) も同じ扱いにして `session/set_mode` を送らない (`mode_after_new = None`)。
+- 既定の `auto` でも、作業ディレクトリ内の書き込みと MCP は許可要求なしで通る **[調査]**。つまり Yhtye の使い方 (エージェントはワークツリーの中で作業し、MCP で報告する) に足りる。
+  それ以外の操作 (作業ディレクトリ外・シェルなど) は `session/request_permission` で来る → §11.4 の自動応答が `allow-once` で通す。
+  README / SETUP の注意 (エージェントはあなたのリポジトリのコピーで何でも実行する。サンドボックスは無い) は MiniMax Code にも当てはまる。
+- **[実測]** Yhtye から起動・モデル設定・effort 設定・1 ターンを行っても、`~/.minimax/config.yaml` のハッシュは変わらなかった
+  (モデルと effort の `set_config_option` は、このファイルには書き込まない。`defaultModel` はそのまま)。
+- 偽エージェントで「`session/set_mode` も `permissionMode` の `set_config_option` も 1 回も送らない」ことを確認 (`neither_the_mode_nor_the_permission_mode_is_ever_written`)。
+
+### 11.3 モデルと effort
+
+- **モデル**: 一覧は `session/new` の `configOptions` の `model` (プローブのセッション、プロンプトなし、§8 と同じ)。選んだモデルは `session/set_config_option` で `model` に設定して
+  「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。値の形式は `m:minimax:<Model>:v:<variant>`。
+- **既定のモデルは `m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking`** (`MINIMAX_CODE_DEFAULT_MODEL`、クレジット節約のため。thinking のある Flash Preview) **[Yhtye]**。
+  `HarnessPreset::minimax_code` は `requires_model = true`: 設定の行は必ずモデルを持ち、モデル無しの選択 (古い設定など) は mcode 自身の既定 (ユーザーの
+  `~/.minimax/config.yaml` の `defaultModel`、高いモデルかもしれない) ではなくこのモデルで動く。組み込みの既定の選択もこのモデル。
+- **一覧から外すモデル** (`HarnessPreset::unusable_models`、`MINIMAX_CODE_UNUSABLE_MODELS`): `m:minimax:MiniMax-M3.1-Flash-Preview:v:` (thinking なしの Flash Preview)。一覧には出るが、
+  選ぶと `-32603 "Invalid model reasoning"` で拒否される **[調査]**。`probe_models` が一覧から除く (effort の読み取りもこれに対しては行わない) **[Yhtye]**。
+  **[実測]** 実機の一覧 (`option` は 6 つ) から除いて 5 つ: Flash Preview thinking (effort `low` / `medium` / `high` / `xhigh` / `max`)、`MiniMax-M3` (thinking なし)、
+  `MiniMax-M3` thinking、`MiniMax-M2.7-highspeed` thinking、`MiniMax-M2.7` thinking (この 4 つに effort は無い)。現在の値は Flash Preview thinking。一覧の読み取りは約 3.8 秒
+  (全モデルを順に選んで effort を読む。設定ファイルは変わらない)。
+- **effort**: `thinkingEffort` (category `thought_level`) に設定する。preset の `effort_config_id` は実際の id の **`thinkingEffort`** (`MINIMAX_CODE_EFFORT_CONFIG_ID`。
+  id が違っても category で見つけるロジック `effort_option` (§10.3) もそのまま効く) **[Yhtye]**。**この option はモデルを選んだ後にだけ出る**ので、順序は §8 と同じ
+  **モデル → effort** (`startup.rs` はモデルの応答の `configOptions` を見てから effort を設定する)。effort の無いモデルに effort を付けると、起動が
+  `session/set_config_option` で失敗する (拒否が見える)。`default` は effort 一覧から除かれる (「指定なし」)。
+  偽エージェントで「モデルの後に `thinkingEffort` が設定される (`options=model,thinkingEffort`)、別のモデルへ変えると option が消える、effort の無いモデルへの effort は起動失敗」を確認
+  (`the_effort_is_set_on_thinking_effort_after_the_model`)。
+
+### 11.4 許可の自動応答: `PermissionPolicy::OnceOnly` (ハイフン形の id)
+
+- 選択肢は `allow-once` (kind `allow_once`)、`allow-always` (kind `allow_always`)、`deny` (kind `reject_once`) **[調査]**。`allow-always` を選ぶとユーザーの設定に永続化する恐れがあるので、
+  preset は Devin と同じ **`PermissionPolicy::OnceOnly`** にする **[Yhtye]** (`acp/permission.rs`): kind が `allow_once` のものだけを選ぶ。
+- OnceOnly の id による除外 (`switch_` / `plan_` で始まる、`_always` で終わる) はアンダースコア形だけを見る。mcode の id はハイフン形 (`allow-always`) だが、
+  `allow-always` は kind が `allow_always` なので kind で選ばれず、`allow-once` (kind `allow_once`、id はどの除外にも当たらない) が選ばれる。
+  **ハイフン形の id でも正しく動く**ことを偽エージェントで確認 (`permissions_pick_the_hyphenated_allow_once_and_never_allow_always`): `allow-always` / `deny` / `allow-once` の並びから `allow-once`、
+  `allow-always` と `deny` だけのときは `Cancelled`。位置ではなく kind で選ぶ点は他と同じ。
+- **[未検証]** 実際に許可要求が来る操作 (作業ディレクトリ外への書き込み・シェルなど) は、1 回のプロンプトの制約で試していない。
+
+### 11.5 システムプロンプトと MCP
+
+- `_meta.systemPrompt` は無視されるので、`SystemPromptStyle::FirstPrompt` (最初のプロンプトの前にテキストとして付ける。`session/load` で復元したセッションには付けない) **[調査][Yhtye]**。
+  役割プロンプトへの追加の注記 (`system_prompt_note`) は**無し**: ツールは `mcp__yhtye__<tool>` の名前のまま見える **[調査]**。
+  偽エージェントで「役割プロンプトが最初のプロンプトにだけ付き、注記が無い」ことを確認 (`the_role_prompt_rides_the_first_prompt_only_and_nothing_is_added_to_it`)。
+- Yhtye の HTTP の MCP は `session/new` の `mcpServers` に渡す (stdio のブリッジは要らない)。
+  **[未検証]** Yhtye の `McpHost` に実際につないで `report_step_done` を呼ばせるところは、プロンプト 1 回の制約で試していない (§11.8)。
+
+### 11.6 そのほか
+
+- **`clientInfo`**: 既定の `yhtye` で通る (上書き不要) **[調査][実測]**。
+- **ベンダー拡張**: 独自のリクエストは来ない。`$/cancel_request` の通知は無視してよい **[調査]**。Yhtye の acp 層は未知の通知を無視する (`acp/session.rs`)。
+- **ターン中に来る更新**: `available_commands_update` (`/help` `/new` `/model` など)、`config_option_update`、`session_info_update`、`usage_update` (`used` / `size` / `cost`) が来る **[実測]**。
+  Yhtye は型付きの `AgentOutput` として受け取り、問題なく処理する。
+- **キャンセル**: `session/cancel` で `stopReason: cancelled` で終わる **[調査]**。Yhtye のキャンセル (§4.4) と同じ形で扱えるはず (実機での Yhtye 経由の確認は未)。
+- **料金**: 利用はユーザーの MiniMax のクレジットを使う (`usage_update` の `cost` は `0.0` と出たが、実際にいくら引かれるかは未確認)。既定のモデルを Flash Preview thinking にしているのはそのため。
+
+### 11.7 失敗の見え方: 未認証
+
+- 未認証のとき `session/new` が `-32000 "Authentication required: Run \`mcode login\` and try again."` を返す **[調査]**。Yhtye では
+  「agent startup failed at `session/new`: Authentication required …」として**既存の起動エラー**になる (`AgentError::Startup { step: "session/new", .. }`) **[Yhtye]**。メッセージに
+  `mcode login` が出るので、ユーザーは何をすればよいか分かる。偽エージェントで確認 (`an_authentication_error_reads_as_a_startup_error`)。
+
+### 11.8 実機の結果 (Yhtye の acp 層から、mcode 0.6.2、2026-10-02、プロンプト 1 回)
+
+すべて **[実測]**。`HarnessPreset::minimax_code("~/.minimax-code/bin/mcode").config(Implementer, Some("m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking"), Some("low"))`、
+作業ディレクトリは一時ディレクトリ。システムプロンプトを付けて最初のプロンプトの前置を使った。
+
+| 項目 | 結果 |
+|---|---|
+| 検出 | `~/.minimax-code/bin/mcode` (`PATH` 外) を見つけて起動できる |
+| 起動 | 約 2.6 秒で `Ready`。`agent` = `minimax-code` / "MiniMax Code" / `0.6.2`。モード = `default` (`default` / `plan`)、`permissionMode` = `auto` (**変更していない**)、`model` = Flash Preview thinking、`thinkingEffort` = `low` (モデルの後に設定) |
+| モデル一覧 | §11.3 のとおり (5 つ、thinking なしの Flash Preview は除外)。約 3.8 秒、プロンプトなし (モデル呼び出しなし) |
+| 1 ターン | 「`pong` とだけ答えて。ツールは使わないで」→ `EndTurn`、約 3.8 秒、応答は `pong`。`usage_update` は `used` = 15014、`size` = 512000、`cost` = 0.0。許可要求は来なかった |
+| 設定ファイル | 一覧の読み取り・起動・1 ターンの前後で `~/.minimax/config.yaml` のハッシュは同じ (`permissionMode` も `defaultModel` も変わっていない) |
+| 後始末 | 終了コード 0。`mcode` のプロセスは残らない |
+
+**未検証** (クレジットの都合でプロンプトは 1 回に限った): 許可要求が来る操作と `allow-once` の応答、Yhtye の MCP (`McpHost`) 経由の `report_step_done` (実装エージェントとしてのタスク完了)、
+`session/load`、`session/cancel` を Yhtye 経由で、thinking なしの Flash Preview を選んだときの拒否の見え方、未ログイン時のエラー (調査の結果はあるが Yhtye 経由では未)。
+Devin の §10.9 にならい、mcode を使える人は小さなタスクを流して、この節に **[実測]** として書き足す。
+
+### 11.9 自動テストで確認したこと (偽エージェント、mcode 本体ではない)
+
+- `tests/acp_fake_minimax_code.rs` (6 本。偽エージェントは `permission_modes` / `report_writes` で mcode 風に振る舞う): `session/set_mode` も `permissionMode` も書かず、モデルだけを設定する
+  (モデル無指定の選択は既定のモデルになる)、役割プロンプトが最初のプロンプトにだけ付き注記が無い、effort が `thinkingEffort` に**モデルの後**に設定され、別のモデルで option が消え、effort の無いモデルへは
+  起動が失敗する、許可の自動応答がハイフン形の `allow-once` を選び `allow-always` を選ばない (選べなければ `Cancelled`)、認証エラーが起動エラーとして読める、
+  モデル一覧が拒否されるモデルを除き残りの effort を読む。
+- `agents/catalog.rs` の preset の単体テスト (`minimax_code_preset_never_touches_the_mode_and_defaults_to_its_cheapest_model`)、
+  `agents/detect.rs` の単体テスト (`mcode_is_found_in_its_own_install_directory_and_in_the_root_the_environment_names`: `~/.minimax-code/bin`、`MCODE_INSTALL_ROOT`、`PATH` が先、ほかのハーネスは探さない)、
+  `agents/installed.rs` (登録と既定の順)、`tests/harness_detection.rs` (Core 経由で `mcode` が見つかり登録される)。

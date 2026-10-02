@@ -208,7 +208,9 @@ async fn efforts_of(
 /// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
 /// stops it. Harnesses with at most [`EAGER_EFFORT_MODELS`] models also get
 /// every model's efforts read (a model the harness refuses keeps `efforts:
-/// None`). Gives up (stopping the agent) when `cancel` fires.
+/// None`). A model the harness lists but cannot run
+/// ([`HarnessPreset::unusable_models`]) is left out. Gives up (stopping the
+/// agent) when `cancel` fires.
 pub async fn probe_models(
     secrets: &Secrets,
     preset: &HarnessPreset,
@@ -218,6 +220,7 @@ pub async fn probe_models(
     let handle = open_probe(secrets, preset, cwd, cancel).await?;
     let config_id = preset.model_config_id();
     let (mut models, current) = models_from_options(&handle.info().config_options, config_id);
+    models.retain(|m| !preset.unusable_models.contains(&m.value));
     if models.len() <= EAGER_EFFORT_MODELS {
         for m in &mut models {
             if cancel.is_cancelled() {
