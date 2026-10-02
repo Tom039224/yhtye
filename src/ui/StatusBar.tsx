@@ -1,53 +1,57 @@
 import type { UsageReport, UsageWindow } from "../api/generated";
 import type { UsageView } from "../store/app";
 import { useAppState, useStore } from "../store/useStore";
+import { Icon } from "./Icon";
 import { useNow } from "./useNow";
 
 /**
- * Plan name and connection to the core on the left; the design's usage meters
- * on the right (§3.7). Usage comes from the harness through the core
- * (`get_usage`, Stage 6b); without a report the meters stay empty ("—"),
- * never with made-up values. Clicking the meters asks the harness again.
+ * The plan name and the design's usage meters as one group on the right (§3.7);
+ * the connection to the core is shown by the sidebar's host footer, not here.
+ * Usage comes from the harness through the core (`get_usage`, Stage 6b);
+ * without a report the meters stay empty ("—"), never with made-up values.
+ * Clicking the meters asks the harness again.
  */
 export function StatusBar() {
   const connection = useAppState((s) => s.connection);
-  const transport = useAppState((s) => s.transport);
   const usage = useAppState((s) => s.usage);
   const store = useStore();
   const now = useNow(30_000);
-  const text =
-    connection.state === "open"
-      ? `接続済み · ${transport.target}`
-      : connection.state === "connecting"
-        ? `接続中… · ${transport.target}`
-        : `切断: ${connection.reason}${connection.retryInMs !== null ? ` · ${Math.round(connection.retryInMs / 100) / 10} 秒後に再接続` : ""}`;
-  const dot = connection.state === "open" ? "dot-ok" : connection.state === "connecting" ? "dot-busy" : "dot-bad";
   const report = usage.report;
   return (
     <footer className="statusbar">
-      {report?.plan ? (
-        <span className="plan" data-testid="plan">
-          claude {report.plan}
-        </span>
-      ) : null}
-      <span className="connection" role="status" data-testid="connection">
-        <span className={`dot ${dot}`} />
-        {text}
-      </span>
       <span className="spacer" />
-      <button
-        type="button"
-        className="usage"
-        title={usageTitle(usage)}
-        disabled={connection.state !== "open" || usage.loading}
-        onClick={() => void store.refreshUsage(true)}
-      >
-        <UsageMeter label="5h" tone="usage-5h" window={pick(report, "five_hour")} now={now} />
-        <span className="meter-sep" />
-        <UsageMeter label="week" tone="usage-week" window={pick(report, "week")} now={now} />
-      </button>
+      <div className="usage-group" role="group" aria-label="プランと使用量">
+        {report?.plan ? (
+          <>
+            <span className="plan" data-testid="plan" title={`${planLabel(report.plan)} プラン`}>
+              {planLabel(report.plan)}
+            </span>
+            <span className="meter-sep" />
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="usage"
+          title={usageTitle(usage)}
+          disabled={connection.state !== "open" || usage.loading}
+          onClick={() => void store.refreshUsage(true)}
+        >
+          <UsageMeter id="5h" label="5h" tone="usage-5h" window={pick(report, "five_hour")} now={now} />
+          <span className="meter-sep" />
+          <UsageMeter id="week" label="7d" tone="usage-week" window={pick(report, "week")} now={now} />
+        </button>
+      </div>
     </footer>
   );
+}
+
+/** The harness's plan name ("max") as the subscription it is: "Claude Max". */
+export function planLabel(plan: string): string {
+  const name = plan
+    .trim()
+    .replace(/^claude\s+/i, "")
+    .replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  return `Claude ${name}`;
 }
 
 function pick(report: UsageReport | null, kind: UsageWindow["kind"]): UsageWindow | null {
@@ -55,11 +59,14 @@ function pick(report: UsageReport | null, kind: UsageWindow["kind"]): UsageWindo
 }
 
 function UsageMeter({
+  id,
   label,
   tone,
   window,
   now,
 }: {
+  /** Names the meter for tests (`usage-<id>`); `label` is what is shown. */
+  id: string;
   label: string;
   tone: string;
   window: UsageWindow | null;
@@ -67,7 +74,7 @@ function UsageMeter({
 }) {
   const percent = window ? Math.max(0, Math.min(100, window.percent)) : null;
   return (
-    <span className="meter" data-testid={`usage-${label}`}>
+    <span className="meter" data-testid={`usage-${id}`}>
       <span className="meter-label">{label}</span>
       <span className="meter-bar">
         {percent !== null ? (
@@ -76,7 +83,10 @@ function UsageMeter({
       </span>
       <span className="meter-value">{percent !== null ? `${Math.round(percent)}%` : "—"}</span>
       {window?.resets_at_ms != null ? (
-        <span className="meter-reset">({formatRemaining(window.resets_at_ms - now)})</span>
+        <span className="meter-reset" title="リセットまで">
+          <Icon name="hourglass" size={10} />
+          {formatRemaining(window.resets_at_ms - now)}
+        </span>
       ) : null}
     </span>
   );

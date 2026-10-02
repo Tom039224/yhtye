@@ -90,9 +90,9 @@ describe("design layout", () => {
     expect(within(graph).getByText("ttttttt")).toBeInTheDocument();
     expect(within(graph).getByText("wip: second")).toBeInTheDocument();
     // Task branches are labelled with their task's live status.
-    expect(within(graph).getByText("T-2 実装中")).toBeInTheDocument();
+    expect(within(graph).getByTitle("T-2 実装中")).toHaveTextContent("T-2");
     expect(within(graph).getByText("HEAD")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "git" })).toHaveTextContent("yhtye/G-1 ← main");
+    expect(within(screen.getByRole("region", { name: "git" })).getByTitle("yhtye/G-1 ← main")).toHaveTextContent("yhtye/G-1main");
   });
 
   it("renders task cards with progress, log, steps, footer and the group wait banner", async () => {
@@ -103,13 +103,13 @@ describe("design layout", () => {
     expect(within(card).getByText("実装中")).toBeInTheDocument();
     expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "17");
     const done = screen.getByRole("article", { name: "task T-1" });
-    expect(within(done).getByText("同グループの他タスク完了を待機 — 送信保留")).toBeInTheDocument();
+    expect(within(done).getByTitle("同グループの他タスク完了を待機 — 送信保留")).toHaveTextContent("他タスクの完了待ち");
     expect(within(done).queryByRole("progressbar")).not.toBeInTheDocument();
     // The footer names the agent session that worked on it last.
     expect(within(done).getByText(/^review-1 · /)).toBeInTheDocument();
-    expect(screen.getByTestId("wait-banner")).toHaveTextContent("グループ「greeting」の全タスク完了まで待機中 — 1/2 完了");
-    const header = within(screen.getByRole("region", { name: "tasks" })).getAllByText(/完了$/)[0];
-    expect(header).toHaveTextContent("1/2 完了");
+    expect(screen.getByTestId("wait-banner")).toHaveAccessibleName("グループ「greeting」の全タスク完了まで待機中 — 1/2 完了");
+    expect(screen.getByTestId("wait-banner")).toHaveTextContent("greeting1/2");
+    expect(screen.getByRole("region", { name: "group G-1" })).toHaveTextContent("1/2 完了");
   });
 
   it("quotes a task into the composer with @ and sends the reference", async () => {
@@ -144,6 +144,7 @@ describe("design layout", () => {
     const output = screen.getByRole("region", { name: "agent output" });
     expect(within(output).getByText(/^Looks good\./)).toBeInTheDocument();
     expect(within(output).getByLabelText("step results")).toHaveTextContent("implement result:");
+    expect(screen.getByRole("button", { name: "T-1 の出力" })).toBeInTheDocument();
     await user.click(within(output).getByRole("button", { name: "出力を閉じる" }));
     expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
   });
