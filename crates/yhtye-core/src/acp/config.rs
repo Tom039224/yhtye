@@ -107,6 +107,22 @@ server `yhtye`.";
 /// (`~/.local/share/devin/cli/logs`) down to nothing.
 pub const DEVIN_ENV_REMOVE: [&str; 1] = ["RUST_LOG"];
 
+/// The model Yhtye runs MiniMax Code's sessions on when a choice names none
+/// (`mcode`'s own default is whatever the user's `~/.minimax/config.yaml` says,
+/// possibly a model that costs more): the cheapest, the Flash Preview with
+/// thinking. The value has the form `m:minimax:<Model>:v:<variant>`.
+pub const MINIMAX_CODE_DEFAULT_MODEL: &str = "m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking";
+
+/// Models `mcode acp` lists but refuses when they are selected (`-32603
+/// "Invalid model reasoning"`: the Flash Preview without thinking), so the
+/// model listing leaves them out.
+pub const MINIMAX_CODE_UNUSABLE_MODELS: [&str; 1] = ["m:minimax:MiniMax-M3.1-Flash-Preview:v:"];
+
+/// The id of MiniMax Code's effort option (category `thought_level`). It exists
+/// only while a model with effort levels is selected, so the effort is set
+/// after the model.
+pub const MINIMAX_CODE_EFFORT_CONFIG_ID: &str = "thinkingEffort";
+
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelect {
@@ -306,6 +322,39 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
+        }
+    }
+
+    /// MiniMax Code's ACP server (`mcode acp`, stdio) at `command`, see
+    /// `docs/architecture/acp-harnesses.md` §11. Neither the mode nor the
+    /// `permissionMode` option is touched: `permissionMode` is written to the
+    /// user's global `~/.minimax/config.yaml` when it is set, and the default
+    /// (`auto`: writes inside the working directory and MCP calls need no
+    /// request) already fits. The model is set to
+    /// [`MINIMAX_CODE_DEFAULT_MODEL`] unless a choice names another
+    /// ([`crate::agents::HarnessPreset::config`]), the role prompt is prepended
+    /// to the first prompt (`_meta.systemPrompt` is ignored), and the permission
+    /// requests that still arrive are answered [`PermissionPolicy::OnceOnly`]
+    /// (`allow-always` would be saved to the user's settings).
+    #[must_use]
+    pub fn minimax_code(command: &str) -> Self {
+        Self {
+            command: command.into(),
+            args: vec!["acp".into()],
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            mode_after_new: None,
+            model: Some(ModelSelect {
+                config_id: "model".into(),
+                value: MINIMAX_CODE_DEFAULT_MODEL.into(),
+            }),
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            client_info: None,
+            permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: None,
         }
     }
 
