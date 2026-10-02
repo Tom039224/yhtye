@@ -874,7 +874,7 @@ Devin の §10.9 にならい、mcode を使える人は小さなタスクを流
 
 1. **実装エージェントとしてタスクを完了できる**: 実装エージェント (kind `code`) の行に MiniMax Code を足して、小さな変更 (1 ファイル) のタスクを流す。
    `McpHost` 経由で `report_step_done` が呼ばれ、タスクが完了状態まで進むか。ツール名が `mcp__yhtye__report_step_done` のまま見えるか、`tool_called` の記録があるか。
-2. **許可要求が来る操作で `allow-once` が自動で選ばれる**: 作業ディレクトリ外 (`~/.minimax/config.yaml` や別の作業ツリー) への書き込み・シェル実行を含むタスクを流す。
+2. **許可要求が来る操作で `allow-once` が自動で選ばれる**: 作業ディレクトリ外 (`mktemp -d` で作った一時ディレクトリなど。`~/.minimax/` や他の作業ツリーは使わない) への書き込み・シェル実行を含むタスクを流す。
    `session/request_permission` が来るか、来たときに選ばれた選択肢の id が `allow-once` かどうか、`allow-always` を選ばないこと (`allow-once` しか無ければ `Cancelled` になる)。
    あと、選ばれた許可が次のターンに残らないこと (§11.4)。
 3. **`session/load` と `session/cancel` を Yhtye 経由で**: タスクを 1 つ流して Yhtye を再起動し、そのタスクのセッションが再開できるか
