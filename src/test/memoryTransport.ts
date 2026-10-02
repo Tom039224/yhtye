@@ -292,6 +292,7 @@ const HARNESS_SPECS = [
   { id: "codex", label: "Codex", main: "codex", also: ["npx"] },
   { id: "devin", label: "Devin", main: "devin", also: [] },
   { id: "minimax-code", label: "MiniMax Code", main: "mcode", also: [] },
+  { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
 ];
 
 /** The core's harness detection in miniature: a search result per command, and manual paths. */

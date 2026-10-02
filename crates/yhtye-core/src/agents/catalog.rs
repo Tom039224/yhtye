@@ -13,8 +13,8 @@ use super::settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, RoleSettings, effective,
 };
 use crate::acp::{
-    AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, HarnessConfig, MINIMAX_CODE_EFFORT_CONFIG_ID,
-    MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
+    AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, GROK_BUILD_EFFORT_CONFIG_ID, HarnessConfig,
+    MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
 };
 use crate::secrets::Secrets;
 
@@ -34,6 +34,8 @@ pub const CODEX: &str = "codex";
 pub const DEVIN: &str = "devin";
 /// Id of the MiniMax Code preset (`mcode`).
 pub const MINIMAX_CODE: &str = "minimax-code";
+/// Id of the Grok Build preset (`grok`).
+pub const GROK_BUILD: &str = "grok-build";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +228,32 @@ impl HarnessPreset {
                 .iter()
                 .map(|m| (*m).to_string())
                 .collect(),
+        }
+    }
+
+    /// Grok Build (`grok agent --no-leader stdio`, `HarnessConfig::grok_build`)
+    /// at `command` for every role (`acp-harnesses.md` §12). `grok`'s own
+    /// default model applies unless a choice names one (its `model` option,
+    /// read over ACP), and the effort goes to its `reasoning_effort` option
+    /// ([`GROK_BUILD_EFFORT_CONFIG_ID`]). There are no modes to switch, so the
+    /// model listing session differs from the roles' only in setting no model.
+    #[must_use]
+    pub fn grok_build(command: &str) -> Self {
+        let h = HarnessConfig::grok_build(command);
+        Self {
+            id: GROK_BUILD.into(),
+            label: "Grok Build".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig { model: None, ..h }),
+            model_env: None,
+            model_config_env: None,
+            effort_config_id: GROK_BUILD_EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
+            requires_model: false,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -843,6 +871,56 @@ mod tests {
             HarnessPreset::devin("devin").unusable_models.is_empty(),
             "only MiniMax Code names models to leave out"
         );
+    }
+
+    #[test]
+    fn grok_build_preset_runs_every_role_the_same_and_sets_reasoning_effort() {
+        let command = "/home/u/.grok/bin/grok";
+        let p = HarnessPreset::grok_build(command);
+        assert_eq!(
+            (p.id.as_str(), p.label.as_str()),
+            ("grok-build", "Grok Build")
+        );
+        assert!(!p.requires_model, "grok's own default model is usable");
+        assert_eq!(p.model_source, ModelSource::Acp);
+        assert_eq!(p.model_config_id(), "model");
+        assert_eq!(p.effort_config_id, "reasoning_effort");
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        let expected = HarnessConfig::grok_build(command);
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            let h = p.config(role, None, None);
+            assert_eq!(h, expected);
+            assert_eq!(h.mode_after_new, None, "grok advertises no modes");
+        }
+        let h = p.config(AgentRole::Implementer, Some("grok-4.7"), Some("low"));
+        assert_eq!(
+            (h.model, h.effort),
+            (
+                Some(ModelSelect {
+                    config_id: "model".into(),
+                    value: "grok-4.7".into()
+                }),
+                Some(ModelSelect {
+                    config_id: "reasoning_effort".into(),
+                    value: "low".into()
+                })
+            )
+        );
+        assert!(h.env.is_empty(), "the model travels as an option only");
+        let probe = p.probe_config();
+        assert_eq!(
+            (probe.command.as_str(), probe.args.as_slice()),
+            (command, &expected.args[..])
+        );
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
     }
 
     #[test]
