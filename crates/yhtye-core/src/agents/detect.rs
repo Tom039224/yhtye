@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, OPENCODE};
+use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE};
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -24,6 +24,17 @@ pub const NPX_COMMAND: &str = "npx";
 
 /// The Devin executable.
 pub const DEVIN_COMMAND: &str = "devin";
+
+/// The MiniMax Code executable.
+pub const MINIMAX_CODE_COMMAND: &str = "mcode";
+
+/// Where MiniMax Code's installer puts `mcode` (`~/.minimax-code/bin`), which a
+/// shell such as fish does not have in its `PATH`.
+pub const MINIMAX_CODE_INSTALL_DIR: &str = "~/.minimax-code/bin";
+
+/// The environment variable that moves MiniMax Code's install root, so its
+/// `bin` directory is where `mcode` is.
+pub const MINIMAX_CODE_ROOT_ENV: &str = "MCODE_INSTALL_ROOT";
 
 /// The Grok Build executable.
 pub const GROK_BUILD_COMMAND: &str = "grok";
@@ -67,7 +78,7 @@ pub struct HarnessSpec {
 
 /// The known harnesses, in the order the built-in default prefers them
 /// ([`super::default_choice`] has the rule).
-pub const HARNESS_SPECS: [HarnessSpec; 5] = [
+pub const HARNESS_SPECS: [HarnessSpec; 6] = [
     HarnessSpec {
         id: CLAUDE_CODE,
         label: "Claude Code",
@@ -99,6 +110,14 @@ pub const HARNESS_SPECS: [HarnessSpec; 5] = [
         also: &[],
         root_env: None,
         extra_dirs: &[],
+    },
+    HarnessSpec {
+        id: MINIMAX_CODE,
+        label: "MiniMax Code",
+        main: MINIMAX_CODE_COMMAND,
+        also: &[],
+        root_env: Some(MINIMAX_CODE_ROOT_ENV),
+        extra_dirs: &[MINIMAX_CODE_INSTALL_DIR],
     },
     HarnessSpec {
         id: GROK_BUILD,
@@ -483,14 +502,21 @@ mod tests {
     #[test]
     fn every_harness_is_reported_with_what_it_needs() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["npx", "opencode", "codex", "devin", "grok"] {
+        for name in ["npx", "opencode", "codex", "devin", "mcode", "grok"] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
         let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
         assert_eq!(
             ids,
-            ["claude-code", "opencode", "codex", "devin", "grok-build"]
+            [
+                "claude-code",
+                "opencode",
+                "codex",
+                "devin",
+                "minimax-code",
+                "grok-build"
+            ]
         );
         assert!(all.iter().all(|d| d.installed));
 
@@ -541,7 +567,7 @@ mod tests {
     #[test]
     fn a_missing_npx_takes_claude_code_and_codex_with_it() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["opencode", "codex", "devin", "grok"] {
+        for name in ["opencode", "codex", "devin", "mcode", "grok"] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
@@ -552,6 +578,7 @@ mod tests {
         assert_eq!(codex.found("npx"), None);
         assert!(by_id(&all, "opencode").installed);
         assert!(by_id(&all, "devin").installed);
+        assert!(by_id(&all, "minimax-code").installed);
         assert!(by_id(&all, "grok-build").installed);
     }
 
@@ -634,6 +661,71 @@ mod tests {
             !by_id(&all, "claude-code").installed,
             "claude needs npx, not a claude CLI"
         );
+    }
+
+    #[test]
+    fn mcode_is_found_in_its_own_install_directory_and_in_the_root_the_environment_names() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = tempfile::tempdir().expect("tempdir");
+        let empty = tempfile::tempdir().expect("tempdir");
+        let install = home.path().join(".minimax-code/bin");
+        std::fs::create_dir_all(&install).expect("mkdir");
+        std::fs::create_dir_all(root.path().join("bin")).expect("mkdir");
+        let default = fake_bin(&install, "mcode", 0o755);
+        let find = |vars: &[(&str, &str)]| {
+            let found = detect_harnesses(env(vars), &[], &HashMap::new());
+            let d = by_id(&found, "minimax-code").clone();
+            (d.installed, d.resolved_path, d.path_source)
+        };
+        let home_var = path_of(&home);
+        let path_var = path_of(&empty);
+        let base = [("HOME", home_var.as_str()), ("PATH", path_var.as_str())];
+
+        // The shell's PATH (fish) does not have it: the installer's directory does.
+        assert_eq!(
+            find(&base),
+            (
+                true,
+                default.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        // Without a HOME there is nowhere to look.
+        assert_eq!(
+            find(&[("PATH", &path_var)]),
+            (false, None, PathSource::None)
+        );
+
+        // The install root of the environment is searched first; a relative one is not.
+        let moved = fake_bin(&root.path().join("bin"), "mcode", 0o755);
+        let root_var = path_of(&root);
+        let with_root = [base[0], base[1], ("MCODE_INSTALL_ROOT", root_var.as_str())];
+        assert_eq!(
+            find(&with_root),
+            (
+                true,
+                moved.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        let relative = [base[0], base[1], ("MCODE_INSTALL_ROOT", "relative/root")];
+        assert_eq!(find(&relative).1, default.to_str().map(str::to_string));
+
+        // The other harnesses do not look there, and `PATH` still comes first.
+        fake_bin(&install, "devin", 0o755);
+        let found = detect_harnesses(env(&base), &[], &HashMap::new());
+        assert!(!by_id(&found, "devin").installed);
+        let on_path = tempfile::tempdir().expect("tempdir");
+        let first = fake_bin(on_path.path(), "mcode", 0o755);
+        let path_var = path_of(&on_path);
+        let found = detect_harnesses(
+            env(&[("HOME", home_var.as_str()), ("PATH", path_var.as_str())]),
+            &[],
+            &HashMap::new(),
+        );
+        let d = by_id(&found, "minimax-code");
+        assert_eq!(d.resolved_path.as_deref(), first.to_str());
+        assert_eq!(d.path_source, PathSource::Path);
     }
 
     #[test]
@@ -743,6 +835,7 @@ mod tests {
             HarnessPreset::opencode("m", Vec::new()),
             HarnessPreset::codex(None),
             HarnessPreset::devin("devin"),
+            HarnessPreset::minimax_code("mcode"),
             HarnessPreset::grok_build("grok"),
         ];
         assert_eq!(presets.len(), HARNESS_SPECS.len());
