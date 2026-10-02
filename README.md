@@ -25,8 +25,8 @@ English: [README-EN.md](README-EN.md)
 - 作業ツリーごとの複数のチャット: BRANCHES のツリー (作業ツリーを今のブランチ名で表示) から新しいチャットを作る (ブランチはアプリから作成でき、専用の作業ツリーで動く)。
   チャットは並行して動かせ、過去のチャットも再開できる (グループは作成時に作業ツリーがチェックアウトしていたブランチへマージされ、マージ前にずれていればオーケストレータが対処する)
 - 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
-- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)。
-  実行ファイル (`npx` / `opencode` / `codex` / `devin`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる。
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)、MiniMax Code (基本動作は実機確認済み・一部未検証)。
+  実行ファイル (`npx` / `opencode` / `codex` / `devin` / `mcode`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる (`mcode` は `~/.minimax-code/bin` も探す)。
   設定の「ハーネス」タブで検出状態の確認、パスの手動指定、再検出ができる
 - 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
 - API キーなどの秘密の環境変数の登録 (OS のキーリングに保存)
@@ -41,6 +41,9 @@ English: [README-EN.md](README-EN.md)
 - Devin (`devin acp`) は無料プラン (SWE-1.6 Slow) の実機で起動・MCP の接続・実装エージェントとしてのタスクの完了 (`report_step_done`) までを確認した。
   未ログイン時、再起動後の復元などは未確認。動かなければ、
   [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめと手動検証チェックリスト) が手がかりになる
+- MiniMax Code (`mcode acp`) は mcode 0.6.2 の実機で、起動・モデル一覧・モデルと effort の設定・1 ターンの応答までを確認した (プロンプトは 1 回だけ)。
+  Yhtye の MCP 経由のタスク完了、許可要求が来る操作、再開は未確認
+  ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11)。`permissionMode` はあなたの全体設定に書き込まれてしまうので、Yhtye は変えない
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
 
@@ -56,8 +59,8 @@ English: [README-EN.md](README-EN.md)
 - エージェントはあなたのリポジトリのコピー (git worktree) でコードとシェルコマンドを承認なしで実行する。
   Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
 - エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`、Devin は `bypass`)。
-  サンドボックスは無い。
-- Claude Code / OpenCode / Codex (OpenRouter) / Devin の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
+  MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし、それ以外は確認を自動で 1 回だけ許可) で動かす。サンドボックスは無い。
+- Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
   ただし登録した変数は**すべてのエージェント**に渡る。

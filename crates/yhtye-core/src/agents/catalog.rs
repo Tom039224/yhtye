@@ -12,7 +12,10 @@ use ts_rs::TS;
 use super::settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, RoleSettings, effective,
 };
-use crate::acp::{AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, HarnessConfig, ModelSelect};
+use crate::acp::{
+    AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, HarnessConfig, MINIMAX_CODE_EFFORT_CONFIG_ID,
+    MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
+};
 use crate::secrets::Secrets;
 
 /// Shown when an agent is started and no harness is registered.
@@ -29,6 +32,8 @@ pub const CLAUDE_CODE: &str = "claude-code";
 pub const CODEX: &str = "codex";
 /// Id of the Devin preset.
 pub const DEVIN: &str = "devin";
+/// Id of the MiniMax Code preset (`mcode`).
+pub const MINIMAX_CODE: &str = "minimax-code";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +75,9 @@ pub struct HarnessPreset {
     /// A choice of this harness must name a model (OpenCode: its own default is
     /// the last model the user used, possibly a paid one).
     pub requires_model: bool,
+    /// Models the harness lists but cannot run (selecting them is refused):
+    /// left out of the model listing.
+    pub unusable_models: Vec<String>,
 }
 
 /// A registered harness, for the UI.
@@ -99,6 +107,7 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: false,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -129,6 +138,7 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: true,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -156,6 +166,7 @@ impl HarnessPreset {
             effort_config_id: "reasoning_effort".into(),
             model_source: ModelSource::Codex,
             requires_model: true,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -183,6 +194,38 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: false,
+            unusable_models: Vec::new(),
+        }
+    }
+
+    /// MiniMax Code (`mcode acp`, `HarnessConfig::minimax_code`) at `command`
+    /// for every role (`acp-harnesses.md` §11). A choice must name a model
+    /// (one without runs on the config's own default, the cheapest, so the
+    /// user's own default model is never what a role runs on by accident). The
+    /// effort goes to its `thinkingEffort` option, which only the models with
+    /// effort levels have, so it is set after the model. The model listing
+    /// session does no model switching and leaves out the models `mcode` lists
+    /// but refuses ([`MINIMAX_CODE_UNUSABLE_MODELS`]).
+    #[must_use]
+    pub fn minimax_code(command: &str) -> Self {
+        let h = HarnessConfig::minimax_code(command);
+        Self {
+            id: MINIMAX_CODE.into(),
+            label: "MiniMax Code".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig { model: None, ..h }),
+            model_env: None,
+            model_config_env: None,
+            effort_config_id: MINIMAX_CODE_EFFORT_CONFIG_ID.into(),
+            model_source: ModelSource::Acp,
+            requires_model: true,
+            unusable_models: MINIMAX_CODE_UNUSABLE_MODELS
+                .iter()
+                .map(|m| (*m).to_string())
+                .collect(),
         }
     }
 
@@ -208,6 +251,7 @@ impl HarnessPreset {
             effort_config_id: EFFORT_CONFIG_ID.into(),
             model_source: ModelSource::Acp,
             requires_model: false,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -640,6 +684,7 @@ impl AgentCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::acp::{PermissionPolicy, SystemPromptStyle};
 
     fn catalog() -> AgentCatalog {
         let other = HarnessPreset::fixed(
@@ -718,6 +763,86 @@ mod tests {
         );
         assert!(h.env.is_empty(), "the model travels as an option only");
         assert_eq!(p.info().id, "devin");
+    }
+
+    #[test]
+    fn minimax_code_preset_never_touches_the_mode_and_defaults_to_its_cheapest_model() {
+        let command = "/home/u/.minimax-code/bin/mcode";
+        let p = HarnessPreset::minimax_code(command);
+        assert_eq!(
+            (p.id.as_str(), p.label.as_str()),
+            ("minimax-code", "MiniMax Code")
+        );
+        assert!(
+            p.requires_model,
+            "its own default is the user's, maybe paid"
+        );
+        assert_eq!(p.model_config_id(), "model");
+        assert_eq!(p.effort_config_id, "thinkingEffort");
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        let expected = HarnessConfig::minimax_code(command);
+        assert_eq!(
+            (expected.command.as_str(), expected.args.as_slice()),
+            (command, &["acp".to_string()][..])
+        );
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            let h = p.config(role, None, None);
+            assert_eq!(h, expected);
+            // `permissionMode` and the mode are saved to the user's own settings.
+            assert_eq!(h.mode_after_new, None);
+            assert_eq!(
+                h.model.as_ref().map(|m| m.value.as_str()),
+                Some("m:minimax:MiniMax-M3.1-Flash-Preview:v:thinking"),
+                "a choice without a model runs on the cheapest"
+            );
+            assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+            assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+            assert_eq!(h.system_prompt_note, None);
+        }
+        let h = p.config(
+            AgentRole::Implementer,
+            Some("m:minimax:MiniMax-M3:v:thinking"),
+            Some("high"),
+        );
+        assert_eq!(
+            (
+                h.model.as_ref().map(|m| m.value.as_str()),
+                h.effort
+                    .as_ref()
+                    .map(|e| (e.config_id.as_str(), e.value.as_str()))
+            ),
+            (
+                Some("m:minimax:MiniMax-M3:v:thinking"),
+                Some(("thinkingEffort", "high"))
+            )
+        );
+        assert!(h.env.is_empty(), "the model travels as an option only");
+
+        // The listing session switches nothing, and leaves out the model that
+        // `mcode` lists but refuses (never the default).
+        let probe = p.probe_config();
+        assert_eq!(probe.command, command);
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
+        assert_eq!(
+            p.unusable_models,
+            ["m:minimax:MiniMax-M3.1-Flash-Preview:v:"]
+        );
+        assert!(
+            !p.unusable_models
+                .contains(&crate::acp::MINIMAX_CODE_DEFAULT_MODEL.to_string())
+        );
+        assert!(
+            HarnessPreset::devin("devin").unusable_models.is_empty(),
+            "only MiniMax Code names models to leave out"
+        );
     }
 
     #[test]
