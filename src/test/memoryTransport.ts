@@ -291,6 +291,7 @@ const HARNESS_SPECS = [
   { id: "opencode", label: "OpenCode", main: "opencode", also: [] },
   { id: "codex", label: "Codex", main: "codex", also: ["npx"] },
   { id: "devin", label: "Devin", main: "devin", also: [] },
+  { id: "minimax-code", label: "MiniMax Code", main: "mcode", also: [] },
   { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
 ];
 
