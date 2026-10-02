@@ -1,23 +1,28 @@
 //! Which harness × model runs each role (Stage 7b, `core-design.md` §15):
 //! the settings and their resolution ([`settings`], pure), the harness
 //! registry ([`catalog`]) and the model listing read from the harnesses
-//! ([`models`]), and which harnesses are installed ([`installed`]).
+//! ([`models`]), and which harnesses are installed ([`detect`], [`installed`]).
 
 mod catalog;
 mod codex_config;
+mod detect;
 mod installed;
 mod models;
 mod openrouter;
 mod settings;
 
 pub use catalog::{
-    AgentCatalog, CLAUDE_CODE, CODEX, HarnessInfo, HarnessPreset, MODEL_CONFIG_ID, ModelSource,
-    OPENCODE, Resolved,
+    AgentCatalog, CLAUDE_CODE, CODEX, DEVIN, HarnessInfo, HarnessPreset, MODEL_CONFIG_ID,
+    ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved,
 };
 pub use codex_config::{codex_home, configured_provider, model_provider};
+pub use detect::{
+    CODEX_COMMAND, DEVIN_COMMAND, HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec,
+    KNOWN_DIRS, NPX_COMMAND, OPENCODE_COMMAND, PathSource, check_executable_path, detect_harnesses,
+    find_command, find_in_path, harness_spec, known_dirs,
+};
 pub use installed::{
-    CODEX_COMMAND, OPENCODE_COMMAND, OPENCODE_FALLBACK_MODEL, find_in_path,
-    inherited_opencode_env_remove, installed_presets,
+    OPENCODE_FALLBACK_MODEL, default_choice, inherited_opencode_env_remove, presets_from,
 };
 pub use models::{
     EffortOption, HarnessModels, ModelEfforts, ModelOption, ModelService, efforts_from_options,

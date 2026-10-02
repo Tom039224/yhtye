@@ -24,7 +24,10 @@ What works:
   tasks; sub-agents implement them in git worktrees, review, and the result is merged into the base branch.
 - Per-role harness / model / effort settings (orchestrator, implementation, investigation, review), globally
   and per project.
-- Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list).
+- Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), and Devin (basic operation verified against the
+  real Devin on the free plan). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin`) are found on
+  `PATH` or in `~/.local/bin` etc.; the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
+  path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
 - Secret environment variables (API keys), stored in the OS keyring.
 
@@ -35,6 +38,10 @@ What is not done, and limitations:
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
+- Devin (`devin acp`) has been verified against the real Devin on the free plan (SWE-1.6 Slow): startup, the Yhtye MCP
+  connection, and an implementer task completing through `report_step_done`. The logged-out error, `session/load` and
+  cancellation are still unverified. If it does not work, the measured results and the manual verification checklist in [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (Japanese)
+  is the place to start.
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
@@ -50,8 +57,8 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 - Agents run code and shell commands in worktrees of your repository without asking for permission, and Yhtye
   **merges the result into your base branch**. Back up or push before trying it on a repository you care about.
 - Agents run without permission prompts (Claude Code with `bypassPermissions`-equivalent, Codex with
-  `agent-full-access`). There is no sandbox.
-- Claude Code, OpenCode and Codex (OpenRouter) usage is billed to you, or counted against your quota, by
+  `agent-full-access`, Devin with `bypass`). There is no sandbox.
+- Claude Code, OpenCode, Codex (OpenRouter) and Devin usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
   keeps only the names. A registered variable is passed to **every** agent.
@@ -67,11 +74,15 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
 
    | Harness | Needs | Launched as |
    |---|---|---|
-   | Claude Code (required) | Node 22+ and a local Claude Code login (`~/.claude`); the `claude` CLI itself is not needed | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` |
-   | OpenCode (optional) | `opencode` on `PATH`, logged in with `opencode auth login` | `opencode acp` |
-   | Codex (optional) | `codex` on `PATH`, configured in `~/.codex/config.toml` | `npx -y @agentclientprotocol/codex-acp@2.0.0` |
+   | Claude Code | Node 22+ (`npx`) and a local Claude Code login (`~/.claude`); the `claude` CLI itself is not needed | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` |
+   | OpenCode | `opencode`, logged in with `opencode auth login` | `opencode acp` |
+   | Codex | `codex` and `npx`, configured in `~/.codex/config.toml` | `npx -y @agentclientprotocol/codex-acp@2.0.0` |
+   | Devin (partly verified) | Devin CLI (`devin`), logged in with `devin auth login`; optionally `WINDSURF_API_KEY` | `devin acp` |
 
-   OpenCode and Codex appear in the settings only if the executable is found on `PATH` at startup.
+   At least one harness is needed. Yhtye registers only the harnesses whose executables it finds: on `PATH`, then in
+   `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin`. Claude Code is registered when `npx` is found; the
+   others are optional. If you installed something elsewhere, or after starting Yhtye, open the settings' "ハーネス" tab
+   to see what was found, give an absolute path by hand, and press "再検出" (detect again); no restart is needed.
    If your Codex config gets its OpenRouter key from an environment variable, register that variable under
    "Secret environment variables" in the settings (needs a running Secret Service such as gnome-keyring or KeePassXC).
 3. Build and run:

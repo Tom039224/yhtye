@@ -159,7 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 7);
+    assert_eq!(applied, 8);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -173,6 +173,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
             "agent_settings",
             "chats",
             "events",
+            "harness_paths",
             "helps",
             "inbox",
             "projects",
@@ -192,7 +193,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 7);
+    assert_eq!(applied, 8);
 }
 
 #[tokio::test]
@@ -522,6 +523,45 @@ async fn secret_names_are_stored_sorted_without_duplicates() {
         .await
         .expect("remove again");
     assert_eq!(store.secret_names().await.expect("list"), ["B_KEY"]);
+}
+
+#[tokio::test]
+async fn harness_paths_round_trip_and_are_removed_with_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    assert!(store.harness_paths().await.expect("empty").is_empty());
+    store
+        .set_harness_path("devin", Some("/opt/devin"), 1)
+        .await
+        .expect("set");
+    store
+        .set_harness_path("codex", Some("/opt/codex"), 2)
+        .await
+        .expect("set");
+    store
+        .set_harness_path("devin", Some("/usr/bin/devin"), 3)
+        .await
+        .expect("replace");
+    let paths = store.harness_paths().await.expect("list");
+    assert_eq!(paths.len(), 2);
+    assert_eq!(paths["devin"], "/usr/bin/devin", "the second write wins");
+    assert_eq!(paths["codex"], "/opt/codex");
+    drop(store);
+    let store = Store::open(&db(dir.path())).await.expect("reopen");
+    assert_eq!(
+        store.harness_paths().await.expect("kept")["devin"],
+        "/usr/bin/devin"
+    );
+    store
+        .set_harness_path("devin", None, 4)
+        .await
+        .expect("remove");
+    store
+        .set_harness_path("devin", None, 5)
+        .await
+        .expect("remove again");
+    let paths = store.harness_paths().await.expect("list");
+    assert_eq!(paths.keys().collect::<Vec<_>>(), ["codex"]);
 }
 
 #[tokio::test]

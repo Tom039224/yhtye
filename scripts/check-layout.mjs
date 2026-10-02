@@ -226,6 +226,11 @@ const STATES = [
     await page.locator(".picker-popover").waitFor();
   } },
   { name: "long: settings (secret env)", scenario: "long", interactive: true, run: async (page) => { await click(page, "設定"); await click(page, "秘密の環境変数"); } },
+  { name: "long: settings (harnesses)", scenario: "long", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "ハーネス");
+    await page.getByRole("list", { name: "ハーネス" }).waitFor();
+  } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
   { name: "run: every control reached with Tab", scenario: "run", interactive: true, tab: 60 },
 ];

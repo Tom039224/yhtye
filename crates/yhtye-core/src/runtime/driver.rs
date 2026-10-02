@@ -364,8 +364,8 @@ impl Driver {
                 }
             }
             ToolCall::CreateTask(args) => {
-                let args =
-                    choose_agents(&self.cfg.agents.effective(Some(&self.cfg.project)), args)?;
+                let settings = self.cfg.agents.available_settings(Some(&self.cfg.project));
+                let args = choose_agents(&settings, args)?;
                 DomainCommand::Tool {
                     binding,
                     call: ToolCall::CreateTask(args),
@@ -395,7 +395,7 @@ impl Driver {
             .unwrap_or_else(|| Err(ToolError::internal("the command produced no reply")));
         match reply {
             Ok(Value::Object(mut body)) if status => {
-                let settings = self.cfg.agents.effective(Some(&self.cfg.project));
+                let settings = self.cfg.agents.available_settings(Some(&self.cfg.project));
                 body.insert("agents".into(), agents_status(&settings));
                 Ok(Value::Object(body))
             }

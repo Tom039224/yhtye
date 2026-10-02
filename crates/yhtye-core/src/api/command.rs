@@ -10,8 +10,8 @@ use ts_rs::TS;
 
 use super::{ApiEventBody, Snapshot};
 use crate::agents::{
-    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessInfo, HarnessModels,
-    ModelEfforts, RoleSettings,
+    AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessDetection, HarnessInfo,
+    HarnessModels, ModelEfforts, RoleSettings,
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
@@ -191,6 +191,24 @@ pub enum ApiCommand {
         harness: String,
         model: String,
     },
+    /// Which harnesses are installed: looks for their executables again (the
+    /// `PATH`, a few well-known directories, and the paths set with
+    /// `set_harness_path`) and registers those that were found, so the settings
+    /// panel offers them. Sessions already running are not affected. Called when
+    /// the settings are opened.
+    GetHarnesses,
+    /// Like `get_harnesses`, and also forgets the models read from every
+    /// harness (the "detect again" button).
+    DetectHarnesses,
+    /// Sets (or with `path: null` removes: detect automatically) the path of a
+    /// harness's main executable (`npx` for Claude Code), used before the `PATH`
+    /// search. `invalid_argument` unless it is an absolute path of an executable
+    /// file, `not_found` for an unknown harness. Detects again and returns the
+    /// harnesses like `get_harnesses`.
+    SetHarnessPath {
+        harness: String,
+        path: Option<String>,
+    },
     /// The names of the secret environment variables (Stage 7e). Values are
     /// never returned.
     ListSecretEnv,
@@ -309,6 +327,11 @@ pub enum ApiResponse {
     /// The registered secret environment variable names, sorted.
     SecretEnv {
         names: Vec<String>,
+    },
+    /// Every known harness with whether it was found and where. Empty when the
+    /// core does not detect harnesses (tests).
+    Harnesses {
+        harnesses: Vec<HarnessDetection>,
     },
 }
 

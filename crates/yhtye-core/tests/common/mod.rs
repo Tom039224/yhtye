@@ -3,6 +3,9 @@
 
 pub mod chats;
 pub mod codex;
+pub mod devin;
+#[cfg(unix)]
+pub mod gate;
 pub mod opencode;
 pub mod orch;
 pub mod real;

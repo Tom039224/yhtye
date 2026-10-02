@@ -12,10 +12,11 @@ mod session;
 mod startup;
 
 pub use config::{
-    CODEX_ACP, CODEX_CONFIG_ENV, CODEX_FULL_ACCESS_MODE, CODEX_PATH_ENV, DEFAULT_STARTUP_TIMEOUT,
-    EFFORT_CONFIG_ID, HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE, SystemPromptStyle,
+    CODEX_ACP, CODEX_CONFIG_ENV, CODEX_FULL_ACCESS_MODE, CODEX_PATH_ENV, ClientInfoOverride,
+    DEFAULT_STARTUP_TIMEOUT, DEVIN_BYPASS_MODE, DEVIN_ENV_REMOVE, DEVIN_MCP_NOTE, EFFORT_CONFIG_ID,
+    HarnessConfig, ModelSelect, OPENCODE_BUILD_MODE, PermissionPolicy, SystemPromptStyle,
 };
-pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value};
+pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value, effort_option};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};
 pub use permission::{choose_permission, outcome_for};
 pub(crate) use process::PRIVATE_ENV;

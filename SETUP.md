@@ -11,7 +11,7 @@ Yhtye を動かしたい人向け。開発する人は [`docs/DEVELOPMENT.md`](d
 |---|---|---|
 | WebKitGTK 4.1 | アプリのウィンドウ | `pkg-config --modversion webkit2gtk-4.1` |
 | git | worktree とマージ | `git --version` |
-| Node 22+ (`npx` 含む) | ACP アダプタ (`npx` で取得して起動) | `node --version` |
+| Node 22+ (`npx` 含む) | Claude Code と Codex の ACP アダプタ (`npx` で取得して起動) | `node --version` |
 | Rust 1.98+ | ビルド | `rustc --version` |
 | pnpm 11+ | ビルド | `pnpm --version` |
 | Secret Service (gnome-keyring / KeePassXC / KWallet など) | 秘密の環境変数を使うときだけ | 下記 |
@@ -34,18 +34,53 @@ Debian / Ubuntu のパッケージ名は CI (`.github/workflows/ci.yml`) のも�
 ## エージェントの準備
 
 Yhtye は自前でエージェントを実装せず、既存のハーネスを [ACP](https://agentclientprotocol.com) で起動する。
-使うハーネスを先に入れてログインしておく。**Claude Code は必須** (常に登録される)、OpenCode と Codex は任意。
+使うハーネスを先に入れてログインしておく。**ハーネスは 1 つ以上必要**。Yhtye は実行ファイルが見つかったハーネスだけを登録するので、
+どれも見つからないとエージェントを起動できない (「使えるハーネスがありません (設定 › ハーネス を確認)」)。
+Claude Code は `npx` が見つかれば登録される (最初に試すならこれ)。OpenCode・Codex・Devin は任意。
 
 | ハーネス | 入れるもの | Yhtye の起動方法 | 認証 |
 |---|---|---|---|
 | Claude Code | Node 22+ (`npx`) だけ。`claude` CLI は不要 (アダプタが SDK 同梱のバイナリを使う) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく |
-| OpenCode | `opencode` を `PATH` に | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
-| Codex | `codex` を `PATH` に | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
+| OpenCode | `opencode` | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
+| Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
+| Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
 
-- OpenCode と Codex は、起動時に `PATH` で実行ファイルが見つかったときだけ設定画面の候補に出る。入れた後はアプリを再起動する。
+- 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
 - Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
 - ユーザー自身の `~/.claude` の CLAUDE.md・フック・スキルは Yhtye のエージェントにも効く。MCP サーバーだけは隔離している。
 - 初回の `npx` はアダプタのダウンロードに時間がかかる (Codex のアダプタは約 440 MB)。起動のタイムアウトは 120 秒。
+
+### ハーネスの検出 (設定 › ハーネス)
+
+設定画面 (アイコンレール下部の歯車) の「ハーネス」タブで、各ハーネスの状態を確認し、パスを指定し、見つけ直せる。
+
+- **状態**: ハーネスごとに「インストール済み / 未インストール」と、必要なコマンドがどこで見つかったか (`PATH` / 既知の場所 / 手動) を出す。
+  必要なコマンドは、Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`。
+  すべて見つかったハーネスだけが、設定の「エージェント」タブの候補になる。
+- **自動検出の範囲**: 実行ファイルを、まず `PATH` (絶対パスの項目) から、次に既知の場所
+  `~/.local/bin` → `~/.cargo/bin` → `~/.bun/bin` → `/usr/local/bin` の順に探す。デスクトップのランチャーから起動した Yhtye はシェルの設定を
+  読まず `PATH` が短いことがあるので、`~/.local/bin` などを別に見ている。実行ファイルは走らせず (`--version` なし)、実行可能な通常ファイルかどうかだけを見る。
+- **手動パス**: 上の範囲に無い場所に入れたときは、そのハーネスの主実行ファイル (Claude Code は `npx`、他は `opencode` / `codex` / `devin`) の
+  **絶対パス**を入力して「保存」する。保存すると自動検出より優先される。実行可能な通常ファイルでなければ保存できない。
+  後でそのファイルが壊れたり消えたりすると、そのハーネスは未インストール扱いになり、理由が表示される (自動検出には**戻らない**)。「自動検出に戻す」で消せる。
+  手動パスで置き換えるのは主実行ファイルだけで、Codex の `npx` は常に自動検出。
+- **再検出**: タブを開いたとき、「再検出」ボタン、手動パスの保存のたびに見つけ直す。「再検出」はモデル一覧のキャッシュも捨てる。
+  すでに動いているエージェントには影響せず、新しく起動するエージェントから反映される。
+
+### Devin (基本動作は実機確認済み、一部未検証)
+
+Devin は **devin 3000.11.3・無料プラン (モデルは SWE-1.6 Slow だけ) の実機で基本動作を確認した**: 起動、権限確認なしのモード (`bypass`)、モデルの設定、
+1 ターンの応答、Yhtye の MCP への接続とツールの一覧、実装エージェントとしてタスクを `report_step_done` で完了まで進めること。**まだ確かめていない**のは、
+未ログイン時のエラー、再起動後の復元 (`session/load`)、ターンの中断、`WINDSURF_API_KEY` での認証。
+うまく動かないときは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §10 (実測のまとめ §10.0、手動検証チェックリスト §10.9) が手がかりになる。
+
+- 認証は `devin auth login` (保存された認証情報) が基本。環境変数 `WINDSURF_API_KEY` があれば Devin はそちらを優先する。使うときは、設定 ›
+  「秘密の環境変数」に `WINDSURF_API_KEY` を登録する (下記。**すべてのエージェント**の環境に渡る)。
+- Yhtye は Devin を権限確認なしのモード (`bypass`) で動かす。ほかのハーネスと同様、サンドボックスは無い。
+- 未認証のときは、起動時に認証を求めるエラーが返り、エージェントの起動エラーとして出るはず (偽エージェントでの確認のみ)。
+- Devin は MCP のツールを自分のツールとして並べず、MCP の一覧・呼び出し用のツールを通して使う。Yhtye は役割の指示に、その旨の短い注記を Devin にだけ付ける。
+- Devin はあなたの `~/.config/devin/mcp_config.json` の MCP サーバーも読み込む (Yhtye の MCP と並んで使える)。
+- 無料プランのモデル (SWE-1.6 Slow) には effort が無いので、設定 › エージェント の effort は選べない。
 
 ### Codex (OpenRouter)
 
@@ -76,6 +111,7 @@ OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、
 | 全ハーネス共通 | オーケストレータも書き込める (検証のいらない小さな変更は自分でコミットし、それ以外はタスクに渡す。システムプロンプトでの指示のみ) |
 | Codex | オーケストレータとしては使えない ([openai/codex#13746](https://github.com/openai/codex/issues/13746) で `create_task` が呼べない)。実装・調査・レビュー役で使う |
 | Codex / OpenCode 共通 | 権限確認なしで動く (Codex は `agent-full-access`)。OpenRouter の無料モデルは 429 や遅延が多く、失敗が普通の応答として返ることがある |
+| Devin | 基本動作は実機 (無料プラン) で確認済み、実装エージェントとしてタスクの完了 (`report_step_done`) まで確認済み。権限確認なしの `bypass` モードで動かす。Yhtye の HTTP の MCP にはつながるが、Devin はツールを MCP の一覧・呼び出し用のツール経由で使う (Yhtye が指示に注記を付ける) |
 
 ## ビルドとインストール
 
@@ -106,7 +142,9 @@ makepkg -si
 1. 起動する。左の欄でプロジェクトのディレクトリ (git リポジトリ) を入力して「開く」。
 2. 歯車 (アイコンレール下部) で、役割ごと (オーケストレータ / 実装 / 調査 / レビュー) のハーネス・モデル・effort を選ぶ。
    「全体」と「このプロジェクト」で切り替えられる。変更はすぐ保存され、新しく起動するエージェントから有効になる。
-   組み込みの既定は Claude Code で、モデルは環境変数 `YHTYE_MODEL` (未設定なら `haiku`)。
+   設定していない役割の組み込みの既定は、見つかったハーネスのうち Claude Code → OpenCode → Devin → Codex の順で最初のもの
+   (Codex はモデルの指定が要るので、ほかに無いときだけ。そのときは設定でモデルを選ぶよう案内が出る)。
+   Claude Code のモデルは環境変数 `YHTYE_MODEL` (未設定なら `haiku`)。
    試すときは Haiku で安く済ませ、本格的に使うときにモデルを上げるとよい。
 3. 会話欄のオーケストレータに自然文で依頼を送る。
 
@@ -138,10 +176,12 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 | 症状 | 対処 |
 |---|---|
 | Wayland + NVIDIA で起動直後に `Error 71 ... dispatching to Wayland display` を出して落ちる | 起動時に自動で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定して回避する。効かないときは `WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/release/yhtye` で起動する (この変数を自分で設定済みなら Yhtye は触らない) |
-| エージェントが起動しない / `npx` が見つからない | Node 22+ を入れ、`npx` が `PATH` にあるか確認。アプリを起動した環境 (デスクトップのランチャーはシェルの設定を読まないことがある) の `PATH` で見えるか |
+| 「使えるハーネスがありません」と出てエージェントが起動しない | 設定 › ハーネス で、どのハーネスも「未インストール」になっていないか確認する。Claude Code は `npx` が必要 (Node 22+ を入れる)。入れたら「再検出」 |
+| ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
+| 手動パスを保存したのに使えない | 表示された理由を確認する。絶対パスの実行可能な通常ファイルでなければならない (ディレクトリやシンボリックリンク先が無い、実行権限が無い、など)。壊れた手動パスは自動検出に戻らないので、直すか「自動検出に戻す」 |
 | Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する |
-| 設定画面に OpenCode / Codex が出ない | `opencode` / `codex` が `PATH` にあるか確認し、アプリを再起動する |
 | OpenCode で認証エラー | `opencode auth login` を済ませる |
+| Devin が認証エラーになる / 起動しない | `devin auth login` を済ませる (`devin auth status` で確認)。`WINDSURF_API_KEY` を使うなら「秘密の環境変数」に登録する。Devin は一部未検証なので、それでも動かないときは `docs/architecture/acp-harnesses.md` §10 の手動検証チェックリストを参照して報告してほしい |
 | Codex が空のトークンで失敗する | 「秘密の環境変数」に `config.toml` が参照している変数を登録する |
 | 秘密の登録やエージェント起動が「キーリングが使えない」で失敗する | Secret Service (gnome-keyring / KeePassXC など) を起動してロックを解除する |
 | グループが「マージ待ち」で止まる | base ブランチをチェックアウトし、作業ツリーを clean にして再試行する |

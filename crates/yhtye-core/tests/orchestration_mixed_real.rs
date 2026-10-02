@@ -51,7 +51,7 @@ fn codex_catalog(roles: &[(AgentRole, AgentChoice)]) -> AgentCatalog {
     agents
 }
 
-/// Both presets as the app registers them (`installed_presets`), Claude Code
+/// Both presets as the app registers them (`presets_from`), Claude Code
 /// (Haiku) the built-in default, and `roles` set to `choice` globally.
 fn catalog(roles: &[(AgentRole, AgentChoice)]) -> AgentCatalog {
     let presets = vec![

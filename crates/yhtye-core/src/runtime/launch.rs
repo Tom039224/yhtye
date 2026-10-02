@@ -102,7 +102,7 @@ impl Sessions {
         let mut prompt = system_prompt(binding.role).to_string();
         if pick.role == AgentRole::Orchestrator {
             prompt.push_str(&agent_choices_prompt(
-                &agents.effective(Some(&self.cfg.project)),
+                &agents.available_settings(Some(&self.cfg.project)),
             ));
         }
         let options = SpawnOptions {

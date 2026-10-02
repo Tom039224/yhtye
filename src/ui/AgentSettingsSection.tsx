@@ -156,6 +156,12 @@ export function AgentSettingsSection({ project, scope }: Props) {
         }
         return null;
       })}
+      {view && view.harnesses.length === 0 ? (
+        <p className="agent-warning" role="alert">
+          <Icon name="alert" size={14} />
+          <span>使えるハーネスが見つかりません。設定 › ハーネス を開いて、検出状態の確認や実行ファイルのパスの指定をしてください。</span>
+        </p>
+      ) : null}
       {error ? <p className="agent-panel-status error-text" role="alert">{error}</p> : null}
       {view ? (
         <div className="agent-roles">
