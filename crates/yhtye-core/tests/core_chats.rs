@@ -593,3 +593,39 @@ async fn a_chat_whose_orchestrator_is_working_is_not_deleted() {
     assert!(list_chats(&core, &project).await.is_empty());
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn compact_chat_sends_the_command_through_the_api_once_the_orchestrator_is_idle() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [
+        {"match": "hello", "actions": [{"message": "hi"}]},
+        {"match": "/compact", "actions": [{"message": "compacted"}]}
+    ]});
+    let core = Core::start(core_config(&r, script)).await.expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    let chat = create_chat(&core, &project, "main").await.id;
+    let compact = |chat: &str| ApiCommand::CompactChat {
+        project: project.clone(),
+        chat: chat.into(),
+    };
+    assert_eq!(code(&core, compact("C-9")).await, ApiErrorCode::NotFound);
+    assert_eq!(
+        code(&core, compact(&chat)).await,
+        ApiErrorCode::InvalidState,
+        "not started"
+    );
+
+    run(&core, send(&project, &chat, "hello")).await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    assert!(matches!(
+        run(&core, compact(&chat)).await,
+        ApiResponse::Accepted
+    ));
+    until(&mut rx, said("orchestrator:C-1", "compacted")).await;
+    core.shutdown().await;
+}

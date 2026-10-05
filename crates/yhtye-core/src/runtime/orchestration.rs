@@ -270,6 +270,15 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
+    /// Sends `/compact` to the chat's orchestrator now (see
+    /// [`crate::api::ApiCommand::CompactChat`]): `not_found` for an unknown
+    /// chat, `invalid_state` unless its orchestrator is running and idle.
+    pub async fn compact_chat(&self, chat: impl Into<String>) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::CompactChat(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     /// Gives `chat` the user's title (`not_found` for an unknown chat,
     /// `invalid_argument` for an empty or too long title); returns the chat as
     /// listed afterwards.

@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 use super::driver::{Driver, Restarted};
 use super::launch::FirstPrompts;
 use super::sessions::{AgentPick, StoredSession};
+use crate::acp::AgentError;
 use crate::domain::{
-    Chat, DomainCommand, INTERNAL_BRANCH_PREFIX, InboxItem, InboxKind, OrchestratorResume,
-    ToolError, TurnOutcome, chat_of_session, check_target_branch, lost_session_note,
-    orchestrator_session, render_batch,
+    COMPACT_PROMPT, Chat, DomainCommand, INTERNAL_BRANCH_PREFIX, InboxItem, InboxKind,
+    OrchestratorResume, ToolError, TurnOutcome, chat_of_session, check_target_branch,
+    lost_session_note, orchestrator_session, render_batch,
 };
 use crate::git::{BranchWorktreeError, CreateBranchError};
 use crate::mcp::{SessionBinding, ToolCall};
@@ -40,6 +41,9 @@ pub(super) struct Orchestrators {
     /// The newest inbox entry of a chat when its start failed. Nothing is retried
     /// until a newer entry (or the next app start) gives a new reason.
     failed: HashMap<String, u64>,
+    /// Chats whose orchestrator is running a `/compact` turn the user asked for.
+    /// Its end is not the orchestrator's own (no group-finish reminder follows).
+    compacting: HashSet<String>,
 }
 
 impl Orchestrators {
@@ -48,6 +52,7 @@ impl Orchestrators {
         self.pending.remove(&orchestrator_session(chat));
         self.cut_off.remove(chat);
         self.failed.remove(chat);
+        self.compacting.remove(chat);
     }
 }
 
@@ -114,6 +119,36 @@ impl Driver {
         self.sessions.stop(&key);
         self.orchestrators.forget(&chat);
         Ok(())
+    }
+
+    /// Sends [`COMPACT_PROMPT`] as is (not as an inbox batch, so the harness
+    /// sees a slash command) to the orchestrator of `chat`, which must be
+    /// running and idle. Inbox entries arriving meanwhile wait for the turn to end.
+    pub(super) fn compact_chat(&mut self, chat: &str) -> Result<(), ToolError> {
+        if self.state.chat(chat).is_none() {
+            return Err(ToolError::not_found(format!("no chat {chat}")));
+        }
+        let key = orchestrator_session(chat);
+        if self.sessions.is_starting(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is starting; compact its context once it is idle"
+            )));
+        }
+        match self.sessions.prompt_now(&key, COMPACT_PROMPT) {
+            Ok(()) => {
+                self.orchestrators.compacting.insert(chat.to_string());
+                Ok(())
+            }
+            Err(AgentError::Closed) => Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is not running; there is no context to compact"
+            ))),
+            Err(AgentError::Busy) => Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is working; compact its context once its turn ends"
+            ))),
+            Err(e) => Err(ToolError::internal(format!(
+                "could not send {COMPACT_PROMPT} to the orchestrator of chat {chat}: {e}"
+            ))),
+        }
     }
 
     /// The worktree of `chat` if its directory still exists: `not_found` for
@@ -310,6 +345,8 @@ impl Driver {
             return;
         };
         if self.sessions.is_live(key) {
+            // A new process: a compaction of an earlier one is over.
+            self.orchestrators.compacting.remove(&chat);
             if let Some((chat, up_to)) = self.orchestrators.pending.remove(key) {
                 self.execute(DomainCommand::InboxDelivered { chat, up_to })
                     .await;
@@ -327,6 +364,11 @@ impl Driver {
         outcome: TurnOutcome,
         prompt_queued: bool,
     ) {
+        if self.orchestrators.compacting.remove(&chat) {
+            // The user's `/compact` turn: nothing for the state machine (the
+            // inbox is flushed as after every turn).
+            return;
+        }
         if outcome == TurnOutcome::Closed {
             self.orchestrators.cut_off.insert(chat.clone());
         }

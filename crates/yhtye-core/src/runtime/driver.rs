@@ -42,6 +42,8 @@ pub(super) enum Cmd {
     UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
     /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
+    /// Sends `/compact` to a chat's idle orchestrator.
+    CompactChat(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// The user renames a chat (chat, title).
@@ -243,6 +245,9 @@ impl Driver {
                     None => Err(ToolError::not_found(format!("no chat {chat}"))),
                 };
                 let _ = tx.send(reply);
+            }
+            Some(Cmd::CompactChat(chat, tx)) => {
+                let _ = tx.send(self.compact_chat(&chat));
             }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);
