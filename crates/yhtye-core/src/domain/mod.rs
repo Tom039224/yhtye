@@ -23,8 +23,8 @@ mod types;
 
 pub use agent_rules::MAX_NUDGES;
 pub use chat_rules::{
-    INTERNAL_BRANCH_PREFIX, MAX_RENAMED_TITLE_CHARS, MAX_TITLE_CHARS, chat_of_session,
-    check_target_branch, orchestrator_session,
+    COMPACT_PROMPT, INTERNAL_BRANCH_PREFIX, MAX_RENAMED_TITLE_CHARS, MAX_TITLE_CHARS,
+    chat_of_session, check_target_branch, orchestrator_session,
 };
 pub use command::{
     AgentRef, DomainCommand, Effect, GitOp, GitResult, MergeTrigger, OrchestratorResume,

@@ -64,6 +64,16 @@ pub enum ApiCommand {
         project: String,
         chat: String,
     },
+    /// Sends [`crate::domain::COMPACT_PROMPT`] (`/compact`) as is, not through
+    /// the inbox, to the chat's orchestrator session: the harness compacts its
+    /// context (Claude Code does; others may answer it as a plain message).
+    /// Inbox entries that arrive meanwhile are delivered after that turn.
+    /// `not_found` for an unknown chat, `invalid_state` unless the orchestrator
+    /// is running and idle (not started, starting, or in a turn).
+    CompactChat {
+        project: String,
+        chat: String,
+    },
     /// The project's chats, most recently used first. Works for projects that
     /// are not open.
     ListChats {

@@ -33,3 +33,8 @@ export function userMessage(seq: number, inboxId: number, text: string, chat = "
 export function delivered(seq: number, upTo: number, chat = "C-1"): ApiEvent {
   return ev(seq, { type: "domain", event: { type: "inbox_delivered", chat, up_to: upTo } });
 }
+
+/** A live `usage_update` of `session` (ACP's `UsageUpdate`). */
+export function usage(seq: number, session: string, update: { used: number; size: number; cost?: { amount: number; currency: string } }): ApiEvent {
+  return ev(seq, { type: "agent", session, event: { type: "output", data: { kind: "usage", update } } }, true);
+}

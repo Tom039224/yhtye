@@ -7,13 +7,15 @@
 // state only when newer than the snapshot (`stateSeq`); transcripts are built
 // from the whole log. Live events only feed `streaming`.
 
-import type { ApiEvent, ChatInfo, DomainEvent, ProjectInfo, SessionRecord, Snapshot, State } from "../api/generated";
+import { type ContextUsage, usageInfo } from "../api/acp";
+import type { ApiEvent, ApiEventBody, ChatInfo, DomainEvent, ProjectInfo, SessionRecord, Snapshot, State } from "../api/generated";
 import { applyChatEvent, initialChat, orchestratorKey } from "./chats";
 import { applyDomainEvent } from "./domain";
 import { applySessionEvent } from "./sessions";
 import {
   applyChunk,
   applyTranscriptEvent,
+  COMPACT_PROMPT,
   prependTranscripts,
   settleStreaming,
   type Streaming,
@@ -45,6 +47,13 @@ export interface ProjectView {
   sessions: SessionRecord[];
   transcripts: Transcripts;
   streaming: Streaming;
+  /**
+   * The latest context usage each session reported (live `usage_update`s,
+   * never stored: empty after a reload until the agent reports again).
+   */
+  contextUsage: Record<string, ContextUsage>;
+  /** Sessions running a `/compact` turn the user asked for (folded from the log). */
+  compacting: Record<string, true>;
 }
 
 export function newProjectView(info: ProjectInfo): ProjectView {
@@ -63,6 +72,8 @@ export function newProjectView(info: ProjectInfo): ProjectView {
     sessions: [],
     transcripts: {},
     streaming: {},
+    contextUsage: {},
+    compacting: {},
   };
 }
 
@@ -106,6 +117,8 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
     cursor: ev.seq,
     transcripts: applyTranscriptEvent(view.transcripts, ev, view.state),
     streaming: settleStreaming(view.streaming, ev),
+    compacting: applyCompacting(view.compacting, ev.body),
+    contextUsage: forgetUsage(view.contextUsage, ev.body),
   };
   if (ev.seq <= view.stateSeq) return next;
   const body = ev.body;
@@ -116,6 +129,35 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
     return body.event.type === "chat_deleted" ? forgetChat(applied, next.state, body.event.chat) : applied;
   }
   return { ...next, chats, sessions: applySessionEvent(next.sessions, body) };
+}
+
+/** Without `key` (the same record if it has none). */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const { [key]: _gone, ...rest } = record;
+  return rest;
+}
+
+/** A `/compact` prompt starts a compaction; the turn's end (or any other prompt) ends it. */
+function applyCompacting(compacting: ProjectView["compacting"], body: ApiEventBody): ProjectView["compacting"] {
+  switch (body.type) {
+    case "prompted":
+      return body.text === COMPACT_PROMPT ? { ...compacting, [body.session]: true } : without(compacting, body.session);
+    case "session_started":
+    case "session_stopped":
+      return without(compacting, body.session);
+    case "agent":
+      return body.event.type === "turn_ended" || body.event.type === "exited"
+        ? without(compacting, body.session)
+        : compacting;
+    default:
+      return compacting;
+  }
+}
+
+/** A new (not restored) session starts with an empty context: the old reading is stale. */
+function forgetUsage(usage: ProjectView["contextUsage"], body: ApiEventBody): ProjectView["contextUsage"] {
+  return body.type === "session_started" && !body.resumed ? without(usage, body.session) : usage;
 }
 
 /**
@@ -137,6 +179,8 @@ export function forgetChat(view: ProjectView, before: State | null, chat: string
     sessions: view.sessions.filter((s) => !ofChat(s.session_key)),
     transcripts: Object.fromEntries(Object.entries(view.transcripts).filter(([session]) => !ofChat(session))),
     streaming: Object.fromEntries(Object.entries(view.streaming).filter(([session]) => !ofChat(session))),
+    contextUsage: Object.fromEntries(Object.entries(view.contextUsage).filter(([session]) => !ofChat(session))),
+    compacting: Object.fromEntries(Object.entries(view.compacting).filter(([session]) => !ofChat(session))),
   };
 }
 
@@ -154,15 +198,17 @@ function markUnread(view: ProjectView, event: DomainEvent): ProjectView["unread"
 }
 
 /**
- * A live event: text chunks are streamed; anything else live was not stored
- * (the core falls back to live when saving fails), so it is shown but not folded.
+ * A live event: text chunks are streamed and usage updates kept per session;
+ * anything else live was not stored (the core falls back to live when saving
+ * fails), so it is shown but not folded.
  */
 export function applyLive(view: ProjectView, ev: ApiEvent): ProjectView {
   const streaming = applyChunk(view.streaming, ev);
   if (streaming) return streaming === view.streaming ? view : { ...view, streaming };
   const body = ev.body;
   if (body.type === "agent" && body.event.type === "output" && body.event.data.kind === "usage") {
-    return view;
+    const usage = usageInfo(body.event.data.update);
+    return usage ? { ...view, contextUsage: { ...view.contextUsage, [body.session]: usage } } : view;
   }
   return { ...view, transcripts: applyTranscriptEvent(view.transcripts, ev, view.state) };
 }

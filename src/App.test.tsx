@@ -9,7 +9,7 @@ import { AppStore } from "./store/app";
 import { emptyState } from "./store/domain";
 import { ORCHESTRATOR } from "./test/events";
 import { StoreContext } from "./store/useStore";
-import { agentText, chunk, delivered, prompted, turnEnded, userMessage } from "./test/events";
+import { agentText, chunk, delivered, prompted, turnEnded, usage, userMessage } from "./test/events";
 import { durable, FULL_RUN, PROJECT } from "./test/fixtures";
 import { FakeCore, MemoryTransport } from "./test/memoryTransport";
 
@@ -106,6 +106,35 @@ describe("App", () => {
     await user.type(box, "again{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("orchestration has stopped");
     expect(box).toHaveValue("again");
+  });
+
+  it("shows the orchestrator's context below the composer and compacts it on request", async () => {
+    const { user, store, transport } = setup();
+    await openProject(store);
+    const conversation = screen.getByRole("region", { name: "orchestrator" });
+    const meter = within(conversation).getByTestId("context-meter");
+    expect(meter).toHaveTextContent("—");
+    act(() => transport.emit(usage(LAST, ORCHESTRATOR, { used: 84_000, size: 200_000 })));
+    expect(meter).toHaveTextContent("42% · 84k / 200k");
+
+    // During an ordinary turn there is nothing to compact.
+    act(() => transport.emit(prompted(LAST + 1, ORCHESTRATOR)));
+    expect(within(conversation).getByTestId("compact-button")).toBeDisabled();
+    act(() => transport.emit(turnEnded(LAST + 2, ORCHESTRATOR)));
+
+    await user.click(within(conversation).getByRole("button", { name: "コンテキストを圧縮" }));
+    expect(transport.callsOf("compact_chat")).toEqual([{ type: "compact_chat", project: "repo", chat: "C-1" }]);
+    act(() => transport.emit(prompted(LAST + 3, ORCHESTRATOR, "/compact")));
+    expect(within(conversation).getByRole("button", { name: "圧縮中…" })).toBeDisabled();
+    expect(within(conversation).getByTestId("compact-item")).toHaveTextContent("コンテキストを圧縮しました");
+    expect(within(conversation).getByTestId("chat-title")).toHaveTextContent("Add hello.txt please");
+
+    act(() => {
+      transport.emit(usage(LAST + 3, ORCHESTRATOR, { used: 12_000, size: 200_000 }));
+      transport.emit(turnEnded(LAST + 4, ORCHESTRATOR));
+    });
+    expect(meter).toHaveTextContent("6% · 12k / 200k");
+    expect(within(conversation).getByRole("button", { name: "コンテキストを圧縮" })).toBeEnabled();
   });
 
   it("streams text, marks queued messages and offers cancel during a turn", async () => {

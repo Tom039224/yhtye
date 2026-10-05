@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
-import { agentText, chunk, ev, turnEnded } from "../test/events";
+import { agentText, chunk, ev, prompted, turnEnded, usage } from "../test/events";
 import { applyDurable, applyLive, applySnapshot, forgetChat, newProjectView, type ProjectView, removeChatNow } from "./project";
 import { ORCHESTRATOR } from "../test/events";
 import { CHAT_INFOS, chatSnapshot } from "../test/chats";
@@ -40,7 +40,7 @@ describe("project view", () => {
     expect(v.streaming[ORCHESTRATOR]).toEqual({ message: "", thought: "" });
   });
 
-  it("ignores usage updates and shows other live events without folding them", () => {
+  it("ignores malformed usage updates and shows other live events without folding them", () => {
     let v = applySnapshot(newProjectView(PROJECT), FULL_RUN.start);
     const usage = ev(0, { type: "agent", session: ORCHESTRATOR, event: { type: "output", data: { kind: "usage", update: {} } } }, true);
     expect(applyLive(v, usage)).toBe(v);
@@ -123,5 +123,42 @@ describe("a deleted chat", () => {
     expect(later.sessions).toEqual(early.sessions);
     expect(later.transcripts).toEqual(early.transcripts);
     expect(forgetChat(later, null, "C-1")).toEqual(later);
+  });
+
+  it("keeps each session's latest context usage until a new session starts", () => {
+    let v = newProjectView(PROJECT);
+    expect(v.contextUsage[ORCHESTRATOR]).toBeUndefined();
+    v = applyLive(v, usage(0, ORCHESTRATOR, { used: 1000, size: 200000 }));
+    v = applyLive(v, usage(0, ORCHESTRATOR, { used: 84000, size: 200000, cost: { amount: 1.5, currency: "USD" } }));
+    expect(v.contextUsage[ORCHESTRATOR]).toEqual({ used: 84000, size: 200000, cost: { amount: 1.5, currency: "USD" } });
+    expect(v.transcripts[ORCHESTRATOR]).toBeUndefined();
+    const started = (seq: number, resumed: boolean) =>
+      ev(seq, { type: "session_started", session: ORCHESTRATOR, role: "orchestrator", task: null, pid: 1, acp_session_id: "a", resumed, agent: null });
+    v = applyDurable(v, started(1, true));
+    expect(v.contextUsage[ORCHESTRATOR]).toMatchObject({ used: 84000 });
+    v = applyDurable(v, started(2, false));
+    expect(v.contextUsage[ORCHESTRATOR]).toBeUndefined();
+  });
+
+  it("marks a session compacting from its /compact prompt to the end of that turn", () => {
+    let v = newProjectView(PROJECT);
+    v = applyDurable(v, prompted(1, ORCHESTRATOR, "[yhtye:user_message]\nhi"));
+    expect(v.compacting[ORCHESTRATOR]).toBeUndefined();
+    v = applyDurable(v, turnEnded(2, ORCHESTRATOR));
+    v = applyDurable(v, prompted(3, ORCHESTRATOR, "/compact"));
+    expect(v.compacting[ORCHESTRATOR]).toBe(true);
+    // Shown in the conversation; never as the user's message.
+    expect(v.transcripts[ORCHESTRATOR]).toEqual([expect.objectContaining({ kind: "compact" })]);
+    v = applyDurable(v, turnEnded(4, ORCHESTRATOR));
+    expect(v.compacting[ORCHESTRATOR]).toBeUndefined();
+  });
+
+  it("forgets a deleted chat's context usage and compaction", () => {
+    let v = applySnapshot(newProjectView(PROJECT), chatSnapshot());
+    v = applyLive(v, usage(0, ORCHESTRATOR, { used: 5, size: 10 }));
+    v = applyDurable(v, prompted(v.cursor + 1, ORCHESTRATOR, "/compact"));
+    v = forgetChat(v, v.state, "C-1");
+    expect(v.contextUsage).toEqual({});
+    expect(v.compacting).toEqual({});
   });
 });

@@ -311,6 +311,23 @@ details.tool { display: block; }
 .mention .label { overflow: hidden; text-overflow: ellipsis; }
 .composer-hint { width: 100%; display: flex; align-items: center; gap: 6px; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim); }
 .composer-hint .icon { flex: none; }
+/* Below the composer, right-aligned: the orchestrator's context meter and the compact button. */
+.context-bar {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; padding-top: 6px;
+  font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim);
+}
+.ctx-meter { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.ctx-meter-track { flex: none; width: 40px; height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.ctx-meter-track > span { display: block; height: 100%; border-radius: 2px; background: var(--status-done-bar); }
+.ctx-meter-warn .ctx-meter-track > span { background: var(--accent); }
+.ctx-meter-high .ctx-meter-track > span { background: var(--status-handling-bar); }
+.ctx-meter-high { color: var(--status-handling-fg); }
+.ctx-compact {
+  flex: none; display: flex; align-items: center; gap: 4px; padding: 1px 7px; border: 1px solid var(--border-card);
+  border-radius: 4px; background: transparent; font: inherit; color: var(--text-secondary); cursor: pointer;
+}
+.ctx-compact:hover:not(:disabled) { background: var(--surface-hover-strong); }
+.ctx-compact:disabled { opacity: 0.5; cursor: default; }
 /* ---- settings (Stage 7d): an app-wide large modal ------------------------- */
 .sr-only {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
