@@ -45,7 +45,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
 | Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
 | MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
-| Google Antigravity (起動・モデル一覧を実機確認、プロンプト等は未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
+| Google Antigravity (基本動作は実機確認済み・一部未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
 | Grok Build (基本動作は実機確認済み・一部未検証) | xAI の Grok Build CLI (`grok`)。標準のインストール先は `~/.grok/bin/grok` | `grok agent --no-leader stdio` | `grok login` で先にログインしておく (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
@@ -121,11 +121,12 @@ Yhtye の MCP への接続、実装エージェントとしてタスクを `repo
 - Yhtye が起動したセッション (モデル一覧の取得を含む) も、grok のセッションの記録 (`~/.grok/sessions/`) に残る。
 - MCP のツールは grok の「ツールを探す / 使う」ツール (`search_tool` / `use_tool`) 経由で使われ、名前は `yhtye__report_step_done` の形になる。実装エージェントでは注記なしで見つけて呼べた。
 
-### Google Antigravity (起動・未ログインの失敗・ログイン後モデル一覧を実機確認、プロンプト等は未検証)
+### Google Antigravity (基本動作は実機確認済み・一部未検証)
 
 Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) を、Yhtye の acp 層から実機で起動し、モデル一覧 (ダミーの API キーでの 14 個、および Google アカウントでログインした状態での 11 個)・モデルの設定・
 未ログインのときの失敗の見え方を確認した**。Google アカウント (`oauth-personal`) ログイン時のモデル一覧は 2026-10-08 に実測し、API キー時と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` があるが、Gemini 以外は含まれず Yhtye の既定 `gemini-3.8-flash-low` は含まれることを確認した。
-**まだ確かめていない**のは、OAuth のログインの流れ (ブラウザの対話)、プロンプトのストリーム、許可確認への自動応答、Yhtye の MCP 経由のタスクの完了 (`report_step_done`)、再開 (`session/load`)、ターンの中断。
+さらに Google アカウントでログインした状態で、`gemini-3.8-flash-low` を実装エージェントにしてドキュメント変更のタスクを流し、Yhtye の MCP 経由の `report_step_done` まで完了することを確認した。
+**まだ確かめていない**のは、Yhtye の中で始めたときの OAuth のブラウザの流れ、許可確認への自動応答 (実機では要求が来なかった)、再開 (`session/load`)、ターンの中断。
 実測のまとめと手動検証チェックリストは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §13。
 
 - **利用規約に注意**: Antigravity の利用規約が、Google 自身のクライアント以外 (Yhtye のような第三者の ACP クライアント) からの利用をどう扱うかは、確認していない。使う前にあなた自身で確かめてほしい。
@@ -137,8 +138,17 @@ Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) �
      リンクを使うなら環境変数 `ANTIGRAVITY_HARNESS_PATH` に `localharness_external` の絶対パスを渡す)。
   3. 設定 › ハーネス の「再検出」。`agy_acp_server.par` (または `agy_acp_server`) は、`PATH`、`$AGY_ACP_SERVER_HOME` (とその `bin`)、`~/.local/bin` などの共通の場所、
      `~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` の順に探す。ほかの場所に置いたら、設定 › ハーネス で `agy_acp_server.par` の絶対パスを手動で指定する。
-- **ログインは先に済ませる (Yhtye はログインしない)**: `agy_acp_server` には端末でのログインのコマンドが無い (端末で起動しても ACP のクライアントを待つだけ)。次のどちらかで済ませる。
-  - **Google アカウント**: `${GEMINI_HOME:-~/.gemini}/antigravity-acp/settings.json` に `{"auth": {"type": "oauth-personal"}}` を書いて Yhtye でエージェントを始めると、
+- **ログインは先に済ませる (Yhtye はログインしない)**: `agy_acp_server` には端末でのログインのコマンドが無い (端末で起動しても ACP のクライアントを待つだけ)。次のいずれかで済ませる。
+  - **Google アカウント (端末から、実機で確認済み)**: ACP の `authenticate` を手で送る。ブラウザで Google ログインが開き、終わると `settings.json` (`oauth-personal`) と
+    `acp_token.json` が作られる。`"id":2` の応答が返ったら Ctrl-C で止める (例は fish。bash なら `begin … end` を `{ …; }` に)。
+    ```fish
+    begin
+      printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{}}}' \
+                    '{"jsonrpc":"2.0","id":2,"method":"authenticate","params":{"methodId":"oauth-personal"}}'
+      sleep 300
+    end | ~/.local/share/agy-acp-server/agy_acp_server.par
+    ```
+  - **Google アカウント (Yhtye の中で)**: `${GEMINI_HOME:-~/.gemini}/antigravity-acp/settings.json` に `{"auth": {"type": "oauth-personal"}}` を書いて Yhtye でエージェントを始めると、
     `session/new` でブラウザの Google ログインが開く (ソースを読んだ限りの流れで、実機では試していない)。ログインは起動のタイムアウト (120 秒) 以内に済ませる。
     Zed や JetBrains など ACP クライアントで一度ログインしても、同じ設定とトークン (`acp_token.json`) が残る。
   - **API キー**: 同じ `settings.json` に `{"auth": {"type": "gemini-api-key"}}` を書き、環境変数 `GEMINI_API_KEY` を Yhtye の起動環境に入れる (設定 › 「秘密の環境変数」に登録すると**すべてのエージェント**に渡る)。
