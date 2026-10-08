@@ -292,6 +292,7 @@ const HARNESS_SPECS = [
   { id: "codex", label: "Codex", main: "codex", also: ["npx"] },
   { id: "devin", label: "Devin", main: "devin", also: [] },
   { id: "minimax-code", label: "MiniMax Code", main: "mcode", also: [] },
+  { id: "antigravity", label: "Google Antigravity", main: "agy_acp_server.par", also: [] },
   { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
 ];
 

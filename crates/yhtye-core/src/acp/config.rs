@@ -57,6 +57,12 @@ pub struct HarnessConfig {
     /// the session has no role prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt_note: Option<String>,
+    /// Appended to the startup error when `session/new` / `session/load` answers
+    /// that authentication is required, for a harness Yhtye cannot log in for
+    /// (it never calls `authenticate`) and whose own message does not say what
+    /// to do from here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub login_hint: Option<String>,
 }
 
 /// The Claude Code ACP adapter run through `npx` (an exact version).
@@ -136,6 +142,27 @@ pub const GROK_BUILD_EFFORT_CONFIG_ID: &str = "reasoning_effort";
 /// `tracing` and honours `RUST_LOG`, so a value meant for Yhtye would flood the
 /// agent's stderr (`trace`: megabytes per second) or filter its log.
 pub const GROK_BUILD_ENV_REMOVE: [&str; 1] = ["RUST_LOG"];
+
+/// The model Yhtye runs Google Antigravity's sessions on when a choice names
+/// none (the server's own default is a constant of its binary,
+/// `gemini-3.8-flash-high`): the cheapest, Flash with the lowest thinking level.
+/// The thinking level is part of the model id (`gemini-3.8-flash-high|medium|low`),
+/// the server has no separate effort option.
+pub const ANTIGRAVITY_DEFAULT_MODEL: &str = "gemini-3.8-flash-low";
+
+/// Appended to the startup error of Google Antigravity when it answers that
+/// authentication is required ([`HarnessConfig::login_hint`]). `agy_acp_server`
+/// has no login command (started in a terminal it only waits for an ACP client):
+/// the sign-in is started by `authenticate`, or by `session/new` once
+/// `auth.type` is `oauth-personal` in its `settings.json`
+/// (`docs/architecture/acp-harnesses.md` §13.7).
+pub const ANTIGRAVITY_LOGIN_HINT: &str = "\
+Google Antigravity にログインしていません (Yhtye は代わりにログインしません)。\
+`$GEMINI_HOME/antigravity-acp/settings.json` (GEMINI_HOME が無ければ \
+`~/.gemini/antigravity-acp/settings.json`) に `{\"auth\": {\"type\": \"oauth-personal\"}}` を書いて \
+もう一度始めると、ブラウザで Google のログインが開きます \
+(Zed など別の ACP クライアントで一度ログインしてもよい。API キーを使うなら type を \
+`gemini-api-key` にして環境変数 GEMINI_API_KEY を渡す)。詳しくは SETUP.md の「Google Antigravity」。";
 
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +251,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
+            login_hint: None,
         }
     }
 
@@ -275,6 +303,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
+            login_hint: None,
         }
     }
 
@@ -308,6 +337,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
+            login_hint: None,
         }
     }
 
@@ -337,6 +367,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
+            login_hint: None,
         }
     }
 
@@ -370,6 +401,42 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
+            login_hint: None,
+        }
+    }
+
+    /// Google Antigravity's ACP server (`agy_acp_server`, stdio, no arguments) at
+    /// `command`, see `docs/architecture/acp-harnesses.md` §13. The mode is left
+    /// at `default`, the environment (`GEMINI_HOME` included) is inherited as is,
+    /// and no `clientInfo` is claimed (`yhtye` is accepted; only the names of a
+    /// few editors unlock other vendors' models). The model is set to
+    /// [`ANTIGRAVITY_DEFAULT_MODEL`] unless a choice names another
+    /// ([`crate::agents::HarnessPreset::config`]); there is no effort option (the
+    /// thinking level is part of the model id). The role prompt is prepended to
+    /// the first prompt (the server has no hook for it), the permission requests
+    /// that arrive are answered [`PermissionPolicy::OnceOnly`] (`allow_always` is
+    /// saved with the session), and an authentication error is followed by
+    /// [`ANTIGRAVITY_LOGIN_HINT`].
+    #[must_use]
+    pub fn antigravity(command: &str) -> Self {
+        Self {
+            command: command.into(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
+            mode_after_new: None,
+            model: Some(ModelSelect {
+                config_id: "model".into(),
+                value: ANTIGRAVITY_DEFAULT_MODEL.into(),
+            }),
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            client_info: None,
+            permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: None,
+            login_hint: Some(ANTIGRAVITY_LOGIN_HINT.into()),
         }
     }
 
@@ -402,6 +469,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
+            login_hint: None,
         }
     }
 
@@ -422,6 +490,7 @@ impl HarnessConfig {
             client_info: None,
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
+            login_hint: None,
         }
     }
 }
@@ -535,6 +604,31 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_runs_without_arguments_touches_nothing_and_points_to_the_login() {
+        let h = HarnessConfig::antigravity("/opt/agy/agy_acp_server.par");
+        assert_eq!(
+            (h.command.as_str(), h.args.as_slice()),
+            ("/opt/agy/agy_acp_server.par", &[][..]),
+            "no arguments (the registry's --uid= is not needed)"
+        );
+        assert!(h.env.is_empty(), "GEMINI_HOME is the user's own");
+        assert!(h.env_remove.is_empty());
+        assert_eq!(h.mode_after_new, None, "the mode stays `default`");
+        let model = h.model.expect("the cheapest model");
+        assert_eq!(
+            (model.config_id.as_str(), model.value.as_str()),
+            ("model", "gemini-3.8-flash-low")
+        );
+        assert!(h.effort.is_none() && h.session_meta.is_none());
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+        assert_eq!(h.system_prompt_note, None);
+        assert_eq!(h.client_info, None, "no other product's name is claimed");
+        let hint = h.login_hint.expect("how to log in");
+        assert!(hint.contains("antigravity-acp/settings.json") && hint.contains("oauth-personal"));
+    }
+
+    #[test]
     fn grok_build_runs_its_own_stdio_agent_without_modes_or_always_approve() {
         let h = HarnessConfig::grok_build("/home/u/.grok/bin/grok");
         assert_eq!(h.command, "/home/u/.grok/bin/grok");
@@ -566,6 +660,7 @@ mod tests {
             HarnessConfig::plain("x", vec![]),
         ] {
             assert_eq!(h.client_info, None);
+            assert_eq!(h.login_hint, None, "only Antigravity points to a login");
             assert_eq!(h.permission_policy, PermissionPolicy::Default);
             assert_eq!(
                 h.system_prompt_note, None,

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::catalog::{CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE};
+use super::catalog::{ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE};
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -35,6 +35,27 @@ pub const MINIMAX_CODE_INSTALL_DIR: &str = "~/.minimax-code/bin";
 /// The environment variable that moves MiniMax Code's install root, so its
 /// `bin` directory is where `mcode` is.
 pub const MINIMAX_CODE_ROOT_ENV: &str = "MCODE_INSTALL_ROOT";
+
+/// The Google Antigravity executable: the Python archive of its ACP server, as
+/// the distribution zip names it (`localharness_external` must sit next to it).
+pub const ANTIGRAVITY_COMMAND: &str = "agy_acp_server.par";
+
+/// The other name Google Antigravity's server goes by (a link, or a file
+/// renamed without the extension).
+pub const ANTIGRAVITY_COMMAND_ALIAS: &str = "agy_acp_server";
+
+/// The environment variable naming the directory Google Antigravity's server was
+/// unpacked into: the zip holds the executables flat, so the directory itself
+/// is searched, and its `bin`.
+pub const ANTIGRAVITY_ROOT_ENV: &str = "AGY_ACP_SERVER_HOME";
+
+/// Where Google Antigravity's server is looked for besides `PATH`: a directory
+/// of its own under `~/.local/share`, and the `bin` of the ACP server's data
+/// directory (`$GEMINI_HOME/antigravity-acp`, default `~/.gemini/antigravity-acp`).
+pub const ANTIGRAVITY_INSTALL_DIRS: [&str; 2] = [
+    "~/.local/share/agy-acp-server",
+    "~/.gemini/antigravity-acp/bin",
+];
 
 /// The Grok Build executable.
 pub const GROK_BUILD_COMMAND: &str = "grok";
@@ -65,12 +86,17 @@ pub struct HarnessSpec {
     /// The main executable: the one a manual path replaces, and the one shown
     /// as the harness's path.
     pub main: &'static str,
+    /// Other names of the main executable, tried in each directory after `main`.
+    pub aliases: &'static [&'static str],
     /// Further commands it needs (found automatically only).
     pub also: &'static [&'static str],
     /// An environment variable naming the root of the harness's own install
-    /// directory, whose `bin` is searched after `PATH` and before
-    /// [`KNOWN_DIRS`] (an absolute path only).
+    /// directory, searched after `PATH` and before [`KNOWN_DIRS`] (an absolute
+    /// path only): its subdirectories named by `root_subdirs`.
     pub root_env: Option<&'static str>,
+    /// The directories under the root of `root_env` that are searched, in
+    /// order (`""`: the root itself).
+    pub root_subdirs: &'static [&'static str],
     /// Directories only this harness's installer uses (`~` is the `HOME` of the
     /// environment), searched after [`KNOWN_DIRS`].
     pub extra_dirs: &'static [&'static str],
@@ -78,53 +104,75 @@ pub struct HarnessSpec {
 
 /// The known harnesses, in the order the built-in default prefers them
 /// ([`super::default_choice`] has the rule).
-pub const HARNESS_SPECS: [HarnessSpec; 6] = [
+pub const HARNESS_SPECS: [HarnessSpec; 7] = [
     HarnessSpec {
         id: CLAUDE_CODE,
         label: "Claude Code",
         main: NPX_COMMAND,
+        aliases: &[],
         also: &[],
         root_env: None,
+        root_subdirs: &[],
         extra_dirs: &[],
     },
     HarnessSpec {
         id: OPENCODE,
         label: "OpenCode",
         main: OPENCODE_COMMAND,
+        aliases: &[],
         also: &[],
         root_env: None,
+        root_subdirs: &[],
         extra_dirs: &[],
     },
     HarnessSpec {
         id: CODEX,
         label: "Codex",
         main: CODEX_COMMAND,
+        aliases: &[],
         also: &[NPX_COMMAND],
         root_env: None,
+        root_subdirs: &[],
         extra_dirs: &[],
     },
     HarnessSpec {
         id: DEVIN,
         label: "Devin",
         main: DEVIN_COMMAND,
+        aliases: &[],
         also: &[],
         root_env: None,
+        root_subdirs: &[],
         extra_dirs: &[],
     },
     HarnessSpec {
         id: MINIMAX_CODE,
         label: "MiniMax Code",
         main: MINIMAX_CODE_COMMAND,
+        aliases: &[],
         also: &[],
         root_env: Some(MINIMAX_CODE_ROOT_ENV),
+        root_subdirs: &["bin"],
         extra_dirs: &[MINIMAX_CODE_INSTALL_DIR],
+    },
+    HarnessSpec {
+        id: ANTIGRAVITY,
+        label: "Google Antigravity",
+        main: ANTIGRAVITY_COMMAND,
+        aliases: &[ANTIGRAVITY_COMMAND_ALIAS],
+        also: &[],
+        root_env: Some(ANTIGRAVITY_ROOT_ENV),
+        root_subdirs: &["", "bin"],
+        extra_dirs: &ANTIGRAVITY_INSTALL_DIRS,
     },
     HarnessSpec {
         id: GROK_BUILD,
         label: "Grok Build",
         main: GROK_BUILD_COMMAND,
+        aliases: &[],
         also: &[],
         root_env: Some(GROK_BUILD_ROOT_ENV),
+        root_subdirs: &["bin"],
         extra_dirs: &[GROK_BUILD_INSTALL_DIR],
     },
 ];
@@ -205,9 +253,9 @@ fn expand_home(dirs: &[&str], env: impl Fn(&str) -> Option<OsString>) -> Vec<Pat
         .collect()
 }
 
-/// Where the main executable of `spec` is looked for after `PATH`: the `bin` of
-/// its install root (when the environment names one), the well-known
-/// directories, then the directories only its installer uses.
+/// Where the main executable of `spec` is looked for after `PATH`: the
+/// directories of its install root (when the environment names one), the
+/// well-known directories, then the directories only its installer uses.
 fn search_dirs(
     spec: &HarnessSpec,
     env: &impl Fn(&str) -> Option<OsString>,
@@ -218,8 +266,8 @@ fn search_dirs(
         .and_then(env)
         .map(PathBuf::from)
         .filter(|root| root.is_absolute());
-    root.map(|root| root.join("bin"))
-        .into_iter()
+    root.into_iter()
+        .flat_map(|root| spec.root_subdirs.iter().map(move |sub| root.join(sub)))
         .chain(known_dirs.iter().cloned())
         .chain(expand_home(spec.extra_dirs, env))
         .collect()
@@ -229,10 +277,26 @@ fn search_dirs(
 /// (a `PATH` value): see [`is_usable`]. Relative entries are ignored.
 #[must_use]
 pub fn find_in_path(command: &str, path: Option<&OsStr>) -> Option<PathBuf> {
-    std::env::split_paths(path?)
-        .filter(|dir| dir.is_absolute())
-        .map(|dir| dir.join(command))
-        .find(|p| is_usable(p))
+    find_in_path_as(&[command], path)
+}
+
+/// [`find_in_path`] for an executable that goes by several `names`: the first
+/// directory holding any of them wins, and within it the earlier name.
+fn find_in_path_as(names: &[&str], path: Option<&OsStr>) -> Option<PathBuf> {
+    first_usable(
+        names,
+        std::env::split_paths(path?).filter(|dir| dir.is_absolute()),
+    )
+}
+
+/// The first usable `names[i]` in `dirs`, by directory and then by name.
+fn first_usable(names: &[&str], dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    dirs.into_iter().find_map(|dir| {
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| is_usable(p))
+    })
 }
 
 /// `command` in `PATH` of `env`, else in `known_dirs`.
@@ -241,14 +305,20 @@ pub fn find_command(
     env: impl Fn(&str) -> Option<OsString>,
     known_dirs: &[PathBuf],
 ) -> Option<(PathBuf, PathSource)> {
-    if let Some(path) = find_in_path(command, env("PATH").as_deref()) {
+    find_command_as(&[command], env, known_dirs)
+}
+
+/// [`find_command`] for an executable that goes by several `names`: `PATH` is
+/// searched before `known_dirs` whatever the name.
+fn find_command_as(
+    names: &[&str],
+    env: impl Fn(&str) -> Option<OsString>,
+    known_dirs: &[PathBuf],
+) -> Option<(PathBuf, PathSource)> {
+    if let Some(path) = find_in_path_as(names, env("PATH").as_deref()) {
         return Some((path, PathSource::Path));
     }
-    known_dirs
-        .iter()
-        .map(|dir| dir.join(command))
-        .find(|p| is_usable(p))
-        .map(|p| (p, PathSource::KnownDir))
+    first_usable(names, known_dirs.iter().cloned()).map(|p| (p, PathSource::KnownDir))
 }
 
 /// An executable regular file whose path is valid UTF-8. A path that is not
@@ -315,10 +385,15 @@ fn detect(
             Ok(()) => (Some(path.clone()), PathSource::Override, None),
             Err(e) => (None, PathSource::None, Some(e)),
         },
-        None => match find_command(spec.main, env, &search_dirs(spec, env, known_dirs)) {
-            Some((path, source)) => (path.to_str().map(str::to_string), source, None),
-            None => (None, PathSource::None, None),
-        },
+        None => {
+            let names: Vec<&str> = std::iter::once(spec.main)
+                .chain(spec.aliases.iter().copied())
+                .collect();
+            match find_command_as(&names, env, &search_dirs(spec, env, known_dirs)) {
+                Some((path, source)) => (path.to_str().map(str::to_string), source, None),
+                None => (None, PathSource::None, None),
+            }
+        }
     };
     let mut requirements = vec![HarnessRequirement {
         command: spec.main.to_string(),
@@ -502,7 +577,15 @@ mod tests {
     #[test]
     fn every_harness_is_reported_with_what_it_needs() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["npx", "opencode", "codex", "devin", "mcode", "grok"] {
+        for name in [
+            "npx",
+            "opencode",
+            "codex",
+            "devin",
+            "mcode",
+            "agy_acp_server.par",
+            "grok",
+        ] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
@@ -515,6 +598,7 @@ mod tests {
                 "codex",
                 "devin",
                 "minimax-code",
+                "antigravity",
                 "grok-build"
             ]
         );
@@ -567,7 +651,14 @@ mod tests {
     #[test]
     fn a_missing_npx_takes_claude_code_and_codex_with_it() {
         let bin = tempfile::tempdir().expect("tempdir");
-        for name in ["opencode", "codex", "devin", "mcode", "grok"] {
+        for name in [
+            "opencode",
+            "codex",
+            "devin",
+            "mcode",
+            "agy_acp_server",
+            "grok",
+        ] {
             fake_bin(bin.path(), name, 0o755);
         }
         let all = detect_all(&path_of(&bin), &[]);
@@ -579,6 +670,7 @@ mod tests {
         assert!(by_id(&all, "opencode").installed);
         assert!(by_id(&all, "devin").installed);
         assert!(by_id(&all, "minimax-code").installed);
+        assert!(by_id(&all, "antigravity").installed);
         assert!(by_id(&all, "grok-build").installed);
     }
 
@@ -729,6 +821,113 @@ mod tests {
     }
 
     #[test]
+    fn agy_acp_server_is_found_by_either_name_in_its_own_directories_and_in_the_root_the_environment_names()
+     {
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = tempfile::tempdir().expect("tempdir");
+        let empty = tempfile::tempdir().expect("tempdir");
+        let share = home.path().join(".local/share/agy-acp-server");
+        let gemini = home.path().join(".gemini/antigravity-acp/bin");
+        for dir in [&share, &gemini, &root.path().join("bin")] {
+            std::fs::create_dir_all(dir).expect("mkdir");
+        }
+        let find = |vars: &[(&str, &str)]| {
+            let found = detect_harnesses(env(vars), &[], &HashMap::new());
+            let d = by_id(&found, "antigravity").clone();
+            (d.installed, d.resolved_path, d.path_source)
+        };
+        let home_var = path_of(&home);
+        let path_var = path_of(&empty);
+        let base = [("HOME", home_var.as_str()), ("PATH", path_var.as_str())];
+        let some = |p: &PathBuf| p.to_str().map(str::to_string);
+
+        // Nothing there yet; without a HOME there is nowhere to look either.
+        assert_eq!(find(&base), (false, None, PathSource::None));
+
+        // The zip holds `agy_acp_server.par`; the server's data directory has a `bin` too.
+        let in_gemini = fake_bin(&gemini, "agy_acp_server.par", 0o755);
+        assert_eq!(
+            find(&base),
+            (true, some(&in_gemini), PathSource::KnownDir),
+            "an extension in the name does not matter"
+        );
+        assert_eq!(
+            find(&[("PATH", &path_var)]),
+            (false, None, PathSource::None)
+        );
+        let in_share = fake_bin(&share, "agy_acp_server.par", 0o755);
+        assert_eq!(find(&base).1, some(&in_share), "~/.local/share comes first");
+
+        // The name without the extension is accepted; the longer name wins in one directory.
+        let bare = fake_bin(&share, "agy_acp_server", 0o755);
+        assert_eq!(find(&base).1, some(&in_share));
+        std::fs::remove_file(&in_share).expect("remove");
+        assert_eq!(find(&base).1, some(&bare));
+
+        // The directory the environment names (the unpacked zip itself, then its
+        // `bin`) is searched first; a relative one is not.
+        let flat = fake_bin(root.path(), "agy_acp_server.par", 0o755);
+        let in_bin = fake_bin(&root.path().join("bin"), "agy_acp_server.par", 0o755);
+        let root_var = path_of(&root);
+        let with_root = [base[0], base[1], ("AGY_ACP_SERVER_HOME", root_var.as_str())];
+        assert_eq!(find(&with_root), (true, some(&flat), PathSource::KnownDir));
+        std::fs::remove_file(&flat).expect("remove");
+        assert_eq!(find(&with_root).1, some(&in_bin));
+        let relative = [base[0], base[1], ("AGY_ACP_SERVER_HOME", "relative/root")];
+        assert_eq!(find(&relative).1, some(&bare));
+
+        // `PATH` comes before all of them, whichever name is on it, and the other
+        // harnesses do not look in these directories.
+        fake_bin(&share, "devin", 0o755);
+        let found = detect_harnesses(env(&base), &[], &HashMap::new());
+        assert!(!by_id(&found, "devin").installed);
+        let on_path = tempfile::tempdir().expect("tempdir");
+        let first = fake_bin(on_path.path(), "agy_acp_server", 0o755);
+        let path_var = path_of(&on_path);
+        let found = detect_harnesses(
+            env(&[("HOME", home_var.as_str()), ("PATH", path_var.as_str())]),
+            &[],
+            &HashMap::new(),
+        );
+        let d = by_id(&found, "antigravity");
+        assert_eq!(d.label, "Google Antigravity");
+        assert_eq!(d.resolved_path.as_deref(), first.to_str());
+        assert_eq!(d.path_source, PathSource::Path);
+        assert_eq!(
+            d.requirements
+                .iter()
+                .map(|r| r.command.as_str())
+                .collect::<Vec<_>>(),
+            ["agy_acp_server.par"],
+            "the main name is what the settings show and a manual path replaces"
+        );
+    }
+
+    #[test]
+    fn a_manual_path_with_an_extension_is_an_executable_file_like_any_other() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let par = fake_bin(dir.path(), "agy_acp_server.par", 0o755);
+        assert_eq!(check_executable_path(par.to_str().expect("utf-8")), Ok(()));
+        let all = detect_all(
+            "/nonexistent",
+            &[("antigravity", par.to_str().expect("utf-8"))],
+        );
+        let d = by_id(&all, "antigravity");
+        assert!(d.installed);
+        assert_eq!(d.path_source, PathSource::Override);
+        assert_eq!(d.resolved_path.as_deref(), par.to_str());
+        assert!(
+            check_executable_path(
+                fake_bin(dir.path(), "localharness_external.par", 0o644)
+                    .to_str()
+                    .expect("utf-8")
+            )
+            .is_err(),
+            "the execute bit still decides"
+        );
+    }
+
+    #[test]
     fn a_manual_path_wins_over_the_search() {
         let on_path = tempfile::tempdir().expect("tempdir");
         let elsewhere = tempfile::tempdir().expect("tempdir");
@@ -836,6 +1035,7 @@ mod tests {
             HarnessPreset::codex(None),
             HarnessPreset::devin("devin"),
             HarnessPreset::minimax_code("mcode"),
+            HarnessPreset::antigravity("agy_acp_server.par"),
             HarnessPreset::grok_build("grok"),
         ];
         assert_eq!(presets.len(), HARNESS_SPECS.len());

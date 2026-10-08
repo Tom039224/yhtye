@@ -32,7 +32,8 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続、実装エージェントとしての `report_step_done` を確認 (§10.0、§10.9)。未ログイン時、`session/load`、cancel は未確認 (§10.9) |
 | MiniMax Code | **実装済み・基本動作は実機確認済み (T-26)** — MiniMax Code CLI の `mcode acp`、§11。`mcode` が見つかれば全役割で選べる (`PATH` に無くても `~/.minimax-code/bin` を探す)。mcode 0.6.2 で起動・モデル一覧・モデルと effort の設定・1 ターンを確認。`permissionMode` はユーザーの全体設定に書き込まれるので**触らない** (§11.2) |
 | Grok Build | **実装済み・基本動作は実機確認済み (T-29)** — xAI の Grok Build CLI の `grok agent --no-leader stdio`、§12。`grok` が見つかれば全役割で選べる (`PATH` に無くても `~/.grok/bin` を探す)。grok 1.0.46・grok.com の Free プラン (モデルは `grok-4.7` だけ) で起動・モデル一覧・モデルと effort の設定、実装エージェントとしての `report_step_done` (Yhtye の MCP 経由) まで確認。許可要求の自動応答 (実機では要求が来なかった)、`session/load`、cancel は未確認 (§12.8) |
-| Cursor CLI / Gemini CLI / GitHub Copilot / Google Antigravity CLI | 未着手 |
+| Google Antigravity | **実装済み・基本動作は実機確認済み (T-34, T-36)** — Google の公式 ACP サーバー `agy_acp_server` (v1.3.0)、§13。`agy_acp_server.par` が見つかれば全役割で選べる (`PATH` に無くても `$AGY_ACP_SERVER_HOME`、`~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` を探す)。Yhtye は `authenticate` を呼ばない (ログインは利用者が先に済ませる、§13.7)。effort は無い (思考レベルはモデルの id に含まれる)。Google アカウントでのログイン後、`gemini-3.8-flash-low` の実装エージェントとしてドキュメント変更のタスクを `report_step_done` (Yhtye の MCP 経由) まで完了。許可要求の自動応答 (要求が来なかった)、`session/load`、cancel は未確認 (§13.8) |
+| Cursor CLI / Gemini CLI / GitHub Copilot | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
 ## 4. Rust クライアント: `agent-client-protocol` 2.2
@@ -1047,3 +1048,182 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
 5. **leader を有効にした設定**: `[cli] use_leader = true` の人が、`--no-leader` で独立したプロセスとして動き、終了時に残らないか。**未**
 6. **`$GROK_HOME/bin`**: `GROK_HOME` を変えてインストールした人の `grok` がそこにあるか (検出が見つけるか)。**未**
 7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.grok/config.toml` のハッシュを比べる (Yhtye は grok の設定に書き込まない)。T-29 の範囲 (§12.6) では**済**。
+
+## 13. Google Antigravity: `agy_acp_server` (T-34/T-36、v1.3.0 で**基本動作を実機確認**)
+
+> 実装は Devin (§10)・MiniMax Code (§11) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) で、**agy_acp_server 1.3.0** の実機調査
+> (JSON-RPC を直接送る調査と、同梱の Python ソースを読んだこと、2026-10-08) で分かったことに合わせた。
+> その後 Yhtye 自身の acp 層 (`HarnessPreset::antigravity(..).config(..)`、`ModelService`) から、**プロンプトなし**で起動・モデル一覧・未認証の失敗を実機で確かめた (§13.8)。
+> さらに Google アカウント (`oauth-personal`) でログインした状態でのモデル一覧も実機で確認した (T-36、2026-10-08、§13.3/§13.8)。その状態で `gemini-3.8-flash-low` を実装エージェントにし、ドキュメントだけを変えるタスクを 1 つ流して完了まで確認した (T-36、§13.8)。
+> 認証は利用者の `~/.gemini` に永続的に書き込まれ、プロンプトは利用枠を使うため、ダミーの API キーでの確認は
+> `HOME` と `GEMINI_HOME` を `/tmp` の隔離ディレクトリにして、ダミーの API キーで `session/new` まで通す範囲に限った (実ユーザーの `~/.gemini` には何も作っていない)。
+> 実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
+> ラベル: **[調査]** = 実機を直接調べて分かったこと、**[ソース]** = 同梱の Python ソースを読んで分かったこと (実機では試していない)、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
+> 節番号: §12 は Grok Build (T-29)。
+
+### 13.0 調査のまとめ (agy_acp_server 1.3.0)
+
+| 項目 | 結果 |
+|---|---|
+| 配布 | ACP レジストリの `antigravity-acp`。Linux x86_64 は `https://dl.google.com/agy-extensions/releases/linux/agy-acp-server-1.3.0-linux-x86_64.zip` (約 320 MB)。展開すると **`agy_acp_server.par`** (実行ファイル、884 MB の Python アーカイブ) と **`localharness_external`** (125 MB) の 2 つが出て、**同じディレクトリに置く必要がある**。Antigravity IDE (`/opt/Antigravity`) には同梱されていない。`agy` CLI 自体に ACP モードは無い **[調査]** |
+| 起動 | **引数なし**で動く (レジストリにある `--uid=` は不要)。フラグは `--debug` と `--notices` だけ。`initialize` まで約 2〜2.5 秒 **[調査][実測]** |
+| `initialize` | `agentInfo` = `antigravity-acp` / "Google Antigravity" / `1.3.0`。`loadSession: true`、`mcpCapabilities` = http・sse、`sessionCapabilities` = list・resume。`authMethods` = `oauth-personal` / `oauth-business` / `gemini-api-key` / `agent-platform` **[調査][実測]** |
+| 未認証 | `session/new` が `-32000 "Authentication required"` を返す。`data.message` に「`authenticate` を呼ぶか、`settings.json` の `auth.type` を…」と出る。Yhtye では起動エラー (step = `session/new`) として読める (§13.7) **[調査][実測]** |
+| 認証の保存 | `authenticate` を呼ぶと `$GEMINI_HOME/antigravity-acp/settings.json` に**ユーザーの認証方式が永続的に書き込まれる**。トークンは `$GEMINI_HOME/antigravity-acp/acp_token.json` (個人) / `acp_business_token.json`。`GEMINI_HOME` が無ければ `~/.gemini` **[調査][ソース]** |
+| モード | `default` / `auto_edit` / `yolo` (`session/new` 直後は `default`) **[調査][実測]** |
+| config options | `model` (category `model`、select) と `mode` (category `mode`、select) の 2 つ。**effort 用の option は無い**。`session/new` の応答に `models` (`availableModels`) も付く **[実測]** |
+| モデル | **11 個** (Google アカウント / `oauth-personal` ログイン時、2026-10-08 実測): `gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`。API キー時の 14 個と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外は含まれない。思考レベルはモデルの id に含まれる。既定 (`currentModelId`) はバイナリ内の定数 `gemini-3.8-flash-high`。Yhtye の既定 `gemini-3.8-flash-low` は含まれる。`session/set_model` と `session/set_config_option` (`model`) は動く **[調査][実測]** |
+| 設定ファイル | `session/set_mode`・`mode` と `model` の `set_config_option`・`session/set_model` は `settings.json` を**書き換えない** (API キーの環境で確認) **[実測]** |
+| システムプロンプト | 受け取る口は見つからなかった → 最初のプロンプトの前に付ける (`FirstPrompt`) **[調査]** |
+| `clientInfo` | `yhtye` のままで通る (`client_info: None`)。`clientInfo.name` が zed / JetBrains / xcode のときだけ Gemini 以外のモデルも出る (Yhtye は名前を偽装しない) **[調査][実測]** |
+| MCP | `mcpServers` (http / sse / stdio) を受け付け、グローバル設定とマージされる (同名ならクライアント側が優先) **[調査]** |
+| 許可要求の選択肢 | `allow` (kind `allow_once`)、`deny` (`reject_once`)、`allow_always` (`allow_always`。セッションのメタデータに永続化される) **[ソース]** |
+| スラッシュコマンド | `available_commands_update` で `plan` と `logout` が来る。`/logout` は**ユーザーの認証を消す** **[実測]** |
+| セッションの記録 | `session/new` のたびに `$GEMINI_HOME/antigravity-acp/conversations/<uuid>.db` と `.meta` が作られる (モデル一覧の読み取りのセッションも) **[実測]** |
+
+### 13.1 入手・配置・検出 (`HarnessSpec`)
+
+- **入手と配置** (自動インストールはしない。検出と手動パスだけ) **[Yhtye]**: 上の zip を `unzip` で展開し (実行権限は zip が保つ)、**2 つのファイルを同じディレクトリに置く**。
+  `agy_acp_server.par` は自分が起動されたパスのディレクトリ (か `PATH`) から `localharness_external` を探し、リンクの実体のディレクトリは見ない。**`.par` だけを別のディレクトリへ
+  シンボリックリンクすると `session/new` が `-32603 "Could not find default localharness binary…"` で失敗する [実測]**。リンクを使うなら、環境変数 `ANTIGRAVITY_HARNESS_PATH` に
+  `localharness_external` の絶対パスを渡す (リンク経由でも `session/new` が通ることを確かめた)。Yhtye はこの環境変数に触らず、起動した環境のまま継承する。
+- **検出** (`agents/detect.rs`): 実行ファイル名は **`agy_acp_server.par`** (設定 › ハーネス に出る名前、手動パスで置き換えるのもこれ)。`agy_acp_server` も別名として受け付ける
+  (`HarnessSpec::aliases`: 同じディレクトリでは `.par` を先に見る)。探す順は `PATH` → **`$AGY_ACP_SERVER_HOME`** と **`$AGY_ACP_SERVER_HOME/bin`** (絶対パスのときだけ。zip を展開した
+  ディレクトリそのものが入る) → 共通の既知の場所 (`~/.local/bin` など) → **`~/.local/share/agy-acp-server`** → **`~/.gemini/antigravity-acp/bin`**
+  (`HarnessSpec::root_subdirs` / `extra_dirs`)。`PATH` の別名が既知の場所の `.par` より先に見つかる。見つかった場所は `known_dir` として出る。
+  実行ファイルは走らせない (`--version` もない)。実行可能な通常ファイルかだけを見るので、`.par` という拡張子は判定に関係しない (手動パスも同じ)。`localharness_external` の有無は検査しない。
+  ほかのハーネスはこれらの場所を探さない。
+- **ハーネスの id は `antigravity`、表示名は `Google Antigravity`**。組み込みの既定の順は claude-code > opencode > devin > minimax-code > **antigravity** > codex
+  (Codex はモデルの指定が要るので最後)。組み込みの既定の選択は `antigravity` のモデル `gemini-3.8-flash-low`。
+- **利用規約**: Antigravity の利用規約が、Google 自身のクライアント以外 (Yhtye のような第三者のクライアント) からの利用をどう扱うかは、ここでは調べていない。
+  使う前にあなた自身で確認してほしい (SETUP.md にも書いてある)。
+
+### 13.2 起動、モード、設定ファイル (`HarnessConfig::antigravity` / `HarnessPreset::antigravity`)
+
+- **起動**: `agy_acp_server` (引数なし、stdio)。`command` は検出で見つけた絶対パス **[Yhtye]**。`npx` は要らない。環境の追加・除去は**無い**: ユーザーの環境をそのまま継承する
+  (`GEMINI_HOME` も `GEMINI_API_KEY` もそのまま渡る。Yhtye は `GEMINI_HOME` を上書きしない)。起動のタイムアウトは他と同じ 120 秒。
+  **これは `session/new` にも掛かる**: ブラウザでのログインを待つ間もこの時間以内に済ませる必要がある (§13.7)。
+- **モード**: `session/set_mode` を送らない (`mode_after_new = None`)。`default` のままで、書き込みやシェルの許可確認は `session/request_permission` で来て、Yhtye が自動で
+  `allow` (1 回だけ) を返す (§13.4)。`auto_edit` / `yolo` は設定ファイルを書き換えない [実測] が、決定として使っていない (許可確認の自動応答で足りる)。
+- **ユーザーの設定ファイルに書かない**: Yhtye が書くのはセッションのモデルだけで、`settings.json` は変わらない **[実測]** (起動・モデル一覧・モデルの設定の前後で内容が同じ。
+  ただし API キーの環境で、OAuth ログイン後は未確認)。
+- **記録が溜まる**: `session/new` のたびに `$GEMINI_HOME/antigravity-acp/conversations/` に 2 ファイル (`.db`、`.meta`) が増える。Yhtye は後片付けをしない
+  (モデル一覧の読み取りのセッションでも増える)。これはサーバーの仕様で、Devin / MiniMax Code の「何も残さない」一覧のセッションとは違う。
+
+### 13.3 モデルと effort
+
+- **モデル**: 一覧は `session/new` の `configOptions` の `model` (プローブのセッション、プロンプトなし、§8 と同じ)。選んだモデルは `session/set_config_option` で `model` に設定して
+  「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。**既定のモデルは `gemini-3.8-flash-low`** (`ANTIGRAVITY_DEFAULT_MODEL`、クレジット節約のため。サーバー自身の既定は
+  `gemini-3.8-flash-high`) で、設定の行がモデルを持たなくてもこれで動く。ただし `HarnessPreset::antigravity` の `requires_model = false`:
+  サーバーの既定はバイナリの定数で、ユーザーの設定ではない (MiniMax Code や OpenCode と違って、ユーザーの高いモデルで意図せず動く心配がない)。
+  認証方式によってモデル一覧は異なる **[実測]**:
+  - **Google アカウント (`oauth-personal`) ログイン時** (2026-10-08 実測、`currentModelId` は `gemini-3.8-flash-high`): 次の **11 個**
+    `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `gemini-3.7-flash-high`, `gemini-3.7-flash-medium`, `gemini-3.7-flash-low`, `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`, `gemini-3.6-flash-low`, `gemini-pro-agent`, `gemini-3.1-pro-low`。
+  - **ダミーの API キーで認証時**: **14 個** (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-…`、`gemini-3.6-flash-…`、`gemini-3.5-flash-…` (各 3 段階)、`gemini-3.1-pro-high|low`)。
+  - **差分と注意点**: OAuth ログイン時の一覧は、API キー時と異なり 3.5 系 (各 3 段階) と `gemini-3.1-pro-high` が無く、代わりに `gemini-pro-agent` が含まれる。Gemini 以外のモデルは含まれない。Yhtye の既定モデル `gemini-3.8-flash-low` はどちらの一覧にも含まれるため問題なく動作する。使えないモデルの除外 (`unusable_models`) は無し。
+- **effort は対応しない**: `HarnessPreset::effort_config_id` が `None` (新設。Devin / MiniMax Code は effort の option を持つので `Some`)。**[Yhtye]**
+  - モデル一覧の読み取り (`probe_models`) は、モデルを 1 つずつ選んで effort を調べることをせず、全モデルを `efforts: Some([])` ("effort 無し") にする。
+    モデルが多数あるので、`set_config_option` をモデル数分呼んで、結果が空と確かめることを省く。`get_efforts` (モデル 1 つの effort) もサーバーを起動せずに空を返す。
+  - 設定に新しく保存する行に effort が付いていれば、既存の `check_efforts` が「このモデルには effort が無い」と拒否する (Devin と同じ)。UI とエージェント一覧には effort が出ない。
+  - 手書きの設定などで effort が付いた選択が起動まで来ても、`HarnessPreset::config` は effort を送らない (無い option に `set_config_option` を送って起動を失敗させない)。
+  - 偽エージェントで確認 (`the_listing_has_no_efforts_and_asks_the_server_for_none`、`the_efforts_of_a_model_are_none_without_starting_the_server`、`an_effort_is_not_sent_because_there_is_no_effort_option`)。
+    **[実測]** 実機の一覧でもモデルすべてが `efforts: []` (API キー時の 14 個すべてで確認)。
+
+### 13.4 許可の自動応答: `PermissionPolicy::OnceOnly`
+
+- 選択肢は `allow` (kind `allow_once`)、`deny` (kind `reject_once`)、`allow_always` (kind `allow_always`、セッションのメタデータに永続化される) **[ソース]**。
+  preset は Devin と同じ **`PermissionPolicy::OnceOnly`** にする **[Yhtye]** (`acp/permission.rs`): kind が `allow_once` のものだけを選ぶ。`allow_always` は kind でも
+  `_always` で終わる id でも選ばれない。位置ではなく kind で選ぶ点は他と同じ。
+- 偽エージェントで確認 (`permissions_pick_allow_and_never_allow_always`): `allow_always` / `deny` / `allow` の並びから `allow`、`allow_always` と `deny` だけのときは `Cancelled`。
+- **[未検証]** 実際に許可要求が来る操作 (`default` モードでのファイル編集・シェル) と、`allow` の自動応答が実機で通ること。認証が要るので試していない (§13.8)。
+
+### 13.5 システムプロンプト、`clientInfo`、MCP
+
+- システムプロンプトを受け取る口が見つからないので、`SystemPromptStyle::FirstPrompt` (最初のプロンプトの前にテキストとして付ける。`session/load` で復元したセッションには付けない)。
+  役割プロンプトへの追加の注記 (`system_prompt_note`) は**無し** **[調査][Yhtye]**。偽エージェントで確認 (`the_role_prompt_rides_the_first_prompt_only_and_yhtye_keeps_its_own_name`)。
+- `clientInfo` は既定の `yhtye` で通る。zed / JetBrains / xcode の名前を名乗ると Gemini 以外のモデルも出るが、**他社製品の名前は名乗らない**方針なので `client_info: None` のまま
+  (Gemini のモデルだけが出る) **[Yhtye]**。
+- Yhtye の HTTP の MCP は `session/new` の `mcpServers` に渡す。**[未検証]** 実際につないで `report_step_done` を呼ばせること、ツール名がどう見えるか (`mcp__yhtye__<tool>` のままか、
+  メタツール経由か)。ユーザーのグローバル設定の MCP サーバーとマージされる (同名なら Yhtye の側が優先) **[調査]**。
+
+### 13.6 そのほか
+
+- **`/logout` は Yhtye から送られない**: サーバーは `available_commands_update` で `plan` と `logout` を出し、`/logout` は**ユーザーの認証 (`acp_token.json` など) を消す**。
+  Yhtye がエージェントに送るプロンプトは、必ず `[yhtye:step]` や `[yhtye:user_message]` などの見出しで始まる (`domain/inbox.rs` の `render_batch`、役割プロンプトの前置)。
+  利用者がチャットに `/logout` と打っても `[yhtye:user_message]\n/logout` として届き、行頭は見出しなのでスラッシュコマンドにならないはず (**[未検証]**: サーバーが行頭以外のスラッシュを解釈するかは見ていない)。
+  Yhtye が生のスラッシュコマンドを送るのは Claude Code の使用量取得 (`/usage`) だけ。
+- **`available_commands_update` が `Ready` より前に来る**: `session/new` の直後にサーバーが送るので、`Ready` の前に `Output(AvailableCommands)` が 1 つ届く。
+  Yhtye の処理には問題ない (`session/load` で復元するときの再生の破棄 (`runtime/launch.rs`) とは別)。
+- **料金**: 利用は Google アカウント (または API キー) の利用枠を使う。既定のモデルを Flash の `low` にしているのはそのため。Yhtye は課金を管理しない。
+
+### 13.7 ログインと失敗の見え方
+
+- **`agy_acp_server` に端末でのログインの手順は無い**: `--help` のフラグは `--debug` と `--notices` だけで、ログイン用のサブコマンドやフラグは無い **[実測]**。端末で起動しても stdin の ACP の
+  JSON-RPC を待つだけで、「ターミナルで一度起動してログインする」ことはできない。ソースでも、ログインを始めるのは ACP の `authenticate` と `session/new` の認証の確認だけ。
+  Yhtye は `authenticate` を**呼ばない** (呼ぶと `settings.json` に利用者の認証方式が永続的に書き込まれるため。選ぶのは利用者)。
+  代わりに、`settings.json` の `auth.type` が `oauth-personal` なら **`session/new` が (キャッシュされたトークンが無いとき) ブラウザの Google ログインを始める** **[ソース]**。
+  また Zed や JetBrains のような `authenticate` を呼ぶ ACP クライアントで一度ログインしても、同じ `settings.json` とトークンが残るはず **[ソース]**。
+- **未ログインの失敗** **[実測]**: Yhtye の acp 層で起動すると、`initialize` は通り (約 2.4 秒)、`session/new` が `-32000` で失敗する。メッセージは次のとおり
+  (`HarnessConfig::login_hint`、`ANTIGRAVITY_LOGIN_HINT` が既存の起動エラーのメッセージの後ろに付く):
+
+  ```text
+  agent startup failed at `session/new`: Authentication required: {
+    "message": "No authentication method selected. Either call the `authenticate` method (supports oauth-personal, gemini-api-key, agent-platform), or set `auth.type` in settings.json (<GEMINI_HOME>/antigravity-acp/settings.json) to one of: oauth-personal, gemini-api-key (requires GEMINI_API_KEY env var), …"
+  }
+  Google Antigravity にログインしていません (Yhtye は代わりにログインしません)。`$GEMINI_HOME/antigravity-acp/settings.json` (GEMINI_HOME が無ければ …) に `{"auth": {"type": "oauth-personal"}}` を書いて もう一度始めると、ブラウザで Google のログインが開きます (…)。詳しくは SETUP.md の「Google Antigravity」。
+  ```
+
+  モデル一覧の読み取り (設定 › エージェント) でも同じ文が「could not start the harness: …」として出る。ヒントは `session/new` / `session/load` の認証エラー (`-32000`) にだけ付き、ほかのエラーには付かない
+  (`HarnessConfig::login_hint` が `Some` のハーネスだけ。Antigravity だけが持つ)。偽エージェントで確認 (`an_authentication_error_says_how_to_log_in_and_other_errors_do_not`)。
+- **API キーで使う場合**: `settings.json` の `auth.type` を `gemini-api-key` にして、環境変数 `GEMINI_API_KEY` を Yhtye の起動環境に入れる (設定 › 秘密の環境変数に登録すると**すべてのエージェント**に渡る)。
+  `GEMINI_API_KEY` だけでは認証方式として選ばれない (環境変数だけの選択は廃止されている) **[ソース]**。ダミーのキーでも `session/new` まで通る (少なくともそこまではキーを検証しない) **[実測]**。
+- **時間**: ブラウザでのログインを待つ間、`session/new` は 120 秒 (`startup_timeout`) で `Timeout` になる。初回は長めに見て、タイムアウトしたらもう一度始める **[未検証]**。
+
+### 13.8 実機の結果 (Yhtye の acp 層から、agy_acp_server 1.3.0、2026-10-08、プロンプトなし)
+
+すべて **[実測]**。`HarnessPreset::antigravity("/tmp/agy-acp/agy_acp_server.par")` を `HOME` と `GEMINI_HOME` を `/tmp` の隔離ディレクトリにして使った。実ユーザーの `~/.gemini` は前後で変化なし
+(`~/.gemini/antigravity-acp` は作られていない、`settings.json` のハッシュも同じ)。
+
+| 項目 | 結果 |
+|---|---|
+| 未認証 (設定ファイルなし) | `initialize` は通り、約 2.6 秒で `session/new` が `Authentication required` で失敗。メッセージに §13.7 のヒントが付く。隔離ディレクトリには何も作られない (`settings.json` も) |
+| モデル一覧 (ダミーの API キー、`settings.json` を手で書いた隔離環境) | 約 3.1 秒で 14 個、全部 `efforts: []`、現在のモデルは `gemini-3.8-flash-high`。`settings.json` は変わらない |
+| モデル一覧 (Google アカウント / `oauth-personal` ログイン時) | 11 個 (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`)、現在のモデルは `gemini-3.8-flash-high`。API キー時 (14 個) と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外は無し。Yhtye の既定 `gemini-3.8-flash-low` は含まれる (2026-10-08 実測) |
+| セッションの開始 (同上) | 約 2.7 秒で `Ready`。モードは `default`、モデルは `gemini-3.8-flash-low` (サーバーの既定 `gemini-3.8-flash-high` から置き換わる)。effort 付きの選択 (`high`) でも起動は成功 (effort は送られない)。`gemini-3.1-pro-low` を選ぶとそのモデルになる。`Ready` の前に `available_commands_update` が 1 つ届く |
+| シンボリックリンク | `.par` へのリンク (`agy_acp_server`) は `session/new` が `-32603 "Could not find default localharness binary…"`。`ANTIGRAVITY_HARNESS_PATH` を渡すと通る |
+| 後始末 | 終了後に `agy_acp_server` のプロセスは残らない。隔離ディレクトリには `conversations/<uuid>.db` と `.meta` がセッションごとに残る |
+
+**実測 (T-36、Google アカウントでログイン済み、2026-10-08)**: ログインは、端末で `agy_acp_server.par` に `initialize` と `authenticate` (`methodId: "oauth-personal"`) の JSON-RPC を標準入力から送って済ませた。ブラウザで Google ログインが開き、`settings.json` (`oauth-personal`) と `acp_token.json` が作られた。その後 Yhtye の実装エージェント (`gemini-3.8-flash-low`) に、ドキュメント 2 ファイルを直して commit するタスクを流し、編集・`git commit`・Yhtye の MCP 経由の `report_step_done` まで完了した (システムプロンプトは `FirstPrompt` のままで足りた)。この間に許可要求は来なかった (`default` モードのまま)。タスクの前後で `settings.json` の内容は変わらなかった。
+
+**未検証**: Yhtye の中で始めたときの OAuth のブラウザの流れ (`startup_timeout` との兼ね合い)、実際の許可要求と `allow` の自動応答、MCP のツール名の見え方の詳細、`session/load`、`session/cancel`、`yolo` / `auto_edit` の挙動、
+Windows / macOS のビルド。
+
+### 13.9 自動テストで確認したこと (偽エージェント、`agy_acp_server` 本体ではない)
+
+- `tests/acp_fake_antigravity.rs` (7 本): `session/set_mode` を書かずモデルだけを設定する (モデル無指定の選択は既定のモデルになり、選べばそのモデルになる)、役割プロンプトが最初のプロンプトにだけ付き
+  `clientInfo` が `yhtye` のまま、effort が送られない、許可の自動応答が `allow` を選び `allow_always` を選ばない (選べなければ `Cancelled`)、認証エラーにログインのヒントが付き
+  ほかのエラーには付かない、モデル一覧が `set_config_option` なしで全モデルを `efforts: []` にし保存済みでない effort を拒否する、`get_efforts` がサーバーを起動せず空を返す。
+  偽エージェントは新しい機能を足さずに済んだ (既存の `fail_kind: auth_required`、`permission_options`、`report_writes`、`report_state`、`report_client_info`、モードとモデルの一覧で足りる)。
+- `agents/catalog.rs` の preset の単体テスト (`antigravity_preset_runs_on_its_cheapest_model_and_offers_no_effort`)、`acp/config.rs` (`antigravity_runs_without_arguments_touches_nothing_and_points_to_the_login`)、
+  `agents/detect.rs` の単体テスト (`agy_acp_server_is_found_by_either_name_in_its_own_directories_and_in_the_root_the_environment_names`: 両方の名前、`AGY_ACP_SERVER_HOME` とその `bin`、
+  `~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin`、`PATH` が先、ほかのハーネスは探さない、`a_manual_path_with_an_extension_is_an_executable_file_like_any_other`)、
+  `agents/installed.rs` (登録と既定の順・既定のモデル)、`tests/harness_detection.rs` (Core 経由で `agy_acp_server.par` が見つかり登録される)。
+
+### 13.10 手動検証チェックリスト (Google アカウントで Antigravity を使える人向け)
+
+前提: §13.1 のとおり 2 つのファイルを同じディレクトリに置き、Yhtye の設定 › ハーネスで Google Antigravity が「インストール済み」。ログインは §13.7 のどちらかで済ませる。
+設定 › エージェント で Google Antigravity の行を implementer などに足して、小さなタスクを流す。結果 (成否・観察・バージョン `1.3.0` のほか) を、この節に **[実測]** として書き足す。
+**済** / **未** を各項目の末尾に書いて、進んだ形を残す。**前後で `~/.gemini/antigravity-acp/settings.json` と `acp_token.json` のハッシュを比べる** (項目 7)。
+
+1. **ログイン**: `settings.json` を `{"auth": {"type": "oauth-personal"}}` にして Yhtye で Antigravity のエージェントを始める。ブラウザの Google ログインが開くか、
+   完了すると `session/new` が通るか、120 秒以内に済むか (超えたときの `Timeout` の見え方)。(**未**。端末から `authenticate` を送る方法でのログインは**済**、§13.8)
+2. **実装エージェントとしてタスクを完了できる**: 小さな変更 (1 ファイル) のタスクを流す。`McpHost` 経由で `report_step_done` が呼ばれ、タスクが完了状態まで進むか。
+   ツール名が `mcp__yhtye__report_step_done` のまま見えるか、メタツール経由か (経由なら Devin の `DEVIN_MCP_NOTE` のような注記が要る)。(**済**: T-36 で注記なしに `report_step_done` まで完了)
+3. **許可要求が来る操作で `allow` が自動で選ばれる**: 既定の `default` モードで、ファイルの編集・シェルの実行を含むタスクを流す。`session/request_permission` が来るか、
+   選ばれた選択肢の id が `allow` か、`allow_always` を選ばないこと。選ばれた許可が次のターンに残らないこと。(**未**)
+4. **ログイン後のモデル一覧**: 設定 › エージェント のモデルの選択肢が、ダミーのキーで見た 14 個と同じか。アカウントで違うなら、`gemini-3.8-flash-low` が無いときの起動の失敗の見え方。(**確認済み**: 2026-10-08 実測。Google アカウント (`oauth-personal`) でログインした状態では 11 個 (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`) で、`currentModelId` は `gemini-3.8-flash-high`。API キー時の 14 個と異なり 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外のモデルは含まれず、Yhtye の既定 `gemini-3.8-flash-low` は含まれるため問題なく動作する)
+5. **`session/load` と `session/cancel`**: タスクを 1 つ流して Yhtye を再起動し、セッションが再開できるか (履歴の再生と `Ready`、`loadSession` の扱い)。実行中に中断するとターンが
+   `stopReason: cancelled` で止まるか。(**未**)
+6. **プロンプトのストリーム**: メッセージ・思考・ツール呼び出し・`usage_update` が Yhtye の画面に期待どおり出るか。`Ready` 前の `available_commands_update` が画面に出ないか。(**一部済**: T-36 でターンが流れて完了した。画面の表示の細部は未確認)
+7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.gemini/antigravity-acp/settings.json` と `acp_token.json` のハッシュを比べる (`auth.type` はログインのときに自分で書いた分だけが変わる)。
+   `/logout` が Yhtye 経由で送られないこと (チャットに `/logout` と打ってもログアウトしないこと)。(**未**)
