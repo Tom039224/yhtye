@@ -45,7 +45,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
 | Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
 | MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
-| Google Antigravity (起動だけ実機確認・ログイン後は未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
+| Google Antigravity (起動・モデル一覧を実機確認、プロンプト等は未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
 | Grok Build (基本動作は実機確認済み・一部未検証) | xAI の Grok Build CLI (`grok`)。標準のインストール先は `~/.grok/bin/grok` | `grok agent --no-leader stdio` | `grok login` で先にログインしておく (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
@@ -121,11 +121,11 @@ Yhtye の MCP への接続、実装エージェントとしてタスクを `repo
 - Yhtye が起動したセッション (モデル一覧の取得を含む) も、grok のセッションの記録 (`~/.grok/sessions/`) に残る。
 - MCP のツールは grok の「ツールを探す / 使う」ツール (`search_tool` / `use_tool`) 経由で使われ、名前は `yhtye__report_step_done` の形になる。実装エージェントでは注記なしで見つけて呼べた。
 
-### Google Antigravity (起動と未ログインの失敗だけ実機確認、ログイン後は未検証)
+### Google Antigravity (起動・未ログインの失敗・ログイン後モデル一覧を実機確認、プロンプト等は未検証)
 
-Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) を、Yhtye の acp 層から実機で起動し、モデル一覧 (14 個。ダミーの API キーで隔離した環境で)・モデルの設定・
-未ログインのときの失敗の見え方を確認した**。**Google アカウントでのログインとプロンプトは試していない** (ログインはあなたの `~/.gemini` に書き込まれ、プロンプトは利用枠を使うため)。
-**まだ確かめていない**のは、OAuth のログインの流れ、ログイン後のモデル一覧、プロンプトのストリーム、許可確認への自動応答、Yhtye の MCP 経由のタスクの完了 (`report_step_done`)、再開 (`session/load`)、ターンの中断。
+Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) を、Yhtye の acp 層から実機で起動し、モデル一覧 (ダミーの API キーでの 14 個、および Google アカウントでログインした状態での 11 個)・モデルの設定・
+未ログインのときの失敗の見え方を確認した**。Google アカウント (`oauth-personal`) ログイン時のモデル一覧は 2026-10-08 に実測し、API キー時と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` があるが、Gemini 以外は含まれず Yhtye の既定 `gemini-3.8-flash-low` は含まれることを確認した。
+**まだ確かめていない**のは、OAuth のログインの流れ (ブラウザの対話)、プロンプトのストリーム、許可確認への自動応答、Yhtye の MCP 経由のタスクの完了 (`report_step_done`)、再開 (`session/load`)、ターンの中断。
 実測のまとめと手動検証チェックリストは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §13。
 
 - **利用規約に注意**: Antigravity の利用規約が、Google 自身のクライアント以外 (Yhtye のような第三者の ACP クライアント) からの利用をどう扱うかは、確認していない。使う前にあなた自身で確かめてほしい。
