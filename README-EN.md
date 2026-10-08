@@ -25,9 +25,9 @@ What works:
 - Per-role harness / model / effort settings (orchestrator, implementation, investigation, review), globally
   and per project.
 - Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), Devin (basic operation verified against the
-  real Devin on the free plan), MiniMax Code (basic operation verified against mcode 0.6.2), and Google Antigravity (only
-  startup and the logged-out failure verified against the real server). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par`) are found on
-  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
+  real Devin on the free plan), MiniMax Code (basic operation verified against mcode 0.6.2), Google Antigravity (only
+  startup and the logged-out failure verified against the real server), and Grok Build (basic operation verified against grok 1.0.46). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) are found on
+  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
   path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
 - Secret environment variables (API keys), stored in the OS keyring.
@@ -55,6 +55,10 @@ What is not done, and limitations:
   (streaming, permission requests, MCP, resuming) is unverified. Yhtye does not log in for you and the server has no terminal login:
   see [`SETUP.md`](SETUP.md) (Japanese) for writing `auth.type` into its `settings.json`. Whether Antigravity's terms of use allow third-party
   clients was not checked; check before using it ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §13, Japanese).
+- Grok Build (`grok agent --no-leader stdio`) has been verified against grok 1.0.46 on the grok.com Free plan (`grok-4.7`):
+  startup, the model list, setting the model and effort, and an implementer task completing through `report_step_done`
+  (only two prompts were sent). Answering permission requests, the orchestrator role, the logged-out error and resuming
+  are unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §12, Japanese).
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
@@ -71,9 +75,11 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
   **merges the result into your base branch**. Back up or push before trying it on a repository you care about.
 - Agents run without permission prompts (Claude Code with `bypassPermissions`-equivalent, Codex with
   `agent-full-access`, Devin with `bypass`; MiniMax Code runs on mcode's own default `auto`: writes inside the working
-  directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; a confirmation that does arrive is answered "allow once" automatically;
-  Google Antigravity stays in its `default` mode and a confirmation is answered "allow once" automatically, unverified against the real server). There is no sandbox.
-- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code and Google Antigravity usage is billed to you, or counted against your quota, by
+  directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; Google
+  Antigravity stays in its `default` mode (unverified against the real server); Grok Build has no modes and follows the
+  permission setting of your `~/.grok/config.toml`; a confirmation that does arrive is answered "allow once"
+  automatically). There is no sandbox.
+- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity and Grok Build usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
   keeps only the names. A registered variable is passed to **every** agent.
@@ -95,11 +101,12 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    | Devin (partly verified) | Devin CLI (`devin`), logged in with `devin auth login`; optionally `WINDSURF_API_KEY` | `devin acp` |
    | MiniMax Code (partly verified) | MiniMax Code CLI (`mcode`), logged in with `mcode login` | `mcode acp` |
    | Google Antigravity (startup verified only) | the ACP server zip `agy-acp-server-<version>-linux-x86_64.zip` (`agy_acp_server.par` + `localharness_external`, in one directory), signed in as described in SETUP.md | `agy_acp_server` (no arguments) |
+   | Grok Build (partly verified) | Grok Build CLI (`grok`, installed to `~/.grok/bin`), logged in with `grok login` | `grok agent --no-leader stdio` |
 
    At least one harness is needed. Yhtye registers only the harnesses whose executables it finds: on `PATH`, then in
    `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin` (`mcode` is also looked for in `~/.minimax-code/bin`,
    or `$MCODE_INSTALL_ROOT/bin`; `agy_acp_server.par`, or `agy_acp_server`, in `$AGY_ACP_SERVER_HOME`, `~/.local/share/agy-acp-server`
-   and `~/.gemini/antigravity-acp/bin`). Claude Code is registered when `npx` is found; the
+   and `~/.gemini/antigravity-acp/bin`; `grok` in `~/.grok/bin`, or `$GROK_HOME/bin`). Claude Code is registered when `npx` is found; the
    others are optional. If you installed something elsewhere, or after starting Yhtye, open the settings' "ハーネス" tab
    to see what was found, give an absolute path by hand, and press "再検出" (detect again); no restart is needed.
    If your Codex config gets its OpenRouter key from an environment variable, register that variable under
