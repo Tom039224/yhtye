@@ -202,13 +202,18 @@ async fn efforts_of(
     .await
     .map_err(|_| format!("selecting {model} timed out"))?
     .map_err(|e| format!("could not select {model}: {e}"))?;
-    Ok(efforts_from_options(&options, &preset.effort_config_id))
+    Ok(preset
+        .effort_config_id
+        .as_deref()
+        .map_or_else(Vec::new, |id| efforts_from_options(&options, id)))
 }
 
 /// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
 /// stops it. Harnesses with at most [`EAGER_EFFORT_MODELS`] models also get
 /// every model's efforts read (a model the harness refuses keeps `efforts:
-/// None`). A model the harness lists but cannot run
+/// None`). A harness without an effort option
+/// ([`HarnessPreset::effort_config_id`]) has none read: no model has an effort.
+/// A model the harness lists but cannot run
 /// ([`HarnessPreset::unusable_models`]) is left out. Gives up (stopping the
 /// agent) when `cancel` fires.
 pub async fn probe_models(
@@ -221,7 +226,11 @@ pub async fn probe_models(
     let config_id = preset.model_config_id();
     let (mut models, current) = models_from_options(&handle.info().config_options, config_id);
     models.retain(|m| !preset.unusable_models.contains(&m.value));
-    if models.len() <= EAGER_EFFORT_MODELS {
+    if preset.effort_config_id.is_none() {
+        for m in &mut models {
+            m.efforts = Some(Vec::new());
+        }
+    } else if models.len() <= EAGER_EFFORT_MODELS {
         for m in &mut models {
             if cancel.is_cancelled() {
                 break;
@@ -443,6 +452,9 @@ impl ModelService {
         preset: &HarnessPreset,
         model: &str,
     ) -> Result<Vec<EffortOption>, String> {
+        if preset.effort_config_id.is_none() {
+            return Ok(Vec::new());
+        }
         if self.uses_openrouter(preset).await {
             // OpenRouter's list carries every model's efforts.
             let listed = self.get(preset, false).await?;
