@@ -11,7 +11,7 @@ use agent_client_protocol::schema::v1::{
     NewSessionRequest, SessionConfigOption, SessionId, SessionModeState,
     SetSessionConfigOptionRequest, SetSessionModeRequest,
 };
-use agent_client_protocol::{Agent, ConnectionTo};
+use agent_client_protocol::{Agent, ConnectionTo, ErrorCode};
 
 use super::config::{HarnessConfig, SystemPromptStyle};
 use super::events::{AgentError, AgentInfo, config_value, effort_option};
@@ -63,11 +63,25 @@ async fn step<T>(
     timeout: Duration,
     fut: impl Future<Output = Result<T, agent_client_protocol::Error>>,
 ) -> Result<T, AgentError> {
+    step_with_login_hint(name, timeout, None, fut).await
+}
+
+/// [`step`] for the steps that open the session: `login_hint`
+/// ([`HarnessConfig::login_hint`]) follows an "authentication required" error.
+async fn step_with_login_hint<T>(
+    name: &str,
+    timeout: Duration,
+    login_hint: Option<&str>,
+    fut: impl Future<Output = Result<T, agent_client_protocol::Error>>,
+) -> Result<T, AgentError> {
     match tokio::time::timeout(timeout, fut).await {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(AgentError::Startup {
             step: name.into(),
-            message: e.to_string(),
+            message: match login_hint {
+                Some(hint) if e.code == ErrorCode::AuthRequired => format!("{e}\n{hint}"),
+                _ => e.to_string(),
+            },
         }),
         Err(_) => Err(AgentError::Timeout {
             step: name.into(),
@@ -82,6 +96,7 @@ pub(crate) async fn open_session(
     p: &StartupParams,
 ) -> Result<AgentInfo, AgentError> {
     let timeout = p.harness.startup_timeout;
+    let login_hint = p.harness.login_hint.as_deref();
     let init = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(ClientCapabilities::default())
         .client_info(client_info(&p.harness));
@@ -93,7 +108,13 @@ pub(crate) async fn open_session(
             let req = LoadSessionRequest::new(id.clone(), p.cwd.clone())
                 .mcp_servers(p.mcp.clone())
                 .meta(p.session_meta());
-            let res = step("session/load", timeout, cx.send_request(req).block_task()).await?;
+            let res = step_with_login_hint(
+                "session/load",
+                timeout,
+                login_hint,
+                cx.send_request(req).block_task(),
+            )
+            .await?;
             (id.clone(), res.modes, res.config_options, true)
         }
         resume => {
@@ -103,7 +124,13 @@ pub(crate) async fn open_session(
             let req = NewSessionRequest::new(p.cwd.clone())
                 .mcp_servers(p.mcp.clone())
                 .meta(p.session_meta());
-            let res = step("session/new", timeout, cx.send_request(req).block_task()).await?;
+            let res = step_with_login_hint(
+                "session/new",
+                timeout,
+                login_hint,
+                cx.send_request(req).block_task(),
+            )
+            .await?;
             (res.session_id, res.modes, res.config_options, false)
         }
     };

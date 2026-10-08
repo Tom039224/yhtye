@@ -25,8 +25,8 @@ English: [README-EN.md](README-EN.md)
 - 作業ツリーごとの複数のチャット: BRANCHES のツリー (作業ツリーを今のブランチ名で表示) から新しいチャットを作る (ブランチはアプリから作成でき、専用の作業ツリーで動く)。
   チャットは並行して動かせ、過去のチャットも再開できる (グループは作成時に作業ツリーがチェックアウトしていたブランチへマージされ、マージ前にずれていればオーケストレータが対処する)
 - 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
-- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)、MiniMax Code (基本動作は実機確認済み・一部未検証)。
-  実行ファイル (`npx` / `opencode` / `codex` / `devin` / `mcode`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる (`mcode` は `~/.minimax-code/bin` も探す)。
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)、MiniMax Code (基本動作は実機確認済み・一部未検証)、Google Antigravity (起動と未ログインの失敗だけ実機確認、ログイン後は未検証)。
+  実行ファイル (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `~/.local/share/agy-acp-server` なども探す)。
   設定の「ハーネス」タブで検出状態の確認、パスの手動指定、再検出ができる
 - 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
 - API キーなどの秘密の環境変数の登録 (OS のキーリングに保存)
@@ -45,6 +45,11 @@ English: [README-EN.md](README-EN.md)
   既定の `auto` では、作業ディレクトリ外へのシェルの書き込みや削除でも許可要求は来なかったため、許可要求への「1 回だけ許可」の自動応答は実機では未確認 (`permissionMode` が `default` のときに要求が来る)。
   Yhtye の MCP 経由のタスク完了と再開も未確認
   ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §11)。`permissionMode` はあなたの全体設定に書き込まれてしまうので、Yhtye は変えない
+- Google Antigravity (Google 公式の ACP サーバー `agy_acp_server`、v1.3.0) は、Yhtye の acp 層から起動・未ログインの失敗・(ダミーの API キーで隔離した環境での) モデル一覧 (14 個)とモデルの設定までを実機で確認した。
+  **Google アカウントでのログインとプロンプトは試していない** (認証があなたの `~/.gemini` に書き込まれ、利用枠も使うため)。ログイン後の動作 (ストリーム・許可要求・MCP・再開) は未検証。
+  ログインは Yhtye から行わない (ターミナルのログインコマンドも無い): [`SETUP.md`](SETUP.md) の手順で、利用者が `settings.json` に `auth.type` を書く。
+  Antigravity の利用規約が第三者のクライアントからの利用をどう扱うかは確認していないので、使う前に確かめてほしい
+  ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §13)
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
 
@@ -60,8 +65,9 @@ English: [README-EN.md](README-EN.md)
 - エージェントはあなたのリポジトリのコピー (git worktree) でコードとシェルコマンドを承認なしで実行する。
   Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
 - エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`、Devin は `bypass`)。
-  MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし。作業ディレクトリ外へのシェルの書き込み・削除も実機では確認なしで通った。確認が来たときは自動で 1 回だけ許可) で動かす。サンドボックスは無い。
-- Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
+  MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし。作業ディレクトリ外へのシェルの書き込み・削除も実機では確認なしで通った。確認が来たときは自動で 1 回だけ許可) で動かす。
+  Google Antigravity は既定の `default` モードのまま動かし、許可確認が来たときは自動で 1 回だけ許可する (実機では未確認)。サンドボックスは無い。
+- Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code / Google Antigravity の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
   ただし登録した変数は**すべてのエージェント**に渡る。
