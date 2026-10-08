@@ -81,6 +81,21 @@ describe("harness settings", () => {
     expect(within(codex).getByRole("button", { name: "自動検出に戻す" })).toHaveProperty("disabled", true);
   });
 
+  it("shows Google Antigravity found by the name of its Python archive", async () => {
+    const { dialog } = await openHarnesses((c) => {
+      c.harnesses.found["agy_acp_server.par"] = {
+        path: "/home/u/.local/share/agy-acp-server/agy_acp_server.par",
+        source: "known_dir",
+      };
+    });
+    const agy = row(dialog, "Google Antigravity");
+    expect(within(agy).getByText("インストール済み")).toBeTruthy();
+    expect(requirements(agy)).toEqual([
+      "agy_acp_server.par/home/u/.local/share/agy-acp-server/agy_acp_server.par既知の場所",
+    ]);
+    expect(within(agy).getByRole("textbox", { name: "Google Antigravity の agy_acp_server.par のパス" })).toBeTruthy();
+  });
+
   it("saves a manual path, then goes back to the automatic search", async () => {
     const { user, dialog, core } = await openHarnesses((c) => c.harnesses.executables.add(OPENCODE_BIN));
     const opencode = row(dialog, "OpenCode");

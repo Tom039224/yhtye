@@ -34,6 +34,8 @@ pub const CODEX: &str = "codex";
 pub const DEVIN: &str = "devin";
 /// Id of the MiniMax Code preset (`mcode`).
 pub const MINIMAX_CODE: &str = "minimax-code";
+/// Id of the Google Antigravity preset (`agy_acp_server`).
+pub const ANTIGRAVITY: &str = "antigravity";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,8 +71,10 @@ pub struct HarnessPreset {
     /// model is still verified through its config option; the effort is then
     /// not sent as an option.
     pub model_config_env: Option<String>,
-    /// The config id of the effort option (`effort`; Codex: `reasoning_effort`).
-    pub effort_config_id: String,
+    /// The config id of the effort option (`effort`; Codex: `reasoning_effort`);
+    /// `None`: the harness has no effort option (Google Antigravity, whose
+    /// thinking levels are separate models), so no model has an effort.
+    pub effort_config_id: Option<String>,
     pub model_source: ModelSource,
     /// A choice of this harness must name a model (OpenCode: its own default is
     /// the last model the user used, possibly a paid one).
@@ -104,7 +108,7 @@ impl HarnessPreset {
             probe: Some(HarnessConfig::claude_code_usage_probe()),
             model_env: Some("ANTHROPIC_MODEL".into()),
             model_config_env: None,
-            effort_config_id: EFFORT_CONFIG_ID.into(),
+            effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
@@ -135,7 +139,7 @@ impl HarnessPreset {
             probe: Some(probe),
             model_env: None,
             model_config_env: None,
-            effort_config_id: EFFORT_CONFIG_ID.into(),
+            effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: true,
             unusable_models: Vec::new(),
@@ -163,7 +167,7 @@ impl HarnessPreset {
             }),
             model_env: None,
             model_config_env: Some(CODEX_CONFIG_ENV.into()),
-            effort_config_id: "reasoning_effort".into(),
+            effort_config_id: Some("reasoning_effort".into()),
             model_source: ModelSource::Codex,
             requires_model: true,
             unusable_models: Vec::new(),
@@ -191,7 +195,7 @@ impl HarnessPreset {
             }),
             model_env: None,
             model_config_env: None,
-            effort_config_id: EFFORT_CONFIG_ID.into(),
+            effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
@@ -219,13 +223,40 @@ impl HarnessPreset {
             probe: Some(HarnessConfig { model: None, ..h }),
             model_env: None,
             model_config_env: None,
-            effort_config_id: MINIMAX_CODE_EFFORT_CONFIG_ID.into(),
+            effort_config_id: Some(MINIMAX_CODE_EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: true,
             unusable_models: MINIMAX_CODE_UNUSABLE_MODELS
                 .iter()
                 .map(|m| (*m).to_string())
                 .collect(),
+        }
+    }
+
+    /// Google Antigravity (`agy_acp_server`, `HarnessConfig::antigravity`) at
+    /// `command` for every role (`acp-harnesses.md` §13). Its own default model
+    /// is a constant of the binary, not the user's setting, so a choice need not
+    /// name a model: one without runs on the config's default, the cheapest
+    /// (`gemini-3.8-flash-low`). There is no effort option (the thinking level
+    /// is part of the model id), so no model has an effort and an effort in a
+    /// choice is not sent. The model listing session does no model switching.
+    #[must_use]
+    pub fn antigravity(command: &str) -> Self {
+        let h = HarnessConfig::antigravity(command);
+        Self {
+            id: ANTIGRAVITY.into(),
+            label: "Google Antigravity".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(HarnessConfig { model: None, ..h }),
+            model_env: None,
+            model_config_env: None,
+            effort_config_id: None,
+            model_source: ModelSource::Acp,
+            requires_model: false,
+            unusable_models: Vec::new(),
         }
     }
 
@@ -248,7 +279,7 @@ impl HarnessPreset {
             probe: None,
             model_env: None,
             model_config_env: None,
-            effort_config_id: EFFORT_CONFIG_ID.into(),
+            effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
@@ -314,8 +345,9 @@ impl HarnessPreset {
         // as an option: the adapter shows none for models it has no metadata of).
         h.effort = effort
             .filter(|_| self.model_config_env.is_none())
-            .map(|value| ModelSelect {
-                config_id: self.effort_config_id.clone(),
+            .zip(self.effort_config_id.as_ref())
+            .map(|(value, config_id)| ModelSelect {
+                config_id: config_id.clone(),
                 value: value.to_string(),
             });
         if let Some(model) = model {
@@ -732,7 +764,7 @@ mod tests {
         assert_eq!((p.id.as_str(), p.label.as_str()), ("devin", "Devin"));
         assert!(!p.requires_model);
         assert_eq!(p.model_source, ModelSource::Acp);
-        assert_eq!(p.effort_config_id, "effort");
+        assert_eq!(p.effort_config_id.as_deref(), Some("effort"));
         assert_eq!(
             (p.model_env.as_ref(), p.model_config_env.as_ref()),
             (None, None)
@@ -778,7 +810,7 @@ mod tests {
             "its own default is the user's, maybe paid"
         );
         assert_eq!(p.model_config_id(), "model");
-        assert_eq!(p.effort_config_id, "thinkingEffort");
+        assert_eq!(p.effort_config_id.as_deref(), Some("thinkingEffort"));
         assert_eq!(
             (p.model_env.as_ref(), p.model_config_env.as_ref()),
             (None, None)
@@ -843,6 +875,69 @@ mod tests {
             HarnessPreset::devin("devin").unusable_models.is_empty(),
             "only MiniMax Code names models to leave out"
         );
+    }
+
+    #[test]
+    fn antigravity_preset_runs_on_its_cheapest_model_and_offers_no_effort() {
+        let command = "/home/u/.local/share/agy-acp-server/agy_acp_server.par";
+        let p = HarnessPreset::antigravity(command);
+        assert_eq!(
+            (p.id.as_str(), p.label.as_str()),
+            ("antigravity", "Google Antigravity")
+        );
+        assert!(
+            !p.requires_model,
+            "its default is a constant of the binary, not the user's setting"
+        );
+        assert_eq!(p.model_config_id(), "model");
+        assert_eq!(p.effort_config_id, None, "the thinking level is the model");
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        assert!(p.unusable_models.is_empty());
+        let expected = HarnessConfig::antigravity(command);
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            let h = p.config(role, None, None);
+            assert_eq!(h, expected);
+            assert!(h.args.is_empty() && h.env.is_empty() && h.mode_after_new.is_none());
+            assert_eq!(
+                h.model.as_ref().map(|m| m.value.as_str()),
+                Some("gemini-3.8-flash-low"),
+                "a choice without a model runs on the cheapest"
+            );
+            assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+            assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        }
+
+        // A chosen model replaces the default; an effort is not sent anywhere.
+        let h = p.config(
+            AgentRole::Implementer,
+            Some("gemini-3.1-pro-high"),
+            Some("high"),
+        );
+        assert_eq!(
+            h.model.as_ref().map(|m| m.value.as_str()),
+            Some("gemini-3.1-pro-high")
+        );
+        assert!(h.effort.is_none() && h.env.is_empty(), "no effort option");
+
+        // The listing session switches nothing.
+        let probe = p.probe_config();
+        assert_eq!(probe.command, command);
+        assert!(probe.mode_after_new.is_none() && probe.model.is_none());
+        for other in [
+            HarnessPreset::claude_code("haiku"),
+            HarnessPreset::devin("devin"),
+            HarnessPreset::minimax_code("mcode"),
+        ] {
+            assert!(other.effort_config_id.is_some(), "{} has efforts", other.id);
+        }
     }
 
     #[test]

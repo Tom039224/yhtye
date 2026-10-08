@@ -1,6 +1,7 @@
 //! Shared helpers for ACP integration tests.
 #![allow(dead_code)]
 
+pub mod antigravity;
 pub mod chats;
 pub mod codex;
 pub mod devin;

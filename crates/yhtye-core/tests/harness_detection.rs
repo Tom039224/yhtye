@@ -147,6 +147,7 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let npx = bin.install("npx");
     let devin = bin.install("devin");
     let mcode = bin.install("mcode");
+    let agy = bin.install("agy_acp_server.par");
     bin.install("opencode");
     let core = Core::start(config(&r, &bin)).await.expect("core");
 
@@ -154,11 +155,24 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let ids: Vec<&str> = all.iter().map(|d| d.id.as_str()).collect();
     assert_eq!(
         ids,
-        ["claude-code", "opencode", "codex", "devin", "minimax-code"]
+        [
+            "claude-code",
+            "opencode",
+            "codex",
+            "devin",
+            "minimax-code",
+            "antigravity"
+        ]
     );
     assert_eq!(
         installed(&all),
-        ["claude-code", "opencode", "devin", "minimax-code"]
+        [
+            "claude-code",
+            "opencode",
+            "devin",
+            "minimax-code",
+            "antigravity"
+        ]
     );
 
     let claude = by_id(&all, "claude-code");
@@ -189,9 +203,23 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let minimax = by_id(&all, "minimax-code");
     assert_eq!(minimax.label, "MiniMax Code");
     assert_eq!(minimax.resolved_path.as_deref(), Some(text(&mcode)));
+    let antigravity = by_id(&all, "antigravity");
+    assert_eq!(antigravity.label, "Google Antigravity");
+    assert_eq!(antigravity.resolved_path.as_deref(), Some(text(&agy)));
+    assert_eq!(
+        antigravity.found("agy_acp_server.par"),
+        Some(text(&agy)),
+        "the main name is the one with the extension"
+    );
     assert_eq!(
         offered(&core).await,
-        ["claude-code", "opencode", "devin", "minimax-code"],
+        [
+            "claude-code",
+            "opencode",
+            "devin",
+            "minimax-code",
+            "antigravity"
+        ],
         "a harness that is not installed is not offered"
     );
     assert_eq!(
