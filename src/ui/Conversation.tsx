@@ -5,6 +5,7 @@ import { orchestratorKey, scopeState } from "../store/chats";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
+import { type CompactState, ContextBar } from "./ContextBar";
 import { EmptyState } from "./EmptyState";
 import { Icon, IconButton } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
@@ -58,6 +59,15 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             ? `作業ツリー「${chat.worktree}」が見つからないため送信できません (履歴は読めます)`
             : null;
 
+  const compacting = useAppState((s) => s.busy.compacting);
+  const usage = key ? (view.contextUsage[key] ?? null) : null;
+  const compact = compactState({
+    disabledReason,
+    status: session?.status,
+    turnRunning: session?.turn_running ?? false,
+    compacting: compacting || (key !== null && view.compacting[key] === true),
+  });
+
   const send = async (text: string) => {
     const ok = await store.sendMessage(withMentions(text, mentions));
     if (ok) onClearMentions();
@@ -108,9 +118,27 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         onRemoveMention={onRemoveMention}
         onSend={send}
         onCancel={() => void store.cancelTurn()}
+        footer={chat ? <ContextBar usage={usage} compact={compact} onCompact={() => void store.compactChat()} /> : null}
       />
     </section>
   );
+}
+
+/**
+ * Whether the compact button can be pressed: only for a running, idle
+ * orchestrator (the core refuses otherwise); the reason is its tooltip.
+ */
+export function compactState(o: {
+  disabledReason: string | null;
+  status: string | undefined;
+  turnRunning: boolean;
+  compacting: boolean;
+}): CompactState {
+  if (o.compacting) return { kind: "compacting" };
+  if (o.disabledReason) return { kind: "disabled", reason: o.disabledReason };
+  if (o.status !== "live") return { kind: "disabled", reason: "オーケストレータが起動していないため圧縮できません" };
+  if (o.turnRunning) return { kind: "disabled", reason: "作業中は圧縮できません (ターン終了後に押せます)" };
+  return { kind: "ready" };
 }
 
 /** "Load older history" while the start of the log is not loaded (lazy history). */

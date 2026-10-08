@@ -302,6 +302,25 @@ impl Sessions {
         }
     }
 
+    /// Sends `text` to the idle session `key` right away, bypassing the queue:
+    /// fails with [`AgentError::Busy`] unless it is idle (nothing is queued for
+    /// later), [`AgentError::Closed`] if it is not live.
+    pub(super) fn prompt_now(&mut self, key: &str, text: &str) -> Result<(), AgentError> {
+        if !self.is_live(key) {
+            return Err(AgentError::Closed);
+        }
+        if !self.is_idle(key) {
+            return Err(AgentError::Busy);
+        }
+        let live = self.live.get(key).ok_or(AgentError::Closed)?;
+        live.handle.prompt_text(text)?;
+        self.emit.send(ApiEventBody::Prompted {
+            session: key.to_string(),
+            text: text.to_string(),
+        });
+        Ok(())
+    }
+
     /// Queues `text` for the live session `key` and sends it if it is idle.
     pub(super) fn queue_and_deliver(&mut self, key: &str, text: String) {
         match self.live.get_mut(key) {

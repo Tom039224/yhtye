@@ -1065,6 +1065,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 | `create_branch{project, name, from?}` | ブランチを Yhtye の作業ツリーに作り (§17.4) 最初のチャットを作る。名前不正・`yhtye/` 始まりは `invalid_argument`、既存は `conflict`、`from` が無ければ `not_found` | `chat{chat}` |
 | `send_user_message{project, chat, text}` | (変更) チャットを指定。遅延起動 (§17.3)。`branch_missing` は `invalid_state` | `accepted` |
 | `cancel_orchestrator_turn{project, chat}` | (変更) チャットを指定 | `accepted` |
+| `compact_chat{project, chat}` | (追加) チャットのオーケストレータに素の `/compact` を 1 件、受信箱を通さず `prompt_text` で送る (`render_batch` の見出しが付くとスラッシュコマンドにならないため)。起動済みでアイドルのときだけ。未知のチャットは `not_found`、未起動・起動中・ターン中は `invalid_state`。そのターン中に届いた受信箱はターン終了後に配信し、ターン終了は `OrchestratorTurnEnded` にしない (グループ完了の催促を出さない)。チャットのタイトルにはしない | `accepted` |
 
 - イベント: `domain { chat_created }` / `domain { chat_titled }` (durable)。ブランチ作成は git の状態なのでドメインイベントにせず、
   UI は `chat_created` と `create_branch` の応答で `GetGitOverview` を読み直す。

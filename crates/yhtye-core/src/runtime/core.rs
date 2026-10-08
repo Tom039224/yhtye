@@ -215,6 +215,13 @@ impl Core {
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
+            ApiCommand::CompactChat { project, chat } => {
+                self.orchestration(&project)?
+                    .compact_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
+            }
             ApiCommand::ListChats { project } => {
                 self.known_project(&project).await?;
                 Ok(ApiResponse::Chats {
