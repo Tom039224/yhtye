@@ -32,7 +32,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | Devin | **実装済み・基本動作は実機確認済み (T-5〜T-10、T-21)** — Devin CLI の `devin acp`、§10。`devin` が見つかれば全役割で選べる。devin 3000.11.3・無料プラン (SWE-1.6 Slow) で起動・`bypass`・モデル設定・1 ターン・HTTP MCP の接続、実装エージェントとしての `report_step_done` を確認 (§10.0、§10.9)。未ログイン時、`session/load`、cancel は未確認 (§10.9) |
 | MiniMax Code | **実装済み・基本動作は実機確認済み (T-26)** — MiniMax Code CLI の `mcode acp`、§11。`mcode` が見つかれば全役割で選べる (`PATH` に無くても `~/.minimax-code/bin` を探す)。mcode 0.6.2 で起動・モデル一覧・モデルと effort の設定・1 ターンを確認。`permissionMode` はユーザーの全体設定に書き込まれるので**触らない** (§11.2) |
 | Grok Build | **実装済み・基本動作は実機確認済み (T-29)** — xAI の Grok Build CLI の `grok agent --no-leader stdio`、§12。`grok` が見つかれば全役割で選べる (`PATH` に無くても `~/.grok/bin` を探す)。grok 1.0.46・grok.com の Free プラン (モデルは `grok-4.7` だけ) で起動・モデル一覧・モデルと effort の設定、実装エージェントとしての `report_step_done` (Yhtye の MCP 経由) まで確認。許可要求の自動応答 (実機では要求が来なかった)、`session/load`、cancel は未確認 (§12.8) |
-| Google Antigravity | **実装済み・起動と未認証の失敗は実機確認済み、ログイン後は未検証 (T-34)** — Google の公式 ACP サーバー `agy_acp_server` (v1.3.0)、§13。`agy_acp_server.par` が見つかれば全役割で選べる (`PATH` に無くても `$AGY_ACP_SERVER_HOME`、`~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` を探す)。Yhtye は `authenticate` を呼ばない (ログインは利用者が先に済ませる、§13.7)。effort は無い (思考レベルはモデルの id に含まれる)。プロンプトは 1 回も送っていない (§13.8) |
+| Google Antigravity | **実装済み・起動と未認証の失敗・ログイン後モデル一覧は実機確認済み、プロンプト等は未検証 (T-34, T-36)** — Google の公式 ACP サーバー `agy_acp_server` (v1.3.0)、§13。`agy_acp_server.par` が見つかれば全役割で選べる (`PATH` に無くても `$AGY_ACP_SERVER_HOME`、`~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` を探す)。Yhtye は `authenticate` を呼ばない (ログインは利用者が先に済ませる、§13.7)。effort は無い (思考レベルはモデルの id に含まれる)。プロンプトは 1 回も送っていない (§13.8) |
 | Cursor CLI / Gemini CLI / GitHub Copilot | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -1049,12 +1049,13 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
 6. **`$GROK_HOME/bin`**: `GROK_HOME` を変えてインストールした人の `grok` がそこにあるか (検出が見つけるか)。**未**
 7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.grok/config.toml` のハッシュを比べる (Yhtye は grok の設定に書き込まない)。T-29 の範囲 (§12.6) では**済**。
 
-## 13. Google Antigravity: `agy_acp_server` (T-34、v1.3.0 で**起動と未認証の失敗を実機確認**、ログイン後は未検証)
+## 13. Google Antigravity: `agy_acp_server` (T-34/T-36、v1.3.0 で**起動・未認証の失敗・ログイン後のモデル一覧を実機確認**、プロンプト等は未検証)
 
 > 実装は Devin (§10)・MiniMax Code (§11) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) で、**agy_acp_server 1.3.0** の実機調査
 > (JSON-RPC を直接送る調査と、同梱の Python ソースを読んだこと、2026-10-08) で分かったことに合わせた。
 > その後 Yhtye 自身の acp 層 (`HarnessPreset::antigravity(..).config(..)`、`ModelService`) から、**プロンプトなし**で起動・モデル一覧・未認証の失敗を実機で確かめた (§13.8)。
-> **Google アカウントでのログイン (OAuth) は試していない**: 認証は利用者の `~/.gemini` に永続的に書き込まれ、プロンプトは利用枠を使うため、実機の確認は
+> さらに Google アカウント (`oauth-personal`) でログインした状態でのモデル一覧も実機で確認した (T-36、2026-10-08、§13.3/§13.8)。プロンプト送信やタスク実行は試していない。
+> 認証は利用者の `~/.gemini` に永続的に書き込まれ、プロンプトは利用枠を使うため、ダミーの API キーでの確認は
 > `HOME` と `GEMINI_HOME` を `/tmp` の隔離ディレクトリにして、ダミーの API キーで `session/new` まで通す範囲に限った (実ユーザーの `~/.gemini` には何も作っていない)。
 > 実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
 > ラベル: **[調査]** = 実機を直接調べて分かったこと、**[ソース]** = 同梱の Python ソースを読んで分かったこと (実機では試していない)、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
@@ -1071,7 +1072,7 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
 | 認証の保存 | `authenticate` を呼ぶと `$GEMINI_HOME/antigravity-acp/settings.json` に**ユーザーの認証方式が永続的に書き込まれる**。トークンは `$GEMINI_HOME/antigravity-acp/acp_token.json` (個人) / `acp_business_token.json`。`GEMINI_HOME` が無ければ `~/.gemini` **[調査][ソース]** |
 | モード | `default` / `auto_edit` / `yolo` (`session/new` 直後は `default`) **[調査][実測]** |
 | config options | `model` (category `model`、select) と `mode` (category `mode`、select) の 2 つ。**effort 用の option は無い**。`session/new` の応答に `models` (`availableModels`) も付く **[実測]** |
-| モデル | **14 個**: `gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-…`、`gemini-3.6-flash-…`、`gemini-3.5-flash-…` (各 3 段階)、`gemini-3.1-pro-high|low`。思考レベルはモデルの id に含まれる。既定はバイナリ内の定数 `gemini-3.8-flash-high`。`session/set_model` と `session/set_config_option` (`model`) は動く **[調査][実測]** |
+| モデル | **11 個** (Google アカウント / `oauth-personal` ログイン時、2026-10-08 実測): `gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`。API キー時の 14 個と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外は含まれない。思考レベルはモデルの id に含まれる。既定 (`currentModelId`) はバイナリ内の定数 `gemini-3.8-flash-high`。Yhtye の既定 `gemini-3.8-flash-low` は含まれる。`session/set_model` と `session/set_config_option` (`model`) は動く **[調査][実測]** |
 | 設定ファイル | `session/set_mode`・`mode` と `model` の `set_config_option`・`session/set_model` は `settings.json` を**書き換えない** (API キーの環境で確認) **[実測]** |
 | システムプロンプト | 受け取る口は見つからなかった → 最初のプロンプトの前に付ける (`FirstPrompt`) **[調査]** |
 | `clientInfo` | `yhtye` のままで通る (`client_info: None`)。`clientInfo.name` が zed / JetBrains / xcode のときだけ Gemini 以外のモデルも出る (Yhtye は名前を偽装しない) **[調査][実測]** |
@@ -1115,14 +1116,18 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
   「要求値 = 応答の `currentValue`」を検証する **[Yhtye]**。**既定のモデルは `gemini-3.8-flash-low`** (`ANTIGRAVITY_DEFAULT_MODEL`、クレジット節約のため。サーバー自身の既定は
   `gemini-3.8-flash-high`) で、設定の行がモデルを持たなくてもこれで動く。ただし `HarnessPreset::antigravity` の `requires_model = false`:
   サーバーの既定はバイナリの定数で、ユーザーの設定ではない (MiniMax Code や OpenCode と違って、ユーザーの高いモデルで意図せず動く心配がない)。
-  モデルの一覧は認証方式やアカウントで変わるかもしれない (**[未検証]**: 14 個はダミーの API キーでの一覧)。使えないモデルの除外 (`unusable_models`) は無し。
+  認証方式によってモデル一覧は異なる **[実測]**:
+  - **Google アカウント (`oauth-personal`) ログイン時** (2026-10-08 実測、`currentModelId` は `gemini-3.8-flash-high`): 次の **11 個**
+    `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-low`, `gemini-3.7-flash-high`, `gemini-3.7-flash-medium`, `gemini-3.7-flash-low`, `gemini-3.6-flash-high`, `gemini-3.6-flash-medium`, `gemini-3.6-flash-low`, `gemini-pro-agent`, `gemini-3.1-pro-low`。
+  - **ダミーの API キーで認証時**: **14 個** (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-…`、`gemini-3.6-flash-…`、`gemini-3.5-flash-…` (各 3 段階)、`gemini-3.1-pro-high|low`)。
+  - **差分と注意点**: OAuth ログイン時の一覧は、API キー時と異なり 3.5 系 (各 3 段階) と `gemini-3.1-pro-high` が無く、代わりに `gemini-pro-agent` が含まれる。Gemini 以外のモデルは含まれない。Yhtye の既定モデル `gemini-3.8-flash-low` はどちらの一覧にも含まれるため問題なく動作する。使えないモデルの除外 (`unusable_models`) は無し。
 - **effort は対応しない**: `HarnessPreset::effort_config_id` が `None` (新設。Devin / MiniMax Code は effort の option を持つので `Some`)。**[Yhtye]**
   - モデル一覧の読み取り (`probe_models`) は、モデルを 1 つずつ選んで effort を調べることをせず、全モデルを `efforts: Some([])` ("effort 無し") にする。
-    14 個のモデルがあるので、`set_config_option` を 14 回呼んで、結果が空と確かめることを省く。`get_efforts` (モデル 1 つの effort) もサーバーを起動せずに空を返す。
+    モデルが多数あるので、`set_config_option` をモデル数分呼んで、結果が空と確かめることを省く。`get_efforts` (モデル 1 つの effort) もサーバーを起動せずに空を返す。
   - 設定に新しく保存する行に effort が付いていれば、既存の `check_efforts` が「このモデルには effort が無い」と拒否する (Devin と同じ)。UI とエージェント一覧には effort が出ない。
   - 手書きの設定などで effort が付いた選択が起動まで来ても、`HarnessPreset::config` は effort を送らない (無い option に `set_config_option` を送って起動を失敗させない)。
   - 偽エージェントで確認 (`the_listing_has_no_efforts_and_asks_the_server_for_none`、`the_efforts_of_a_model_are_none_without_starting_the_server`、`an_effort_is_not_sent_because_there_is_no_effort_option`)。
-    **[実測]** 実機の一覧でも 14 個すべてが `efforts: []`。
+    **[実測]** 実機の一覧でもモデルすべてが `efforts: []` (API キー時の 14 個すべてで確認)。
 
 ### 13.4 許可の自動応答: `PermissionPolicy::OnceOnly`
 
@@ -1183,11 +1188,12 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
 |---|---|
 | 未認証 (設定ファイルなし) | `initialize` は通り、約 2.6 秒で `session/new` が `Authentication required` で失敗。メッセージに §13.7 のヒントが付く。隔離ディレクトリには何も作られない (`settings.json` も) |
 | モデル一覧 (ダミーの API キー、`settings.json` を手で書いた隔離環境) | 約 3.1 秒で 14 個、全部 `efforts: []`、現在のモデルは `gemini-3.8-flash-high`。`settings.json` は変わらない |
+| モデル一覧 (Google アカウント / `oauth-personal` ログイン時) | 11 個 (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`)、現在のモデルは `gemini-3.8-flash-high`。API キー時 (14 個) と違い 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外は無し。Yhtye の既定 `gemini-3.8-flash-low` は含まれる (2026-10-08 実測) |
 | セッションの開始 (同上) | 約 2.7 秒で `Ready`。モードは `default`、モデルは `gemini-3.8-flash-low` (サーバーの既定 `gemini-3.8-flash-high` から置き換わる)。effort 付きの選択 (`high`) でも起動は成功 (effort は送られない)。`gemini-3.1-pro-low` を選ぶとそのモデルになる。`Ready` の前に `available_commands_update` が 1 つ届く |
 | シンボリックリンク | `.par` へのリンク (`agy_acp_server`) は `session/new` が `-32603 "Could not find default localharness binary…"`。`ANTIGRAVITY_HARNESS_PATH` を渡すと通る |
 | 後始末 | 終了後に `agy_acp_server` のプロセスは残らない。隔離ディレクトリには `conversations/<uuid>.db` と `.meta` がセッションごとに残る |
 
-**未検証** (ログインとプロンプトを伴うため): OAuth でのログイン (ブラウザの流れ、`startup_timeout` との兼ね合い)、ログイン後のモデル一覧 (アカウントで変わるか)、プロンプトのストリーム (メッセージ・
+**未検証** (プロンプト等を伴うため): OAuth でのログインの流れ (ブラウザの対話、`startup_timeout` との兼ね合い)、プロンプトのストリーム (メッセージ・
 ツール呼び出し・`usage_update` の形)、実際の許可要求と `allow` の自動応答、Yhtye の MCP (`McpHost`) 経由の `report_step_done` とツール名、`session/load`、`session/cancel`、`yolo` / `auto_edit` の挙動、
 Windows / macOS のビルド。
 
@@ -1214,7 +1220,7 @@ Windows / macOS のビルド。
    ツール名が `mcp__yhtye__report_step_done` のまま見えるか、メタツール経由か (経由なら Devin の `DEVIN_MCP_NOTE` のような注記が要る)。(**未**)
 3. **許可要求が来る操作で `allow` が自動で選ばれる**: 既定の `default` モードで、ファイルの編集・シェルの実行を含むタスクを流す。`session/request_permission` が来るか、
    選ばれた選択肢の id が `allow` か、`allow_always` を選ばないこと。選ばれた許可が次のターンに残らないこと。(**未**)
-4. **ログイン後のモデル一覧**: 設定 › エージェント のモデルの選択肢が、ダミーのキーで見た 14 個と同じか。アカウントで違うなら、`gemini-3.8-flash-low` が無いときの起動の失敗の見え方。(**未**)
+4. **ログイン後のモデル一覧**: 設定 › エージェント のモデルの選択肢が、ダミーのキーで見た 14 個と同じか。アカウントで違うなら、`gemini-3.8-flash-low` が無いときの起動の失敗の見え方。(**確認済み**: 2026-10-08 実測。Google アカウント (`oauth-personal`) でログインした状態では 11 個 (`gemini-3.8-flash-high|medium|low`、`gemini-3.7-flash-high|medium|low`、`gemini-3.6-flash-high|medium|low`、`gemini-pro-agent`、`gemini-3.1-pro-low`) で、`currentModelId` は `gemini-3.8-flash-high`。API キー時の 14 個と異なり 3.5 系と `gemini-3.1-pro-high` が無く `gemini-pro-agent` がある。Gemini 以外のモデルは含まれず、Yhtye の既定 `gemini-3.8-flash-low` は含まれるため問題なく動作する)
 5. **`session/load` と `session/cancel`**: タスクを 1 つ流して Yhtye を再起動し、セッションが再開できるか (履歴の再生と `Ready`、`loadSession` の扱い)。実行中に中断するとターンが
    `stopReason: cancelled` で止まるか。(**未**)
 6. **プロンプトのストリーム**: メッセージ・思考・ツール呼び出し・`usage_update` が Yhtye の画面に期待どおり出るか。`Ready` 前の `available_commands_update` が画面に出ないか。(**未**)
