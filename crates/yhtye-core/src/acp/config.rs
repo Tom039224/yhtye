@@ -128,6 +128,20 @@ pub const MINIMAX_CODE_UNUSABLE_MODELS: [&str; 1] = ["m:minimax:MiniMax-M3.1-Fla
 /// only while a model with effort levels is selected, so the effort is set
 /// after the model.
 pub const MINIMAX_CODE_EFFORT_CONFIG_ID: &str = "thinkingEffort";
+/// The arguments of Grok Build's ACP server: `grok agent --no-leader stdio`.
+/// `--no-leader` keeps every agent in a process of its own even when the
+/// user's `~/.grok/config.toml` enables the shared leader (`[cli] use_leader`),
+/// so Yhtye's process group, working directory and environment are the agent's.
+pub const GROK_BUILD_ARGS: [&str; 3] = ["agent", "--no-leader", "stdio"];
+
+/// The id of Grok Build's effort option (category `thought_level`; values
+/// `xhigh` / `high` / `medium` / `low` with grok 1.0.46).
+pub const GROK_BUILD_EFFORT_CONFIG_ID: &str = "reasoning_effort";
+
+/// Inherited variables removed from Grok Build's environment: `grok` logs with
+/// `tracing` and honours `RUST_LOG`, so a value meant for Yhtye would flood the
+/// agent's stderr (`trace`: megabytes per second) or filter its log.
+pub const GROK_BUILD_ENV_REMOVE: [&str; 1] = ["RUST_LOG"];
 
 /// The model Yhtye runs Google Antigravity's sessions on when a choice names
 /// none (the server's own default is a constant of its binary,
@@ -184,7 +198,8 @@ pub enum PermissionPolicy {
     Default,
     /// Only `allow_once`, and never an option that switches the mode / plan or
     /// grants a standing permission (Devin offers `switch_*`, `plan_*` and
-    /// `*_always` options that would change how the session runs).
+    /// `*_always` options that would change how the session runs; Grok Build
+    /// offers `allow_always_*` and `allow_edits_for_session`).
     OnceOnly,
 }
 
@@ -425,6 +440,39 @@ impl HarnessConfig {
         }
     }
 
+    /// Grok Build's ACP server (`grok agent --no-leader stdio`, [`GROK_BUILD_ARGS`])
+    /// at `command`, see `docs/architecture/acp-harnesses.md` §12. `grok`
+    /// advertises no modes, so none is set; it is not started with
+    /// `--always-approve` either: the permission requests that reach Yhtye are
+    /// answered [`PermissionPolicy::OnceOnly`] (its `allow_always*` options
+    /// persist grants). No model or effort is set here
+    /// ([`crate::agents::HarnessPreset::config`] adds the chosen ones as config
+    /// options; `grok`'s own default applies otherwise), the role prompt is
+    /// prepended to the first prompt, and an inherited `RUST_LOG` is removed
+    /// ([`GROK_BUILD_ENV_REMOVE`]).
+    #[must_use]
+    pub fn grok_build(command: &str) -> Self {
+        Self {
+            command: command.into(),
+            args: GROK_BUILD_ARGS.iter().map(|a| (*a).to_string()).collect(),
+            env: BTreeMap::new(),
+            env_remove: GROK_BUILD_ENV_REMOVE
+                .iter()
+                .map(|v| (*v).to_string())
+                .collect(),
+            mode_after_new: None,
+            model: None,
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            client_info: None,
+            permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: None,
+            login_hint: None,
+        }
+    }
+
     /// A bare harness running `command args...` with no mode/model configuration.
     #[must_use]
     pub fn plain(command: impl Into<String>, args: Vec<String>) -> Self {
@@ -578,6 +626,29 @@ mod tests {
         assert_eq!(h.client_info, None, "no other product's name is claimed");
         let hint = h.login_hint.expect("how to log in");
         assert!(hint.contains("antigravity-acp/settings.json") && hint.contains("oauth-personal"));
+    }
+
+    #[test]
+    fn grok_build_runs_its_own_stdio_agent_without_modes_or_always_approve() {
+        let h = HarnessConfig::grok_build("/home/u/.grok/bin/grok");
+        assert_eq!(h.command, "/home/u/.grok/bin/grok");
+        assert_eq!(
+            h.args,
+            ["agent", "--no-leader", "stdio"],
+            "never the shared leader, never --always-approve"
+        );
+        assert_eq!(h.mode_after_new, None, "grok advertises no modes");
+        assert!(h.model.is_none() && h.effort.is_none() && h.session_meta.is_none());
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+        assert_eq!(h.system_prompt_note, None, "its MCP tools keep their names");
+        assert!(h.env.is_empty());
+        assert_eq!(h.env_remove, ["RUST_LOG"]);
+        assert_eq!(h.client_info, None);
+        let back: HarnessConfig =
+            serde_json::from_value(serde_json::to_value(&h).expect("serialize"))
+                .expect("round trip");
+        assert_eq!(back, h);
     }
 
     #[test]
