@@ -213,6 +213,8 @@ impl AgentHandle {
   (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode`
   (`modes` に無ければ `Unsupported`) → `model` 指定があれば `set_config_option`
   (応答の現在値が要求値と違えば起動失敗)。各段に `HarnessConfig::startup_timeout`。
+  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`)・モデル・effort を現在値として返していれば、
+  その `set_mode` / `set_config_option` は送らない** (T-46: 復元後の `set_mode` がタイムアウトして会話を失った事故があった。送っても何も変わらない要求を省く)。
 - **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
   単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
@@ -553,6 +555,7 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
    (`stopped` 以外) を `session_interrupted` として配信し、そのキー → ACP セッション ID を
    セッション管理に渡す (各キーで 1 回だけ使う)。
 2. オーケストレータを起動する。保存済みセッションがあれば `session/load`、失敗したら
+   新しいエージェントプロセスで数秒空けて再試行し (§17.10)、それでも失敗したら
    新しいセッション (`session_failed` に理由)。
 3. ドメインに `Restart { orchestrator: { had_session, restored, turn_was_running } }`:
    `running` / `merging` のタスク → `interrupted`。help の返答待ちだったエージェントは
@@ -1169,3 +1172,23 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - 作業ツリーとブランチには触れない (チャットの削除は会話の記録の削除)。
 - フロントエンド: `store/domain.ts` と `store/chats.ts` に `chat_deleted` の畳み込み (Rust の `remove_chat` と同じ)、`store/project.ts` の `forgetChat` が会話・セッション・ストリーム・未読の印を捨て、表示中のチャットなら次のチャットを選ぶ。
   `AppStore.renameChat` / `deleteChat` はコアの拒否で reject し (行内の編集・確認が表示する)、成功時はイベントを待たずに反映する。
+
+### 17.10 復元の再試行と失われたセッション ID (T-46)
+
+アプリ再起動後の `session/load` 系の起動が失敗すると、以前は即座に `session/new` で新しいセッションを作り、`agent_sessions.acp_session_id` を上書きしていたため、
+一時的な不調 (実際の事故: `session/load` は通ったが直後の `session/set_mode` が 120 秒でタイムアウト) でも旧セッションの会話が完全に失われた。
+
+- **再試行** (`runtime/launch.rs` の `Sessions::restore_failed`): 復元を伴う起動が失敗 (`initialize` / `session/load` / `set_mode` / `set_config_option` の失敗・タイムアウトのどれでも) したら、
+  同じ保存済みセッションを**新しいエージェントプロセス**で最大 `ResumeRetry::retries` (既定 `DEFAULT_RESUME_RETRIES` = 2) 回、毎回 `ResumeRetry::delay`
+  (既定 `DEFAULT_RESUME_RETRY_DELAY` = 3 秒) 空けて試す。方針は `AgentCatalog::with_resume_retry` で変える (テストは短い待ちを使う)。
+  再試行のたびに `session_failed` (`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
+  `Starting` が復元対象 (`resume`)・失敗回数 (`failed_restores`) を持つ。
+- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed`: `could not restore the session <id> (<理由>); starting a new session`)。
+- **旧 ID を失わない**: 復元を諦めて (または `session/load` 非対応で `session/new` になって) 新しいセッションになったとき、`session_started.lost_acp_session_id` に旧 ACP セッション ID を載せる。
+  マイグレーション `0009_lost_acp_session.sql` の `agent_sessions.lost_acp_session_id` に保存され (`SessionRecord.lost_acp_session_id`)、
+  失われなかった次の起動では消さない (`COALESCE`。別のセッションを諦めたときだけ置き換わる。履歴は `session_started` のイベントログに全て残る)。後で `session/load` にこの ID を渡して手で復元できる。
+- **見える化**: フロントの会話 (`store/transcript.ts`) は `lost_acp_session_id` のある `session_started` を、「session started」の代わりにエラー行
+  `could not restore the previous session (<id>); started a new session` として出す。タスクカードの活動ログ (`taskInfo.ts`) もエラー行として拾う。`store/sessions.ts` は `agent_sessions` の導出を移植している。
+- テスト: 偽エージェントに `fault_attempts` + `attempt_file` (先頭 N 個のプロセスだけ `fail_at` / `exit_at` / `hang_at` が効く) を足した。`tests/orchestration_fake_restart.rs`
+  (復元後の `set_mode` がタイムアウトしても再試行で同じ ACP セッションに復元できる / 再試行が全滅したら旧 ID が DB とイベントに残り新しいセッションで続く / `session/load` 非対応でも旧 ID を残す)、
+  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。

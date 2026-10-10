@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -51,6 +52,15 @@ impl AgentPick {
 pub(crate) struct StoredSession {
     pub(crate) acp_session_id: String,
     pub(crate) agent: Option<AgentChoice>,
+}
+
+/// How a start follows earlier failed restores of the stored session.
+#[derive(Debug, Default)]
+struct Attempt {
+    /// Restores of the stored session that failed before this start.
+    failed_restores: u32,
+    /// The stored session given up on: this start is a new session instead.
+    lost: Option<String>,
 }
 
 /// What to send once a session started in the background is up.
@@ -179,9 +189,21 @@ impl Sessions {
         &mut self,
         binding: SessionBinding,
         cwd: PathBuf,
+        first: FirstPrompts,
+        resume: Option<StoredSession>,
+        pick: AgentPick,
+    ) {
+        self.launch_attempt(binding, cwd, first, resume, pick, Attempt::default());
+    }
+
+    fn launch_attempt(
+        &mut self,
+        binding: SessionBinding,
+        cwd: PathBuf,
         mut first: FirstPrompts,
         resume: Option<StoredSession>,
         pick: AgentPick,
+        attempt: Attempt,
     ) {
         let key = binding.session.clone();
         if resume.is_none()
@@ -193,22 +215,29 @@ impl Sessions {
             Ok(t) => t,
             Err(e) => return self.failed(&key, &e),
         };
-        let resuming = resume.is_some();
         let launch = self.next_launch();
         let (harness, options, events, agent) =
-            match self.launch_parts(&binding, &token, resume, &pick, launch) {
+            match self.launch_parts(&binding, &token, resume.clone(), &pick, launch) {
                 Ok(p) => p,
                 Err(e) => {
                     self.revoke(&token);
                     return self.failed(&key, &e);
                 }
             };
+        // A new try at restoring waits a moment first.
+        let pause = if attempt.failed_restores > 0 {
+            self.cfg.agents.resume_retry().delay
+        } else {
+            Duration::ZERO
+        };
         let starting = Starting {
             launch,
             token: token.clone(),
             queued: first.queued,
             fallback: first.fallback,
-            resuming,
+            resume,
+            failed_restores: attempt.failed_restores,
+            lost: attempt.lost,
             cwd: cwd.clone(),
             pick,
             agent,
@@ -216,6 +245,9 @@ impl Sessions {
         self.starting.insert(key, starting);
         let secrets = self.cfg.agents.secrets();
         self.spawning.spawn(async move {
+            if !pause.is_zero() {
+                tokio::time::sleep(pause).await;
+            }
             let result = spawn_agent_with_secrets(&secrets, &harness, &cwd, options, events).await;
             Spawned {
                 launch,
@@ -226,21 +258,63 @@ impl Sessions {
         });
     }
 
-    /// A restore (`session/load`) failed: start a new session for the same step.
-    pub(super) fn retry_fresh(&mut self, binding: SessionBinding, starting: Starting, error: &str) {
-        tracing::warn!(
-            "restoring session {} failed ({error}); starting a new session",
-            binding.session
-        );
-        self.failed_text(
-            &binding.session,
-            format!("could not restore the session ({error}); starting a new session"),
-        );
+    /// A restore (`session/load`) failed. It is tried again with a new agent
+    /// process up to [`crate::agents::ResumeRetry::retries`] times; then the session is started
+    /// anew for the same step, and the id of the session that could not be
+    /// restored is kept (see [`Starting::lost_session`]).
+    pub(super) fn restore_failed(
+        &mut self,
+        binding: SessionBinding,
+        starting: Starting,
+        error: &str,
+    ) {
+        let Some(stored) = starting.resume.clone() else {
+            return self.failed_text(&binding.session, error.to_string());
+        };
+        let retries = self.cfg.agents.resume_retry().retries;
+        let failed = starting.failed_restores + 1;
+        let id = stored.acp_session_id.clone();
         let first = FirstPrompts {
             queued: starting.queued,
             fallback: starting.fallback,
         };
-        self.launch(binding, starting.cwd, first, None, starting.pick);
+        if failed <= retries {
+            tracing::warn!(
+                "restoring session {} ({id}) failed ({error}); trying again ({failed}/{retries})",
+                binding.session
+            );
+            self.failed_text(
+                &binding.session,
+                format!(
+                    "restoring the session {id} failed ({error}); trying again ({failed}/{retries})"
+                ),
+            );
+            let attempt = Attempt {
+                failed_restores: failed,
+                lost: None,
+            };
+            return self.launch_attempt(
+                binding,
+                starting.cwd,
+                first,
+                Some(stored),
+                starting.pick,
+                attempt,
+            );
+        }
+        tracing::warn!(
+            "restoring session {} ({id}) failed ({error}); starting a new session",
+            binding.session
+        );
+        self.failed_text(
+            &binding.session,
+            format!("could not restore the session {id} ({error}); starting a new session"),
+        );
+        let attempt = Attempt {
+            failed_restores: 0,
+            lost: Some(id),
+        };
+        self.launch_attempt(binding, starting.cwd, first, None, starting.pick, attempt);
     }
 }
 
