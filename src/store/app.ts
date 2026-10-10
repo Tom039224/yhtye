@@ -332,13 +332,17 @@ export class AppStore {
     if (project) await this.run({ type: "retry_group_merge", project, group }, "accepted");
   }
 
-  /** Loads the page of history before what is shown (lazy history, newest first). */
+  /**
+   * Loads the page of history before what is shown (lazy history, newest first).
+   * A failure is kept in `olderError` for the history row to show; calling this
+   * again retries.
+   */
   async loadOlderHistory(): Promise<void> {
     const view = this.state.project;
     if (!view || view.phase !== "ready" || view.loadingOlder || view.historyStart <= 1) return;
     const token = this.loadToken;
     const from = Math.max(1, view.historyStart - this.historyPage);
-    this.updateProject((v) => ({ ...v, loadingOlder: true }));
+    this.updateProject((v) => ({ ...v, loadingOlder: true, olderError: null }));
     try {
       const events: ApiEvent[] = [];
       let after = from - 1;
@@ -358,8 +362,7 @@ export class AppStore {
       this.updateProject((v) => ({ ...prependHistory(v, events, from), loadingOlder: false }));
     } catch (e) {
       if (token !== this.loadToken) return;
-      this.updateProject((v) => ({ ...v, loadingOlder: false }));
-      this.pushError(`loading older history failed: ${toCommandError(e).message}`);
+      this.updateProject((v) => ({ ...v, loadingOlder: false, olderError: toCommandError(e).message }));
     }
   }
 

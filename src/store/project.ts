@@ -44,6 +44,8 @@ export interface ProjectView {
   historyStart: number;
   /** An older page of history is being loaded. */
   loadingOlder: boolean;
+  /** Why the last attempt to load an older page failed (cleared when the next one starts). */
+  olderError: string | null;
   state: State | null;
   /** The project's chats (`Snapshot.chats`, then folded from events). */
   chats: ChatInfo[];
@@ -71,6 +73,7 @@ export function newProjectView(info: ProjectInfo): ProjectView {
     cursor: 0,
     historyStart: 1,
     loadingOlder: false,
+    olderError: null,
     state: null,
     chats: [],
     selectedChat: null,

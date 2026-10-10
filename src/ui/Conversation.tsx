@@ -6,8 +6,9 @@ import { orchestratorSession, type ProjectView, selectedChatInfo } from "../stor
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
 import { EmptyState } from "./EmptyState";
-import { Icon, IconButton } from "./Icon";
+import { Icon } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
+import { OlderHistory } from "./OlderHistory";
 import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
@@ -91,7 +92,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             agentLabel="orchestrator"
             queued={queued}
             state={view.state}
-            before={<OlderHistory view={view} />}
+            before={<OlderHistory view={view} scroller={scroller} />}
           />
         ) : (
           <EmptyState icon="message" text="会話はまだありません" />
@@ -115,23 +116,6 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         onCancel={() => void store.cancelTurn()}
       />
     </section>
-  );
-}
-
-/** "Load older history" while the start of the log is not loaded (lazy history). */
-export function OlderHistory({ view }: { view: ProjectView }) {
-  const store = useStore();
-  if (view.historyStart <= 1) return null;
-  const loading = view.loadingOlder;
-  return (
-    <IconButton
-      icon={loading ? "loader" : "chevrons-up"}
-      spin={loading}
-      className="load-older"
-      label={loading ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
-      disabled={loading || view.phase !== "ready"}
-      onClick={() => void store.loadOlderHistory()}
-    />
   );
 }
 
