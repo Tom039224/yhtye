@@ -4,10 +4,11 @@
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import type { GitOverview, Snapshot, State } from "../api/generated";
+import { CommandError } from "../api/transport";
 import { AppStore, type AppStoreOptions, LAST_PROJECT_KEY } from "../store/app";
 import { emptyState } from "../store/domain";
 import { memoryPrefs } from "../store/prefs";
@@ -15,8 +16,10 @@ import { ORCHESTRATOR } from "../test/events";
 import { StoreContext } from "../store/useStore";
 import { ev } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
+import { stubIntersectionObserver } from "../test/intersectionObserver";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 
+const reveal = vi.fn();
 const LOG = durable(FULL_RUN);
 const LAST = LOG[LOG.length - 1].seq;
 
@@ -160,6 +163,43 @@ describe("design layout", () => {
     expect(close.parentElement).toHaveClass("tab-group");
   });
 
+  it("keeps git as the only tab in the git header until a task is opened, then gives the tabs a row of their own", async () => {
+    const { store, user } = setup();
+    await open(store);
+    expect(screen.getByRole("button", { name: "git" }).closest(".bottom-header")).not.toBeNull();
+    expect(document.querySelector(".bottom-tabs")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "add hello.txt" }));
+    const bar = screen.getByRole("button", { name: "git" }).closest(".bottom-tabs");
+    expect(bar).not.toBeNull();
+    expect(bar).toContainElement(screen.getByRole("button", { name: "T-1 の出力" }));
+    // Above the header of the content, not in it: the session pick-list has that row to itself.
+    const output = screen.getByRole("region", { name: "agent output" });
+    const header = output.querySelector(".bottom-header");
+    expect(header).not.toBeNull();
+    expect(output.firstElementChild).toBe(bar);
+    expect(bar?.nextElementSibling).toContainElement(header as HTMLElement);
+    expect(header).toContainElement(screen.getByRole("button", { name: /^T-1\/review-1$/ }));
+    expect(header).not.toContainElement(bar as HTMLElement);
+  });
+
+  it("brings the shown tab into view as it opens and switches", async () => {
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, writable: true, value: reveal });
+    try {
+      const snapshot = snapshotOf({ groups: [{ ...base.groups[0], status: "active" }], tasks: [doneTask, running] }, LAST);
+      const { store, user } = setup({ snapshot });
+      await open(store);
+      const revealedTabs = () =>
+        (reveal.mock.contexts as HTMLElement[]).filter((el) => el.closest(".bottom-tabs")).map((el) => el.textContent);
+      await user.click(screen.getByRole("button", { name: "add hello.txt" }));
+      await user.click(screen.getByRole("button", { name: "second task" }));
+      await user.click(screen.getByRole("button", { name: "T-1 の出力" }));
+      expect(revealedTabs()).toEqual(["T-1", "T-2", "T-1"]);
+    } finally {
+      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      reveal.mockReset();
+    }
+  });
+
   describe("with several tasks", () => {
     async function openTwoTasks() {
       const snapshot = snapshotOf({ groups: [{ ...base.groups[0], status: "active" }], tasks: [doneTask, running] }, LAST);
@@ -210,6 +250,18 @@ describe("design layout", () => {
       expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
     });
 
+    it("shows the group heading in the git header, apart from the tabs, however many are open", async () => {
+      const { user } = await openTwoTasks();
+      await user.click(screen.getByRole("button", { name: "git" }));
+      const heading = within(screen.getByRole("region", { name: "git" })).getByTitle(/ ← /);
+      const header = heading.closest(".bottom-header");
+      expect(header).not.toBeNull();
+      const bar = screen.getByRole("button", { name: "git" }).closest(".bottom-tabs");
+      expect(bar?.nextElementSibling).toBe(header);
+      expect(bar).not.toContainElement(heading);
+      expect(heading).not.toHaveClass("tab", "tab-group");
+    });
+
     it("keeps the shown tab when another one is closed", async () => {
       const { user } = await openTwoTasks();
       await user.click(screen.getByRole("button", { name: "T-1 の出力を閉じる" }));
@@ -219,6 +271,10 @@ describe("design layout", () => {
 });
 
 describe("lazy history", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("loads recent events first and older pages on demand, ending like a full load", async () => {
     const full = setup({ snapshot: FULL_RUN.end });
     await open(full.store);
@@ -239,6 +295,57 @@ describe("lazy history", () => {
     expect(view()?.state).toEqual(FULL_RUN.end.state);
     expect(screen.queryByRole("button", { name: /さらに前の履歴を読み込む/ })).not.toBeInTheDocument();
     expect(view()?.transcripts[ORCHESTRATOR]?.some((i) => i.kind === "group")).toBe(true);
+  });
+
+  it("loads older pages by itself while the top of the transcript is in view, then stops", async () => {
+    const full = setup({ snapshot: FULL_RUN.end });
+    await open(full.store);
+    const expected = full.store.getState().project?.transcripts;
+    full.store.stop();
+    document.body.innerHTML = "";
+
+    // A transcript too short to fill the pane: the row stays in view after every page.
+    stubIntersectionObserver(true);
+    const { store, transport } = setup({ snapshot: FULL_RUN.end, store: { historyWindow: 10, historyPage: 7 } });
+    await open(store);
+    const view = () => store.getState().project;
+    await waitFor(() => expect(view()?.historyStart).toBe(1));
+    expect(view()?.transcripts).toEqual(expected);
+    expect(screen.queryByText("読み込み中…")).not.toBeInTheDocument();
+
+    // One request per page: none twice, none once the log is exhausted.
+    const pages: number[] = [];
+    for (let start = LAST - 9; start > 1; start = Math.max(1, start - 7)) pages.push(Math.max(1, start - 7) - 1);
+    const older = transport.callsOf("list_events").filter((c) => c.after_seq < LAST - 10);
+    expect(older.map((c) => c.after_seq)).toEqual(pages);
+    const calls = transport.callsOf("list_events").length;
+    await act(async () => {});
+    expect(transport.callsOf("list_events")).toHaveLength(calls);
+  });
+
+  it("waits for the reader to reach the top, and shows a failed page with a retry", async () => {
+    const io = stubIntersectionObserver(false);
+    const { store, core, transport, user } = setup({ snapshot: FULL_RUN.end, store: { historyWindow: 10, historyPage: 7 } });
+    await open(store);
+    const view = () => store.getState().project;
+    await act(async () => {});
+    expect(view()?.historyStart).toBe(LAST - 9);
+    expect(screen.getByRole("status")).toHaveTextContent("読み込み中…");
+
+    core.failures.set("list_events", new CommandError("transport", "bridge restarted"));
+    io.visible = true;
+    await act(async () => io.notify());
+    expect(await screen.findByRole("alert")).toHaveTextContent("履歴を読み込めませんでした: bridge restarted");
+    expect(view()?.historyStart).toBe(LAST - 9);
+    // The row is still in view, but a failure is not retried by itself.
+    const calls = transport.callsOf("list_events").length;
+    await act(async () => io.notify());
+    expect(transport.callsOf("list_events")).toHaveLength(calls);
+
+    core.failures.delete("list_events");
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+    await waitFor(() => expect(view()?.historyStart).toBe(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 

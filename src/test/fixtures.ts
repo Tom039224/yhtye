@@ -19,7 +19,7 @@ export const CANCEL_RUN = cancelRun as unknown as Recording;
 /** The orchestrator leaves the settled group open; Yhtye reminds it, then finishes it (Stage 7a). */
 export const UNFINISHED_RUN = unfinishedRun as unknown as Recording;
 
-export const PROJECT: ProjectInfo = { id: "repo", name: "repo", path: "/tmp/repo", open: true };
+export const PROJECT: ProjectInfo = { id: "repo", name: "repo", path: "/tmp/repo", open: true, running: false };
 
 export function durable(r: Recording): ApiEvent[] {
   return r.events.filter((e) => !e.live);

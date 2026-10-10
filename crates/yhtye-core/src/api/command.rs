@@ -263,6 +263,10 @@ pub struct ProjectInfo {
     pub path: String,
     /// Its orchestration is running in this process.
     pub open: bool,
+    /// Work is on in it: a live agent session is in a turn, or a task is
+    /// running or merging (what the sidebar's turning ring shows). Always
+    /// `false` while it is not open.
+    pub running: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].

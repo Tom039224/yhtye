@@ -31,7 +31,7 @@ use crate::domain::{
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 use crate::prompts::workspace_changes_note;
-use crate::store::StoreError;
+use crate::store::{SessionStatus, StoreError};
 
 /// Session key of tool calls made by the user through the API (not an agent).
 pub const USER_SESSION: &str = "user";
@@ -62,6 +62,8 @@ pub(super) enum Cmd {
     /// The user retries the base merge of a `merge_blocked` group.
     RetryGroupMerge(String, oneshot::Sender<Reply>),
     Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
+    /// Whether work is on in the project (see [`Driver::has_running_work`]).
+    Running(oneshot::Sender<Result<bool, StoreError>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -263,6 +265,9 @@ impl Driver {
             Some(Cmd::Snapshot(tx)) => {
                 let _ = tx.send(self.snapshot().await);
             }
+            Some(Cmd::Running(tx)) => {
+                let _ = tx.send(self.has_running_work().await);
+            }
             Some(Cmd::Shutdown(done)) => {
                 self.shutdown().await;
                 let _ = done.send(());
@@ -289,6 +294,18 @@ impl Driver {
             sessions,
             chats,
         })
+    }
+
+    /// Whether a live agent session is in a turn (an orchestrator's or a task's
+    /// agent) or a task is running or merging: the project is "running" in the
+    /// sidebar. Read like [`Driver::snapshot`], so it matches the same `seq`.
+    async fn has_running_work(&mut self) -> Result<bool, StoreError> {
+        self.publisher.flush().await;
+        let sessions = self.publisher.store().sessions(&self.cfg.project).await?;
+        Ok(self.state.has_working_task()
+            || sessions
+                .iter()
+                .any(|s| s.status == SessionStatus::Live && s.turn_running))
     }
 
     /// Runs an orchestrator tool for the user, records it like an agent's tool
