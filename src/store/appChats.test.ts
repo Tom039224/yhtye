@@ -235,6 +235,28 @@ describe("renaming and deleting chats", () => {
     expect(view(s).transcripts[orchestratorKey("C-2")]).toBeUndefined();
   });
 
+  it("forgets a deleted chat's draft, and keeps it when the core refuses", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set("repo", "C-2", "typed");
+    s.drafts.set("repo", "C-1", "other");
+    core.failures.set("delete_chat", new CommandError("invalid_state", "chat C-2 still has group G-2"));
+    await expect(s.deleteChat("C-2")).rejects.toMatchObject({ code: "invalid_state" });
+    expect(s.drafts.get("repo", "C-2")).toBe("typed");
+    core.failures.delete("delete_chat");
+    await s.deleteChat("C-2");
+    expect(s.drafts.get("repo", "C-2")).toBe("");
+    expect(s.drafts.get("repo", "C-1")).toBe("other");
+  });
+
+  it("keeps drafts when the project is opened again", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set("repo", "C-1", "typed");
+    await open(s);
+    expect(s.drafts.get("repo", "C-1")).toBe("typed");
+  });
+
   it("keeps the chat and rejects with the refusal when the core will not delete it", async () => {
     const s = newStore();
     await open(s);
