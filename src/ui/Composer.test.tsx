@@ -89,4 +89,55 @@ describe("Composer", () => {
     expect(onRemove).toHaveBeenCalledWith("T-1");
     expect(document.querySelector(".composer-row")).toContainElement(screen.getByRole("button", { name: "T-1 の引用を外す" }));
   });
+
+  describe("draft", () => {
+    const BOX = { name: "オーケストレータへのメッセージ" };
+
+    function draftSetup(initialText: string, sent = true) {
+      const onSend = vi.fn().mockResolvedValue(sent);
+      const onTextChange = vi.fn();
+      render(
+        <Composer
+          disabled={false}
+          disabledReason={null}
+          sending={false}
+          turnRunning={false}
+          initialText={initialText}
+          onTextChange={onTextChange}
+          mentions={[]}
+          onRemoveMention={() => {}}
+          onSend={onSend}
+          onCancel={() => {}}
+        />,
+      );
+      return { onSend, onTextChange, user: userEvent.setup() };
+    }
+
+    it("starts with the saved draft", () => {
+      draftSetup("half-written");
+      expect(screen.getByRole("textbox", BOX)).toHaveValue("half-written");
+    });
+
+    it("reports every edit so the draft can be saved", async () => {
+      const { onTextChange, user } = draftSetup("");
+      await user.type(screen.getByRole("textbox", BOX), "abc");
+      expect(onTextChange.mock.calls.map((c) => c[0])).toEqual(["a", "ab", "abc"]);
+    });
+
+    it("drops the draft once the send is accepted", async () => {
+      const { onSend, onTextChange, user } = draftSetup("saved text");
+      await user.click(screen.getByRole("button", { name: "送信" }));
+      expect(onSend).toHaveBeenCalledWith("saved text");
+      expect(screen.getByRole("textbox", BOX)).toHaveValue("");
+      expect(onTextChange).toHaveBeenLastCalledWith("");
+    });
+
+    it("keeps the draft when the send is not accepted", async () => {
+      const { onSend, onTextChange, user } = draftSetup("saved text", false);
+      await user.click(screen.getByRole("button", { name: "送信" }));
+      expect(onSend).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("textbox", BOX)).toHaveValue("saved text");
+      expect(onTextChange).not.toHaveBeenCalled();
+    });
+  });
 });

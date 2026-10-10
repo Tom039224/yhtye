@@ -182,7 +182,7 @@ describe("selecting a chat", () => {
     expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
   });
 
-  it("does not carry a draft over to another chat", async () => {
+  it("keeps a draft per chat: another chat starts empty and the draft is back on return", async () => {
     const { store, user, transport } = setup();
     await open(store);
     const box = () => screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
@@ -191,6 +191,27 @@ describe("selecting a chat", () => {
     expect(box()).toHaveValue("");
     await user.type(box(), "{Enter}");
     expect(transport.callsOf("send_user_message")).toHaveLength(0);
+    await user.type(box(), "draft for main");
+    await user.click(chatButton(/Add feature x/));
+    expect(box()).toHaveValue("draft for feat/x");
+    await user.click(chatButton(/Refactor checkout/));
+    expect(box()).toHaveValue("draft for main");
+    expect(transport.callsOf("send_user_message")).toHaveLength(0);
+  });
+
+  it("clears the draft of the chat it was sent to, and only that one", async () => {
+    const { store, user, transport } = setup();
+    await open(store);
+    const box = () => screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
+    await user.type(box(), "other draft");
+    await user.click(chatButton(/Refactor checkout/));
+    await user.type(box(), "ship it{Enter}");
+    await waitFor(() => expect(transport.callsOf("send_user_message")).toHaveLength(1));
+    await waitFor(() => expect(box()).toHaveValue(""));
+    await user.click(chatButton(/Add feature x/));
+    expect(box()).toHaveValue("other draft");
+    await user.click(chatButton(/Refactor checkout/));
+    expect(box()).toHaveValue("");
   });
 
   it("sends to the selected chat and remembers the choice for the project", async () => {
