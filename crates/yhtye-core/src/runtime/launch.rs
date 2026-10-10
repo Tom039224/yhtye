@@ -2,9 +2,11 @@
 //! of a stored ACP session, and the per-session event forwarder.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
@@ -51,6 +53,15 @@ impl AgentPick {
 pub(crate) struct StoredSession {
     pub(crate) acp_session_id: String,
     pub(crate) agent: Option<AgentChoice>,
+}
+
+/// How a start follows earlier failed restores of the stored session.
+#[derive(Debug, Default)]
+struct Attempt {
+    /// Restores of the stored session that failed before this start.
+    failed_restores: u32,
+    /// The stored session given up on: this start is a new session instead.
+    lost: Option<String>,
 }
 
 /// What to send once a session started in the background is up.
@@ -179,9 +190,21 @@ impl Sessions {
         &mut self,
         binding: SessionBinding,
         cwd: PathBuf,
+        first: FirstPrompts,
+        resume: Option<StoredSession>,
+        pick: AgentPick,
+    ) {
+        self.launch_attempt(binding, cwd, first, resume, pick, Attempt::default());
+    }
+
+    fn launch_attempt(
+        &mut self,
+        binding: SessionBinding,
+        cwd: PathBuf,
         mut first: FirstPrompts,
         resume: Option<StoredSession>,
         pick: AgentPick,
+        attempt: Attempt,
     ) {
         let key = binding.session.clone();
         if resume.is_none()
@@ -193,30 +216,44 @@ impl Sessions {
             Ok(t) => t,
             Err(e) => return self.failed(&key, &e),
         };
-        let resuming = resume.is_some();
         let launch = self.next_launch();
         let (harness, options, events, agent) =
-            match self.launch_parts(&binding, &token, resume, &pick, launch) {
+            match self.launch_parts(&binding, &token, resume.clone(), &pick, launch) {
                 Ok(p) => p,
                 Err(e) => {
                     self.revoke(&token);
                     return self.failed(&key, &e);
                 }
             };
+        // A new try at restoring waits a moment first.
+        let pause = if attempt.failed_restores > 0 {
+            self.cfg.agents.resume_retry().delay
+        } else {
+            Duration::ZERO
+        };
         let starting = Starting {
             launch,
             token: token.clone(),
             queued: first.queued,
             fallback: first.fallback,
-            resuming,
+            resume,
+            failed_restores: attempt.failed_restores,
+            lost: attempt.lost,
             cwd: cwd.clone(),
             pick,
             agent,
         };
         self.starting.insert(key, starting);
         let secrets = self.cfg.agents.secrets();
+        let slots = self.start_slots.clone();
         self.spawning.spawn(async move {
-            let result = spawn_agent_with_secrets(&secrets, &harness, &cwd, options, events).await;
+            if !pause.is_zero() {
+                tokio::time::sleep(pause).await;
+            }
+            let start = spawn_agent_with_secrets(&secrets, &harness, &cwd, options, events);
+            let result = with_start_slot(&slots, start)
+                .await
+                .unwrap_or(Err(AgentError::Closed));
             Spawned {
                 launch,
                 token,
@@ -226,27 +263,120 @@ impl Sessions {
         });
     }
 
-    /// A restore (`session/load`) failed: start a new session for the same step.
-    pub(super) fn retry_fresh(&mut self, binding: SessionBinding, starting: Starting, error: &str) {
-        tracing::warn!(
-            "restoring session {} failed ({error}); starting a new session",
-            binding.session
-        );
-        self.failed_text(
-            &binding.session,
-            format!("could not restore the session ({error}); starting a new session"),
-        );
+    /// A restore (`session/load`) failed. It is tried again with a new agent
+    /// process up to [`crate::agents::ResumeRetry::retries`] times; then the session is started
+    /// anew for the same step, and the id of the session that could not be
+    /// restored is kept (see [`Starting::lost_session`]).
+    pub(super) fn restore_failed(
+        &mut self,
+        binding: SessionBinding,
+        starting: Starting,
+        error: &str,
+    ) {
+        let Some(stored) = starting.resume.clone() else {
+            return self.failed_text(&binding.session, error.to_string());
+        };
+        let retries = self.cfg.agents.resume_retry().retries;
+        let failed = starting.failed_restores + 1;
+        let id = stored.acp_session_id.clone();
         let first = FirstPrompts {
             queued: starting.queued,
             fallback: starting.fallback,
         };
-        self.launch(binding, starting.cwd, first, None, starting.pick);
+        if failed <= retries {
+            tracing::warn!(
+                "restoring session {} ({id}) failed ({error}); trying again ({failed}/{retries})",
+                binding.session
+            );
+            self.failed_text(
+                &binding.session,
+                format!(
+                    "restoring the session {id} failed ({error}); trying again ({failed}/{retries})"
+                ),
+            );
+            let attempt = Attempt {
+                failed_restores: failed,
+                lost: None,
+            };
+            return self.launch_attempt(
+                binding,
+                starting.cwd,
+                first,
+                Some(stored),
+                starting.pick,
+                attempt,
+            );
+        }
+        tracing::warn!(
+            "restoring session {} ({id}) failed ({error}); starting a new session",
+            binding.session
+        );
+        self.failed_text(
+            &binding.session,
+            format!("could not restore the session {id} ({error}); starting a new session"),
+        );
+        let attempt = Attempt {
+            failed_restores: 0,
+            lost: Some(id),
+        };
+        self.launch_attempt(binding, starting.cwd, first, None, starting.pick, attempt);
     }
+}
+
+/// Runs `start` once one of the start slots is free and holds the slot until it
+/// is done, so only [`super::sessions::MAX_CONCURRENT_STARTS`] processes start at
+/// a time. `None`: the slots are closed (Yhtye is shutting down), `start` never ran.
+async fn with_start_slot<T>(slots: &Semaphore, start: impl Future<Output = T>) -> Option<T> {
+    let _slot = slots.acquire().await.ok()?;
+    Some(start.await)
 }
 
 pub(super) fn replace_first(queued: &mut VecDeque<String>, text: String) {
     match queued.front_mut() {
         Some(first) => *first = text,
         None => queued.push_back(text),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+    use crate::runtime::sessions::MAX_CONCURRENT_STARTS;
+
+    #[tokio::test]
+    async fn only_a_few_starts_run_at_a_time_and_all_of_them_finish() {
+        let slots = Arc::new(Semaphore::new(MAX_CONCURRENT_STARTS));
+        let (running, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let starts = (0..MAX_CONCURRENT_STARTS * 3).map(|_| {
+            let (slots, running, most) = (slots.clone(), running.clone(), most.clone());
+            tokio::spawn(async move {
+                with_start_slot(&slots, async {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    running.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+            })
+        });
+        for start in starts.collect::<Vec<_>>() {
+            assert!(start.await.expect("joined").is_some());
+        }
+        assert_eq!(most.load(Ordering::SeqCst), MAX_CONCURRENT_STARTS);
+    }
+
+    #[tokio::test]
+    async fn a_start_waiting_for_a_slot_does_not_run_once_the_slots_are_closed() {
+        let slots = Arc::new(Semaphore::new(0));
+        let waiting = {
+            let slots = slots.clone();
+            tokio::spawn(async move { with_start_slot(&slots, async { 1 }).await })
+        };
+        tokio::task::yield_now().await;
+        slots.close();
+        assert_eq!(waiting.await.expect("joined"), None);
     }
 }

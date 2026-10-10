@@ -81,6 +81,11 @@ pub enum ApiEventBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         cwd: Option<String>,
+        /// The ACP session this start meant to restore but could not (it is a
+        /// new session instead); kept so the old one can be restored later.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        lost_acp_session_id: Option<String>,
     },
     SessionFailed {
         session: String,

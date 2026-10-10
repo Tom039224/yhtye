@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig};
-use yhtye_core::agents::AgentCatalog;
+use yhtye_core::agents::{AgentCatalog, ResumeRetry};
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainConfig, DomainEvent, HelpKind, TaskStatus};
 use yhtye_core::git::NoopGit;
@@ -31,6 +31,13 @@ pub async fn send(orch: &Orchestration, text: impl Into<String>) {
     orch.send_user_message(CHAT, text).await.expect("send");
 }
 
+/// A failed restore is tried again as often as in the app, with a pause that
+/// does not slow the test down.
+pub const TEST_RESUME_RETRY: ResumeRetry = ResumeRetry {
+    retries: 2,
+    delay: Duration::from_millis(50),
+};
+
 /// Where tests without git keep the database of a project directory
 /// (`dir/.yhtye/`; `dir` is not a repository). Tests on a git repository use
 /// [`git_config`], which keeps it outside the repository.
@@ -48,7 +55,10 @@ pub fn config(
     OrchestrationConfig {
         project: "P-1".into(),
         project_dir: dir.to_path_buf(),
-        agents: Arc::new(AgentCatalog::fixed(orchestrator, implementer, reviewer)),
+        agents: Arc::new(
+            AgentCatalog::fixed(orchestrator, implementer, reviewer)
+                .with_resume_retry(TEST_RESUME_RETRY),
+        ),
         mcp_bind: "127.0.0.1:0".parse().expect("addr"),
         domain: DomainConfig::default(),
         git: Arc::new(NoopGit::new(dir, Some("main".into()))),
@@ -67,7 +77,10 @@ pub fn git_config(
     OrchestrationConfig {
         project: PROJECT.into(),
         project_dir: repo.repo.clone(),
-        agents: Arc::new(AgentCatalog::fixed(orchestrator, implementer, reviewer)),
+        agents: Arc::new(
+            AgentCatalog::fixed(orchestrator, implementer, reviewer)
+                .with_resume_retry(TEST_RESUME_RETRY),
+        ),
         mcp_bind: "127.0.0.1:0".parse().expect("addr"),
         domain: DomainConfig::default(),
         git: Arc::new(repo.git_cli()),

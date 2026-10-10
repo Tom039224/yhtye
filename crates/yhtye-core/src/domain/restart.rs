@@ -3,7 +3,9 @@
 //! `Restart` marks what was in flight when Yhtye stopped; `ResumeTask` then
 //! continues each `interrupted` task. Tasks waiting for the orchestrator
 //! (`checkpoint` / `handling` / `awaiting_instruction`) stay as they are; the
-//! undelivered inbox is delivered again by the runtime.
+//! undelivered inbox is delivered again by the runtime. The chats' orchestrators
+//! are not started by a restart: each is told what it missed
+//! (`TellOrchestrator`) when it is started later.
 
 use super::command::{AgentRef, Effect, OrchestratorResume};
 use super::event::DomainEvent;
@@ -15,7 +17,7 @@ use super::types::StepKind;
 use crate::prompts::{RESTART_NOTE, resume_prompt};
 
 impl Tx {
-    pub(super) fn restart(&mut self, orchestrators: &[(String, OrchestratorResume)]) {
+    pub(super) fn restart(&mut self) {
         let in_flight: Vec<String> = self
             .state
             .tasks
@@ -28,9 +30,6 @@ impl Tx {
         }
         self.mark_waiting_agents_lost();
         self.block_interrupted_merges();
-        for (chat, resume) in orchestrators {
-            self.tell_orchestrator(chat, *resume);
-        }
     }
 
     /// Agents waiting for a help answer died with Yhtye: resuming the help

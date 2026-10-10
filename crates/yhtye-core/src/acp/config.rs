@@ -24,10 +24,12 @@ pub struct HarnessConfig {
     /// an `OPENCODE_CONFIG_DIR` injected by the terminal Yhtye was started from).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_remove: Vec<String>,
-    /// `session/set_mode` sent right after `session/new` / `session/load`.
+    /// `session/set_mode` sent right after `session/new` / `session/load` (not
+    /// when the agent already reports that mode as current).
     #[serde(default)]
     pub mode_after_new: Option<String>,
-    /// `session/set_config_option` sent after the mode is set.
+    /// `session/set_config_option` sent after the mode is set (not when the agent
+    /// already reports that value as current).
     #[serde(default)]
     pub model: Option<ModelSelect>,
     /// `session/set_config_option` for the effort (thought level), sent right

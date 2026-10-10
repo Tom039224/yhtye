@@ -1,12 +1,13 @@
 //! The chats' orchestrators inside the runtime loop (`core-design.md` §17.3,
-//! §17.8): one session per chat (`orchestrator:<chatId>`), started lazily when
-//! there is something to send, in the chat's worktree (which never moves), and
-//! started again after its process ended.
+//! §17.8): one session per chat (`orchestrator:<chatId>`), started lazily — when
+//! the user opens the chat or when there is something to send it, also after a
+//! restart of Yhtye — in the chat's worktree (which never moves), and started
+//! again after its process ended.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use super::driver::{Driver, Restarted};
+use super::driver::Driver;
 use super::launch::FirstPrompts;
 use super::sessions::{AgentPick, StoredSession};
 use crate::domain::{
@@ -212,19 +213,43 @@ impl Driver {
         chat.map(str::to_string)
     }
 
-    /// Plans the start of every chat to restore; a chat whose worktree cannot be
-    /// found is reported and left alone.
-    pub(super) async fn plan_restore(&mut self, r: &Restarted) -> Vec<(String, StartPlan)> {
-        let mut plans = Vec::new();
-        for chat in &r.chats {
-            let key = orchestrator_session(chat);
-            let record = r.records.iter().find(|s| s.session_key == key);
-            match self.plan_start(chat, record).await {
-                Ok(plan) => plans.push((chat.clone(), plan)),
-                Err(e) => self.start_failed(chat, &e),
-            }
+    /// The user opened `chat`: starts its orchestrator, restoring its stored
+    /// session, if it has anything to resume and is not running (an app restart
+    /// starts none, so this is where a chat comes back). Answers whether the
+    /// orchestrator is starting. A chat that was never used, whose process ended
+    /// on its own, or whose working tree is gone starts when something is sent to
+    /// it, as before.
+    pub(super) async fn open_chat(&mut self, chat: String) -> Result<bool, ToolError> {
+        if self.state.chat(&chat).is_none() {
+            return Err(ToolError::not_found(format!("no chat {chat}")));
         }
-        plans
+        let key = orchestrator_session(&chat);
+        if self.sessions.is_live(&key) {
+            return Ok(false);
+        }
+        if self.sessions.is_starting(&key) {
+            return Ok(true);
+        }
+        if self.chat_worktree(&chat).is_err() {
+            return Ok(false); // read-only: nothing can run there
+        }
+        let record = self.stored_session(&chat).await;
+        if !self.has_work_to_resume(&chat, record.as_ref()) {
+            return Ok(false);
+        }
+        // The user asks (again): a start that failed earlier is tried anew.
+        self.orchestrators.failed.remove(&chat);
+        self.start_from(&chat, record).await;
+        Ok(self.sessions.is_starting(&key))
+    }
+
+    /// Whether the orchestrator of `chat` has something to continue: a stored
+    /// session that was not stopped (it ran when Yhtye stopped), an open group, or
+    /// inbox entries it has not got.
+    fn has_work_to_resume(&self, chat: &str, record: Option<&SessionRecord>) -> bool {
+        record.is_some_and(|r| r.status.is_resumable())
+            || self.state.open_group_of(chat).is_some()
+            || self.state.inbox_of(chat).next().is_some()
     }
 
     async fn plan_start(
@@ -380,6 +405,10 @@ impl Driver {
     /// working tree is the same, and tells it what it missed.
     async fn start_lazily(&mut self, chat: &str) {
         let record = self.stored_session(chat).await;
+        self.start_from(chat, record).await;
+    }
+
+    async fn start_from(&mut self, chat: &str, record: Option<SessionRecord>) {
         let plan = match self.plan_start(chat, record.as_ref()).await {
             Ok(plan) => plan,
             Err(e) => return self.start_failed(chat, &e),

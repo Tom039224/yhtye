@@ -386,7 +386,7 @@ fn a_turn_end_only_reminds_about_the_chats_own_settled_group() {
 }
 
 #[test]
-fn restart_tells_each_listed_chat_what_it_lost_and_only_its_own_state() {
+fn a_started_orchestrator_is_told_what_it_lost_and_only_its_own_state() {
     let mut sim = two_chats();
     sim.group();
     sim.task(json!({}));
@@ -397,10 +397,16 @@ fn restart_tells_each_listed_chat_what_it_lost_and_only_its_own_state() {
         restored: false,
         turn_was_running: false,
     };
-    sim.run(DomainCommand::Restart {
-        orchestrators: vec![("C-2".into(), lost)],
+    sim.run(DomainCommand::Restart).expect("restart");
+    assert!(
+        sim.inbox_kinds_of("C-2").is_empty(),
+        "a restart tells no orchestrator"
+    );
+    sim.run(DomainCommand::TellOrchestrator {
+        chat: "C-2".into(),
+        resume: lost,
     })
-    .expect("restart");
+    .expect("tell");
     assert!(sim.inbox_kinds_of("C-1").is_empty(), "C-1 was not restored");
     assert_eq!(sim.inbox_kinds_of("C-2"), vec![InboxKind::Restarted]);
     let text = sim

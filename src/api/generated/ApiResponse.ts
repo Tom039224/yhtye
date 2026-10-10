@@ -14,4 +14,8 @@ export type ApiResponse = { "type": "pong", host: string, } | { "type": "project
 /**
  * More events follow (the page was full).
  */
-more: boolean, } | { "type": "accepted" } | { "type": "chats", chats: Array<ChatInfo>, } | { "type": "chat", chat: ChatInfo, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, };
+more: boolean, } | { "type": "accepted" } | { "type": "chats", chats: Array<ChatInfo>, } | { "type": "chat", chat: ChatInfo, } | { "type": "chat_opened", 
+/**
+ * The chat's orchestrator is being started (now, or by an earlier call).
+ */
+starting: boolean, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, };

@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Duration;
 
 use serde::Serialize;
 use ts_rs::TS;
@@ -390,6 +391,33 @@ struct Registry {
     builtin: AgentChoice,
 }
 
+/// How many times a restore that failed is tried again, each with a new agent
+/// process, before the session is started anew.
+pub const DEFAULT_RESUME_RETRIES: u32 = 2;
+
+/// Pause before each of those new tries: the agent may need a moment (a
+/// stuck process, a lock on its session store) to be able to restore.
+pub const DEFAULT_RESUME_RETRY_DELAY: Duration = Duration::from_secs(3);
+
+/// What happens when restoring a stored session (`session/load`) fails: tried
+/// again with a new agent process, then replaced by a new session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeRetry {
+    /// New tries after the first one failed.
+    pub retries: u32,
+    /// Pause before each new try.
+    pub delay: Duration,
+}
+
+impl Default for ResumeRetry {
+    fn default() -> Self {
+        Self {
+            retries: DEFAULT_RESUME_RETRIES,
+            delay: DEFAULT_RESUME_RETRY_DELAY,
+        }
+    }
+}
+
 /// Registered harnesses, the built-in default and the stored settings (a copy
 /// kept in sync by [`crate::runtime::Core`]). Shared by every project. The
 /// registered harnesses can change while the app runs ([`AgentCatalog::refresh`]);
@@ -400,6 +428,7 @@ pub struct AgentCatalog {
     layers: RwLock<Layers>,
     /// The secret environment variables every agent process gets (Stage 7e).
     secrets: Arc<Secrets>,
+    resume_retry: ResumeRetry,
 }
 
 impl AgentCatalog {
@@ -410,7 +439,21 @@ impl AgentCatalog {
             registry: RwLock::new(Registry { presets, builtin }),
             layers: RwLock::new(Layers::default()),
             secrets: Arc::new(Secrets::none()),
+            resume_retry: ResumeRetry::default(),
         }
+    }
+
+    /// Uses `retry` when restoring a stored session fails.
+    #[must_use]
+    pub fn with_resume_retry(mut self, retry: ResumeRetry) -> Self {
+        self.resume_retry = retry;
+        self
+    }
+
+    /// What happens when restoring a stored session fails.
+    #[must_use]
+    pub fn resume_retry(&self) -> ResumeRetry {
+        self.resume_retry
     }
 
     /// Uses `secrets` for the environment of every agent this catalog launches.

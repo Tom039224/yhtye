@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
@@ -47,6 +47,13 @@ pub fn agent_ref(binding: &SessionBinding) -> Option<AgentRef> {
     })
 }
 
+/// Most agent processes that are being started at the same time. A start (the
+/// handshake, `session/load`, the mode and config calls) takes seconds and often
+/// much longer for a restored session; many at once made them time out, so the
+/// ones beyond this wait for a start to finish (T-48). Running sessions are not
+/// counted.
+pub(super) const MAX_CONCURRENT_STARTS: usize = 4;
+
 /// An agent event tagged with its session key and launch number.
 pub(super) type AgentMsg = (String, u64, AgentEvent);
 
@@ -67,13 +74,32 @@ pub(super) struct Starting {
     pub(super) queued: VecDeque<String>,
     /// Replaces the first queued prompt if the stored session is not restored.
     pub(super) fallback: Option<String>,
-    /// Started with `session/load` of a stored ACP session.
-    pub(super) resuming: bool,
+    /// The stored ACP session this start restores with `session/load`.
+    pub(super) resume: Option<StoredSession>,
+    /// Restores of `resume` that failed before this one (tried with a new process).
+    pub(super) failed_restores: u32,
+    /// The stored ACP session that could not be restored and that this start
+    /// replaces with a new session.
+    pub(super) lost: Option<String>,
     pub(super) cwd: PathBuf,
     /// What the session was started with (a failed restore starts it again).
     pub(super) pick: AgentPick,
     /// The harness × model it runs.
     pub(super) agent: Picked,
+}
+
+impl Starting {
+    /// The stored ACP session this start gave up on: the one that failed to be
+    /// restored, or the one the agent could not load at all (`restored` false
+    /// although a session was to be restored).
+    pub(super) fn lost_session(&self, restored: bool) -> Option<String> {
+        self.lost.clone().or_else(|| {
+            self.resume
+                .as_ref()
+                .filter(|_| !restored)
+                .map(|r| r.acp_session_id.clone())
+        })
+    }
 }
 
 /// Result of a background `spawn_agent`.
@@ -96,6 +122,9 @@ pub(super) struct Sessions {
     /// Stored sessions to restore (`session/load`), by session key.
     pub(super) resume: HashMap<String, StoredSession>,
     pub(super) spawning: JoinSet<Spawned>,
+    /// One permit per start that may run now ([`MAX_CONCURRENT_STARTS`]); closed
+    /// on shutdown, which fails the starts still waiting.
+    pub(super) start_slots: Arc<Semaphore>,
     /// Shutdowns in progress; each yields its session key and launch number.
     pub(super) stopping: JoinSet<(String, u64)>,
 }
@@ -118,6 +147,7 @@ impl Sessions {
             starting: HashMap::new(),
             resume,
             spawning: JoinSet::new(),
+            start_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_STARTS)),
             stopping: JoinSet::new(),
         }
     }
@@ -243,6 +273,7 @@ impl Sessions {
             agent: Some(starting.agent.agent.clone()),
             replaced: starting.agent.replaced.clone(),
             cwd: Some(starting.cwd.display().to_string()),
+            lost_acp_session_id: starting.lost_session(handle.info().resumed),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {
@@ -268,8 +299,8 @@ impl Sessions {
     ) -> Option<(SessionBinding, String)> {
         self.revoke(token);
         match starting {
-            Some(st) if st.resuming => {
-                self.retry_fresh(binding, st, &e.to_string());
+            Some(st) if st.resume.is_some() => {
+                self.restore_failed(binding, st, &e.to_string());
                 None
             }
             other => {
@@ -400,9 +431,19 @@ impl Sessions {
         let mut suspended: HashSet<String> = self.starting.keys().cloned().collect();
         suspended.extend(self.live.keys().cloned());
         self.starting.clear();
+        self.start_slots.close();
         while let Some(res) = self.spawning.join_next().await {
-            if let Ok(spawned) = res {
-                self.on_spawned(spawned);
+            match res {
+                // A start that was still waiting for a slot never began.
+                Ok(Spawned {
+                    token,
+                    result: Err(AgentError::Closed),
+                    ..
+                }) => self.revoke(&token),
+                Ok(spawned) => {
+                    self.on_spawned(spawned);
+                }
+                Err(_) => {}
             }
         }
         let keys: Vec<String> = self.live.keys().cloned().collect();

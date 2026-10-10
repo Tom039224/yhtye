@@ -1,5 +1,6 @@
 //! Startup sequence of one agent session:
-//! `initialize` → `session/load` or `session/new` → `set_mode` → `set_config_option`.
+//! `initialize` → `session/load` or `session/new` → `set_mode` → `set_config_option`
+//! (a mode or option the agent already reports as current is not set again).
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -116,10 +117,17 @@ pub(crate) async fn open_session(
         capabilities: caps,
         agent: init.agent_info,
     };
-    if let Some(mode) = &p.harness.mode_after_new {
+    // What the agent already reports as current is not set again: it saves a
+    // request that can hang (a `set_mode` timeout cost a restored session) and
+    // it changes nothing.
+    if let Some(mode) = &p.harness.mode_after_new
+        && !in_mode(&info, mode)
+    {
         set_mode(cx, &mut info, mode, timeout).await?;
     }
-    if let Some(model) = &p.harness.model {
+    if let Some(model) = &p.harness.model
+        && !has_option_value(&info.config_options, &model.config_id, &model.value)
+    {
         info.config_options = set_config_option(
             cx,
             &info.acp_session_id,
@@ -134,10 +142,26 @@ pub(crate) async fn open_session(
     // (`core-design.md` §15.1).
     if let Some(effort) = &p.harness.effort {
         let config_id = effort_config_id(&info.config_options, &effort.config_id);
-        info.config_options =
-            set_config_option(cx, &info.acp_session_id, &config_id, &effort.value, timeout).await?;
+        if !has_option_value(&info.config_options, &config_id, &effort.value) {
+            info.config_options =
+                set_config_option(cx, &info.acp_session_id, &config_id, &effort.value, timeout)
+                    .await?;
+        }
     }
     Ok(info)
+}
+
+/// Whether the agent's `modes` state (of `session/new` / `session/load`) says
+/// `mode` is the current one.
+fn in_mode(info: &AgentInfo, mode: &str) -> bool {
+    info.modes
+        .as_ref()
+        .is_some_and(|m| &*m.current_mode_id.0 == mode)
+}
+
+/// Whether the select option `config_id` currently has `value`.
+fn has_option_value(options: &[SessionConfigOption], config_id: &str, value: &str) -> bool {
+    config_value(options, config_id) == Some(value)
 }
 
 /// Who Yhtye says it is in `initialize`: the harness' override, else `yhtye`.

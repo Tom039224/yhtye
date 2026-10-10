@@ -1,7 +1,8 @@
 //! Chats with fake agents (`core-design.md` §17, §17.8): lazy start in the
 //! chat's worktree (resolved from a branch when the chat is made), several
 //! orchestrators at once, the open-group limit per worktree, an orchestrator
-//! whose process ended, resuming past chats, and which chats a restart restores.
+//! whose process ended, resuming past chats, and how chats come back after a
+//! restart (when they are opened or notified, never with the project).
 
 mod common;
 
@@ -21,6 +22,7 @@ use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, GroupStatus, orchestrator_session};
 use yhtye_core::git::worktree_root;
 use yhtye_core::runtime::Orchestration;
+use yhtye_core::store::SessionStatus;
 
 #[tokio::test]
 async fn an_orchestrator_starts_lazily_in_its_chats_worktree() {
@@ -302,7 +304,7 @@ async fn session_of(
 }
 
 #[tokio::test]
-async fn a_past_chat_is_resumed_by_sending_and_only_live_chats_come_back_at_startup() {
+async fn a_restart_starts_no_chat_and_each_comes_back_when_opened_or_sent_to() {
     let dir = tempfile::tempdir().expect("tempdir");
     let first = session_of(dir.path(), mortal_orchestrator(), async |orch, rx, events| {
         let past = new_chat(orch, "main").await; // C-1: ends its process
@@ -318,25 +320,47 @@ async fn a_past_chat_is_resumed_by_sending_and_only_live_chats_come_back_at_star
     })
     .await;
     let past_id = started(&first, "orchestrator:C-1")[0].0.clone();
+    let live_id = started(&first, "orchestrator:C-2")[0].0.clone();
 
-    // A restart brings back C-2 (it was live) and nothing else.
+    // (a) A restart starts no chat's agent, not even the one that was live.
     let second = session_of(
         dir.path(),
         mortal_orchestrator(),
         async |orch, rx, events| {
+            settle(rx, events).await;
+            assert_eq!(
+                started_sessions(events),
+                Vec::<&str>::new(),
+                "nothing starts with the project"
+            );
+            let sessions = orch.snapshot().await.expect("snapshot").sessions;
+            let status = |key: &str| {
+                sessions
+                    .iter()
+                    .find(|s| s.session_key == key)
+                    .map(|s| s.status)
+            };
+            assert_eq!(status("orchestrator:C-2"), Some(SessionStatus::Interrupted));
+
+            // (b) Opening the live chat restores its session; a chat that was
+            // never used or whose process ended has nothing to restore.
+            assert!(orch.open_chat("C-2").await.expect("open"), "starting");
             wait(rx, events, |e| {
                 !started_of(e, "orchestrator:C-2").is_empty()
             })
             .await;
+            assert!(!orch.open_chat("C-2").await.expect("open"), "it runs now");
+            assert!(!orch.open_chat("C-3").await.expect("open"), "never used");
+            assert!(
+                !orch.open_chat("C-1").await.expect("open"),
+                "it ended on its own"
+            );
+            assert!(orch.open_chat("C-9").await.is_err(), "no such chat");
             settle(rx, events).await;
             assert_eq!(
                 started_sessions(events),
                 ["orchestrator:C-2"],
-                "only the live chat"
-            );
-            assert!(
-                started(events, "orchestrator:C-2")[0].1,
-                "restored with session/load"
+                "only the opened chat"
             );
 
             // The past chat resumes when something is sent to it.
@@ -345,6 +369,13 @@ async fn a_past_chat_is_resumed_by_sending_and_only_live_chats_come_back_at_star
         },
     )
     .await;
+    let restored = started(&second, "orchestrator:C-2");
+    assert_eq!(restored.len(), 1);
+    assert_eq!(
+        (restored[0].0.as_str(), restored[0].1),
+        (live_id.as_str(), true),
+        "restored with session/load"
+    );
     let resumed = started(&second, "orchestrator:C-1");
     assert_eq!(resumed.len(), 1);
     assert_eq!(
@@ -397,8 +428,11 @@ async fn a_chat_whose_stored_session_cannot_be_loaded_gets_a_new_one_and_a_summa
     );
 }
 
+/// A chat with an open group (its orchestrator's process ended) and an idle
+/// one: after a restart the group's task resumes, and the chat's orchestrator
+/// starts only when the group settles.
 #[tokio::test]
-async fn a_restart_also_brings_back_a_chat_with_an_open_group_whose_orchestrator_had_stopped() {
+async fn a_chat_with_an_open_group_starts_when_its_group_settles_after_a_restart() {
     let dir = tempfile::tempdir().expect("tempdir");
     let orch_script = json!({"turns": [
         {"match": "work", "actions": [
@@ -408,11 +442,24 @@ async fn a_restart_also_brings_back_a_chat_with_an_open_group_whose_orchestrator
                 "steps": [{"kind": "implement"}], "instruction": "hold"}}},
             {"crash": 3}
         ]},
+        {"match": "[yhtye:group_settled]", "actions": [
+            {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "done"}}}
+        ]},
         {"match": "hello", "actions": [{"message": "hi"}]}
     ]});
-    let impl_script = json!({"turns": [{"actions": ["wait_cancel"]}]});
+    // The first run's implementer holds its turn; the restarted one reports at once.
+    let hold = json!({"turns": [{"actions": ["wait_cancel"]}]});
+    let finish = json!({"turns": [
+        {"match": "[yhtye:resume]", "actions": [
+            {"mcp_call": {"tool": "report_step_done", "args": {"result": "done"}}}]},
+        {"match": "[yhtye:step]", "actions": [
+            {"mcp_call": {"tool": "report_step_done", "args": {"result": "done"}}}]}
+    ]});
     let run = |dir: PathBuf, first: bool| {
-        let (o, i) = (orch_script.clone(), impl_script.clone());
+        let (o, i) = (
+            orch_script.clone(),
+            if first { hold.clone() } else { finish.clone() },
+        );
         async move {
             let cfg = config(&dir, fake_harness(o), fake_harness(i), fake_harness(none()));
             let (orch, mut rx, mut events) = start(cfg).await;
@@ -425,8 +472,12 @@ async fn a_restart_also_brings_back_a_chat_with_an_open_group_whose_orchestrator
                 })
                 .await;
             } else {
+                // The task resumes and settles; that notice starts the chat's
+                // orchestrator (and not the idle chat's), which finishes the group.
                 wait(&mut rx, &mut events, |e| {
-                    !started_of(e, "orchestrator:C-1").is_empty()
+                    is_domain(e, |d| {
+                        matches!(d, DomainEvent::GroupMergeFinished { ok: true, .. })
+                    })
                 })
                 .await;
                 settle(&mut rx, &mut events).await;
@@ -445,6 +496,12 @@ async fn a_restart_also_brings_back_a_chat_with_an_open_group_whose_orchestrator
     assert!(
         !sessions.contains(&"orchestrator:C-2"),
         "the idle chat stays down: {sessions:?}"
+    );
+    // The start came with the notice, not before it.
+    let prompts = prompts_to(&events, "orchestrator:C-1");
+    assert!(
+        prompts[0].contains("[yhtye:group_settled]"),
+        "the settled group is what started it: {prompts:?}"
     );
 }
 
