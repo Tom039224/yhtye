@@ -166,3 +166,49 @@ describe("AppStore sync", () => {
     expect(view().sessions.find((s) => s.session_key === ORCHESTRATOR)?.turn_running).toBe(true);
   });
 });
+
+describe("AppStore lazy history", () => {
+  async function openWindowed() {
+    store.stop();
+    store = new AppStore(transport, { historyWindow: 10, historyPage: 7 });
+    store.start();
+    core.log = LOG;
+    core.snapshot = FULL_RUN.end;
+    await openAndSettle();
+    expect(view().historyStart).toBe(LAST - 9);
+  }
+
+  const olderCalls = () => transport.callsOf("list_events").filter((c) => c.after_seq < LAST - 10);
+
+  it("reads one page for overlapping requests", async () => {
+    await openWindowed();
+    await Promise.all([store.loadOlderHistory(), store.loadOlderHistory(), store.loadOlderHistory()]);
+    expect(view().historyStart).toBe(LAST - 16);
+    expect(olderCalls()).toHaveLength(1);
+    expect(view().loadingOlder).toBe(false);
+  });
+
+  it("does nothing once the whole log is loaded", async () => {
+    await openWindowed();
+    while (view().historyStart > 1) await store.loadOlderHistory();
+    const calls = transport.callsOf("list_events").length;
+    await store.loadOlderHistory();
+    expect(transport.callsOf("list_events")).toHaveLength(calls);
+  });
+
+  it("keeps a failure for the history row, and a retry clears it", async () => {
+    await openWindowed();
+    core.failures.set("list_events", new CommandError("transport", "bridge restarted"));
+    await store.loadOlderHistory();
+    expect(view().olderError).toBe("bridge restarted");
+    expect(view().loadingOlder).toBe(false);
+    expect(view().historyStart).toBe(LAST - 9);
+
+    core.failures.delete("list_events");
+    const retry = store.loadOlderHistory();
+    expect(view().olderError).toBeNull();
+    await retry;
+    expect(view().olderError).toBeNull();
+    expect(view().historyStart).toBe(LAST - 16);
+  });
+});
