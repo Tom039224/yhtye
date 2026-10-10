@@ -564,10 +564,14 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tab:hover { background: var(--surface-hover); color: var(--text-tertiary); }
 .tab.active { background: var(--surface-chip); color: var(--text-primary); }
-/* The git tab and the task tabs; many of them scroll sideways rather than push the header's other items out. */
-.bottom-tabs { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.bottom-tabs::-webkit-scrollbar { display: none; }
-.bottom-tabs > * { flex: none; }
+/* A row of items that scrolls sideways (no scrollbar) rather than squeezing or pushing out its neighbours (ScrollStrip). */
+.scroll-strip { position: relative; display: flex; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.scroll-strip::-webkit-scrollbar { display: none; }
+.scroll-strip > * { flex: none; }
+/* The git tab and the task tabs: a row of their own above the panel's header, so that many tabs
+   neither cut off the heading and the pick-list there nor get cut off by them. */
+.bottom-tabs { flex: none; height: 30px; gap: 6px; padding: 0 14px; scroll-padding-inline: 14px; border-bottom: 1px solid var(--border-subtle); }
+.session-tabs { gap: 10px; padding: 3px 2px; } /* room for the focus ring, which the strip would clip */
 /* A task tab: the name and its close button share one frame, so the frame carries the hover / active look. */
 .tab-group { display: inline-flex; align-items: center; height: 22px; border-radius: 6px; transition: background-color 0.12s; }
 .tab-group:hover { background: var(--surface-hover); }

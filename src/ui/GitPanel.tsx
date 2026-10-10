@@ -77,8 +77,11 @@ const NODE_STROKE: Record<string, string> = {
   done: "var(--git-node-done)",
 };
 
-/** The git panel (§3.6): the repository's recent commits of all local branches. */
-export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode }) {
+/**
+ * The git panel (§3.6): the repository's recent commits of all local branches.
+ * `lead` is what stands before the heading in the header (the git tab, while it is the only tab).
+ */
+export function GitPanel({ view, lead }: { view: ProjectView; lead: ReactNode }) {
   const store = useStore();
   const git = useAppState((s) => (s.git?.project === view.info.id ? s.git : null));
   const overview = git?.overview ?? null;
@@ -94,7 +97,7 @@ export function GitPanel({ view, tabs }: { view: ProjectView; tabs: ReactNode })
   return (
     <>
       <header className="bottom-header">
-        {tabs}
+        {lead}
         <RangeMeta group={group} branch={chatBranch ?? overview?.head ?? null} />
         <span className="spacer" />
         {git?.error ? (

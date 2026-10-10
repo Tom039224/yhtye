@@ -1,9 +1,10 @@
-import { type ReactNode, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import type { ProjectView } from "../store/project";
 import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { OlderHistory } from "./OlderHistory";
+import { ScrollStrip } from "./ScrollStrip";
 import { STEP_LABEL, stepIcon } from "./statusIcons";
 import { taskSessions } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
@@ -11,8 +12,8 @@ import { useAutoScroll } from "./useAutoScroll";
 
 export { taskSessions };
 
-/** The selected task's agent sessions (implementer, reviewers) and step results. */
-export function AgentOutput({ view, task, tabs }: { view: ProjectView; task: string; tabs: ReactNode }) {
+/** The task's agent sessions (implementer, reviewers) and step results. */
+export function AgentOutput({ view, task }: { view: ProjectView; task: string }) {
   const [chosen, setChosen] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const sessions = taskSessions(view, task);
@@ -25,28 +26,30 @@ export function AgentOutput({ view, task, tabs }: { view: ProjectView; task: str
 
   return (
     <div className="agent-output" style={{ display: "contents" }}>
-      <header className="bottom-header">
-        {tabs}
-        <span className="spacer" />
-        {sessions.map((key) => {
-          const record = view.sessions.find((s) => s.session_key === key);
-          const state = record ? (record.turn_running ? "working" : record.status) : null;
-          return (
-            <button
-              type="button"
-              key={key}
-              className={`session-tab ${key === session ? "active" : ""}`}
-              aria-label={key}
-              aria-pressed={key === session}
-              title={state ? `${key} · ${state}` : key}
-              onClick={() => setChosen(key)}
-            >
-              <span className={`status-dot ${dotClass(state)}`} aria-hidden="true" />
-              {key.split("/")[1] ?? key}
-            </button>
-          );
-        })}
-      </header>
+      {sessions.length > 0 ? (
+        <header className="bottom-header">
+          <ScrollStrip className="session-tabs" active={session}>
+            {sessions.map((key) => {
+              const record = view.sessions.find((s) => s.session_key === key);
+              const state = record ? (record.turn_running ? "working" : record.status) : null;
+              return (
+                <button
+                  type="button"
+                  key={key}
+                  className={`session-tab ${key === session ? "active" : ""}`}
+                  aria-label={key}
+                  aria-pressed={key === session}
+                  title={state ? `${key} · ${state}` : key}
+                  onClick={() => setChosen(key)}
+                >
+                  <span className={`status-dot ${dotClass(state)}`} aria-hidden="true" />
+                  {key.split("/")[1] ?? key}
+                </button>
+              );
+            })}
+          </ScrollStrip>
+        </header>
+      ) : null}
       <div className="scroll" ref={scroller}>
         {results.length > 0 ? (
           <div className="transcript" aria-label="step results">

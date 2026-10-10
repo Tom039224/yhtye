@@ -7,7 +7,7 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
@@ -80,6 +80,23 @@ function longTasks(): { tasks: Task[]; helps: Help[] } {
   return { tasks, helps };
 }
 
+/** Every task has had an implementer and several review rounds: the output panel's session pick-list is long. */
+function longSessions(tasks: Task[]): SessionRecord[] {
+  const keys = ["implementer", "review-1", "review-3", "review-5", "review-7"];
+  return tasks.flatMap((t, i) =>
+    keys.map((key, k): SessionRecord => ({
+      session_key: `${t.id}/${key}`,
+      role: k === 0 ? "implementer" : "reviewer",
+      task: t.id,
+      acp_session_id: `acp-${t.id}-${key}`,
+      status: "live",
+      turn_running: (i + k) % 3 === 0,
+      agent: null,
+      cwd: null,
+    })),
+  );
+}
+
 function longGit(): { git: GitOverview; chats: ChatInfo[]; chatStates: State["chats"] } {
   const sha = (c: string, i: number) => `${c}${i}`.padEnd(40, c);
   const branches = Array.from({ length: WORKTREES }, (_, i) => ({ name: i === 0 ? "main" : `feature/${NO_SPACES}${i}`, sha: sha("b", i) }));
@@ -148,7 +165,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const { git, chats, chatStates } = longGit();
     const group = { ...FULL_RUN.end.state.groups[0], id: "G-1", chat: CHAT_ID, title: `グループ ${NO_SPACES}`, status: "active" as const };
     const state: State = { ...emptyState("repo", { max_review_rounds: 2 }), chats: chatStates, groups: [group], tasks, helps };
-    const snapshot: Snapshot = { seq: 0, state, sessions: [], chats };
+    const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats };
     const core = new FakeCore(PROJECT, snapshot);
     core.log = longLog();
     core.git = git;
