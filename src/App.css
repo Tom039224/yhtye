@@ -215,12 +215,19 @@ button:disabled { cursor: default; }
 .msg-mark-agent { color: var(--accent); background: var(--accent-soft); }
 .msg-mark-streaming .icon { animation: ybreathe 1.4s ease-in-out infinite; }
 .msg-body { grid-column: 2; font-size: 13px; line-height: 1.75; color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg-user .msg-body { color: var(--text-primary); }
 .msg-time {
   grid-column: 3; padding-top: 4px; font: 400 10px/1.6 var(--font-mono); color: var(--text-faint);
   opacity: 0; transition: opacity 0.12s;
 }
 .msg:hover .msg-time { opacity: 1; }
+/* The user's own message: a bubble on the right (icon in the right margin, time on its left),
+   so it stands apart from the agent's plain text on the left. */
+.msg-user { display: flex; flex-direction: row-reverse; align-items: flex-start; gap: 10px; padding-left: 12%; }
+.msg-user .msg-body {
+  flex: 0 1 auto; min-width: 0; padding: 6px 12px; color: var(--text-primary);
+  background: var(--user-bubble-bg); border: 1px solid var(--user-bubble-border); border-radius: 10px 3px 10px 10px;
+}
+.msg-user .msg-time { flex: none; align-self: flex-end; padding: 0 0 2px; }
 .queued { display: inline-flex; margin-left: 8px; color: var(--text-faint); vertical-align: -2px; }
 .fold > summary {
   display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer;
@@ -240,7 +247,7 @@ button:disabled { cursor: default; }
   border: 1px dashed var(--border-dashed); border-radius: 6px; padding: 7px 10px;
   font: 400 11px/1.5 var(--font-mono); color: var(--text-faint);
 }
-.notice .notice-body { flex: 1 1 100%; }
+.notice .notice-body { flex: 1 1 100%; color: var(--text-muted); }
 .tool { display: flex; align-items: center; gap: 6px; min-width: 0; font: 400 10.5px/1.6 var(--font-mono); color: var(--text-quaternary); }
 .tool-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 details.tool { display: block; }
