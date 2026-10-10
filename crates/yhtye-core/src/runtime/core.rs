@@ -129,6 +129,8 @@ impl Core {
     /// Opens the database. Projects are started by [`ApiCommand::OpenProject`].
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
+        // Before any agent of this run exists: kill those a previous run left behind.
+        crate::acp::start_process_registry(&cfg.data_dir).await;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let secrets = Arc::new(Secrets::new(
             cfg.secret_backend.clone(),

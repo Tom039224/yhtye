@@ -217,6 +217,21 @@ impl AgentHandle {
   その `set_mode` / `set_config_option` は送らない** (T-46: 復元後の `set_mode` がタイムアウトして会話を失った事故があった。送っても何も変わらない要求を省く)。
 - **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
   単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
+- **Yhtye が異常終了したとき** (SIGKILL・クラッシュ・abort・連続再起動。通常の終了処理が走らない場合) も
+  エージェントを残さない。Linux で 3 層 (`acp/parent_death.rs`, `acp/orphan.rs`):
+  1. 起動時に `prctl(PR_SET_PDEATHSIG, SIGKILL)` を `pre_exec` で設定し、Yhtye (を起動したスレッド) が
+     死んだら直接の子 (`npx` 等) をカーネルが落とす。ただし孫 (`node` → `claude`) は残るので、
+  2. グループごとに見張り役の `/bin/sh` (別プロセスグループ) を 1 つ立てる。Yhtye が書き込み側を持つ
+     パイプを stdin で待ち、Yhtye が死んで EOF になったらそのグループ全体に SIGKILL する。正常終了時は
+     `GroupKillGuard` が 1 行書いて見張りを降ろす。
+  3. 起動中のグループは `<データ dir>/agent-processes/<pgid>.json` に記録する (リーダーの pid・起動時刻
+     (`/proc/<pid>/stat` の starttime)・boot_id・起動した Yhtye の pid と起動時刻)。`Core::start` が最初に
+     この記録を調べ、持ち主の Yhtye が生きていなければ、リーダーの pid と起動時刻が一致するグループ
+     (リーダーが先に死んでいれば、同じ pgid で動いている残党) だけに SIGTERM → 1.5 秒後に SIGKILL を送る。
+     pid の再利用・再起動 (boot_id 違い)・自分のグループ・pgid < 2 は殺さず記録だけ捨てる。持ち主が
+     まだ生きている (別インスタンス・終了処理中) 記録は触らない。判定は純関数 `orphan::judge`。
+  グループを抜けて `setsid` した孫はグループ kill では落ちない (従来どおり)。Linux 以外では 1〜3 は
+  何もしない (従来どおり stdin の EOF に頼る)。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
   `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
   グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
