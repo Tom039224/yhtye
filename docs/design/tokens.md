@@ -60,6 +60,8 @@
 | `--accent-hover` | `#e8b884` | リンクのホバー |
 | `--accent-strong` | `#e0a45c` | 本文中の強調、`@` ボタンのホバー |
 | `--accent-soft` | `accent` の 14% 透過 | エージェントの発話アイコンの地 (原本に無い。実装で追加) |
+| `--user-bubble-bg` | `accent` 11% + `--surface-chat` | 会話でのユーザー自身の発話のバブルの地 (原本に無い。実装で追加) |
+| `--user-bubble-border` | `accent` 26% + `--surface-chat` | 同バブルの枠 (原本に無い。実装で追加) |
 
 ### ステータス (oklch)
 
@@ -168,5 +170,7 @@ reduce のときはすべてのアニメーション (spin / sheen / pulse) と�
 
 - ステップ (implement / review / checkpoint / done) は `code` / `eye` / `flag` / `check` の一列。完了は緑、実行中は
   種別の色 + 呼吸、要修正のレビューは対処中の色、待機は `--text-faintest`。
-- 発話者は左の余白のアイコン (あなた = `user`、エージェント = `bot`)。時刻はホバーで出る。
+- 発話者は余白のアイコン (あなた = `user`、エージェント = `bot`)。時刻はホバーで出る。
+  あなたの発話は右寄せのバブル (`--user-bubble-*`、アイコンは右の余白)、エージェントの発話は左寄せで地なしの本文、
+  Yhtye からの通知・ツール呼び出し・セッションの出来事はモノスペースの小さな控えめな行。
 - ツール呼び出しの結果は `check` / `x` / 回る `loader`。エージェントのツールは `wrench`、Yhtye のツールは `bolt`。
