@@ -131,6 +131,7 @@ pub struct CoreConfig {
   **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
   `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
   **T-48 (§17.11)**: `open_chat{project, chat}` (チャットを開いた: 未起動なら復元して起動、応答 `chat_opened{starting}`)。
+  **T-49 (§17.12)**: `ProjectInfo` に `running` (動作中か) が付く。
   `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage` /
   `agent_settings` / `harness_models` (T-6 で `harnesses`、Stage 8 で `chats` / `chat`、T-48 で `chat_opened`)。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
@@ -1236,3 +1237,17 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   open グループのチャットは `group_settled` で起動しアイドルのチャットは起動しない)、`tests/core_chats.rs` (`open_chat` の API と、live のチャットだけではプロジェクトを開かない)、
   `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`launch.rs` の単体テスト (同時起動数・閉じた許可)、
   vitest (`appChats.test.ts` `project.test.ts` `App.test.tsx`)。
+
+### 17.12 バックグラウンドのプロジェクトの動作中表示 (T-49)
+
+左上のプロジェクト切替のリングは「動作中のチャットがあれば回る緑、なければ中を抜いた緑」(開いていないプロジェクトも後者。グレーはチャット行だけ)。
+表示中のプロジェクトはストアが持つビュー (`hasRunningWork`) で決められるが、表示していないプロジェクトのイベントはストアに入れないので、動作中かどうかを core から取る。
+
+- **core**: `ProjectInfo.running`。開いているプロジェクトで、live なエージェントセッションの `turn_running` があるか、タスクが `running` / `merging` のとき `true` (フロントの `hasRunningWork` と同じ基準。
+  開いていなければ常に `false`)。`list_projects` と `open_project` が返す。`Orchestration::is_running` → `Cmd::Running` → `Driver::has_running_work` で、`snapshot` と同じく発行待ちのイベントを流してから読む。
+  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。
+- **フロント** (`store/app.ts`、`store/activity.ts`): 表示中でない (または何も表示していない) プロジェクトのイベントを捨てる前に `changesActivity` で見て、ターンの開始・終了 (`prompted` / `turn_ended`)、
+  セッションの起動・停止・中断、タスクの状態変化 (`task_*` / `group_cancelled` / `chat_deleted`) なら 200ms の間引きで `list_projects` を読み直し、`open` / `running` だけを `projects` に取り込む
+  (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
+  回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
+- テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。

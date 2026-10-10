@@ -8,12 +8,13 @@ import { describe, expect, it } from "vitest";
 import type { ProjectInfo, SessionRecord, Snapshot } from "../api/generated";
 import { AppStore } from "../store/app";
 import { StoreContext } from "../store/useStore";
+import { prompted, turnEnded, ORCHESTRATOR } from "../test/events";
 import { FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 import { Sidebar } from "./Sidebar";
 
-const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true };
-const GAMMA: ProjectInfo = { id: "gamma", name: "gamma", path: "/tmp/gamma", open: false };
+const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false };
+const GAMMA: ProjectInfo = { id: "gamma", name: "gamma", path: "/tmp/gamma", open: false, running: false };
 
 function setup(opts: { others?: ProjectInfo[]; snapshot?: Snapshot; noProjects?: boolean } = {}) {
   const transport = new MemoryTransport();
@@ -177,17 +178,19 @@ describe("project status rings", () => {
     expect(screen.getByTestId("current-ring")).not.toHaveClass("ring-running");
   });
 
-  it("gives each option the chat rows' ring: turning only for the project with work on, grey when it is not open", async () => {
+  it("gives each option a ring: turning only for the project with work on, hollow green for the others, open or not", async () => {
     const { store, user } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
     await openRepo(store);
     await user.click(trigger());
     expect(screen.getByTestId("ring-repo")).toHaveClass("ring", "ring-running");
     expect(screen.getByTestId("ring-beta")).toHaveClass("ring", "ring-ready");
     expect(screen.getByTestId("ring-beta")).not.toHaveClass("ring-running");
-    expect(screen.getByTestId("ring-gamma")).toHaveClass("ring", "ring-stopped");
+    expect(screen.getByTestId("ring-gamma")).toHaveClass("ring", "ring-ready");
+    expect(screen.getByTestId("ring-gamma")).not.toHaveClass("ring-stopped");
+    expect(screen.getByRole("option", { name: "gamma" })).toHaveAttribute("title", "/tmp/gamma · 待機中");
   });
 
-  it("gives a background project the same hollow ring instead of a lit dot, even while the shown one works", async () => {
+  it("gives an idle background project the hollow ring instead of a lit dot, even while the shown one works", async () => {
     const { store } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
     await openRepo(store);
     const ring = screen.getByTestId("bg-ring-beta");
@@ -195,6 +198,48 @@ describe("project status rings", () => {
     expect(ring).not.toHaveClass("ring-running");
     expect(ring.parentElement).toHaveAttribute("aria-label", "beta に切り替え (待機中)");
     expect(document.querySelector(".bg-dot")).toBeNull();
+  });
+
+  it("turns the ring of a background project while a chat of it works, and hollows it when it stops", async () => {
+    const { store, core, transport, user } = setup();
+    await openRepo(store);
+    expect(screen.getByTestId("bg-ring-beta")).toHaveClass("ring-ready");
+
+    core.others = [{ ...BETA, running: true }, GAMMA];
+    transport.emit({ ...prompted(1, ORCHESTRATOR), project: "beta" });
+    await waitFor(() => expect(screen.getByTestId("bg-ring-beta")).toHaveClass("ring", "ring-running"));
+    expect(screen.getByTestId("bg-ring-beta")).not.toHaveClass("ring-ready");
+    expect(screen.getByRole("button", { name: "beta に切り替え (実行中)" })).toBeInTheDocument();
+    await user.click(trigger());
+    expect(screen.getByTestId("ring-beta")).toHaveClass("ring-running");
+    expect(screen.getByTestId("ring-repo")).toHaveClass("ring-ready");
+
+    core.others = [{ ...BETA, running: false }, GAMMA];
+    transport.emit({ ...turnEnded(2, ORCHESTRATOR), project: "beta" });
+    await waitFor(() => expect(screen.getByTestId("bg-ring-beta")).toHaveClass("ring", "ring-ready"));
+    expect(screen.getByTestId("bg-ring-beta")).not.toHaveClass("ring-running");
+    expect(screen.getByTestId("ring-beta")).toHaveClass("ring-ready");
+  });
+
+  it("shows a background project that was already working as turning from the start", async () => {
+    const { store } = setup({ others: [{ ...BETA, running: true }, GAMMA] });
+    await openRepo(store);
+    expect(screen.getByTestId("bg-ring-beta")).toHaveClass("ring", "ring-running");
+  });
+
+  it("keeps turning the ring of the project switched away from while it works", async () => {
+    const { store, core, user } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
+    core.info = { ...PROJECT, running: true }; // what the core says of it too
+    await openRepo(store);
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring-running");
+
+    core.snapshot = FULL_RUN.start; // beta has nothing going on
+    await user.click(screen.getByRole("button", { name: /beta に切り替え/ }));
+    await waitFor(() => expect(store.getState().project?.info.id).toBe("beta"));
+    expect(screen.getByTestId("bg-ring-repo")).toHaveClass("ring", "ring-running");
+    await waitFor(() => expect(store.getState().project?.phase).toBe("ready"));
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-ready");
+    expect(screen.getByTestId("bg-ring-repo")).toHaveClass("ring-running");
   });
 });
 
