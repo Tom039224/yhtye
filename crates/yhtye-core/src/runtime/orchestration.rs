@@ -337,6 +337,14 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
+    /// Whether work is on: a live session is in a turn, or a task is running or
+    /// merging (the sidebar's ring).
+    pub async fn is_running(&self) -> Result<bool, OrchError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::Running(tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     /// Cancels a task as the user (`cancel_task` with the orchestrator's rules);
     /// the orchestrator gets a `user_message` saying so.
     pub async fn cancel_task(
