@@ -11,4 +11,10 @@ name: string, path: string,
 /**
  * Its orchestration is running in this process.
  */
-open: boolean, };
+open: boolean, 
+/**
+ * Work is on in it: a live agent session is in a turn, or a task is
+ * running or merging (what the sidebar's turning ring shows). Always
+ * `false` while it is not open.
+ */
+running: boolean, };

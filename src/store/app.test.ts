@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiEvent } from "../api/generated";
 import { CommandError } from "../api/transport";
-import { agentText, chunk, prompted } from "../test/events";
+import { agentText, chunk, prompted, turnEnded } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { AppStore } from "./app";
+import { ACTIVITY_REFRESH_MS, AppStore } from "./app";
 import { ORCHESTRATOR } from "../test/events";
 
 const LOG = durable(FULL_RUN);
@@ -210,5 +210,85 @@ describe("AppStore lazy history", () => {
     await retry;
     expect(view().olderError).toBeNull();
     expect(view().historyStart).toBe(LAST - 16);
+  });
+});
+
+describe("AppStore background activity", () => {
+  const BETA = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false };
+  const beta = (seq: number, ev: ApiEvent): ApiEvent => ({ ...ev, seq, project: "beta" });
+  const running = (id: string) => store.getState().projects.find((p) => p.id === id)?.running;
+  const listCalls = () => transport.callsOf("list_projects").length;
+
+  beforeEach(() => {
+    core.others = [BETA];
+  });
+
+  it("re-reads the project list when a turn starts or ends in a project that is not on screen", async () => {
+    core.log = LOG;
+    await openAndSettle();
+    await store.refreshProjects();
+    expect(running("beta")).toBe(false);
+    const before = view();
+    const listed = listCalls();
+
+    core.others = [{ ...BETA, running: true }];
+    transport.emit(beta(1, prompted(1, ORCHESTRATOR)));
+    expect(listCalls()).toBe(listed); // not at once: changes come in bursts
+    await vi.waitFor(() => expect(running("beta")).toBe(true));
+    expect(listCalls()).toBe(listed + 1);
+
+    core.others = [{ ...BETA, running: false }];
+    transport.emit(beta(2, turnEnded(2, ORCHESTRATOR)));
+    await vi.waitFor(() => expect(running("beta")).toBe(false));
+    expect(view()).toBe(before); // the project on screen is untouched
+  });
+
+  it("asks once for a burst of changes, and not at all for output or for the project on screen", async () => {
+    core.log = LOG;
+    await openAndSettle();
+    const listed = listCalls();
+
+    transport.emit(beta(1, agentText(1, ORCHESTRATOR, "hello")));
+    transport.emit(beta(2, chunk(2, ORCHESTRATOR, "hel")));
+    transport.emit(prompted(LAST + 1, ORCHESTRATOR)); // repo is on screen
+    await new Promise((r) => setTimeout(r, ACTIVITY_REFRESH_MS * 2));
+    expect(listCalls()).toBe(listed);
+
+    transport.emit(beta(3, prompted(3, ORCHESTRATOR)));
+    transport.emit(beta(4, turnEnded(4, ORCHESTRATOR)));
+    transport.emit(beta(5, prompted(5, ORCHESTRATOR)));
+    await vi.waitFor(() => expect(listCalls()).toBe(listed + 1));
+    await new Promise((r) => setTimeout(r, ACTIVITY_REFRESH_MS * 2));
+    expect(listCalls()).toBe(listed + 1);
+  });
+
+  it("also follows the projects the core opened itself while none is on screen", async () => {
+    await store.refreshProjects();
+    expect(store.getState().project).toBeNull();
+    core.others = [{ ...BETA, running: true }];
+    transport.emit(beta(1, prompted(1, ORCHESTRATOR)));
+    await vi.waitFor(() => expect(running("beta")).toBe(true));
+  });
+
+  it("keeps the flag of the project it leaves as its view showed it, and follows it afterwards", async () => {
+    core.snapshot = { ...FULL_RUN.start, sessions: [{ ...FULL_RUN.end.sessions[0], status: "live", turn_running: true }] };
+    core.info = { ...PROJECT, running: true }; // what the core says of it too
+    await openAndSettle();
+    await store.refreshProjects();
+    expect(running("repo")).toBe(true);
+    expect(running("beta")).toBe(false);
+
+    // Leaving it: its ring goes on turning (no moment of reading idle) ...
+    core.snapshot = { ...FULL_RUN.start, sessions: [] };
+    core.info = { ...PROJECT, running: false };
+    let during: boolean | undefined;
+    core.before = (cmd) => {
+      if (cmd.type === "get_snapshot") during = running("repo");
+    };
+    await store.openProject(BETA.path);
+    expect(during).toBe(true);
+
+    // ... until the core says it has stopped.
+    await vi.waitFor(() => expect(running("repo")).toBe(false));
   });
 });

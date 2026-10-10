@@ -5,8 +5,8 @@ import { backgroundProjects, projectRing, RING_LABEL } from "./projectActivity";
 /**
  * Projects other than the one on screen whose orchestration keeps running in
  * the core, as compact chips under the picker; a click switches to one. Each
- * chip carries the same ring as the picker and the chat rows (a turning arc
- * only while work is on, which is known for the project on screen alone).
+ * chip carries the same ring as the picker (a turning arc while a chat of the
+ * project is working, a hollow one otherwise).
  */
 export function BackgroundProjects() {
   const store = useStore();

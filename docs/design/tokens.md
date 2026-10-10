@@ -136,7 +136,7 @@ reduce のときはすべてのアニメーション (spin / sheen / pulse) と�
 | `--border-pill` | `#33302b` | タイトルバーのブランチピル |
 | `--scrollbar-thumb` | `#3a3733` | スクロールバー |
 | `--ring-running-track` / `--ring-running-head` | `oklch(0.72 0.13 150 / .28)` / `oklch(0.75 0.15 150)` | 実行中プロジェクトのリング |
-| `--ring-stopped` | `#4a453f` | 停止プロジェクトのリング |
+| `--ring-stopped` | `#4a453f` | 停止したチャットのリング (プロジェクトのリングには使わない、T-49) |
 | `--branch-dot` | `#403c37` | 非選択ブランチのドット |
 | `--status-{implementing,reviewing}-sheen` | `oklch(0.9 0.06 H / .55)` | 進捗バーの光 |
 | `--status-handling-card-{title,meta,meta-strong,icon}` | `#f0e7df` / `#8e7f74` / `#bfa48f` / `#c7ab97` | 対処中カードの文字 |
