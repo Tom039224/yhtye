@@ -25,6 +25,7 @@ import type {
   UsageReport,
 } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
+import { changesActivity, mergeActivity, rememberRunning } from "./activity";
 import { isOrchestratorKey, upsertChat } from "./chats";
 import { type Drafts, memoryDrafts } from "./drafts";
 import { memoryPrefs, type Prefs } from "./prefs";
@@ -49,6 +50,8 @@ export const HISTORY_PAGE = 400;
 export const GIT_COMMITS = 120;
 /** Delay before re-reading git after a domain change (changes come in bursts). */
 export const GIT_REFRESH_MS = 400;
+/** Delay before the project list is re-read after work started or ended in a project not on screen. */
+export const ACTIVITY_REFRESH_MS = 200;
 /** Preference key: path of the project opened last (reopened after a reload). */
 export const LAST_PROJECT_KEY = "yhtye.lastProject";
 /** Preference key (per project id): the chat shown when the project is opened again. */
@@ -123,6 +126,8 @@ export class AppStore {
   private nextErrorId = 1;
   private gitTimer: ReturnType<typeof setTimeout> | null = null;
   private gitToken = 0;
+  private activityTimer: ReturnType<typeof setTimeout> | null = null;
+  private activityToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
@@ -162,6 +167,8 @@ export class AppStore {
     for (const un of this.unsubscribe.splice(0)) un();
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
+    if (this.activityTimer) clearTimeout(this.activityTimer);
+    this.activityTimer = null;
     this.stopUsagePolling();
     this.stopPinging();
   }
@@ -325,13 +332,17 @@ export class AppStore {
     if (project) await this.run({ type: "retry_group_merge", project, group }, "accepted");
   }
 
-  /** Loads the page of history before what is shown (lazy history, newest first). */
+  /**
+   * Loads the page of history before what is shown (lazy history, newest first).
+   * A failure is kept in `olderError` for the history row to show; calling this
+   * again retries.
+   */
   async loadOlderHistory(): Promise<void> {
     const view = this.state.project;
     if (!view || view.phase !== "ready" || view.loadingOlder || view.historyStart <= 1) return;
     const token = this.loadToken;
     const from = Math.max(1, view.historyStart - this.historyPage);
-    this.updateProject((v) => ({ ...v, loadingOlder: true }));
+    this.updateProject((v) => ({ ...v, loadingOlder: true, olderError: null }));
     try {
       const events: ApiEvent[] = [];
       let after = from - 1;
@@ -351,8 +362,7 @@ export class AppStore {
       this.updateProject((v) => ({ ...prependHistory(v, events, from), loadingOlder: false }));
     } catch (e) {
       if (token !== this.loadToken) return;
-      this.updateProject((v) => ({ ...v, loadingOlder: false }));
-      this.pushError(`loading older history failed: ${toCommandError(e).message}`);
+      this.updateProject((v) => ({ ...v, loadingOlder: false, olderError: toCommandError(e).message }));
     }
   }
 
@@ -402,7 +412,10 @@ export class AppStore {
     this.buffer = [];
     this.syncing = true;
     const keepGit = this.state.git?.project === info.id ? this.state.git : null;
-    this.set({ project: newProjectView(info), git: keepGit });
+    // The project left is judged by its flag from now on: keep what its view said.
+    const left = this.state.project?.info.id === info.id ? null : this.state.project;
+    this.set({ project: newProjectView(info), projects: rememberRunning(this.state.projects, left), git: keepGit });
+    if (left) this.scheduleActivityRefresh();
     this.prefs.set(LAST_PROJECT_KEY, info.path);
     void this.refreshGit();
     try {
@@ -461,7 +474,12 @@ export class AppStore {
 
   private onEvent(ev: ApiEvent): void {
     const view = this.state.project;
-    if (!view || ev.project !== view.info.id || view.phase === "error") return;
+    if (!view || ev.project !== view.info.id) {
+      // Not on screen: nothing to show of it but whether work is on (its ring).
+      if (changesActivity(ev)) this.scheduleActivityRefresh();
+      return;
+    }
+    if (view.phase === "error") return;
     if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) this.scheduleGitRefresh();
     if (this.syncing) {
       this.buffer.push(ev);
@@ -552,6 +570,27 @@ export class AppStore {
     } finally {
       this.pinging = false;
     }
+  }
+
+  /**
+   * Re-reads which projects have work on, soon: the events of a project that is
+   * not on screen are not folded, so the core is asked (changes come in bursts).
+   */
+  private scheduleActivityRefresh(): void {
+    if (this.activityTimer) return;
+    this.activityTimer = setTimeout(() => {
+      this.activityTimer = null;
+      void this.refreshActivity();
+    }, ACTIVITY_REFRESH_MS);
+  }
+
+  /** Takes `open` / `running` of every project from the core (the last answer wins). */
+  private async refreshActivity(): Promise<void> {
+    const token = ++this.activityToken;
+    const r = await this.run({ type: "list_projects" }, "projects");
+    if (!r || token !== this.activityToken) return;
+    const projects = mergeActivity(this.state.projects, r.projects);
+    if (projects !== this.state.projects) this.set({ projects });
   }
 
   private scheduleGitRefresh(): void {

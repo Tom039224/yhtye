@@ -512,6 +512,94 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     assert_eq!(error_code(&core, after).await, ApiErrorCode::NotFound);
 }
 
+async fn running_projects(core: &Core) -> Vec<String> {
+    let ApiResponse::Projects { projects } = run(core, ApiCommand::ListProjects).await else {
+        panic!("expected projects");
+    };
+    projects
+        .into_iter()
+        .filter(|p| p.running)
+        .map(|p| p.id)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
+    let r = TempRepo::new();
+    let other = TempRepo::new();
+    let orch = json!({"turns": [
+        {"match": "hold on", "actions": [{"message": "thinking..."}, "wait_cancel"]},
+        {"match": "start one", "actions": [
+            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+                "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-a"}}}
+        ]},
+        {"actions": [{"message": "noted"}]}
+    ]});
+    let implementer = json!({"turns": [{"actions": ["wait_cancel"]}]});
+    let core = Core::start(core_config(&r, orch, implementer, json!({"turns": []})))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let first = open(&core, &r.repo).await;
+    assert!(!first.running, "a project just opened is idle");
+    let project = first.id;
+    // An open project with nothing going on is never listed as running.
+    open(&core, &other.repo).await;
+    new_chat(&core, &project).await;
+    assert!(running_projects(&core).await.is_empty());
+    let send = |text: &str| ApiCommand::SendUserMessage {
+        project: project.clone(),
+        chat: "C-1".into(),
+        text: text.into(),
+    };
+    let mut seen = Vec::new();
+
+    // An orchestrator's turn that is not over.
+    run(&core, send("hold on")).await;
+    until(&mut rx, &mut seen, |e| {
+        matches!(&e.body, ApiEventBody::AgentText { text, .. } if text.contains("thinking"))
+            || e.live
+    })
+    .await;
+    assert_eq!(running_projects(&core).await, vec![project.clone()]);
+    assert!(
+        open(&core, &r.repo).await.running,
+        "opening an open project reports it too"
+    );
+    let cancel = ApiCommand::CancelOrchestratorTurn {
+        project: project.clone(),
+        chat: "C-1".into(),
+    };
+    run(&core, cancel).await;
+    until(&mut rx, &mut seen, orchestrator_turn_ended).await;
+    assert!(running_projects(&core).await.is_empty(), "the turn ended");
+
+    // A task whose agent is working, after the orchestrator's turn is over.
+    run(&core, send("start one")).await;
+    until(&mut rx, &mut seen, |e| {
+        is_domain(
+            e,
+            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "T-1"),
+        )
+    })
+    .await;
+    until(&mut rx, &mut seen, orchestrator_turn_ended).await;
+    assert_eq!(running_projects(&core).await, vec![project.clone()]);
+    let cancel_group = ApiCommand::CancelGroup {
+        project: project.clone(),
+        group: "G-1".into(),
+        reason: None,
+    };
+    run(&core, cancel_group).await;
+    until(&mut rx, &mut seen, orchestrator_turn_ended).await;
+    assert!(
+        running_projects(&core).await.is_empty(),
+        "the task is cancelled"
+    );
+    core.shutdown().await;
+}
+
 #[tokio::test]
 async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
     let r = TempRepo::new();

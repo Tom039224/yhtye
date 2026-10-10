@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use tokio::sync::broadcast;
 
@@ -44,6 +45,9 @@ const EVENT_BUFFER: usize = 4096;
 const USAGE_PROBE_DIR: &str = "usage-probe";
 /// Working directory of the model-listing sessions, under the data directory.
 const MODEL_PROBE_DIR: &str = "model-probe";
+
+/// How long a project may take to tell whether work is on in it (see `is_running`).
+const RUNNING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -555,11 +559,16 @@ impl Core {
 
     async fn list_projects(&self) -> Result<Vec<ProjectInfo>, ApiError> {
         let records = self.inner.store.projects().await?;
-        let open = self.lock_open();
-        Ok(records
-            .iter()
-            .map(|r| project_info(r, open.contains_key(&r.id)))
-            .collect())
+        let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
+        let mut projects = Vec::with_capacity(records.len());
+        for r in &records {
+            let running = match open.get(&r.id) {
+                Some(orch) => is_running(&r.id, orch).await,
+                None => false,
+            };
+            projects.push(project_info(r, open.contains_key(&r.id), running));
+        }
+        Ok(projects)
     }
 
     async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
@@ -577,8 +586,10 @@ impl Core {
                 created_ms: 0,
             },
         };
-        if self.lock_open().contains_key(&record.id) {
-            return Ok(project_info(&record, true));
+        let already = self.lock_open().get(&record.id).cloned();
+        if let Some(orch) = already {
+            let running = is_running(&record.id, &orch).await;
+            return Ok(project_info(&record, true, running));
         }
         let (orch, mut rx) = Orchestration::start(self.orchestration_config(&record))
             .await
@@ -590,8 +601,12 @@ impl Core {
                 let _ = tx.send(ev);
             }
         });
-        self.lock_open().insert(record.id.clone(), Arc::new(orch));
-        Ok(project_info(&record, true))
+        let orch = Arc::new(orch);
+        self.lock_open()
+            .insert(record.id.clone(), Arc::clone(&orch));
+        // Work that was interrupted may already be resuming.
+        let running = is_running(&record.id, &orch).await;
+        Ok(project_info(&record, true, running))
     }
 
     async fn list_events(
@@ -680,12 +695,28 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-fn project_info(r: &ProjectRecord, open: bool) -> ProjectInfo {
+fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {
     ProjectInfo {
         id: r.id.clone(),
         name: dir_name(&r.path),
         path: r.path.display().to_string(),
         open,
+        running,
+    }
+}
+
+/// Whether work is on in an open project. A project busy handling a request
+/// for longer than `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as
+/// running, so a listing never waits for it; one that cannot tell (it is
+/// shutting down, or its store failed) counts as idle, and the failure is logged.
+async fn is_running(project: &str, orch: &Orchestration) -> bool {
+    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.is_running()).await {
+        Ok(Ok(running)) => running,
+        Ok(Err(e)) => {
+            tracing::warn!("could not tell whether {project} is running: {e}");
+            false
+        }
+        Err(_) => true,
     }
 }
 

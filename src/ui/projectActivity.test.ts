@@ -4,9 +4,9 @@ import type { ProjectInfo, SessionRecord, Task, TaskStatus } from "../api/genera
 import { emptyState } from "../store/domain";
 import { newProjectView, type ProjectView } from "../store/project";
 import { FULL_RUN } from "../test/fixtures";
-import { backgroundProjects, hasRunningWork, projectRing } from "./projectActivity";
+import { backgroundProjects, projectRing } from "./projectActivity";
 
-const info = (id: string, open = true): ProjectInfo => ({ id, name: id, path: `/work/${id}`, open });
+const info = (id: string, open = true, running = false): ProjectInfo => ({ id, name: id, path: `/work/${id}`, open, running });
 
 const session = (over: Partial<SessionRecord> = {}): SessionRecord => ({
   session_key: "orchestrator/C-1",
@@ -27,41 +27,40 @@ function viewOf(p: ProjectInfo, over: { sessions?: SessionRecord[]; tasks?: Task
   return { ...newProjectView(p), state, sessions: over.sessions ?? [] };
 }
 
-describe("hasRunningWork", () => {
-  it("is false for a project with nothing going on", () => {
-    expect(hasRunningWork(viewOf(info("a")))).toBe(false);
-    expect(hasRunningWork(newProjectView(info("a")))).toBe(false);
-  });
-
-  it("is true while a live session is in a turn", () => {
-    expect(hasRunningWork(viewOf(info("a"), { sessions: [session({ turn_running: true })] }))).toBe(true);
-  });
-
-  it("ignores a turn of a session that is not live any more", () => {
-    expect(hasRunningWork(viewOf(info("a"), { sessions: [session({ status: "stopped", turn_running: true })] }))).toBe(false);
-  });
-
-  it("is true while a task is running or merging, not once it is settled", () => {
-    expect(hasRunningWork(viewOf(info("a"), { tasks: [task("running")] }))).toBe(true);
-    expect(hasRunningWork(viewOf(info("a"), { tasks: [task("done"), task("merging")] }))).toBe(true);
-    expect(hasRunningWork(viewOf(info("a"), { tasks: [task("done"), task("cancelled"), task("pending")] }))).toBe(false);
-  });
-});
-
 describe("projectRing", () => {
-  it("is stopped for a project that is not open", () => {
-    expect(projectRing(info("a", false), null)).toBe("stopped");
+  it("is ready, not stopped, for a project that is not open (it starts when opened)", () => {
+    expect(projectRing(info("a", false), null)).toBe("ready");
+    expect(projectRing(info("a", false), viewOf(info("b")))).toBe("ready");
   });
 
-  it("is ready for an open project that is idle or not on screen", () => {
+  it("is ready for an open project that is idle", () => {
     expect(projectRing(info("a"), null)).toBe("ready");
     expect(projectRing(info("a"), viewOf(info("a")))).toBe("ready");
+    expect(projectRing(info("a"), viewOf(info("b")))).toBe("ready");
   });
 
-  it("is running for the project on screen while work is on", () => {
+  it("is running for the project on screen while work is on in its view", () => {
     const a = info("a");
     expect(projectRing(a, viewOf(a, { sessions: [session({ turn_running: true })] }))).toBe("running");
     expect(projectRing(a, viewOf(a, { tasks: [task("running")] }))).toBe("running");
+  });
+
+  it("goes by the view, not the flag, for the project on screen", () => {
+    const flagged = info("a", true, true);
+    expect(projectRing(flagged, viewOf(flagged))).toBe("ready");
+    const idle = info("a");
+    expect(projectRing(idle, viewOf(idle, { tasks: [task("merging")] }))).toBe("running");
+  });
+
+  it("is running for a project in the background when the core says work is on in it", () => {
+    const shown = viewOf(info("b"));
+    expect(projectRing(info("a", true, true), shown)).toBe("running");
+    expect(projectRing(info("a", true, true), null)).toBe("running");
+    expect(projectRing(info("a", true, false), shown)).toBe("ready");
+  });
+
+  it("never runs a project that is not open", () => {
+    expect(projectRing(info("a", false, true), null)).toBe("ready");
   });
 
   it("does not take another project's work for this one's", () => {

@@ -178,7 +178,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       fetched_at_ms: NOW,
     };
     core.agents.models["claude-code"] = longModels();
-    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false }));
+    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false }));
     return { core, open: true };
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);

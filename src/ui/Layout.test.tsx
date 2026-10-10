@@ -4,10 +4,11 @@
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import type { GitOverview, Snapshot, State } from "../api/generated";
+import { CommandError } from "../api/transport";
 import { AppStore, type AppStoreOptions, LAST_PROJECT_KEY } from "../store/app";
 import { emptyState } from "../store/domain";
 import { memoryPrefs } from "../store/prefs";
@@ -15,6 +16,7 @@ import { ORCHESTRATOR } from "../test/events";
 import { StoreContext } from "../store/useStore";
 import { ev } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
+import { stubIntersectionObserver } from "../test/intersectionObserver";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 
 const reveal = vi.fn();
@@ -269,6 +271,10 @@ describe("design layout", () => {
 });
 
 describe("lazy history", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("loads recent events first and older pages on demand, ending like a full load", async () => {
     const full = setup({ snapshot: FULL_RUN.end });
     await open(full.store);
@@ -289,6 +295,57 @@ describe("lazy history", () => {
     expect(view()?.state).toEqual(FULL_RUN.end.state);
     expect(screen.queryByRole("button", { name: /さらに前の履歴を読み込む/ })).not.toBeInTheDocument();
     expect(view()?.transcripts[ORCHESTRATOR]?.some((i) => i.kind === "group")).toBe(true);
+  });
+
+  it("loads older pages by itself while the top of the transcript is in view, then stops", async () => {
+    const full = setup({ snapshot: FULL_RUN.end });
+    await open(full.store);
+    const expected = full.store.getState().project?.transcripts;
+    full.store.stop();
+    document.body.innerHTML = "";
+
+    // A transcript too short to fill the pane: the row stays in view after every page.
+    stubIntersectionObserver(true);
+    const { store, transport } = setup({ snapshot: FULL_RUN.end, store: { historyWindow: 10, historyPage: 7 } });
+    await open(store);
+    const view = () => store.getState().project;
+    await waitFor(() => expect(view()?.historyStart).toBe(1));
+    expect(view()?.transcripts).toEqual(expected);
+    expect(screen.queryByText("読み込み中…")).not.toBeInTheDocument();
+
+    // One request per page: none twice, none once the log is exhausted.
+    const pages: number[] = [];
+    for (let start = LAST - 9; start > 1; start = Math.max(1, start - 7)) pages.push(Math.max(1, start - 7) - 1);
+    const older = transport.callsOf("list_events").filter((c) => c.after_seq < LAST - 10);
+    expect(older.map((c) => c.after_seq)).toEqual(pages);
+    const calls = transport.callsOf("list_events").length;
+    await act(async () => {});
+    expect(transport.callsOf("list_events")).toHaveLength(calls);
+  });
+
+  it("waits for the reader to reach the top, and shows a failed page with a retry", async () => {
+    const io = stubIntersectionObserver(false);
+    const { store, core, transport, user } = setup({ snapshot: FULL_RUN.end, store: { historyWindow: 10, historyPage: 7 } });
+    await open(store);
+    const view = () => store.getState().project;
+    await act(async () => {});
+    expect(view()?.historyStart).toBe(LAST - 9);
+    expect(screen.getByRole("status")).toHaveTextContent("読み込み中…");
+
+    core.failures.set("list_events", new CommandError("transport", "bridge restarted"));
+    io.visible = true;
+    await act(async () => io.notify());
+    expect(await screen.findByRole("alert")).toHaveTextContent("履歴を読み込めませんでした: bridge restarted");
+    expect(view()?.historyStart).toBe(LAST - 9);
+    // The row is still in view, but a failure is not retried by itself.
+    const calls = transport.callsOf("list_events").length;
+    await act(async () => io.notify());
+    expect(transport.callsOf("list_events")).toHaveLength(calls);
+
+    core.failures.delete("list_events");
+    await user.click(screen.getByRole("button", { name: "再試行" }));
+    await waitFor(() => expect(view()?.historyStart).toBe(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
 
