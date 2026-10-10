@@ -557,6 +557,17 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tab:hover { background: var(--surface-hover); color: var(--text-tertiary); }
 .tab.active { background: var(--surface-chip); color: var(--text-primary); }
+/* The git tab and the task tabs; many of them scroll sideways rather than push the header's other items out. */
+.bottom-tabs { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.bottom-tabs::-webkit-scrollbar { display: none; }
+.bottom-tabs > * { flex: none; }
+/* A task tab: the name and its close button share one frame, so the frame carries the hover / active look. */
+.tab-group { display: inline-flex; align-items: center; height: 22px; border-radius: 6px; transition: background-color 0.12s; }
+.tab-group:hover { background: var(--surface-hover); }
+.tab-group.active { background: var(--surface-chip); }
+.tab-group .tab { background: none; padding-right: 3px; }
+.tab-group.active .tab { color: var(--text-primary); }
+.tab-group .tab-close { width: 18px; height: 18px; margin-right: 2px; border-radius: 4px; }
 .bottom-meta { display: inline-flex; align-items: center; gap: 5px; font: 400 10.5px/1 var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
 .bottom-meta .icon { flex: none; }
 .session-tab {

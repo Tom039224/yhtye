@@ -159,7 +159,7 @@ describe("panel sizes", () => {
     fireEvent.pointerUp(handle, { pointerId: 1 });
     expect(stored(prefs)).toEqual({ git: 300, output: 470 });
 
-    await user.click(within(output).getByRole("button", { name: "出力を閉じる" }));
+    await user.click(within(output).getByRole("button", { name: "T-1 の出力を閉じる" }));
     expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
     expect(workspaceVar("--bottom-height")).toBe("300px");
   });
