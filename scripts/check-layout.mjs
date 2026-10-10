@@ -11,6 +11,7 @@
 //                                      locations, else Playwright's own download)
 //   YHTYE_LAYOUT_URL=http://host:port  use a running dev server instead of starting one
 //   YHTYE_LAYOUT_SHOTS=dir             also save a screenshot of every state there
+//   YHTYE_LAYOUT_ONLY=text             only the states whose name contains the text (e.g. "task tabs")
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
@@ -134,6 +135,65 @@ function inspectPage({ structure, overlays }) {
   return problems;
 }
 
+/**
+ * Run in the page with the bottom panel's task tabs open: the tab row and the row of the git
+ * heading / session pick-list below it must both stay whole, however many tabs there are and
+ * however narrow the panel is. Returns what is wrong (empty: fine).
+ */
+function inspectBottomTabs({ tasks, active, atStart }) {
+  const problems = [];
+  const bar = document.querySelector(".bottom > .bottom-tabs");
+  if (!bar) return ["the bottom panel has no tab row"];
+  const header = document.querySelector(".bottom > .bottom-header");
+  const inside = (r, box) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5;
+  const rect = (el) => el.getBoundingClientRect();
+  const name = (el) => `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`;
+
+  const groups = [...bar.querySelectorAll(".tab-group")];
+  if (groups.length !== tasks) problems.push(`${groups.length} task tabs, expected ${tasks}`);
+  for (const g of groups) {
+    const label = g.querySelector(".tab")?.textContent?.trim();
+    if (rect(g).width < 50 || g.scrollWidth > g.clientWidth + 1) problems.push(`the tab of ${label} is squeezed (${Math.round(rect(g).width)}px, content ${g.scrollWidth}px)`);
+    const text = g.querySelector(".tab");
+    if (text && text.scrollWidth > text.clientWidth + 1) problems.push(`the name of the tab ${label} is cut off`);
+    const close = g.querySelector(".tab-close");
+    if (close && rect(close).width < 17.5) problems.push(`the close button of ${label} is squeezed (${Math.round(rect(close).width)}px)`);
+  }
+
+  // The shown tab is in view; every tab can be scrolled to (the ends are restored afterwards).
+  const shown = bar.querySelector(".active");
+  if (active && shown && !inside(rect(shown), rect(bar))) problems.push(`the shown tab (${active}) is scrolled out of the tab row`);
+  if (atStart && bar.scrollLeft !== 0) problems.push(`the tab row is not at its start (scrollLeft ${Math.round(bar.scrollLeft)}) after wheeling up`);
+  const before = bar.scrollLeft;
+  bar.scrollLeft = 0;
+  const first = bar.firstElementChild;
+  if (first && !inside(rect(first), rect(bar))) problems.push("the git tab cannot be scrolled into view");
+  bar.scrollLeft = bar.scrollWidth;
+  const last = bar.lastElementChild;
+  if (last && !inside(rect(last), rect(bar))) problems.push("the last task tab cannot be scrolled into view");
+  bar.scrollLeft = before;
+  if (rect(bar).bottom > (header ? rect(header).top : Infinity) + 0.5) problems.push("the tab row overlaps the header below it");
+
+  // The header below: the heading is not cut short, the pick-list and the button keep their size.
+  if (header) {
+    for (const meta of header.querySelectorAll(".bottom-meta:not(.error-text)")) {
+      if (meta.scrollWidth > meta.clientWidth + 1) problems.push(`the git heading is cut short (${meta.clientWidth}px of ${meta.scrollWidth}px)`);
+    }
+    for (const button of header.querySelectorAll(".icon-button")) {
+      if (!inside(rect(button), rect(header)) || rect(button).width < 23.5) problems.push(`${name(button)} is pushed out or squeezed (${Math.round(rect(button).left)}-${Math.round(rect(button).right)})`);
+    }
+    for (const strip of header.querySelectorAll(".session-tabs")) {
+      if (!inside(rect(strip), rect(header))) problems.push("the session pick-list sticks out of the header");
+      const current = strip.querySelector(".active");
+      if (current && !inside(rect(current), rect(strip))) problems.push("the chosen session is scrolled out of the pick-list");
+      for (const b of strip.querySelectorAll(".session-tab")) {
+        if (b.scrollWidth > b.clientWidth + 1 || rect(b).width < 50) problems.push(`session ${b.textContent.trim()} is squeezed (${Math.round(rect(b).width)}px)`);
+      }
+    }
+  }
+  return problems;
+}
+
 // ---- the screen states -------------------------------------------------------------------------
 
 const click = (page, name, options = {}) => page.getByRole("button", { name, ...options }).first().click();
@@ -159,6 +219,15 @@ async function wheelOver(page, selector, deltaY) {
   for (let i = 0; i < 12; i++) await page.mouse.wheel(0, deltaY);
   await page.waitForTimeout(150);
 }
+
+/** Opens the first `count` tasks' output in turn: a tab each, the last one shown. */
+async function openTaskTabs(page, count) {
+  for (let i = 1; i <= count; i++) await page.locator(`article[aria-label="task T-${i}"] .task-title`).click();
+  await page.getByRole("region", { name: "agent output" }).waitFor();
+}
+
+/** The tab row's check (inspectBottomTabs) as a state's `verify`. */
+const bottomTabs = (options) => (page) => page.evaluate(inspectBottomTabs, options);
 
 async function tabThrough(page, count) {
   const problems = [];
@@ -189,7 +258,7 @@ async function failSendThreeTimes(page) {
   await page.locator(".banners .alert").first().waitFor();
 }
 
-/** { name, scenario, interactive, run(page) }: `run` brings the page into the state (default: as loaded). */
+/** { name, scenario, interactive, run(page), verify(page) }: `run` brings the page into the state (default: as loaded); `verify` returns more problems. */
 const STATES = [
   { name: "no project open", scenario: "empty" },
   { name: "the recorded run", scenario: "run" },
@@ -208,6 +277,32 @@ const STATES = [
   { name: "long: chat menu on the first row", scenario: "long", interactive: true, run: (page) => openRowMenu(page, "first") },
   { name: "long: chat menu on the last row", scenario: "long", interactive: true, run: async (page) => { await scrollTreeToEnd(page); await openRowMenu(page, "last"); } },
   { name: "long: a task selected (agent output)", scenario: "long", interactive: true, run: async (page) => { await click(page, /^1 件目/, { exact: false }); await page.getByRole("region", { name: "agent output" }).waitFor(); } },
+  { name: "long: 8 task tabs open (agent output)", scenario: "long", interactive: true, run: (page) => openTaskTabs(page, 8), verify: bottomTabs({ tasks: 8, active: "T-8" }) },
+  { name: "long: 8 task tabs open, the first one shown again", scenario: "long", interactive: true, run: async (page) => {
+    await openTaskTabs(page, 8);
+    await click(page, "T-1 の出力", { exact: true });
+  }, verify: bottomTabs({ tasks: 8, active: "T-1" }) },
+  { name: "long: 8 task tabs open, git shown", scenario: "long", interactive: true, run: async (page) => {
+    await openTaskTabs(page, 8);
+    await click(page, "git", { exact: true });
+    await page.getByRole("region", { name: "git" }).waitFor();
+  }, verify: bottomTabs({ tasks: 8, active: null }) },
+  { name: "long: 8 task tabs open, tab row wheeled on", scenario: "long", interactive: true, run: async (page) => {
+    await openTaskTabs(page, 8);
+    await wheelOver(page, ".bottom-tabs", -4000);
+  }, verify: bottomTabs({ tasks: 8, active: null, atStart: true }) },
+  { name: "long: 8 task tabs open, right panel dragged to its narrowest", scenario: "long", interactive: true, run: async (page) => {
+    await page.getByRole("separator", { name: "右パネルの幅" }).focus();
+    await page.keyboard.press("Shift+Home");
+    await openTaskTabs(page, 8);
+  }, verify: bottomTabs({ tasks: 8, active: "T-8" }) },
+  { name: "long: 8 task tabs open, right panel dragged to its narrowest, git shown", scenario: "long", interactive: true, run: async (page) => {
+    await page.getByRole("separator", { name: "右パネルの幅" }).focus();
+    await page.keyboard.press("Shift+Home");
+    await openTaskTabs(page, 8);
+    await click(page, "git", { exact: true });
+    await page.getByRole("region", { name: "git" }).waitFor();
+  }, verify: bottomTabs({ tasks: 8, active: null }) },
   { name: "long: 30 lines typed in the composer", scenario: "long", interactive: true, run: (page) => page.getByRole("textbox", { name: "オーケストレータへのメッセージ" }).fill(Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")) },
   { name: "long: error banners and a lost connection", scenario: "long", interactive: true, run: failSendThreeTimes },
   { name: "long: right panel and git panel dragged to their limits", scenario: "long", interactive: true, run: async (page) => {
@@ -308,6 +403,7 @@ async function checkState(browser, baseUrl, state, viewport, shots) {
     await state.run?.(page);
     await page.waitForTimeout(200);
     const problems = state.tab ? await tabThrough(page, state.tab) : await page.evaluate(inspectPage, { structure: STRUCTURE, overlays: OVERLAYS });
+    if (state.verify) problems.push(...(await state.verify(page)));
     if (shots) await page.screenshot({ path: path.join(shots, `${state.name.replace(/[^\w]+/g, "-")}-${viewport.width}x${viewport.height}.png`) });
     return [...errors, ...problems];
   } catch (e) {
@@ -321,6 +417,7 @@ async function main() {
   const external = process.env.YHTYE_LAYOUT_URL?.replace(/\/$/, "");
   const server = external ? { url: external, stop: () => {} } : await startVite();
   const shots = process.env.YHTYE_LAYOUT_SHOTS;
+  const only = process.env.YHTYE_LAYOUT_ONLY;
   if (shots) mkdirSync(shots, { recursive: true });
   const executablePath = chromiumPath();
   const browser = await chromium.launch({ executablePath, headless: true, args: ["--no-sandbox"] });
@@ -329,7 +426,7 @@ async function main() {
   try {
     // The first load warms Vite up (dependency optimization), so the real ones are fast and stable.
     await (await openState(browser, server.url, STATES[0], VIEWPORTS[0])).context.close();
-    for (const state of STATES) {
+    for (const state of STATES.filter((s) => !only || s.name.includes(only))) {
       for (const viewport of state.interactive ? INTERACTIVE_VIEWPORTS : VIEWPORTS) {
         const problems = await checkState(browser, server.url, state, viewport, shots);
         checked++;
