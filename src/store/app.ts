@@ -26,6 +26,7 @@ import type {
 } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { isOrchestratorKey, upsertChat } from "./chats";
+import { type Drafts, memoryDrafts } from "./drafts";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
@@ -126,6 +127,8 @@ export class AppStore {
   private pinging = false;
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
+  /** Unsent composer text per chat (kept while another chat or project is shown). */
+  readonly drafts: Drafts = memoryDrafts();
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
@@ -279,6 +282,7 @@ export class AppStore {
     const project = this.state.project?.info.id;
     if (!project) return;
     await this.invoke({ type: "delete_chat", project, chat }, "accepted");
+    this.drafts.set(project, chat, "");
     if (this.state.project?.info.id !== project) return;
     this.updateProject((v) => removeChatNow(v, chat));
   }

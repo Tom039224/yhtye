@@ -145,8 +145,76 @@ describe("design layout", () => {
     expect(within(output).getByText(/^Looks good\./)).toBeInTheDocument();
     expect(within(output).getByLabelText("step results")).toHaveTextContent("implement result:");
     expect(screen.getByRole("button", { name: "T-1 の出力" })).toBeInTheDocument();
-    await user.click(within(output).getByRole("button", { name: "出力を閉じる" }));
+    await user.click(within(output).getByRole("button", { name: "T-1 の出力を閉じる" }));
     expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "T-1 の出力" })).not.toBeInTheDocument();
+  });
+
+  it("puts each task's close button in the same frame as its tab name", async () => {
+    const { store, user } = setup();
+    await open(store);
+    await user.click(screen.getByRole("button", { name: "add hello.txt" }));
+    const tab = screen.getByRole("button", { name: "T-1 の出力" });
+    const close = screen.getByRole("button", { name: "T-1 の出力を閉じる" });
+    expect(close.parentElement).toBe(tab.parentElement);
+    expect(close.parentElement).toHaveClass("tab-group");
+  });
+
+  describe("with several tasks", () => {
+    async function openTwoTasks() {
+      const snapshot = snapshotOf({ groups: [{ ...base.groups[0], status: "active" }], tasks: [doneTask, running] }, LAST);
+      const ctx = setup({ snapshot });
+      await open(ctx.store);
+      await ctx.user.click(screen.getByRole("button", { name: "add hello.txt" }));
+      await ctx.user.click(screen.getByRole("button", { name: "second task" }));
+      return ctx;
+    }
+    const pressed = (name: string) => screen.getByRole("button", { name }).getAttribute("aria-pressed");
+
+    it("keeps every opened task as a tab and switches between them", async () => {
+      const { user } = await openTwoTasks();
+      expect(pressed("T-1 の出力")).toBe("false");
+      expect(pressed("T-2 の出力")).toBe("true");
+      expect(screen.getByRole("article", { name: "task T-2" })).toHaveClass("selected");
+      await user.click(screen.getByRole("button", { name: "T-1 の出力" }));
+      expect(pressed("T-1 の出力")).toBe("true");
+      expect(pressed("T-2 の出力")).toBe("false");
+      expect(within(screen.getByRole("region", { name: "agent output" })).getByText(/^Looks good\./)).toBeInTheDocument();
+      expect(screen.getByRole("article", { name: "task T-1" })).toHaveClass("selected");
+    });
+
+    it("shows an already open task's tab again instead of opening it twice", async () => {
+      const { user } = await openTwoTasks();
+      await user.click(screen.getByRole("button", { name: "add hello.txt" }));
+      expect(screen.getAllByRole("button", { name: "T-1 の出力" })).toHaveLength(1);
+      expect(pressed("T-1 の出力")).toBe("true");
+    });
+
+    it("goes back to git from any tab and returns to the task's tab", async () => {
+      const { user } = await openTwoTasks();
+      await user.click(screen.getByRole("button", { name: "git" }));
+      expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "T-1 の出力" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "T-2 の出力" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "T-1 の出力" }));
+      expect(screen.getByRole("region", { name: "agent output" })).toBeInTheDocument();
+    });
+
+    it("closes the shown tab onto its neighbour and returns to git after the last one", async () => {
+      const { user } = await openTwoTasks();
+      await user.click(screen.getByRole("button", { name: "T-2 の出力を閉じる" }));
+      expect(screen.queryByRole("button", { name: "T-2 の出力" })).not.toBeInTheDocument();
+      expect(pressed("T-1 の出力")).toBe("true");
+      expect(screen.getByRole("region", { name: "agent output" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "T-1 の出力を閉じる" }));
+      expect(screen.getByRole("region", { name: "git" })).toBeInTheDocument();
+    });
+
+    it("keeps the shown tab when another one is closed", async () => {
+      const { user } = await openTwoTasks();
+      await user.click(screen.getByRole("button", { name: "T-1 の出力を閉じる" }));
+      expect(pressed("T-2 の出力")).toBe("true");
+    });
   });
 });
 

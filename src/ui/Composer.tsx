@@ -17,6 +17,10 @@ interface Props {
   turnRunning: boolean;
   /** Sent, but the orchestrator process is still starting (lazy start). */
   starting?: boolean;
+  /** The text the box starts with (the chat's saved draft); the parent remounts the composer per chat. */
+  initialText?: string;
+  /** Called with the text on every edit and with `""` once a send is accepted (to save or drop the draft). */
+  onTextChange?: (text: string) => void;
   mentions: Mention[];
   onRemoveMention: (task: string) => void;
   /** Sends `text` (mentions are added by the caller); resolves to whether it was accepted. */
@@ -37,19 +41,28 @@ export function Composer({
   sending,
   turnRunning,
   starting = false,
+  initialText = "",
+  onTextChange,
   mentions,
   onRemoveMention,
   onSend,
   onCancel,
 }: Props) {
-  const [text, setText] = useState("");
+  const [text, setText] = useState(initialText);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const canSend = !disabled && !sending && text.trim().length > 0;
 
+  const edit = (next: string) => {
+    setText(next);
+    onTextChange?.(next);
+  };
+
+  // `onTextChange` is the one of the render that sent, so the draft of the chat the text was sent to
+  // is dropped even if another chat is shown by the time the send is accepted.
   const send = async () => {
     if (!canSend) return;
     const sent = await onSend(text);
-    if (sent) setText("");
+    if (sent) edit("");
   };
 
   // Wrapped lines do not add rows, so fit the height to the content (capped by CSS `max-height`).
@@ -80,7 +93,7 @@ export function Composer({
             disabled={disabled}
             rows={Math.min(MAX_ROWS, Math.max(MIN_ROWS, text.split("\n").length))}
             style={{ maxHeight: `${MAX_ROWS * LINE_HEIGHT_EM}em` }}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => edit(e.target.value)}
             onKeyDown={onKeyDown}
           />
           <div className="composer-actions">

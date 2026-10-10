@@ -61,8 +61,6 @@
 .bg-chip:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text-primary); }
 .bg-chip:disabled { opacity: 0.5; cursor: default; }
 .bg-chip .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bg-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--status-done-bar); animation: ypulse 1.8s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .bg-dot { animation: none; } }
 
 /* ---- branches: the head stays, only the tree scrolls ------------------------ */
 

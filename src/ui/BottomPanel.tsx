@@ -1,93 +1,64 @@
-import { useEffect, useState } from "react";
-
 import type { ProjectView } from "../store/project";
 import { AgentOutput } from "./AgentOutput";
+import type { BottomTabs } from "./bottomTabs";
 import { GitPanel } from "./GitPanel";
 import { Icon, IconButton } from "./Icon";
 
-export type BottomTab = "git" | "output";
-
 interface Props {
   view: ProjectView;
-  selectedTask: string | null;
-  tab: BottomTab;
-  onTab: (tab: BottomTab) => void;
-  onCloseTask: () => void;
+  tabs: BottomTabs;
+  /** Shows git (`null`) or an open task's output. */
+  onShow: (active: string | null) => void;
+  onClose: (task: string) => void;
 }
-
-/** Which tab the panel shows: selecting a task switches to its output. */
-export function useBottomTab(selectedTask: string | null): [BottomTab, (tab: BottomTab) => void] {
-  const [tab, setTab] = useState<BottomTab>("git");
-  useEffect(() => {
-    setTab(selectedTask ? "output" : "git");
-  }, [selectedTask]);
-  return [tab, setTab];
-}
-
-/** The task whose output the panel shows, or `null` while it shows git (the output gets the taller panel). */
-export const outputTask = (tab: BottomTab, selectedTask: string | null): string | null => (tab === "output" ? selectedTask : null);
 
 /**
- * The design's git panel (§3.6), which also hosts the selected task's agent
- * output (the design has no place for it; Stage 4's view is kept reachable
- * here). The tab is held by the workspace, which sizes the panel per tab.
+ * The design's git panel (§3.6), which also hosts the agent output of the tasks
+ * that were opened (the design has no place for it; Stage 4's view is kept
+ * reachable here): a git tab, then one tab per open task with its own close
+ * button. The tabs are held by the workspace, which sizes the panel per tab.
  */
-export function BottomPanel({ view, selectedTask, tab, onTab, onCloseTask }: Props) {
-  const output = outputTask(tab, selectedTask);
+export function BottomPanel({ view, tabs, onShow, onClose }: Props) {
+  const header = <Tabs tabs={tabs} onShow={onShow} onClose={onClose} />;
   return (
-    <section className={`bottom ${output ? "tall" : ""}`} aria-label={output ? "agent output" : "git"}>
-      {output ? (
-        <AgentOutput
-          view={view}
-          task={output}
-          tabs={<Tabs tab={tab} task={selectedTask} onTab={onTab} onClose={onCloseTask} />}
-        />
-      ) : (
-        <GitPanel view={view} tabs={<Tabs tab={tab} task={selectedTask} onTab={onTab} onClose={onCloseTask} />} />
-      )}
+    <section className={`bottom ${tabs.active ? "tall" : ""}`} aria-label={tabs.active ? "agent output" : "git"}>
+      {tabs.active ? <AgentOutput key={tabs.active} view={view} task={tabs.active} tabs={header} /> : <GitPanel view={view} tabs={header} />}
     </section>
   );
 }
 
-function Tabs({
-  tab,
-  task,
-  onTab,
-  onClose,
-}: {
-  tab: BottomTab;
-  task: string | null;
-  onTab: (t: BottomTab) => void;
-  onClose: () => void;
-}) {
+function Tabs({ tabs, onShow, onClose }: Pick<Props, "tabs" | "onShow" | "onClose">) {
   return (
-    <>
+    <div className="bottom-tabs">
       <button
         type="button"
-        className={`tab ${tab === "git" ? "active" : ""}`}
+        className={`tab ${tabs.active === null ? "active" : ""}`}
         aria-label="git"
-        aria-pressed={tab === "git"}
+        aria-pressed={tabs.active === null}
         title="git のグラフ"
-        onClick={() => onTab("git")}
+        onClick={() => onShow(null)}
       >
         <Icon name="git-branch" size={14} />
       </button>
-      {task ? (
-        <>
-          <button
-            type="button"
-            className={`tab ${tab === "output" ? "active" : ""}`}
-            aria-label={`${task} の出力`}
-            aria-pressed={tab === "output"}
-            title={`${task} のエージェントの出力`}
-            onClick={() => onTab("output")}
-          >
-            <Icon name="terminal" size={14} />
-            {task}
-          </button>
-          <IconButton icon="x" size={14} label="出力を閉じる" onClick={onClose} />
-        </>
-      ) : null}
-    </>
+      {tabs.tasks.map((task) => {
+        const active = tabs.active === task;
+        return (
+          <span key={task} className={`tab-group ${active ? "active" : ""}`}>
+            <button
+              type="button"
+              className="tab"
+              aria-label={`${task} の出力`}
+              aria-pressed={active}
+              title={`${task} のエージェントの出力`}
+              onClick={() => onShow(task)}
+            >
+              <Icon name="terminal" size={14} />
+              {task}
+            </button>
+            <IconButton className="tab-close" icon="x" size={12} label={`${task} の出力を閉じる`} onClick={() => onClose(task)} />
+          </span>
+        );
+      })}
+    </div>
   );
 }
