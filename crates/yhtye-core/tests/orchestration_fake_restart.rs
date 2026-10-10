@@ -15,6 +15,7 @@ use common::orch::{
     prompts_to, shutdown_and_check, summary, until,
 };
 use serde_json::{Value, json};
+use yhtye_core::acp::HarnessConfig;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, TaskStatus};
 use yhtye_core::runtime::Orchestration;
@@ -92,12 +93,15 @@ async fn restart(
     orch_script: Value,
     impl_script: Value,
 ) -> (Orchestration, Vec<ApiEvent>) {
-    let cfg = config(
-        dir,
-        fake_harness(orch_script),
-        fake_harness(impl_script),
-        fake_harness(json!({})),
-    );
+    restart_with(dir, fake_harness(orch_script), fake_harness(impl_script)).await
+}
+
+async fn restart_with(
+    dir: &Path,
+    orchestrator: HarnessConfig,
+    implementer: HarnessConfig,
+) -> (Orchestration, Vec<ApiEvent>) {
+    let cfg = config(dir, orchestrator, implementer, fake_harness(json!({})));
     let (orch, mut rx) = Orchestration::start(cfg).await.expect("restarts");
     let mut events = Vec::new();
     until(&mut rx, &mut events, TIMEOUT, |e| {
@@ -120,6 +124,46 @@ fn started(events: &[ApiEvent], session: &str) -> Vec<(String, bool)> {
             _ => None,
         })
         .collect()
+}
+
+/// The ACP session `session`'s start gave up on, per start.
+fn lost(events: &[ApiEvent], session: &str) -> Vec<Option<String>> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionStarted {
+                session: s,
+                lost_acp_session_id,
+                ..
+            } if s == session => Some(lost_acp_session_id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What the user was told went wrong with the start of `session`.
+fn failures(events: &[ApiEvent], session: &str) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::SessionFailed { session: s, error } if s == session => {
+                Some(error.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// An implementer script whose agent fails (`fault`: `fail_at` / `hang_at`
+/// at `session/set_mode`) in its first `times` processes, after restoring the
+/// session fine, and works from then on.
+fn flaky_set_mode(fault: &str, times: u32, attempts: &Path) -> Value {
+    let script = json!({
+        fault: "session/set_mode",
+        "fault_attempts": times,
+        "attempt_file": attempts.join("implementer").display().to_string(),
+    });
+    implementer_after_restart(script)
 }
 
 fn interrupted(events: &[ApiEvent]) -> Vec<&str> {
@@ -169,6 +213,7 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
     let old_impl = started(&before, IMPLEMENTER);
     let old_orch = started(&before, ORCHESTRATOR_SESSION);
     assert_eq!(old_impl.len(), 1);
+    assert_eq!(lost(&before, IMPLEMENTER), [None]);
     assert!(before.iter().any(|e| matches!(&e.body,
         ApiEventBody::SessionStopped { session, suspended: true } if session == IMPLEMENTER)));
 
@@ -191,6 +236,9 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
         started(&events, ORCHESTRATOR_SESSION),
         [(old_orch[0].0.clone(), true)]
     );
+    // Nothing was lost, nothing went wrong.
+    assert_eq!(lost(&events, IMPLEMENTER), [None]);
+    assert_eq!(failures(&events, IMPLEMENTER), Vec::<String>::new());
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
     assert!(impl_prompts[0].starts_with("[yhtye:resume] task=T-1 step=1\n"));
@@ -245,6 +293,10 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
 async fn restart_starts_new_sessions_when_session_load_fails() {
     let dir = tempfile::tempdir().expect("tempdir");
     let before = run_until_quit(dir.path()).await;
+    let old = [
+        (ORCHESTRATOR_SESSION, started(&before, ORCHESTRATOR_SESSION)),
+        (IMPLEMENTER, started(&before, IMPLEMENTER)),
+    ];
     let fail_load = json!({"fail_at": "session/load"});
     let (orch, events) = restart(
         dir.path(),
@@ -261,6 +313,21 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         assert!(events.iter().any(|e| matches!(&e.body,
             ApiEventBody::SessionFailed { session: s, error }
                 if s == session && error.contains("could not restore"))));
+    }
+    // The sessions that could not be restored are named, not forgotten.
+    for (session, old) in &old {
+        let old_id = old[0].0.clone();
+        assert_eq!(lost(&events, session), [Some(old_id.clone())], "{session}");
+        let told = failures(&events, session);
+        assert!(told.iter().all(|t| t.contains(&old_id)), "{told:?}");
+        let sessions = orch.store().sessions("P-1").await.expect("sessions");
+        let record = sessions.iter().find(|r| r.session_key == *session);
+        let record = record.expect("the session is recorded");
+        assert_eq!(record.lost_acp_session_id.as_deref(), Some(old_id.as_str()));
+        assert_ne!(
+            record.acp_session_id, old_id,
+            "{session} runs a new session"
+        );
     }
     // The new implementer session gets the whole step again, with a note.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
@@ -280,7 +347,8 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
 #[tokio::test]
 async fn restart_with_an_agent_that_cannot_load_uses_the_full_step_prompt() {
     let dir = tempfile::tempdir().expect("tempdir");
-    run_until_quit(dir.path()).await;
+    let before = run_until_quit(dir.path()).await;
+    let old_impl = started(&before, IMPLEMENTER);
     let (orch, events) = restart(
         dir.path(),
         orchestrator_after_restart(json!({})),
@@ -289,6 +357,8 @@ async fn restart_with_an_agent_that_cannot_load_uses_the_full_step_prompt() {
     .await;
     assert_eq!(started(&events, IMPLEMENTER).len(), 1);
     assert!(!started(&events, IMPLEMENTER)[0].1);
+    // The agent never tried to load it, but the old session id is kept anyway.
+    assert_eq!(lost(&events, IMPLEMENTER), [Some(old_impl[0].0.clone())]);
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
     assert!(
@@ -297,5 +367,91 @@ async fn restart_with_an_agent_that_cannot_load_uses_the_full_step_prompt() {
             .any(|m| m.contains("redone in a new session"))
     );
     assert_task_done_after_interruption(&events);
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn a_restore_that_times_out_is_tried_again_with_a_new_agent_process() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let attempts = tempfile::tempdir().expect("tempdir");
+    let before = run_until_quit(dir.path()).await;
+    let old_impl = started(&before, IMPLEMENTER);
+
+    // The first process loads the session, then never answers `set_mode`
+    // (what stranded a real session): its start times out. The second works.
+    let mut implementer = fake_harness(flaky_set_mode("hang_at", 1, attempts.path()));
+    implementer.startup_timeout = Duration::from_secs(2);
+    let orchestrator = fake_harness(orchestrator_after_restart(json!({})));
+    let (orch, events) = restart_with(dir.path(), orchestrator, implementer).await;
+
+    assert_task_done_after_interruption(&events);
+    // The session came back with its own ACP session id: the conversation lives on.
+    assert_eq!(
+        started(&events, IMPLEMENTER),
+        [(old_impl[0].0.clone(), true)]
+    );
+    assert_eq!(lost(&events, IMPLEMENTER), [None]);
+    let told = failures(&events, IMPLEMENTER);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(
+        told[0].contains("timed out at `session/set_mode`"),
+        "{told:?}"
+    );
+    assert!(told[0].contains(&old_impl[0].0), "{told:?}");
+    assert!(told[0].contains("trying again (1/2)"), "{told:?}");
+    // It continued the step instead of redoing it.
+    let impl_prompts = prompts_to(&events, IMPLEMENTER);
+    assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
+    assert!(impl_prompts[0].starts_with("[yhtye:resume] task=T-1 step=1\n"));
+    let sessions = orch.store().sessions("P-1").await.expect("sessions");
+    let record = sessions.iter().find(|r| r.session_key == IMPLEMENTER);
+    assert_eq!(record.map(|r| r.lost_acp_session_id.clone()), Some(None));
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn when_every_try_fails_the_old_acp_session_id_is_kept() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let attempts = tempfile::tempdir().expect("tempdir");
+    let before = run_until_quit(dir.path()).await;
+    let old_id = started(&before, IMPLEMENTER)[0].0.clone();
+
+    // The first try and both retries load the session and then fail at
+    // `set_mode`; the fourth process (a new session) works.
+    let implementer = fake_harness(flaky_set_mode("fail_at", 3, attempts.path()));
+    let orchestrator = fake_harness(orchestrator_after_restart(json!({})));
+    let (orch, events) = restart_with(dir.path(), orchestrator, implementer).await;
+
+    assert_task_done_after_interruption(&events);
+    let starts = started(&events, IMPLEMENTER);
+    assert_eq!(starts.len(), 1, "{starts:?}");
+    assert!(!starts[0].1, "a new session");
+    assert_ne!(starts[0].0, old_id);
+    // The new session knows which one it replaced...
+    assert_eq!(lost(&events, IMPLEMENTER), [Some(old_id.clone())]);
+    // ...and the user is told, with the id: each retry, then the fallback.
+    let told = failures(&events, IMPLEMENTER);
+    assert_eq!(told.len(), 3, "{told:?}");
+    assert!(told[0].contains("trying again (1/2)"), "{told:?}");
+    assert!(told[1].contains("trying again (2/2)"), "{told:?}");
+    assert!(
+        told[2].contains(&format!("could not restore the session {old_id}")),
+        "{told:?}"
+    );
+    assert!(
+        told.iter().all(|t| t.contains("session/set_mode")),
+        "{told:?}"
+    );
+    // The step starts over in the new session.
+    let impl_prompts = prompts_to(&events, IMPLEMENTER);
+    assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
+    // The old id is in the database, next to the new one, after the task is done.
+    let sessions = orch.store().sessions("P-1").await.expect("sessions");
+    let record = sessions
+        .iter()
+        .find(|r| r.session_key == IMPLEMENTER)
+        .expect("recorded");
+    assert_eq!(record.acp_session_id, starts[0].0);
+    assert_eq!(record.lost_acp_session_id.as_deref(), Some(old_id.as_str()));
     shutdown_and_check(orch, &events).await;
 }

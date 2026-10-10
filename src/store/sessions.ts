@@ -26,6 +26,9 @@ export function applySessionEvent(sessions: SessionRecord[], body: ApiEventBody)
         // Older logs have no directory (Stage 8).
         cwd: body.cwd ?? null,
       };
+      // A session lost earlier stays recorded until another one is (like the core).
+      const lost = body.lost_acp_session_id ?? sessions.find((s) => s.session_key === body.session)?.lost_acp_session_id;
+      if (lost) row.lost_acp_session_id = lost;
       const rest = sessions.filter((s) => s.session_key !== body.session);
       // Same order as the core (SQLite's binary collation).
       return [...rest, row].sort((a, b) => (a.session_key < b.session_key ? -1 : a.session_key > b.session_key ? 1 : 0));

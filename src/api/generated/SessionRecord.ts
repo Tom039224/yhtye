@@ -18,4 +18,10 @@ agent: AgentChoice | null,
 /**
  * The directory the session was started in (Stage 8; `None` for older rows).
  */
-cwd: string | null, };
+cwd: string | null, 
+/**
+ * The ACP session a start tried to restore and gave up on, replaced by
+ * `acp_session_id`: kept to restore the lost session by hand later. It stays
+ * until another restore is given up.
+ */
+lost_acp_session_id?: string, };

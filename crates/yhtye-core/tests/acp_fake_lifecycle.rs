@@ -5,7 +5,8 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    Session, assert_process_gone, fake_harness, next_event, start, start_err, wait_exited,
+    Session, assert_process_gone, fake_harness, message_text, next_event, start, start_err,
+    wait_exited,
 };
 use serde_json::json;
 use yhtye_core::acp::schema::{SessionId, StopReason};
@@ -276,6 +277,81 @@ async fn effort_is_set_after_the_model_and_verified() {
         panic!("{err:?}")
     };
     assert_eq!(step, "session/set_config_option", "haiku has no effort");
+}
+
+/// What the agent was asked to change at startup (`session/set_mode` and
+/// `session/set_config_option` received), as the fake reports it.
+async fn startup_writes(h: &HarnessConfig, options: SpawnOptions) -> String {
+    let mut s = start(h, tmp().path(), options).await;
+    s.handle.prompt_text("go").expect("prompt");
+    let (events, _) = s.turn().await;
+    s.handle.shutdown().await;
+    message_text(&events)
+}
+
+#[tokio::test]
+async fn a_mode_and_model_the_agent_already_has_are_not_set_again() {
+    let report = json!({"turns": [{"actions": ["report_writes"]}, {"actions": ["report_writes"]}]});
+    let with = |extra: serde_json::Value| {
+        let mut script = report.clone();
+        script
+            .as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        script
+    };
+
+    // The agent starts in another mode on another model: both are set.
+    let h = fake_harness(report.clone());
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=bypassPermissions;options=model"
+    );
+
+    // It already is in the wanted mode and on the wanted model: nothing is
+    // sent, for a new session and for a restored one alike.
+    let h = fake_harness(with(
+        json!({"modes": ["bypassPermissions", "default"], "models": ["haiku", "default"]}),
+    ));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=;options="
+    );
+    assert_eq!(
+        startup_writes(&h, resume("prev-123")).await,
+        "writes:modes=;options="
+    );
+
+    // Only what differs is set.
+    let h = fake_harness(with(json!({"modes": ["bypassPermissions", "default"]})));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=;options=model"
+    );
+}
+
+#[tokio::test]
+async fn an_effort_the_agent_already_has_is_not_set_again() {
+    let script = json!({
+        "models": ["haiku", "default"],
+        "efforts": {"haiku": ["low", "high"]},
+        "turns": [{"actions": ["report_writes"]}]
+    });
+    let effort = |value: &str| ModelSelect {
+        config_id: "effort".into(),
+        value: value.into(),
+    };
+    let mut h = fake_harness(script);
+    h.effort = Some(effort("default"));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=bypassPermissions;options="
+    );
+    h.effort = Some(effort("high"));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=bypassPermissions;options=effort"
+    );
 }
 
 #[tokio::test]

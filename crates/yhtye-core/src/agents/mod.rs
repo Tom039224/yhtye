@@ -12,8 +12,9 @@ mod openrouter;
 mod settings;
 
 pub use catalog::{
-    AgentCatalog, CLAUDE_CODE, CODEX, DEVIN, HarnessInfo, HarnessPreset, MINIMAX_CODE,
-    MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved,
+    AgentCatalog, CLAUDE_CODE, CODEX, DEFAULT_RESUME_RETRIES, DEFAULT_RESUME_RETRY_DELAY, DEVIN,
+    HarnessInfo, HarnessPreset, MINIMAX_CODE, MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE,
+    OPENCODE, Resolved, ResumeRetry,
 };
 pub use codex_config::{codex_home, configured_provider, model_provider};
 pub use detect::{

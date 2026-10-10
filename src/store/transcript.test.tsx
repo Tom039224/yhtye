@@ -75,6 +75,30 @@ describe("a replaced harness", () => {
   });
 });
 
+describe("a session that could not be restored", () => {
+  const started = (lost?: string): ApiEventBody => ({
+    type: "session_started",
+    session: S,
+    role: "implementer",
+    task: "T-1",
+    pid: 1,
+    acp_session_id: "new-id",
+    resumed: false,
+    agent: null,
+    ...(lost ? { lost_acp_session_id: lost } : {}),
+  });
+
+  it("names the lost ACP session in an error line instead of a plain start", () => {
+    const t = fold([ev(1, started("old-id")), ev(2, started())]);
+    expect(t[S].map((i) => (i.kind === "lifecycle" ? [i.text, i.error] : null))).toEqual([
+      ["could not restore the previous session (old-id); started a new session", true],
+      ["session started", false],
+    ]);
+    render(<TranscriptView items={t[S]} agentLabel="implementer" />);
+    expect(screen.getByText(/could not restore the previous session \(old-id\)/)).toBeInTheDocument();
+  });
+});
+
 describe("a group merged into another branch", () => {
   it("adds nothing to the conversation (the orchestrator reports it)", () => {
     const t = fold([ev(1, { type: "domain", event: { type: "group_base_changed", group: "G-1", from: "feat/x", to: "feat/y" } })]);

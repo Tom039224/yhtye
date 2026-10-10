@@ -159,7 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 8);
+    assert_eq!(applied, 9);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -193,7 +193,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 8);
+    assert_eq!(applied, 9);
 }
 
 #[tokio::test]
@@ -348,8 +348,21 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             agent: Some(AgentChoice::new("claude-code", Some(acp)).with_effort("high")),
             replaced: None,
             cwd: Some("/work/tree".into()),
+            lost_acp_session_id: None,
         },
     )
+}
+
+fn session_restarted_anew(seq: u64, key: &str, acp: &str, lost: &str) -> ApiEvent {
+    let mut started = session_started(seq, key, acp);
+    if let ApiEventBody::SessionStarted {
+        lost_acp_session_id,
+        ..
+    } = &mut started.body
+    {
+        *lost_acp_session_id = Some(lost.into());
+    }
+    started
 }
 
 #[tokio::test]
@@ -438,6 +451,51 @@ async fn session_events_keep_the_agent_sessions_table() {
     let sessions = store.sessions("P-1").await.expect("sessions");
     assert_eq!(sessions[0].acp_session_id, "acp-3");
     assert_eq!(sessions[0].status, SessionStatus::Live);
+}
+
+#[tokio::test]
+async fn a_session_that_could_not_be_restored_keeps_its_lost_acp_session() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = stored_rich(dir.path()).await;
+    let key = "T-1/implementer";
+    let lost = |s: &[SessionRecord]| s[0].lost_acp_session_id.clone();
+    store
+        .append(&[session_started(2, key, "acp-1")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(lost(&sessions), None, "nothing was lost yet");
+
+    // The restore of acp-1 failed: acp-2 replaces it, acp-1 is kept.
+    store
+        .append(&[session_restarted_anew(3, key, "acp-2", "acp-1")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(sessions[0].acp_session_id, "acp-2");
+    assert_eq!(lost(&sessions).as_deref(), Some("acp-1"));
+
+    // A later start that lost nothing does not forget it.
+    store
+        .append(&[session_started(4, key, "acp-2")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(lost(&sessions).as_deref(), Some("acp-1"));
+
+    // Giving up another restore replaces it (the log has both).
+    store
+        .append(&[session_restarted_anew(5, key, "acp-3", "acp-2")])
+        .await
+        .expect("append");
+    let sessions = store.sessions("P-1").await.expect("sessions");
+    assert_eq!(
+        (
+            sessions[0].acp_session_id.as_str(),
+            lost(&sessions).as_deref()
+        ),
+        ("acp-3", Some("acp-2"))
+    );
 }
 
 #[tokio::test]
