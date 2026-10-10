@@ -39,6 +39,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const scoped = useMemo(() => (view.state ? scopeState(view.state, chat?.id ?? null) : null), [view.state, chat?.id]);
   const queued = useMemo(() => new Set((scoped?.inbox ?? []).map((e) => e.id)), [scoped]);
   const session = orchestratorSession(view, chat?.id ?? null);
+  const resuming = chat ? Boolean(view.resuming[chat.id]) : false;
   const overview = useAppState((s) => (s.git?.project === view.info.id ? s.git.overview : null));
   const place = chatPlace(overview, chat);
   const placeText = placeLabel(place);
@@ -78,7 +79,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
           </span>
         ) : null}
         <span className="spacer" />
-        <SessionBadge status={session?.status} running={session?.turn_running ?? false} />
+        <SessionBadge status={session?.status} running={session?.turn_running ?? false} starting={resuming} />
       </header>
       <div className="scroll" ref={scroller}>
         {!chat ? (
@@ -107,7 +108,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         disabledReason={chat ? disabledReason : null}
         sending={sending}
         turnRunning={session?.turn_running ?? false}
-        starting={queued.size > 0 && session?.status !== "live"}
+        starting={resuming || (queued.size > 0 && session?.status !== "live")}
         mentions={mentions}
         onRemoveMention={onRemoveMention}
         onSend={send}
@@ -173,14 +174,32 @@ function WaitBanner({ state }: { state: State }) {
 
 /**
  * The orchestrator's state, by shape as well as colour: a hollow ring not
- * started, a filled green dot idle, a blue dot with a halo working, and the
- * alert icon when the session needs attention. The words are the tooltip.
+ * running (never started, or suspended until the chat is opened or gets
+ * something), a spinner while it starts, a filled green dot idle, a blue dot
+ * with a halo working, and the alert icon when the session needs attention.
+ * The words are the tooltip.
  */
-function SessionBadge({ status, running }: { status: string | undefined; running: boolean }) {
-  const label = !status ? "not started" : status === "live" ? (running ? "working" : "idle") : status;
+function SessionBadge({ status, running, starting }: { status: string | undefined; running: boolean; starting: boolean }) {
+  const label = starting
+    ? "starting"
+    : !status
+      ? "not started"
+      : status === "live"
+        ? running
+          ? "working"
+          : "idle"
+        : status;
   const title = `オーケストレータ: ${label}`;
   const words = <span className="sr-only">{label}</span>;
-  if (status && status !== "live") {
+  if (starting) {
+    return (
+      <span className="status-icon" title={title} data-testid="orchestrator-status">
+        <Icon name="loader" size={14} spin />
+        {words}
+      </span>
+    );
+  }
+  if (status && status !== "live" && !PAUSED.has(status)) {
     return (
       <span className="status-icon status-icon-bad" title={title} data-testid="orchestrator-status">
         <Icon name="alert" size={14} />
@@ -188,10 +207,17 @@ function SessionBadge({ status, running }: { status: string | undefined; running
       </span>
     );
   }
-  const tone = !status ? "" : running ? " status-dot-working" : " status-dot-idle";
+  const tone = !status || PAUSED.has(status) ? "" : running ? " status-dot-working" : " status-dot-idle";
   return (
     <span className={`status-dot${tone}`} title={title} data-testid="orchestrator-status">
       {words}
     </span>
   );
 }
+
+/**
+ * Sessions that are not running because Yhtye was restarted: the orchestrator is
+ * brought back when the chat is opened or has something to receive, so this is
+ * not a problem to flag.
+ */
+const PAUSED: ReadonlySet<string> = new Set(["suspended", "interrupted"]);

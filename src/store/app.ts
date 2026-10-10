@@ -33,6 +33,7 @@ import {
   applyLive,
   applySnapshot,
   clearStreaming,
+  markResuming,
   newProjectView,
   prependHistory,
   type ProjectView,
@@ -214,13 +215,35 @@ export class AppStore {
     await this.run({ type: "cancel_orchestrator_turn", project: view.info.id, chat: view.selectedChat }, "accepted");
   }
 
-  /** Shows another chat (no process is started); remembered for the project. */
+  /**
+   * Shows another chat; remembered for the project. Opening a chat brings its
+   * orchestrator back if it has something to resume (a restart of Yhtye starts
+   * none), which `openChat` asks the core for.
+   */
   selectChat(chat: string): void {
     const view = this.state.project;
     if (!view || view.selectedChat === chat || !view.chats.some((c) => c.id === chat)) return;
     this.prefs.set(chatPrefKey(view.info.id), chat);
     const { [chat]: _read, ...unread } = view.unread;
     this.updateProject((v) => ({ ...v, selectedChat: chat, unread }));
+    void this.openChat(view.info.id, chat);
+  }
+
+  /**
+   * Tells the core the user is looking at `chat`: it starts the chat's
+   * orchestrator if there is a stored session or work to resume, and answers
+   * whether it is starting (shown until its session is up). Failures are shown.
+   */
+  private async openChat(project: string, chat: string): Promise<void> {
+    const r = await this.run({ type: "open_chat", project, chat }, "chat_opened");
+    if (this.state.project?.info.id !== project) return;
+    this.updateProject((v) => markResuming(v, chat, r?.starting ?? false));
+  }
+
+  /** `openChat` for the chat on screen (after a project is loaded or the connection came back). */
+  private openSelectedChat(): void {
+    const view = this.state.project;
+    if (view?.selectedChat) void this.openChat(view.info.id, view.selectedChat);
   }
 
   /**
@@ -390,6 +413,7 @@ export class AppStore {
       await this.catchUp(token);
       if (token !== this.loadToken) return;
       this.updateProject((v) => ({ ...v, phase: "ready" }));
+      this.openSelectedChat();
     } catch (e) {
       if (token !== this.loadToken) return;
       const message = `could not load ${info.name}: ${toCommandError(e).message}`;
@@ -548,6 +572,7 @@ export class AppStore {
     if (!r || this.state.project?.info.id !== info.id) return;
     this.updateProject((v) => ({ ...v, info: r.project }));
     this.requestCatchUp();
+    this.openSelectedChat(); // the core may have restarted
   }
 
   // ---- agent settings (Stage 7b) --------------------------------------------

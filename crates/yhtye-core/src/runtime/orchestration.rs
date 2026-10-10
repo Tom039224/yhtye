@@ -13,7 +13,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::chats::ChatTarget;
-use super::driver::{Channels, Cmd, Driver, Restarted};
+use super::driver::{Channels, Cmd, Driver};
 use super::emitter::{Emitter, Publisher};
 use super::port::{LoopPort, ToolRequest};
 use super::sessions::{Sessions, StoredSession};
@@ -100,13 +100,20 @@ struct Stored {
 impl Stored {
     /// Reports every session that was running (or suspended) when Yhtye stopped
     /// as interrupted; returns the ACP session ids of the sub-agents to restore,
-    /// by session key. Orchestrators are restored by the loop, per chat.
+    /// by session key. The chats' orchestrators are not started with the project:
+    /// the loop restores each one when its chat is opened or gets something.
     fn interrupt_sessions(&self, emit: &Emitter) -> HashMap<String, StoredSession> {
         let resumable = || self.sessions.iter().filter(|s| s.status.is_resumable());
         for s in resumable() {
-            emit.send(ApiEventBody::SessionInterrupted {
-                session: s.session_key.clone(),
-            });
+            // A chat nobody opened since the last start is still interrupted: that
+            // is not reported (and shown in its conversation) again.
+            let again =
+                s.status == SessionStatus::Interrupted && chat_of_session(&s.session_key).is_some();
+            if !again {
+                emit.send(ApiEventBody::SessionInterrupted {
+                    session: s.session_key.clone(),
+                });
+            }
         }
         resumable()
             .filter(|s| chat_of_session(&s.session_key).is_none())
@@ -117,25 +124,6 @@ impl Stored {
                 };
                 (s.session_key.clone(), stored)
             })
-            .collect()
-    }
-
-    /// The chats whose orchestrators start with the project (§10): those whose
-    /// session was live when Yhtye stopped, that have an open group or that have
-    /// undelivered inbox entries. Every other chat starts when it is next used.
-    fn chats_to_restore(&self) -> Vec<String> {
-        self.state
-            .chats
-            .iter()
-            .filter(|c| {
-                let live = self.sessions.iter().any(|s| {
-                    chat_of_session(&s.session_key) == Some(c.id.as_str())
-                        && s.status != SessionStatus::Stopped
-                });
-                let open_group = self.state.open_group_of(&c.id).is_some();
-                live || open_group || self.state.inbox_of(&c.id).next().is_some()
-            })
-            .map(|c| c.id.clone())
             .collect()
     }
 }
@@ -182,12 +170,12 @@ async fn open_project(store: &Store, cfg: &OrchestrationConfig) -> Result<Stored
 
 impl Orchestration {
     /// Opens the project's stored state (or creates it) and starts the MCP
-    /// server. No orchestrator is started for a new or idle project: each chat's
-    /// starts when something is sent to it (`core-design.md` §17.3). After a
-    /// restart, in-flight tasks become `interrupted` and are resumed, restoring
-    /// their agent sessions with `session/load` where possible, and the
-    /// orchestrators of the chats that were live or have open work are restored.
-    /// Events arrive on the returned receiver.
+    /// server. No orchestrator is started with the project, new or restarted:
+    /// each chat's starts when the user opens it ([`Orchestration::open_chat`]) or
+    /// when something is sent to it, such as a notification about its tasks
+    /// (`core-design.md` §17.3). After a restart, in-flight tasks become
+    /// `interrupted` and are resumed, restoring their agent sessions with
+    /// `session/load` where possible. Events arrive on the returned receiver.
     pub async fn start(
         cfg: OrchestrationConfig,
     ) -> Result<(Self, mpsc::UnboundedReceiver<ApiEvent>), OrchError> {
@@ -203,10 +191,7 @@ impl Orchestration {
         let project = cfg.project.clone();
         let cfg = Arc::new(cfg);
         let sessions = Sessions::new(cfg.clone(), host, emit, agent_tx, resume);
-        let restarted = stored.restarted.then(|| Restarted {
-            chats: stored.chats_to_restore(),
-            records: stored.sessions.clone(),
-        });
+        let restarted = stored.restarted;
         let driver = Driver::new(cfg, stored.state, sessions, publisher);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let channels = Channels {
@@ -256,6 +241,16 @@ impl Orchestration {
     ) -> Result<(), UserActionError> {
         let (tx, rx) = oneshot::channel();
         self.send(Cmd::UserMessage(chat.into(), text.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// The user opened `chat`: its orchestrator is started, restoring its stored
+    /// session, if it has anything to resume (it ran when Yhtye stopped, the chat
+    /// has an open group or it has inbox entries) and is not running. Returns
+    /// whether it is starting. `not_found` for an unknown chat.
+    pub async fn open_chat(&self, chat: impl Into<String>) -> Result<bool, UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::OpenChat(chat.into(), tx))?;
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 

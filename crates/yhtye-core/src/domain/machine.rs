@@ -121,7 +121,7 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
         DomainCommand::InboxDelivered { chat, up_to } => {
             tx.emit(DomainEvent::InboxDelivered { chat, up_to });
         }
-        DomainCommand::Restart { orchestrators } => tx.restart(&orchestrators),
+        DomainCommand::Restart => tx.restart(),
         DomainCommand::TellOrchestrator { chat, resume } => tx.tell_orchestrator(&chat, resume),
         DomainCommand::ResumeTask { task } => tx.resume_task(&task),
         DomainCommand::RetryGroupMerge { group } => tx.retry_group_merge(&group)?,

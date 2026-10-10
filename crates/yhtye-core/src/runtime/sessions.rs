@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
@@ -46,6 +46,13 @@ pub fn agent_ref(binding: &SessionBinding) -> Option<AgentRef> {
         step: binding.step?,
     })
 }
+
+/// Most agent processes that are being started at the same time. A start (the
+/// handshake, `session/load`, the mode and config calls) takes seconds and often
+/// much longer for a restored session; many at once made them time out, so the
+/// ones beyond this wait for a start to finish (T-48). Running sessions are not
+/// counted.
+pub(super) const MAX_CONCURRENT_STARTS: usize = 4;
 
 /// An agent event tagged with its session key and launch number.
 pub(super) type AgentMsg = (String, u64, AgentEvent);
@@ -115,6 +122,9 @@ pub(super) struct Sessions {
     /// Stored sessions to restore (`session/load`), by session key.
     pub(super) resume: HashMap<String, StoredSession>,
     pub(super) spawning: JoinSet<Spawned>,
+    /// One permit per start that may run now ([`MAX_CONCURRENT_STARTS`]); closed
+    /// on shutdown, which fails the starts still waiting.
+    pub(super) start_slots: Arc<Semaphore>,
     /// Shutdowns in progress; each yields its session key and launch number.
     pub(super) stopping: JoinSet<(String, u64)>,
 }
@@ -137,6 +147,7 @@ impl Sessions {
             starting: HashMap::new(),
             resume,
             spawning: JoinSet::new(),
+            start_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_STARTS)),
             stopping: JoinSet::new(),
         }
     }
@@ -420,9 +431,19 @@ impl Sessions {
         let mut suspended: HashSet<String> = self.starting.keys().cloned().collect();
         suspended.extend(self.live.keys().cloned());
         self.starting.clear();
+        self.start_slots.close();
         while let Some(res) = self.spawning.join_next().await {
-            if let Ok(spawned) = res {
-                self.on_spawned(spawned);
+            match res {
+                // A start that was still waiting for a slot never began.
+                Ok(Spawned {
+                    token,
+                    result: Err(AgentError::Closed),
+                    ..
+                }) => self.revoke(&token),
+                Ok(spawned) => {
+                    self.on_spawned(spawned);
+                }
+                Err(_) => {}
             }
         }
         let keys: Vec<String> = self.live.keys().cloned().collect();
