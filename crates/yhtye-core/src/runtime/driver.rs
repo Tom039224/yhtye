@@ -31,7 +31,7 @@ use crate::domain::{
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 use crate::prompts::workspace_changes_note;
-use crate::store::{SessionRecord, StoreError};
+use crate::store::StoreError;
 
 /// Session key of tool calls made by the user through the API (not an agent).
 pub const USER_SESSION: &str = "user";
@@ -42,6 +42,9 @@ pub(super) enum Cmd {
     UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
     /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
+    /// The user opened a chat: its orchestrator is started (restored) if it has
+    /// anything to resume. Answers whether it is starting (`not_found`: no such chat).
+    OpenChat(String, oneshot::Sender<Result<bool, ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// The user renames a chat (chat, title).
@@ -60,14 +63,6 @@ pub(super) enum Cmd {
     RetryGroupMerge(String, oneshot::Sender<Reply>),
     Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
     Shutdown(oneshot::Sender<()>),
-}
-
-/// Set when the loop starts on a stored state (a restart).
-pub(super) struct Restarted {
-    /// The chats whose orchestrators are started again (`orchestration-model.md` §10).
-    pub(super) chats: Vec<String>,
-    /// The stored sessions as they were when Yhtye stopped.
-    pub(super) records: Vec<SessionRecord>,
 }
 
 pub(super) struct Channels {
@@ -153,10 +148,10 @@ impl Driver {
         }
     }
 
-    pub(super) async fn run(mut self, mut ch: Channels, restarted: Option<Restarted>) {
+    pub(super) async fn run(mut self, mut ch: Channels, restarted: bool) {
         self.publisher.flush().await;
-        if let Some(r) = restarted {
-            self.restart(r).await;
+        if restarted {
+            self.restart().await;
             self.flush_inbox().await;
             self.publisher.flush().await;
         }
@@ -204,15 +199,13 @@ impl Driver {
         }
     }
 
-    /// Marks what was in flight as interrupted, resumes each interrupted task and
-    /// starts the orchestrators of the chats to restore.
-    async fn restart(&mut self, r: Restarted) {
-        let plans = self.plan_restore(&r).await;
-        let orchestrators = plans
-            .iter()
-            .map(|(chat, plan)| (chat.clone(), plan.resume_info))
-            .collect();
-        self.execute(DomainCommand::Restart { orchestrators }).await;
+    /// Marks what was in flight as interrupted and resumes each interrupted task.
+    /// The chats' orchestrators are not started here (`core-design.md` §17.3): a
+    /// chat's starts when it is opened or when something is sent to it — the
+    /// inbox entries left over (also the ones this restart queues) are flushed by
+    /// the caller, which starts the chats that have any.
+    async fn restart(&mut self) {
+        self.execute(DomainCommand::Restart).await;
         let interrupted: Vec<String> = self
             .state
             .tasks
@@ -222,9 +215,6 @@ impl Driver {
             .collect();
         for task in interrupted {
             self.execute(DomainCommand::ResumeTask { task }).await;
-        }
-        for (chat, plan) in plans {
-            self.launch_orchestrator(&chat, plan);
         }
     }
 
@@ -243,6 +233,9 @@ impl Driver {
                     None => Err(ToolError::not_found(format!("no chat {chat}"))),
                 };
                 let _ = tx.send(reply);
+            }
+            Some(Cmd::OpenChat(chat, tx)) => {
+                let _ = tx.send(self.open_chat(chat).await);
             }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);

@@ -20,11 +20,19 @@ fn running(steps: Value) -> Sim {
     sim
 }
 
-fn restart(sim: &mut Sim, orchestrator: OrchestratorResume) -> Chain {
-    sim.run(DomainCommand::Restart {
-        orchestrators: vec![("C-1".into(), orchestrator)],
+fn restart(sim: &mut Sim) -> Chain {
+    sim.run(DomainCommand::Restart)
+        .expect("restart never fails")
+}
+
+/// The orchestrator of C-1 is started again (when the chat is opened or has
+/// something to receive), not as part of the restart.
+fn start_orchestrator(sim: &mut Sim, resume: OrchestratorResume) -> Chain {
+    sim.run(DomainCommand::TellOrchestrator {
+        chat: "C-1".into(),
+        resume,
     })
-    .expect("restart never fails")
+    .expect("telling never fails")
 }
 
 fn resume(sim: &mut Sim, task: &str) -> Chain {
@@ -51,12 +59,12 @@ fn resume_step(chain: &Chain) -> (AgentRef, String, String) {
 #[test]
 fn a_running_agent_step_is_interrupted_then_resumed_in_its_session() {
     let mut sim = running(json!([{"kind": "implement"}, {"kind": "review"}]));
-    let chain = restart(&mut sim, IDLE);
+    let chain = restart(&mut sim);
     assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
     assert!(chain.effects.is_empty(), "nothing runs before ResumeTask");
     assert!(
         sim.state.inbox.is_empty(),
-        "an idle restored orchestrator is not woken"
+        "no orchestrator is woken by a restart"
     );
 
     let chain = resume(&mut sim, "T-1");
@@ -84,7 +92,7 @@ fn a_reported_step_whose_turn_end_was_lost_advances() {
         ToolName::ReportStepDone,
         json!({"result": "done before the crash"}),
     );
-    restart(&mut sim, IDLE);
+    restart(&mut sim);
     assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
     let chain = resume(&mut sim, "T-1");
     assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 1)]);
@@ -100,7 +108,7 @@ fn an_interrupted_merge_is_retried() {
     t.steps[1].status = StepStatus::Running;
     t.current = 1;
     t.status = TaskStatus::Merging;
-    restart(&mut sim, IDLE);
+    restart(&mut sim);
     assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
     let chain = resume(&mut sim, "T-1");
     assert!(has_effect(&chain, |e| matches!(
@@ -117,7 +125,7 @@ fn a_task_waiting_for_its_workspace_prepares_it_again() {
     let t = sim.state.task_mut("T-1").expect("task");
     t.workdir = None;
     t.steps[0].status = StepStatus::Pending;
-    restart(&mut sim, IDLE);
+    restart(&mut sim);
     let chain = resume(&mut sim, "T-1");
     assert!(has_effect(&chain, |e| matches!(
         e,
@@ -136,7 +144,7 @@ fn tasks_waiting_for_the_orchestrator_are_left_alone() {
     assert_eq!(sim.status("T-1"), TaskStatus::Checkpoint);
     assert_eq!(sim.status("T-2"), TaskStatus::AwaitingInstruction);
     let inbox = sim.state.inbox.clone();
-    let chain = restart(&mut sim, IDLE);
+    let chain = restart(&mut sim);
     assert!(chain.events.is_empty(), "{:?}", chain.events);
     assert_eq!(sim.state.inbox, inbox, "undelivered inbox is kept");
     assert!(
@@ -153,7 +161,7 @@ fn an_agent_waiting_for_a_help_answer_is_marked_lost() {
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
     );
-    restart(&mut sim, IDLE);
+    restart(&mut sim);
     assert_eq!(sim.status("T-1"), TaskStatus::Handling);
     assert!(sim.state.help("H-1").expect("help").agent_lost);
     // Resuming restarts the step (the session is restored by the runtime if it
@@ -175,7 +183,7 @@ fn an_interrupted_group_merge_is_reported_as_blocked() {
     sim.report("T-1", Role::Implementer, None);
     sim.deliver_inbox();
     sim.state.group_mut("G-1").expect("group").status = GroupStatus::Finishing;
-    restart(&mut sim, IDLE);
+    restart(&mut sim);
     let g = sim.state.group("G-1").expect("group");
     assert_eq!(g.status, GroupStatus::MergeBlocked);
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::MergeResult]);
@@ -188,9 +196,20 @@ fn an_interrupted_group_merge_is_reported_as_blocked() {
 }
 
 #[test]
+fn a_restart_leaves_the_orchestrators_alone() {
+    let mut sim = running(json!([{"kind": "implement"}]));
+    restart(&mut sim);
+    assert!(
+        sim.state.inbox.is_empty(),
+        "what an orchestrator missed is told when it is started, not by the restart"
+    );
+}
+
+#[test]
 fn the_orchestrator_is_told_what_it_missed() {
     let mut sim = running(json!([{"kind": "implement"}]));
-    restart(
+    restart(&mut sim);
+    start_orchestrator(
         &mut sim,
         OrchestratorResume {
             turn_was_running: true,
@@ -201,7 +220,7 @@ fn the_orchestrator_is_told_what_it_missed() {
     assert!(sim.state.inbox[0].item.body.contains("cut off"));
     sim.deliver_inbox();
 
-    restart(
+    start_orchestrator(
         &mut sim,
         OrchestratorResume {
             restored: false,
@@ -217,7 +236,7 @@ fn the_orchestrator_is_told_what_it_missed() {
     );
 
     sim.deliver_inbox();
-    restart(
+    start_orchestrator(
         &mut sim,
         OrchestratorResume {
             had_session: false,

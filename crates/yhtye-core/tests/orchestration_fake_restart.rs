@@ -1,6 +1,8 @@
 //! Stopping the runtime mid-task and starting it again on the same database
 //! (fake agents): in-flight tasks become `interrupted`, their sessions are
 //! restored with `session/load` (or replaced by new ones), and the work completes.
+//! The chats' orchestrators are not started with the project: they come back when
+//! the chat is opened or has a notification to receive.
 
 mod common;
 
@@ -206,6 +208,24 @@ fn assert_task_done_after_interruption(events: &[ApiEvent]) {
     );
 }
 
+/// The restarted orchestrator was started only once its task had finished.
+fn assert_orchestrator_started_after_the_task_settled(events: &[ApiEvent]) {
+    let position = |f: &dyn Fn(&ApiEvent) -> bool| events.iter().position(f);
+    let done = position(&|e| is_task_status(e, "T-1", TaskStatus::Done));
+    let started = position(&|e| {
+        matches!(&e.body, ApiEventBody::SessionStarted { session, .. }
+            if session == ORCHESTRATOR_SESSION)
+    });
+    let (done, started) = (
+        done.expect("the task is done"),
+        started.expect("it started"),
+    );
+    assert!(
+        done < started,
+        "started at {started}, the task was done at {done}"
+    );
+}
+
 #[tokio::test]
 async fn restart_mid_step_restores_the_sessions_with_session_load() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -242,13 +262,18 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
     assert!(impl_prompts[0].starts_with("[yhtye:resume] task=T-1 step=1\n"));
-    // The orchestrator's turn was cut off by the quit: it is told so.
+    // The orchestrator was not started with the project: the notice that the
+    // group settled started it, and its first prompt also says that its turn was
+    // cut off by the quit.
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
+    assert_eq!(orch_prompts.len(), 1, "{orch_prompts:?}");
     assert!(
-        orch_prompts[0].starts_with("[yhtye:restarted]\n"),
+        orch_prompts[0].starts_with("[yhtye:group_settled]"),
         "{orch_prompts:?}"
     );
+    assert!(orch_prompts[0].contains("[yhtye:restarted]\n"));
     assert!(orch_prompts[0].contains("cut off"));
+    assert_orchestrator_started_after_the_task_settled(&events);
     // History replayed by session/load is not published again.
     let msgs = summary(&events);
     assert!(
@@ -340,7 +365,11 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         orch_prompts[0].contains("could not be restored"),
         "{orch_prompts:?}"
     );
-    assert!(orch_prompts[0].contains("task T-1 [running] step 1/2: append"));
+    assert!(
+        orch_prompts[0].contains("task T-1 [done]"),
+        "{orch_prompts:?}"
+    );
+    assert_orchestrator_started_after_the_task_settled(&events);
     shutdown_and_check(orch, &events).await;
 }
 
@@ -453,5 +482,106 @@ async fn when_every_try_fails_the_old_acp_session_id_is_kept() {
         .expect("recorded");
     assert_eq!(record.acp_session_id, starts[0].0);
     assert_eq!(record.lost_acp_session_id.as_deref(), Some(old_id.as_str()));
+    shutdown_and_check(orch, &events).await;
+}
+
+/// The second run's implementer holds its resumed turn, so the task stays open
+/// and nothing reaches the chat's orchestrator by itself.
+fn held_implementer() -> Value {
+    json!({"turns": [{"match": "[yhtye:resume]", "actions": ["wait_cancel"]}]})
+}
+
+/// Starts again on `dir` and waits until the interrupted task's implementer is
+/// back, then lets a moment pass to catch a wrongly started orchestrator.
+async fn restart_holding_the_task(
+    dir: &Path,
+) -> (
+    Orchestration,
+    tokio::sync::mpsc::UnboundedReceiver<ApiEvent>,
+    Vec<ApiEvent>,
+) {
+    let cfg = config(
+        dir,
+        fake_harness(orchestrator_after_restart(json!({}))),
+        fake_harness(held_implementer()),
+        fake_harness(json!({})),
+    );
+    let (orch, mut rx) = Orchestration::start(cfg).await.expect("restarts");
+    let mut events = Vec::new();
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        matches!(&e.body, ApiEventBody::SessionStarted { session, resumed: true, .. }
+            if session == IMPLEMENTER)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    (orch, rx, events)
+}
+
+#[tokio::test]
+async fn a_restart_spawns_no_orchestrator_until_the_chat_is_opened() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let before = run_until_quit(dir.path()).await;
+    let old_orch = started(&before, ORCHESTRATOR_SESSION);
+    let (orch, mut rx, mut events) = restart_holding_the_task(dir.path()).await;
+
+    // The task's agent came back; the chat's orchestrator did not.
+    assert!(
+        started(&events, ORCHESTRATOR_SESSION).is_empty(),
+        "{events:?}"
+    );
+    assert!(prompts_to(&events, ORCHESTRATOR_SESSION).is_empty());
+    let sessions = orch.store().sessions("P-1").await.expect("sessions");
+    let record = sessions
+        .iter()
+        .find(|s| s.session_key == ORCHESTRATOR_SESSION);
+    assert_eq!(record.map(|r| r.status), Some(SessionStatus::Interrupted));
+
+    // Opening the chat restores the orchestrator's own session, and it is told
+    // that its turn was cut off.
+    assert!(orch.open_chat("C-1").await.expect("open"), "it is starting");
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        is_message(e, ORCHESTRATOR_SESSION, "noted the restart")
+    })
+    .await;
+    assert_eq!(
+        started(&events, ORCHESTRATOR_SESSION),
+        [(old_orch[0].0.clone(), true)]
+    );
+    let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
+    assert_eq!(orch_prompts.len(), 1, "{orch_prompts:?}");
+    assert!(orch_prompts[0].starts_with("[yhtye:restarted]\n"));
+    assert!(orch_prompts[0].contains("cut off"));
+    assert!(!orch.open_chat("C-1").await.expect("open again"), "it runs");
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn a_notification_for_a_chat_that_is_not_running_starts_it_and_reaches_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    run_until_quit(dir.path()).await;
+    let (orch, mut rx, mut events) = restart_holding_the_task(dir.path()).await;
+    assert!(started(&events, ORCHESTRATOR_SESSION).is_empty());
+
+    // The user cancels the running task from the UI: the chat's orchestrator is
+    // told, which starts it.
+    orch.cancel_task("T-1", "not needed").await.expect("cancel");
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == ORCHESTRATOR_SESSION)
+    })
+    .await;
+    assert_eq!(started(&events, ORCHESTRATOR_SESSION).len(), 1);
+    let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
+    assert_eq!(orch_prompts.len(), 1, "{orch_prompts:?}");
+    assert!(
+        orch_prompts[0].contains("the user cancelled task T-1"),
+        "{orch_prompts:?}"
+    );
+    assert!(
+        orch_prompts[0].contains("[yhtye:restarted]"),
+        "{orch_prompts:?}"
+    );
     shutdown_and_check(orch, &events).await;
 }

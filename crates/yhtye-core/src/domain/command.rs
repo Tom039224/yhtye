@@ -197,12 +197,11 @@ pub enum DomainCommand {
     },
     /// Yhtye started again on a stored state (`orchestration-model.md` §10):
     /// tasks that were mid-turn or mid-merge become `interrupted`, agents that were
-    /// waiting for a help answer are marked lost, an interrupted group merge is
-    /// reported as blocked, and the orchestrators of the restored chats are told
-    /// what they missed (`TellOrchestrator` for each).
-    Restart {
-        orchestrators: Vec<(String, OrchestratorResume)>,
-    },
+    /// waiting for a help answer are marked lost, and an interrupted group merge is
+    /// reported as blocked. No orchestrator is started with it: each chat's is
+    /// started when it is opened or has something to receive, and is told what it
+    /// missed then (`TellOrchestrator`).
+    Restart,
     /// The orchestrator of `chat` is started again (after a restart, or lazily
     /// after its process ended): queues what it missed, if anything.
     TellOrchestrator {

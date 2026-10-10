@@ -27,13 +27,13 @@ use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
-use crate::domain::{DomainConfig, chat_of_session};
+use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::secrets::{
     KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
     validate_secret_value,
 };
-use crate::store::{ProjectRecord, SessionStatus, Store, db_path};
+use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
 /// How many events a slow subscriber may fall behind before it misses some
@@ -207,6 +207,14 @@ impl Core {
                     .await
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::OpenChat { project, chat } => {
+                let starting = self
+                    .orchestration(&project)?
+                    .open_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::ChatOpened { starting })
             }
             ApiCommand::CancelOrchestratorTurn { project, chat } => {
                 self.orchestration(&project)?
@@ -476,11 +484,12 @@ impl Core {
     }
 
     /// Opens every known project that has unfinished work — an active or
-    /// finishing group, undelivered inbox entries, or a chat whose orchestrator
-    /// was live when Yhtye stopped (Stage 8) — so its interrupted tasks resume
-    /// right away instead of waiting for the UI to open it (Stage 5 decision,
-    /// `core-design.md` §2). Projects are opened one after another; the result
-    /// of each is returned (and failures logged).
+    /// finishing group, or undelivered inbox entries — so its interrupted tasks
+    /// resume right away instead of waiting for the UI to open it (Stage 5
+    /// decision, `core-design.md` §2). A chat's orchestrator is not unfinished
+    /// work: it comes back when its chat is opened or gets something (T-48).
+    /// Projects are opened one after another; the result of each is returned (and
+    /// failures logged).
     pub async fn resume_unfinished(&self) -> Vec<(String, Result<ProjectInfo, ApiError>)> {
         let records = match self.inner.store.projects().await {
             Ok(r) => r,
@@ -517,18 +526,7 @@ impl Core {
                 return false;
             }
         };
-        if state.has_open_group() || !state.inbox.is_empty() {
-            return true;
-        }
-        match store.sessions(project).await {
-            Ok(sessions) => sessions.iter().any(|s| {
-                chat_of_session(&s.session_key).is_some() && s.status != SessionStatus::Stopped
-            }),
-            Err(e) => {
-                tracing::error!("could not read the sessions of {project}: {e}");
-                false
-            }
-        }
+        state.has_open_group() || !state.inbox.is_empty()
     }
 
     /// The state of an open project (for tests and the app shell).
