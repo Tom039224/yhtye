@@ -158,6 +158,46 @@ describe("project pull-down", () => {
   });
 });
 
+describe("project status rings", () => {
+  const running: SessionRecord = {
+    session_key: "orchestrator/C-1",
+    role: "orchestrator",
+    task: null,
+    acp_session_id: "acp",
+    status: "live",
+    turn_running: true,
+    agent: null,
+    cwd: null,
+  };
+
+  it("shows a hollow green ring on the trigger while no chat of the project is working", async () => {
+    const { store } = setup();
+    await openRepo(store);
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-ready");
+    expect(screen.getByTestId("current-ring")).not.toHaveClass("ring-running");
+  });
+
+  it("gives each option the chat rows' ring: turning only for the project with work on, grey when it is not open", async () => {
+    const { store, user } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
+    await openRepo(store);
+    await user.click(trigger());
+    expect(screen.getByTestId("ring-repo")).toHaveClass("ring", "ring-running");
+    expect(screen.getByTestId("ring-beta")).toHaveClass("ring", "ring-ready");
+    expect(screen.getByTestId("ring-beta")).not.toHaveClass("ring-running");
+    expect(screen.getByTestId("ring-gamma")).toHaveClass("ring", "ring-stopped");
+  });
+
+  it("gives a background project the same hollow ring instead of a lit dot, even while the shown one works", async () => {
+    const { store } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
+    await openRepo(store);
+    const ring = screen.getByTestId("bg-ring-beta");
+    expect(ring).toHaveClass("ring", "ring-ready");
+    expect(ring).not.toHaveClass("ring-running");
+    expect(ring.parentElement).toHaveAttribute("aria-label", "beta に切り替え (待機中)");
+    expect(document.querySelector(".bg-dot")).toBeNull();
+  });
+});
+
 describe("projects running in the background", () => {
   it("lists the open projects that are not on screen, each with an indicator", async () => {
     const { store } = setup();
