@@ -196,7 +196,7 @@ button:disabled { cursor: default; }
   font: 500 10.5px/1.5 var(--font-mono); color: var(--text-tertiary);
   max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.scroll { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
+.scroll { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-anchor: none; /* useAutoScroll keeps the place itself */ }
 
 /* ---- conversation --------------------------------------------------------- */
 
@@ -215,12 +215,19 @@ button:disabled { cursor: default; }
 .msg-mark-agent { color: var(--accent); background: var(--accent-soft); }
 .msg-mark-streaming .icon { animation: ybreathe 1.4s ease-in-out infinite; }
 .msg-body { grid-column: 2; font-size: 13px; line-height: 1.75; color: var(--text-body); white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg-user .msg-body { color: var(--text-primary); }
 .msg-time {
   grid-column: 3; padding-top: 4px; font: 400 10px/1.6 var(--font-mono); color: var(--text-faint);
   opacity: 0; transition: opacity 0.12s;
 }
 .msg:hover .msg-time { opacity: 1; }
+/* The user's own message: a bubble on the right (icon in the right margin, time on its left),
+   so it stands apart from the agent's plain text on the left. */
+.msg-user { display: flex; flex-direction: row-reverse; align-items: flex-start; gap: 10px; padding-left: 12%; }
+.msg-user .msg-body {
+  flex: 0 1 auto; min-width: 0; padding: 6px 12px; color: var(--text-primary);
+  background: var(--user-bubble-bg); border: 1px solid var(--user-bubble-border); border-radius: 10px 3px 10px 10px;
+}
+.msg-user .msg-time { flex: none; align-self: flex-end; padding: 0 0 2px; }
 .queued { display: inline-flex; margin-left: 8px; color: var(--text-faint); vertical-align: -2px; }
 .fold > summary {
   display: flex; align-items: center; gap: 6px; list-style: none; cursor: pointer;
@@ -240,7 +247,7 @@ button:disabled { cursor: default; }
   border: 1px dashed var(--border-dashed); border-radius: 6px; padding: 7px 10px;
   font: 400 11px/1.5 var(--font-mono); color: var(--text-faint);
 }
-.notice .notice-body { flex: 1 1 100%; }
+.notice .notice-body { flex: 1 1 100%; color: var(--text-muted); }
 .tool { display: flex; align-items: center; gap: 6px; min-width: 0; font: 400 10.5px/1.6 var(--font-mono); color: var(--text-quaternary); }
 .tool-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 details.tool { display: block; }
@@ -253,6 +260,13 @@ details.tool { display: block; }
 .tool-status-in_progress { color: var(--status-implementing-bar); }
 .turn, .lifecycle { display: flex; align-items: center; gap: 6px; font: 400 10.5px/1.6 var(--font-mono); }
 .load-older { align-self: center; border: 1px solid var(--border-card); }
+/* The sentinel row of lazy history: the same height whether it waits, loads or failed. */
+.older-history {
+  display: flex; align-items: center; justify-content: center; gap: 8px; flex: none; min-height: 28px; min-width: 0;
+  font: 400 10.5px/1.6 var(--font-mono); color: var(--text-faint);
+}
+.older-history-text { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.older-history-alert { color: var(--status-handling-bar); flex: none; }
 
 .group-card { margin-top: 4px; border: 1px solid var(--border-card); border-radius: 6px; background: var(--surface-inset); overflow: hidden; }
 .group-card-header {
@@ -567,6 +581,21 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 }
 .tab:hover { background: var(--surface-hover); color: var(--text-tertiary); }
 .tab.active { background: var(--surface-chip); color: var(--text-primary); }
+/* A row of items that scrolls sideways (no scrollbar) rather than squeezing or pushing out its neighbours (ScrollStrip). */
+.scroll-strip { position: relative; display: flex; align-items: center; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.scroll-strip::-webkit-scrollbar { display: none; }
+.scroll-strip > * { flex: none; }
+/* The git tab and the task tabs: a row of their own above the panel's header, so that many tabs
+   neither cut off the heading and the pick-list there nor get cut off by them. */
+.bottom-tabs { flex: none; height: 30px; gap: 6px; padding: 0 14px; scroll-padding-inline: 14px; border-bottom: 1px solid var(--border-subtle); }
+.session-tabs { gap: 10px; padding: 3px 2px; } /* room for the focus ring, which the strip would clip */
+/* A task tab: the name and its close button share one frame, so the frame carries the hover / active look. */
+.tab-group { display: inline-flex; align-items: center; height: 22px; border-radius: 6px; transition: background-color 0.12s; }
+.tab-group:hover { background: var(--surface-hover); }
+.tab-group.active { background: var(--surface-chip); }
+.tab-group .tab { background: none; padding-right: 3px; }
+.tab-group.active .tab { color: var(--text-primary); }
+.tab-group .tab-close { width: 18px; height: 18px; margin-right: 2px; border-radius: 4px; }
 .bottom-meta { display: inline-flex; align-items: center; gap: 5px; font: 400 10.5px/1 var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
 .bottom-meta .icon { flex: none; }
 .session-tab {

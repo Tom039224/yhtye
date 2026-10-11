@@ -31,7 +31,7 @@ use crate::domain::{
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
 use crate::prompts::workspace_changes_note;
-use crate::store::{SessionRecord, StoreError};
+use crate::store::{SessionStatus, StoreError};
 
 /// Session key of tool calls made by the user through the API (not an agent).
 pub const USER_SESSION: &str = "user";
@@ -42,6 +42,9 @@ pub(super) enum Cmd {
     UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
     /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
+    /// The user opened a chat: its orchestrator is started (restored) if it has
+    /// anything to resume. Answers whether it is starting (`not_found`: no such chat).
+    OpenChat(String, oneshot::Sender<Result<bool, ToolError>>),
     /// Sends `/compact` to a chat's idle orchestrator.
     CompactChat(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
@@ -61,15 +64,9 @@ pub(super) enum Cmd {
     /// The user retries the base merge of a `merge_blocked` group.
     RetryGroupMerge(String, oneshot::Sender<Reply>),
     Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
+    /// Whether work is on in the project (see [`Driver::has_running_work`]).
+    Running(oneshot::Sender<Result<bool, StoreError>>),
     Shutdown(oneshot::Sender<()>),
-}
-
-/// Set when the loop starts on a stored state (a restart).
-pub(super) struct Restarted {
-    /// The chats whose orchestrators are started again (`orchestration-model.md` §10).
-    pub(super) chats: Vec<String>,
-    /// The stored sessions as they were when Yhtye stopped.
-    pub(super) records: Vec<SessionRecord>,
 }
 
 pub(super) struct Channels {
@@ -155,10 +152,10 @@ impl Driver {
         }
     }
 
-    pub(super) async fn run(mut self, mut ch: Channels, restarted: Option<Restarted>) {
+    pub(super) async fn run(mut self, mut ch: Channels, restarted: bool) {
         self.publisher.flush().await;
-        if let Some(r) = restarted {
-            self.restart(r).await;
+        if restarted {
+            self.restart().await;
             self.flush_inbox().await;
             self.publisher.flush().await;
         }
@@ -206,15 +203,13 @@ impl Driver {
         }
     }
 
-    /// Marks what was in flight as interrupted, resumes each interrupted task and
-    /// starts the orchestrators of the chats to restore.
-    async fn restart(&mut self, r: Restarted) {
-        let plans = self.plan_restore(&r).await;
-        let orchestrators = plans
-            .iter()
-            .map(|(chat, plan)| (chat.clone(), plan.resume_info))
-            .collect();
-        self.execute(DomainCommand::Restart { orchestrators }).await;
+    /// Marks what was in flight as interrupted and resumes each interrupted task.
+    /// The chats' orchestrators are not started here (`core-design.md` §17.3): a
+    /// chat's starts when it is opened or when something is sent to it — the
+    /// inbox entries left over (also the ones this restart queues) are flushed by
+    /// the caller, which starts the chats that have any.
+    async fn restart(&mut self) {
+        self.execute(DomainCommand::Restart).await;
         let interrupted: Vec<String> = self
             .state
             .tasks
@@ -224,9 +219,6 @@ impl Driver {
             .collect();
         for task in interrupted {
             self.execute(DomainCommand::ResumeTask { task }).await;
-        }
-        for (chat, plan) in plans {
-            self.launch_orchestrator(&chat, plan);
         }
     }
 
@@ -245,6 +237,9 @@ impl Driver {
                     None => Err(ToolError::not_found(format!("no chat {chat}"))),
                 };
                 let _ = tx.send(reply);
+            }
+            Some(Cmd::OpenChat(chat, tx)) => {
+                let _ = tx.send(self.open_chat(chat).await);
             }
             Some(Cmd::CompactChat(chat, tx)) => {
                 let _ = tx.send(self.compact_chat(&chat));
@@ -275,6 +270,9 @@ impl Driver {
             Some(Cmd::Snapshot(tx)) => {
                 let _ = tx.send(self.snapshot().await);
             }
+            Some(Cmd::Running(tx)) => {
+                let _ = tx.send(self.has_running_work().await);
+            }
             Some(Cmd::Shutdown(done)) => {
                 self.shutdown().await;
                 let _ = done.send(());
@@ -301,6 +299,18 @@ impl Driver {
             sessions,
             chats,
         })
+    }
+
+    /// Whether a live agent session is in a turn (an orchestrator's or a task's
+    /// agent) or a task is running or merging: the project is "running" in the
+    /// sidebar. Read like [`Driver::snapshot`], so it matches the same `seq`.
+    async fn has_running_work(&mut self) -> Result<bool, StoreError> {
+        self.publisher.flush().await;
+        let sessions = self.publisher.store().sessions(&self.cfg.project).await?;
+        Ok(self.state.has_working_task()
+            || sessions
+                .iter()
+                .any(|s| s.status == SessionStatus::Live && s.turn_running))
     }
 
     /// Runs an orchestrator tool for the user, records it like an agent's tool

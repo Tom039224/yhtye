@@ -8,8 +8,17 @@
 // from the whole log. Live events only feed `streaming`.
 
 import { type ContextUsage, usageInfo } from "../api/acp";
-import type { ApiEvent, ApiEventBody, ChatInfo, DomainEvent, ProjectInfo, SessionRecord, Snapshot, State } from "../api/generated";
-import { applyChatEvent, initialChat, orchestratorKey } from "./chats";
+import type {
+  ApiEvent,
+  ApiEventBody,
+  ChatInfo,
+  DomainEvent,
+  ProjectInfo,
+  SessionRecord,
+  Snapshot,
+  State,
+} from "../api/generated";
+import { applyChatEvent, chatOfOrchestratorKey, initialChat, isOrchestratorKey, orchestratorKey } from "./chats";
 import { applyDomainEvent } from "./domain";
 import { applySessionEvent } from "./sessions";
 import {
@@ -37,6 +46,8 @@ export interface ProjectView {
   historyStart: number;
   /** An older page of history is being loaded. */
   loadingOlder: boolean;
+  /** Why the last attempt to load an older page failed (cleared when the next one starts). */
+  olderError: string | null;
   state: State | null;
   /** The project's chats (`Snapshot.chats`, then folded from events). */
   chats: ChatInfo[];
@@ -44,6 +55,12 @@ export interface ProjectView {
   selectedChat: string | null;
   /** Chats that got a notification while another chat was selected. */
   unread: Record<string, true>;
+  /**
+   * Chats whose orchestrator the core is starting after the user opened them (a
+   * restart starts none; `open_chat` brings a chat back). Cleared once its
+   * session is up or stopped.
+   */
+  resuming: Record<string, true>;
   sessions: SessionRecord[];
   transcripts: Transcripts;
   streaming: Streaming;
@@ -65,10 +82,12 @@ export function newProjectView(info: ProjectInfo): ProjectView {
     cursor: 0,
     historyStart: 1,
     loadingOlder: false,
+    olderError: null,
     state: null,
     chats: [],
     selectedChat: null,
     unread: {},
+    resuming: {},
     sessions: [],
     transcripts: {},
     streaming: {},
@@ -96,6 +115,7 @@ export function applySnapshot(
     chats: snap.chats,
     selectedChat: initialChat(snap.chats, remembered),
     unread: {},
+    resuming: {},
     sessions: snap.sessions,
     stateSeq: snap.seq,
     cursor: historyStart - 1,
@@ -128,7 +148,44 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
     const applied = { ...next, chats, unread, state: applyDomainEvent(next.state, body.event) };
     return body.event.type === "chat_deleted" ? forgetChat(applied, next.state, body.event.chat) : applied;
   }
-  return { ...next, chats, sessions: applySessionEvent(next.sessions, body) };
+  return {
+    ...next,
+    chats,
+    resuming: settleResuming(next.resuming, body),
+    sessions: applySessionEvent(next.sessions, body),
+  };
+}
+
+/**
+ * A chat is no longer resuming once its orchestrator's session started or
+ * stopped, or its start failed for good. A failure with a retry behind it
+ * (`retrying`: a failed restore tried again, or replaced by a new session) is
+ * not the end: the session is still starting. Older logs lack the flag; their
+ * failures count as final.
+ */
+function settleResuming(resuming: ProjectView["resuming"], body: ApiEventBody): ProjectView["resuming"] {
+  const settles =
+    body.type === "session_started" ||
+    body.type === "session_stopped" ||
+    (body.type === "session_failed" && !body.retrying);
+  if (!settles) return resuming;
+  if (!isOrchestratorKey(body.session)) return resuming;
+  const chat = chatOfOrchestratorKey(body.session);
+  if (!resuming[chat]) return resuming;
+  const { [chat]: _done, ...rest } = resuming;
+  return rest;
+}
+
+/**
+ * Records whether the core is starting `chat`'s orchestrator (its answer to
+ * `open_chat`). A session that is already up (its event came before the answer)
+ * is not "starting".
+ */
+export function markResuming(view: ProjectView, chat: string, starting: boolean): ProjectView {
+  const on = starting && orchestratorSession(view, chat)?.status !== "live";
+  if (Boolean(view.resuming[chat]) === on) return view;
+  const { [chat]: _was, ...rest } = view.resuming;
+  return { ...view, resuming: on ? { ...rest, [chat]: true } : rest };
 }
 
 /** Without `key` (the same record if it has none). */
@@ -172,10 +229,12 @@ export function forgetChat(view: ProjectView, before: State | null, chat: string
   const key = orchestratorKey(chat);
   const ofChat = (session: string) => session === key || [...tasks].some((t) => session.startsWith(`${t}/`));
   const { [chat]: _read, ...unread } = view.unread;
+  const { [chat]: _resuming, ...resuming } = view.resuming;
   return {
     ...view,
     selectedChat: view.selectedChat === chat ? initialChat(view.chats, null) : view.selectedChat,
     unread,
+    resuming,
     sessions: view.sessions.filter((s) => !ofChat(s.session_key)),
     transcripts: Object.fromEntries(Object.entries(view.transcripts).filter(([session]) => !ofChat(session))),
     streaming: Object.fromEntries(Object.entries(view.streaming).filter(([session]) => !ofChat(session))),

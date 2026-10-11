@@ -9,11 +9,14 @@ mod harnesses;
 pub use harnesses::DetectionConfig;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
+use futures::future::join_all;
 use tokio::sync::broadcast;
 
 use super::chats::ChatTarget;
@@ -27,13 +30,13 @@ use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
-use crate::domain::{DomainConfig, chat_of_session};
+use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::secrets::{
     KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
     validate_secret_value,
 };
-use crate::store::{ProjectRecord, SessionStatus, Store, db_path};
+use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
 /// How many events a slow subscriber may fall behind before it misses some
@@ -44,6 +47,9 @@ const EVENT_BUFFER: usize = 4096;
 const USAGE_PROBE_DIR: &str = "usage-probe";
 /// Working directory of the model-listing sessions, under the data directory.
 const MODEL_PROBE_DIR: &str = "model-probe";
+
+/// How long a project may take to tell whether work is on in it (see `is_running`).
+const RUNNING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -129,6 +135,8 @@ impl Core {
     /// Opens the database. Projects are started by [`ApiCommand::OpenProject`].
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
+        // Before any agent of this run exists: kill those a previous run left behind.
+        crate::acp::start_process_registry(&cfg.data_dir).await;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let secrets = Arc::new(Secrets::new(
             cfg.secret_backend.clone(),
@@ -207,6 +215,14 @@ impl Core {
                     .await
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::OpenChat { project, chat } => {
+                let starting = self
+                    .orchestration(&project)?
+                    .open_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::ChatOpened { starting })
             }
             ApiCommand::CancelOrchestratorTurn { project, chat } => {
                 self.orchestration(&project)?
@@ -483,11 +499,12 @@ impl Core {
     }
 
     /// Opens every known project that has unfinished work — an active or
-    /// finishing group, undelivered inbox entries, or a chat whose orchestrator
-    /// was live when Yhtye stopped (Stage 8) — so its interrupted tasks resume
-    /// right away instead of waiting for the UI to open it (Stage 5 decision,
-    /// `core-design.md` §2). Projects are opened one after another; the result
-    /// of each is returned (and failures logged).
+    /// finishing group, or undelivered inbox entries — so its interrupted tasks
+    /// resume right away instead of waiting for the UI to open it (Stage 5
+    /// decision, `core-design.md` §2). A chat's orchestrator is not unfinished
+    /// work: it comes back when its chat is opened or gets something (T-48).
+    /// Projects are opened one after another; the result of each is returned (and
+    /// failures logged).
     pub async fn resume_unfinished(&self) -> Vec<(String, Result<ProjectInfo, ApiError>)> {
         let records = match self.inner.store.projects().await {
             Ok(r) => r,
@@ -524,18 +541,7 @@ impl Core {
                 return false;
             }
         };
-        if state.has_open_group() || !state.inbox.is_empty() {
-            return true;
-        }
-        match store.sessions(project).await {
-            Ok(sessions) => sessions.iter().any(|s| {
-                chat_of_session(&s.session_key).is_some() && s.status != SessionStatus::Stopped
-            }),
-            Err(e) => {
-                tracing::error!("could not read the sessions of {project}: {e}");
-                false
-            }
-        }
+        state.has_open_group() || !state.inbox.is_empty()
     }
 
     /// The state of an open project (for tests and the app shell).
@@ -562,11 +568,11 @@ impl Core {
 
     async fn list_projects(&self) -> Result<Vec<ProjectInfo>, ApiError> {
         let records = self.inner.store.projects().await?;
-        let open = self.lock_open();
-        Ok(records
-            .iter()
-            .map(|r| project_info(r, open.contains_key(&r.id)))
-            .collect())
+        let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
+        Ok(project_infos(&records, |r| {
+            open.get(&r.id).map(|orch| is_running(&r.id, orch))
+        })
+        .await)
     }
 
     async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
@@ -584,8 +590,10 @@ impl Core {
                 created_ms: 0,
             },
         };
-        if self.lock_open().contains_key(&record.id) {
-            return Ok(project_info(&record, true));
+        let already = self.lock_open().get(&record.id).cloned();
+        if let Some(orch) = already {
+            let running = is_running(&record.id, &orch).await;
+            return Ok(project_info(&record, true, running));
         }
         let (orch, mut rx) = Orchestration::start(self.orchestration_config(&record))
             .await
@@ -597,8 +605,12 @@ impl Core {
                 let _ = tx.send(ev);
             }
         });
-        self.lock_open().insert(record.id.clone(), Arc::new(orch));
-        Ok(project_info(&record, true))
+        let orch = Arc::new(orch);
+        self.lock_open()
+            .insert(record.id.clone(), Arc::clone(&orch));
+        // Work that was interrupted may already be resuming.
+        let running = is_running(&record.id, &orch).await;
+        Ok(project_info(&record, true, running))
     }
 
     async fn list_events(
@@ -687,13 +699,50 @@ fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
-fn project_info(r: &ProjectRecord, open: bool) -> ProjectInfo {
+fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {
     ProjectInfo {
         id: r.id.clone(),
         name: dir_name(&r.path),
         path: r.path.display().to_string(),
         open,
+        running,
     }
+}
+
+/// Whether work is on in an open project. A project busy handling a request
+/// for longer than `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as
+/// running, so a listing never waits for it; one that cannot tell (it is
+/// shutting down, or its store failed) counts as idle, and the failure is logged.
+async fn is_running(project: &str, orch: &Orchestration) -> bool {
+    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.is_running()).await {
+        Ok(Ok(running)) => running,
+        Ok(Err(e)) => {
+            tracing::warn!("could not tell whether {project} is running: {e}");
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+/// The listing of `records`, in order. `running` asks whether work is on in a
+/// project that is open (`None`: it is not open). The projects are asked all at
+/// once: a busy one costs up to `RUNNING_QUERY_TIMEOUT`, and N busy ones must
+/// not cost N times that (the UI waits for the listing before it reopens the
+/// last project).
+async fn project_infos<'a, Q: Future<Output = bool>>(
+    records: &'a [ProjectRecord],
+    running: impl Fn(&'a ProjectRecord) -> Option<Q>,
+) -> Vec<ProjectInfo> {
+    join_all(records.iter().map(|r| {
+        let query = running(r);
+        async move {
+            match query {
+                Some(query) => project_info(r, true, query.await),
+                None => project_info(r, false, false),
+            }
+        }
+    }))
+    .await
 }
 
 fn dir_name(path: &Path) -> String {
@@ -802,6 +851,46 @@ mod tests {
             path: PathBuf::from("/x"),
             created_ms: 0,
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn busy_projects_cost_one_timeout_together_not_one_each() {
+        let records: Vec<ProjectRecord> = (0..5).map(|i| record(&format!("p{i}"))).collect();
+        let started = tokio::time::Instant::now();
+        // Every open project is busy until the timeout (which then counts it as running).
+        let infos = project_infos(&records, |_| {
+            Some(async {
+                tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
+                true
+            })
+        })
+        .await;
+        assert_eq!(started.elapsed(), RUNNING_QUERY_TIMEOUT);
+        assert!(infos.iter().all(|p| p.open && p.running));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_listing_keeps_the_order_and_tells_open_from_running() {
+        let records = [record("a"), record("b"), record("c")];
+        let infos = project_infos(&records, |r| match r.id.as_str() {
+            // `a` answers late, `b` at once: the order is still the records'.
+            "a" => Some(Box::pin(async {
+                tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
+                true
+            })
+                as std::pin::Pin<Box<dyn Future<Output = bool>>>),
+            "b" => Some(Box::pin(async { false })),
+            _ => None,
+        })
+        .await;
+        let flags: Vec<_> = infos
+            .iter()
+            .map(|p| (p.id.as_str(), p.open, p.running))
+            .collect();
+        assert_eq!(
+            flags,
+            [("a", true, true), ("b", true, false), ("c", false, false)]
+        );
     }
 
     #[test]

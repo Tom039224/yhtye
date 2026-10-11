@@ -1,7 +1,7 @@
 //! The chat API of [`Core`] (`core-design.md` §17.5) on a temporary git
 //! repository with fake agents: listing, creating chats (for a branch or a
-//! worktree) and branches and their errors, sending to chats, and resuming
-//! projects with live chats.
+//! worktree) and branches and their errors, sending to chats, and bringing
+//! back chats that were live when Yhtye stopped (when they are opened).
 
 mod common;
 
@@ -344,8 +344,22 @@ async fn a_new_branch_gets_its_own_worktree_and_a_first_chat() {
     core.shutdown().await;
 }
 
+fn open_chat(project: &str, chat: &str) -> ApiCommand {
+    ApiCommand::OpenChat {
+        project: project.into(),
+        chat: chat.into(),
+    }
+}
+
+fn orchestrator_started(chat: &'static str) -> impl Fn(&ApiEvent) -> bool {
+    move |e| {
+        matches!(&e.body, ApiEventBody::SessionStarted { session, .. }
+            if session == &format!("orchestrator:{chat}"))
+    }
+}
+
 #[tokio::test]
-async fn a_project_whose_chat_was_live_is_reopened_and_its_orchestrator_restored() {
+async fn a_chat_that_was_live_comes_back_when_it_is_opened_not_with_the_project() {
     let r = TempRepo::new();
     let core = Core::start(core_config(&r, hello_script()))
         .await
@@ -361,13 +375,58 @@ async fn a_project_whose_chat_was_live_is_reopened_and_its_orchestrator_restored
         .await
         .expect("core");
     let mut rx = core.subscribe();
-    let resumed = core.resume_unfinished().await;
-    assert_eq!(resumed.len(), 1, "the project has a live chat");
+    // A live chat session alone is no unfinished work: the project stays closed.
+    assert!(core.resume_unfinished().await.is_empty());
+    // The user opens the project: no agent starts with it.
+    let project = open(&core, &r).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(ev) = rx.try_recv() {
+        assert!(
+            !orchestrator_started("C-1")(&ev),
+            "the project start launched the orchestrator: {ev:?}"
+        );
+    }
+    // Opening the chat restores its session; opening it again does nothing.
+    let ApiResponse::ChatOpened { starting } = run(&core, open_chat(&project, "C-1")).await else {
+        panic!("chat_opened");
+    };
+    assert!(starting);
     until(&mut rx, |e| {
         matches!(&e.body, ApiEventBody::SessionStarted { session, resumed: true, .. }
             if session == "orchestrator:C-1")
     })
     .await;
+    let ApiResponse::ChatOpened { starting } = run(&core, open_chat(&project, "C-1")).await else {
+        panic!("chat_opened");
+    };
+    assert!(!starting, "it is running");
+    assert_eq!(
+        code(&core, open_chat(&project, "C-9")).await,
+        ApiErrorCode::NotFound
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn opening_a_chat_that_was_never_used_starts_nothing() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    create_chat(&core, &project, "main").await;
+    let ApiResponse::ChatOpened { starting } = run(&core, open_chat(&project, "C-1")).await else {
+        panic!("chat_opened");
+    };
+    assert!(!starting, "there is nothing to restore");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    while let Ok(ev) = rx.try_recv() {
+        assert!(!orchestrator_started("C-1")(&ev), "{ev:?}");
+    }
+    // Sending still starts it.
+    run(&core, send(&project, "C-1", "hello")).await;
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
     core.shutdown().await;
 }
 

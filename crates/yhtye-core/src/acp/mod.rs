@@ -6,6 +6,10 @@
 mod config;
 mod events;
 mod handle;
+#[cfg(all(test, target_os = "linux"))]
+mod live_tests;
+mod orphan;
+mod parent_death;
 mod permission;
 mod process;
 mod session;
@@ -21,6 +25,7 @@ pub use config::{
 };
 pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value, effort_option};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};
+pub(crate) use orphan::start_registry as start_process_registry;
 pub use permission::{choose_permission, outcome_for};
 pub(crate) use process::PRIVATE_ENV;
 

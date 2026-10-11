@@ -201,6 +201,43 @@ describe("App", () => {
     expect(transport.callsOf("retry_group_merge")[0].group).toBe("G-1");
   });
 
+  it("shows a chat whose orchestrator is not running as paused, and as starting while the core brings it back", async () => {
+    const snapshot = emptySnapshot();
+    snapshot.sessions = [
+      { session_key: ORCHESTRATOR, role: "orchestrator", task: null, acp_session_id: "acp", status: "interrupted", turn_running: false, agent: null, cwd: null },
+    ];
+    const { store, core, transport } = setup({ snapshot, log: [] });
+    core.starting.add("C-1");
+    await openProject(store);
+    // Opened on load: the core is starting it.
+    const status = await screen.findByTestId("orchestrator-status");
+    await waitFor(() => expect(status).toHaveTextContent("starting"));
+    expect(screen.getByText("起動中…")).toBeInTheDocument();
+    act(() => {
+      transport.emit({
+        seq: 1,
+        ts_ms: 1,
+        project: "repo",
+        live: false,
+        body: { type: "session_started", session: ORCHESTRATOR, role: "orchestrator", task: null, pid: 1, acp_session_id: "acp", resumed: true, agent: null },
+      });
+    });
+    await waitFor(() => expect(screen.getByTestId("orchestrator-status")).toHaveTextContent("idle"));
+    expect(screen.queryByText("起動中…")).not.toBeInTheDocument();
+  });
+
+  it("does not flag a suspended orchestrator as a problem", async () => {
+    const snapshot = emptySnapshot();
+    snapshot.sessions = [
+      { session_key: ORCHESTRATOR, role: "orchestrator", task: null, acp_session_id: "acp", status: "suspended", turn_running: false, agent: null, cwd: null },
+    ];
+    const { store } = setup({ snapshot, log: [] });
+    await openProject(store);
+    const status = await screen.findByTestId("orchestrator-status");
+    expect(status).toHaveTextContent("suspended");
+    expect(status).not.toHaveClass("status-icon-bad");
+  });
+
   it("shows empty states for a new project", async () => {
     const { store } = setup({ snapshot: emptySnapshot(), log: [] });
     await openProject(store);

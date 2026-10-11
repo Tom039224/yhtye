@@ -4,6 +4,7 @@
 //! {
 //!   "load_session": true,
 //!   "modes": ["default", "bypassPermissions"],
+//!   "modes_as_option": false,   // true: report the mode only as a `mode` config option (OpenCode)
 //!   "models": ["default", "haiku"],
 //!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
 //!   "effort_id": "reasoning",   // id of that option (default "effort"; category stays thought_level)
@@ -13,6 +14,8 @@
 //!   "fail_message": null,       // its data (default "fake: scripted failure at <step>")
 //!   "exit_at": null,            // same steps → print to stderr and exit(2)
 //!   "hang_at": null,            // same steps → never answer
+//!   "fault_attempts": null,     // N (with "attempt_file"): only the first N processes fail / exit / hang
+//!   "attempt_file": null,       // a file counting the processes that did (it outlives them)
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
@@ -36,6 +39,10 @@
 //! global settings), and `"report_writes"` reports every `session/set_mode` and
 //! `session/set_config_option` received, in order, as `writes:modes=<ids>;options=<ids>`.
 //!
+//! OpenCode-like behaviour: `modes_as_option` leaves `modes` out of the session
+//! responses and reports the current mode as the select option `mode` instead
+//! (`session/set_mode` still works for the listed `modes`).
+//!
 //! Grok-Build-like behaviour: `"modes": []` leaves `modes` out of the session
 //! responses (the agent has none), and `vendor_notifications` are sent with their
 //! own (unknown) methods before the `session/new` / `session/load` response and at
@@ -57,6 +64,9 @@ pub struct Scenario {
     pub load_session: bool,
     #[serde(default = "default_modes")]
     pub modes: Vec<String>,
+    /// The mode is reported as the `mode` config option, not as `modes`.
+    #[serde(default)]
+    pub modes_as_option: bool,
     #[serde(default = "default_models")]
     pub models: Vec<String>,
     /// Models that have an `effort` select option, with its values (after a
@@ -83,6 +93,15 @@ pub struct Scenario {
     pub exit_at: Option<String>,
     #[serde(default)]
     pub hang_at: Option<String>,
+    /// `fail_at` / `exit_at` / `hang_at` apply to the first N agent processes
+    /// only (those that find fewer than N in `attempt_file`): a later process
+    /// answers normally, like an agent that recovers after a restart.
+    #[serde(default)]
+    pub fault_attempts: Option<u32>,
+    /// The file counting the processes that applied a fault (one number; a
+    /// missing file counts as 0). Needed with `fault_attempts`.
+    #[serde(default)]
+    pub attempt_file: Option<String>,
     /// The options the `ask_permission` action offers.
     #[serde(default)]
     pub permission_options: Vec<PermissionChoice>,
@@ -234,8 +253,25 @@ impl Scenario {
         )
     }
 
-    /// Whether startup step `step` should fail / exit / hang.
+    /// Whether startup step `step` should fail / exit / hang. With
+    /// `fault_attempts` the call counts as one fault in `attempt_file`, and
+    /// only the first N faults happen.
     pub fn at(&self, which: &Option<String>, step: &str) -> bool {
-        which.as_deref() == Some(step)
+        which.as_deref() == Some(step) && self.fault_left()
+    }
+
+    fn fault_left(&self) -> bool {
+        let (Some(limit), Some(path)) = (self.fault_attempts, &self.attempt_file) else {
+            return true;
+        };
+        let done: u32 = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0);
+        if done >= limit {
+            return false;
+        }
+        std::fs::write(path, (done + 1).to_string()).expect("write the attempt file");
+        true
     }
 }

@@ -47,6 +47,12 @@ pub struct SessionRecord {
     pub agent: Option<AgentChoice>,
     /// The directory the session was started in (Stage 8; `None` for older rows).
     pub cwd: Option<String>,
+    /// The ACP session a start tried to restore and gave up on, replaced by
+    /// `acp_session_id`: kept to restore the lost session by hand later. It stays
+    /// until another restore is given up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub lost_acp_session_id: Option<String>,
 }
 
 #[derive(FromRow)]
@@ -61,6 +67,7 @@ struct Row {
     model: Option<String>,
     effort: Option<String>,
     cwd: Option<String>,
+    lost_acp_session_id: Option<String>,
 }
 
 pub(super) async fn list(
@@ -68,8 +75,8 @@ pub(super) async fn list(
     project: &str,
 ) -> Result<Vec<SessionRecord>, StoreError> {
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT session_key, role, task_id, acp_session_id, status, turn_running, harness, model, effort, cwd \
-         FROM agent_sessions WHERE project_id = ? ORDER BY session_key",
+        "SELECT session_key, role, task_id, acp_session_id, status, turn_running, harness, model, effort, cwd, \
+         lost_acp_session_id FROM agent_sessions WHERE project_id = ? ORDER BY session_key",
     )
     .bind(project)
     .fetch_all(pool)
@@ -89,6 +96,7 @@ pub(super) async fn list(
                     effort: r.effort,
                 }),
                 cwd: r.cwd,
+                lost_acp_session_id: r.lost_acp_session_id,
             })
         })
         .collect()
@@ -108,18 +116,21 @@ pub(super) async fn apply(
             acp_session_id,
             agent,
             cwd,
+            lost_acp_session_id,
             ..
         } => {
             sqlx::query(
                 "INSERT INTO agent_sessions \
                  (project_id, session_key, role, task_id, acp_session_id, status, turn_running, updated_ms, \
-                 harness, model, effort, cwd) \
-                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?, ?, ?, ?, ?) \
+                 harness, model, effort, cwd, lost_acp_session_id) \
+                 VALUES (?, ?, ?, ?, ?, 'live', 0, ?, ?, ?, ?, ?, ?) \
                  ON CONFLICT (project_id, session_key) DO UPDATE SET role = excluded.role, \
                  task_id = excluded.task_id, acp_session_id = excluded.acp_session_id, \
                  status = 'live', turn_running = 0, updated_ms = excluded.updated_ms, \
                  harness = excluded.harness, model = excluded.model, effort = excluded.effort, \
-                 cwd = excluded.cwd",
+                 cwd = excluded.cwd, \
+                 lost_acp_session_id = COALESCE(excluded.lost_acp_session_id, \
+                 agent_sessions.lost_acp_session_id)",
             )
             .bind(project)
             .bind(session)
@@ -131,6 +142,7 @@ pub(super) async fn apply(
             .bind(agent.as_ref().and_then(|a| a.model.as_deref()))
             .bind(agent.as_ref().and_then(|a| a.effort.as_deref()))
             .bind(cwd)
+            .bind(lost_acp_session_id)
             .execute(&mut **tx)
             .await?;
         }

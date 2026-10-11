@@ -17,6 +17,11 @@ export function isOrchestratorKey(session: string): boolean {
   return session.startsWith(ORCHESTRATOR_PREFIX);
 }
 
+/** The chat whose orchestrator has this session key (see `isOrchestratorKey`). */
+export function chatOfOrchestratorKey(session: string): string {
+  return session.slice(ORCHESTRATOR_PREFIX.length);
+}
+
 export function isInternalBranch(name: string): boolean {
   return name.startsWith(INTERNAL_BRANCH_PREFIX);
 }
@@ -33,7 +38,7 @@ export const MAX_CHAT_TITLE_CHARS = 80;
 export function applyChatEvent(chats: ChatInfo[], ev: ApiEvent): ChatInfo[] {
   const body = ev.body;
   if (body.type === "prompted" && isOrchestratorKey(body.session)) {
-    const id = body.session.slice(ORCHESTRATOR_PREFIX.length);
+    const id = chatOfOrchestratorKey(body.session);
     return chats.map((c) => (c.id === id ? { ...c, last_used_ms: ev.ts_ms } : c));
   }
   if (body.type !== "domain") return chats;

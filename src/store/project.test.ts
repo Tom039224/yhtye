@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { ApiEventBody } from "../api/generated";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { agentText, chunk, ev, prompted, turnEnded, usage } from "../test/events";
-import { applyDurable, applyLive, applySnapshot, forgetChat, newProjectView, type ProjectView, removeChatNow } from "./project";
+import { applyDurable, applyLive, applySnapshot, forgetChat, markResuming, newProjectView, type ProjectView, removeChatNow } from "./project";
 import { ORCHESTRATOR } from "../test/events";
 import { CHAT_INFOS, chatSnapshot } from "../test/chats";
 import { orchestratorKey } from "./chats";
@@ -44,7 +45,7 @@ describe("project view", () => {
     let v = applySnapshot(newProjectView(PROJECT), FULL_RUN.start);
     const usage = ev(0, { type: "agent", session: ORCHESTRATOR, event: { type: "output", data: { kind: "usage", update: {} } } }, true);
     expect(applyLive(v, usage)).toBe(v);
-    const unsaved = ev(0, { type: "session_failed", session: "T-1/implementer", error: "boom" }, true);
+    const unsaved = ev(0, { type: "session_failed", session: "T-1/implementer", error: "boom", retrying: false }, true);
     v = applyLive(v, unsaved);
     expect(v.cursor).toBe(0);
     expect(v.transcripts["T-1/implementer"]).toEqual([expect.objectContaining({ kind: "lifecycle", error: true })]);
@@ -160,5 +161,87 @@ describe("a deleted chat", () => {
     v = forgetChat(v, v.state, "C-1");
     expect(v.contextUsage).toEqual({});
     expect(v.compacting).toEqual({});
+  });
+});
+
+describe("resuming chats", () => {
+  const started = (seq: number, chat: string) =>
+    ev(seq, {
+      type: "session_started",
+      session: orchestratorKey(chat),
+      role: "orchestrator",
+      task: null,
+      pid: 1,
+      acp_session_id: "acp",
+      resumed: true,
+      agent: null,
+    });
+  const stopped = (seq: number, chat: string, suspended: boolean) =>
+    ev(seq, { type: "session_stopped", session: orchestratorKey(chat), suspended });
+  const failed = (seq: number, chat: string, retrying: boolean) =>
+    ev(seq, { type: "session_failed", session: orchestratorKey(chat), error: "boom", retrying });
+  const sessionOf = (chat: string, status: "live" | "interrupted") => ({
+    session_key: orchestratorKey(chat),
+    role: "orchestrator" as const,
+    task: null,
+    acp_session_id: "acp",
+    status,
+    turn_running: false,
+    agent: null,
+    cwd: null,
+  });
+  const snap = (status: "live" | "interrupted") => ({
+    ...applySnapshot(newProjectView(PROJECT), chatSnapshot()),
+    sessions: [sessionOf("C-1", status)],
+  });
+
+  it("is marked until the chat's session starts or stops", () => {
+    const base = snap("interrupted");
+    const resuming = markResuming(base, "C-1", true);
+    expect(resuming.resuming).toEqual({ "C-1": true });
+    const next = { ...resuming, cursor: 10, stateSeq: 10 };
+    expect(applyDurable(next, started(11, "C-1")).resuming).toEqual({});
+    expect(applyDurable(next, stopped(11, "C-1", false)).resuming).toEqual({});
+    // Another chat's session, or another kind of event, leaves it.
+    expect(applyDurable(next, started(11, "C-2")).resuming).toEqual({ "C-1": true });
+    expect(applyDurable(next, agentText(11, orchestratorKey("C-1"), "x")).resuming).toEqual({ "C-1": true });
+  });
+
+  it("is cleared when the start fails for good, not when a retry follows the failure", () => {
+    const resuming = markResuming(snap("interrupted"), "C-1", true);
+    const next = { ...resuming, cursor: 10, stateSeq: 10 };
+    // A restore that failed and is tried again (or replaced by a new session) is still starting.
+    expect(applyDurable(next, failed(11, "C-1", true)).resuming).toEqual({ "C-1": true });
+    // The last failure ends it, and so does a failure from an older log (no flag).
+    expect(applyDurable(next, failed(11, "C-1", false)).resuming).toEqual({});
+    const old = ev(11, { type: "session_failed", session: orchestratorKey("C-1"), error: "boom" } as unknown as ApiEventBody);
+    expect(applyDurable(next, old).resuming).toEqual({});
+    // Another chat's failure, or a sub-agent's, leaves it.
+    expect(applyDurable(next, failed(11, "C-2", false)).resuming).toEqual({ "C-1": true });
+    const other = ev(11, { type: "session_failed", session: "T-1/implementer", error: "boom", retrying: false });
+    expect(applyDurable(next, other).resuming).toEqual({ "C-1": true });
+  });
+
+  it("goes through the whole sequence of a restore that is retried and then fails", () => {
+    let v = { ...markResuming(snap("interrupted"), "C-1", true), cursor: 10, stateSeq: 10 };
+    v = applyDurable(v, failed(11, "C-1", true)); // trying again (1/2)
+    v = applyDurable(v, failed(12, "C-1", true)); // trying again (2/2)
+    v = applyDurable(v, failed(13, "C-1", true)); // starting a new session
+    expect(v.resuming).toEqual({ "C-1": true });
+    v = applyDurable(v, failed(14, "C-1", false)); // the new session cannot start either
+    expect(v.resuming).toEqual({});
+  });
+
+  it("is cleared by the core's answer, and not set for a session that is already up", () => {
+    const resuming = markResuming(snap("interrupted"), "C-1", true);
+    expect(markResuming(resuming, "C-1", false).resuming).toEqual({});
+    expect(markResuming(snap("live"), "C-1", true).resuming).toEqual({});
+    const same = markResuming(snap("interrupted"), "C-1", false);
+    expect(markResuming(same, "C-1", false)).toBe(same);
+  });
+
+  it("goes with a deleted chat", () => {
+    const resuming = markResuming(snap("interrupted"), "C-1", true);
+    expect(forgetChat(resuming, resuming.state, "C-1").resuming).toEqual({});
   });
 });

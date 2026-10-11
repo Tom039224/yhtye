@@ -109,6 +109,8 @@ export class FakeCore {
   branchError: CommandError | null = null;
   /** The host name `ping` answers with. */
   host = "test-host";
+  /** Chats `open_chat` reports as starting (their orchestrator had something to resume). */
+  starting = new Set<string>();
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -172,6 +174,9 @@ export class FakeCore {
       }
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
+      case "open_chat":
+        if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
+        return { type: "chat_opened", starting: this.starting.has(cmd.chat) };
       case "create_chat":
         return { type: "chat", chat: this.newChat(cmd.worktree ?? this.worktreeOf(cmd.branch ?? "")) };
       case "rename_chat": {

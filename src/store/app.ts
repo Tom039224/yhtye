@@ -25,13 +25,16 @@ import type {
   UsageReport,
 } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
+import { changesActivity, mergeActivity, rememberRunning } from "./activity";
 import { isOrchestratorKey, upsertChat } from "./chats";
+import { type Drafts, memoryDrafts } from "./drafts";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
   applyLive,
   applySnapshot,
   clearStreaming,
+  markResuming,
   newProjectView,
   prependHistory,
   type ProjectView,
@@ -47,6 +50,8 @@ export const HISTORY_PAGE = 400;
 export const GIT_COMMITS = 120;
 /** Delay before re-reading git after a domain change (changes come in bursts). */
 export const GIT_REFRESH_MS = 400;
+/** Delay before the project list is re-read after work started or ended in a project not on screen. */
+export const ACTIVITY_REFRESH_MS = 200;
 /** Preference key: path of the project opened last (reopened after a reload). */
 export const LAST_PROJECT_KEY = "yhtye.lastProject";
 /** Preference key (per project id): the chat shown when the project is opened again. */
@@ -121,11 +126,15 @@ export class AppStore {
   private nextErrorId = 1;
   private gitTimer: ReturnType<typeof setTimeout> | null = null;
   private gitToken = 0;
+  private activityTimer: ReturnType<typeof setTimeout> | null = null;
+  private activityToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
+  /** Unsent composer text per chat (kept while another chat or project is shown). */
+  readonly drafts: Drafts = memoryDrafts();
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
@@ -158,6 +167,8 @@ export class AppStore {
     for (const un of this.unsubscribe.splice(0)) un();
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
+    if (this.activityTimer) clearTimeout(this.activityTimer);
+    this.activityTimer = null;
     this.stopUsagePolling();
     this.stopPinging();
   }
@@ -226,13 +237,35 @@ export class AppStore {
     }
   }
 
-  /** Shows another chat (no process is started); remembered for the project. */
+  /**
+   * Shows another chat; remembered for the project. Opening a chat brings its
+   * orchestrator back if it has something to resume (a restart of Yhtye starts
+   * none), which `openChat` asks the core for.
+   */
   selectChat(chat: string): void {
     const view = this.state.project;
     if (!view || view.selectedChat === chat || !view.chats.some((c) => c.id === chat)) return;
     this.prefs.set(chatPrefKey(view.info.id), chat);
     const { [chat]: _read, ...unread } = view.unread;
     this.updateProject((v) => ({ ...v, selectedChat: chat, unread }));
+    void this.openChat(view.info.id, chat);
+  }
+
+  /**
+   * Tells the core the user is looking at `chat`: it starts the chat's
+   * orchestrator if there is a stored session or work to resume, and answers
+   * whether it is starting (shown until its session is up). Failures are shown.
+   */
+  private async openChat(project: string, chat: string): Promise<void> {
+    const r = await this.run({ type: "open_chat", project, chat }, "chat_opened");
+    if (this.state.project?.info.id !== project) return;
+    this.updateProject((v) => markResuming(v, chat, r?.starting ?? false));
+  }
+
+  /** `openChat` for the chat on screen (after a project is loaded or the connection came back). */
+  private openSelectedChat(): void {
+    const view = this.state.project;
+    if (view?.selectedChat) void this.openChat(view.info.id, view.selectedChat);
   }
 
   /**
@@ -294,6 +327,7 @@ export class AppStore {
     const project = this.state.project?.info.id;
     if (!project) return;
     await this.invoke({ type: "delete_chat", project, chat }, "accepted");
+    this.drafts.set(project, chat, "");
     if (this.state.project?.info.id !== project) return;
     this.updateProject((v) => removeChatNow(v, chat));
   }
@@ -313,13 +347,17 @@ export class AppStore {
     if (project) await this.run({ type: "retry_group_merge", project, group }, "accepted");
   }
 
-  /** Loads the page of history before what is shown (lazy history, newest first). */
+  /**
+   * Loads the page of history before what is shown (lazy history, newest first).
+   * A failure is kept in `olderError` for the history row to show; calling this
+   * again retries.
+   */
   async loadOlderHistory(): Promise<void> {
     const view = this.state.project;
     if (!view || view.phase !== "ready" || view.loadingOlder || view.historyStart <= 1) return;
     const token = this.loadToken;
     const from = Math.max(1, view.historyStart - this.historyPage);
-    this.updateProject((v) => ({ ...v, loadingOlder: true }));
+    this.updateProject((v) => ({ ...v, loadingOlder: true, olderError: null }));
     try {
       const events: ApiEvent[] = [];
       let after = from - 1;
@@ -339,8 +377,7 @@ export class AppStore {
       this.updateProject((v) => ({ ...prependHistory(v, events, from), loadingOlder: false }));
     } catch (e) {
       if (token !== this.loadToken) return;
-      this.updateProject((v) => ({ ...v, loadingOlder: false }));
-      this.pushError(`loading older history failed: ${toCommandError(e).message}`);
+      this.updateProject((v) => ({ ...v, loadingOlder: false, olderError: toCommandError(e).message }));
     }
   }
 
@@ -390,7 +427,10 @@ export class AppStore {
     this.buffer = [];
     this.syncing = true;
     const keepGit = this.state.git?.project === info.id ? this.state.git : null;
-    this.set({ project: newProjectView(info), git: keepGit });
+    // The project left is judged by its flag from now on: keep what its view said.
+    const left = this.state.project?.info.id === info.id ? null : this.state.project;
+    this.set({ project: newProjectView(info), projects: rememberRunning(this.state.projects, left), git: keepGit });
+    if (left) this.scheduleActivityRefresh();
     this.prefs.set(LAST_PROJECT_KEY, info.path);
     void this.refreshGit();
     try {
@@ -401,6 +441,7 @@ export class AppStore {
       await this.catchUp(token);
       if (token !== this.loadToken) return;
       this.updateProject((v) => ({ ...v, phase: "ready" }));
+      this.openSelectedChat();
     } catch (e) {
       if (token !== this.loadToken) return;
       const message = `could not load ${info.name}: ${toCommandError(e).message}`;
@@ -448,7 +489,12 @@ export class AppStore {
 
   private onEvent(ev: ApiEvent): void {
     const view = this.state.project;
-    if (!view || ev.project !== view.info.id || view.phase === "error") return;
+    if (!view || ev.project !== view.info.id) {
+      // Not on screen: nothing to show of it but whether work is on (its ring).
+      if (changesActivity(ev)) this.scheduleActivityRefresh();
+      return;
+    }
+    if (view.phase === "error") return;
     if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) this.scheduleGitRefresh();
     if (this.syncing) {
       this.buffer.push(ev);
@@ -541,6 +587,27 @@ export class AppStore {
     }
   }
 
+  /**
+   * Re-reads which projects have work on, soon: the events of a project that is
+   * not on screen are not folded, so the core is asked (changes come in bursts).
+   */
+  private scheduleActivityRefresh(): void {
+    if (this.activityTimer) return;
+    this.activityTimer = setTimeout(() => {
+      this.activityTimer = null;
+      void this.refreshActivity();
+    }, ACTIVITY_REFRESH_MS);
+  }
+
+  /** Takes `open` / `running` of every project from the core (the last answer wins). */
+  private async refreshActivity(): Promise<void> {
+    const token = ++this.activityToken;
+    const r = await this.run({ type: "list_projects" }, "projects");
+    if (!r || token !== this.activityToken) return;
+    const projects = mergeActivity(this.state.projects, r.projects);
+    if (projects !== this.state.projects) this.set({ projects });
+  }
+
   private scheduleGitRefresh(): void {
     if (this.gitTimer) return;
     this.gitTimer = setTimeout(() => {
@@ -559,6 +626,7 @@ export class AppStore {
     if (!r || this.state.project?.info.id !== info.id) return;
     this.updateProject((v) => ({ ...v, info: r.project }));
     this.requestCatchUp();
+    this.openSelectedChat(); // the core may have restarted
   }
 
   // ---- agent settings (Stage 7b) --------------------------------------------

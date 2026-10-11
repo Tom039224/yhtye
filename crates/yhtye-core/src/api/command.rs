@@ -59,6 +59,17 @@ pub enum ApiCommand {
         chat: String,
         text: String,
     },
+    /// The user opened `chat` in the UI: its orchestrator is started now,
+    /// restoring its stored session, if it is not running and has anything to
+    /// resume (it ran when Yhtye stopped, the chat has an open group, or it has
+    /// inbox entries). An app restart starts no orchestrator; this is where a
+    /// chat comes back (also when something is sent to it). Answers
+    /// `chat_opened`; the start itself goes on in the background and shows as
+    /// `session_started` (or `session_failed`). `not_found` for an unknown chat.
+    OpenChat {
+        project: String,
+        chat: String,
+    },
     /// Cancels the running turn of the chat's orchestrator, if any.
     CancelOrchestratorTurn {
         project: String,
@@ -262,6 +273,10 @@ pub struct ProjectInfo {
     pub path: String,
     /// Its orchestration is running in this process.
     pub open: bool,
+    /// Work is on in it: a live agent session is in a turn, or a task is
+    /// running or merging (what the sidebar's turning ring shows). Always
+    /// `false` while it is not open.
+    pub running: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
@@ -318,6 +333,11 @@ pub enum ApiResponse {
     },
     Chat {
         chat: ChatInfo,
+    },
+    /// Answer of `open_chat`.
+    ChatOpened {
+        /// The chat's orchestrator is being started (now, or by an earlier call).
+        starting: bool,
     },
     GitOverview {
         git: GitOverview,

@@ -416,6 +416,14 @@ impl State {
         self.groups.iter().any(Group::is_open)
     }
 
+    /// Whether a task has an agent (or the merge) working on it.
+    #[must_use]
+    pub fn has_working_task(&self) -> bool {
+        self.tasks
+            .iter()
+            .any(|t| matches!(t.status, TaskStatus::Running | TaskStatus::Merging))
+    }
+
     /// The undelivered inbox entries of `chat`, oldest first.
     pub fn inbox_of<'a>(&'a self, chat: &'a str) -> impl Iterator<Item = &'a InboxEntry> + 'a {
         self.inbox.iter().filter(move |e| e.chat == chat)
