@@ -102,17 +102,18 @@ class TaskDetailTest {
         assertTrue(h.exists("right-panel"))
     }
 
-    // 閉じる距離は幅の 24.5%、はじきは 245dp/s (T-72。それまでは 35% と 350dp/s)
+    // 閉じる距離は指の移動量で幅の 49%、はじきは 245dp/s (T-74。T-72 は 24.5% (画面が指の半分しかずれなかったので指で約 49%)、
+    // それまでは 35% と 350dp/s)。Robolectric はタッチの間に再描画しないので、ずれ = 指の移動量で確かめる
 
     @Test
-    fun `a slow swipe closes the detail just past 24 percent of the width and not just short of it`() {
+    fun `a slow swipe closes the detail just past 49 percent of the width and not just short of it`() {
         h.open()
         openDetail("T-1")
-        h.dragScreen(pulled = 0.19f)
+        h.dragScreen(pulled = 0.44f)
         h.settleFor()
         assertTrue(h.exists("task-detail"))
 
-        h.dragScreen(pulled = 0.30f)
+        h.dragScreen(pulled = 0.54f)
         h.settle { !h.exists("task-detail") }
         // 下の右パネルは開いたまま
         assertTrue(h.exists("right-panel"))
@@ -122,7 +123,7 @@ class TaskDetailTest {
     fun `a short flick closes the detail above 245 dp per second and not below it`() {
         h.open()
         openDetail("T-1")
-        // 24.5% に届かない短さ (10%)。速さだけで決まる
+        // 49% に届かない短さ (10%)。速さだけで決まる
         h.dragScreen(pulled = 0.10f, dpPerSecond = 180f)
         h.settleFor()
         assertTrue(h.exists("task-detail"))

@@ -20,16 +20,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,8 +34,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
@@ -51,32 +43,24 @@ import io.github.tom039224.yhtye.shared.api.generated.UsageWindowKind
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
-import io.github.tom039224.yhtye.shared.sync.HostTone
-import io.github.tom039224.yhtye.shared.sync.formatPingAge
 import io.github.tom039224.yhtye.shared.sync.formatRemaining
-import io.github.tom039224.yhtye.shared.sync.hostTone
-import io.github.tom039224.yhtye.shared.sync.hostToneLabel
-import io.github.tom039224.yhtye.shared.sync.pingAgeSeconds
 import io.github.tom039224.yhtye.shared.sync.planLabel
 import io.github.tom039224.yhtye.shared.sync.usageWindow
 import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
 import io.github.tom039224.yhtye.ui.common.YIcons
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // 左パネル (PC のアイコンレール + サイドバー + ステータスバーの使用量、モックの `#left`): 左端のレールでコーディング /
 // 履歴を切り替え、一番下に設定。コーディングではプロジェクトのドロップダウン・バックグラウンドで動作中のプロジェクト・
-// ブランチとチャットの木。下端にコアのホスト (PC のサイドバーのフッタ) とプラン・使用量 (PC のステータスバー)。
+// ブランチとチャットの木。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`) とプラン・使用量
+// (PC のステータスバー)。
 
 private val RAIL_WIDTH = 56.dp
 private val RAIL_BUTTON_SHAPE = RoundedCornerShape(12.dp)
 private val METER_SHAPE = RoundedCornerShape(2.dp)
-
-/** ホストの最後の ping からの経過を数え直す間隔 (PC の useNow(1000))。 */
-private const val HOST_TICK_MS = 1_000L
 
 /** PC のアイコンレールのビュー。 */
 enum class MainView { Work, Runs }
@@ -85,6 +69,7 @@ enum class MainView { Work, Runs }
 const val RUNS_EMPTY = "現状は何もありません"
 
 /**
+ * @param selfId ペアリングで保存したこの端末の ID (下端の一覧で「この端末」の印を付ける)。
  * @param onChatChosen チャットを選んだ・作った (中央に戻る)。
  * @param onOpenSettings レールの一番下の設定。
  */
@@ -96,6 +81,7 @@ fun LeftPanel(
     view: MainView,
     onView: (MainView) -> Unit,
     memory: LeftPanelMemory,
+    selfId: String?,
     onChatChosen: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -111,7 +97,7 @@ fun LeftPanel(
             }
         }
         HorizontalDivider(color = c.line)
-        Footer(app, sync, now)
+        Footer(app, sync, now, selfId)
     }
 }
 
@@ -163,9 +149,9 @@ private fun WorkSide(app: AppState, sync: AppStore, now: Long, memory: LeftPanel
     }
 }
 
-/** 下端: コアのホストと最後の ping からの経過、プランと使用量 (タップで取り直す)。 */
+/** 下端: サーバー (コアのホストと最後の ping からの経過) と端末の一覧、プランと使用量 (タップで取り直す)。 */
 @Composable
-private fun Footer(app: AppState, sync: AppStore, now: Long) {
+private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?) {
     val c = Yhtye.colors
     val scope = rememberActionScope()
     Column(
@@ -176,7 +162,7 @@ private fun Footer(app: AppState, sync: AppStore, now: Long) {
             .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        HostRow(app)
+        HostAndClients(app, selfId)
         val report = app.usage.report
         val enabled = app.connection is ConnectionState.Connected && !app.usage.loading
         FlowRow(
@@ -196,47 +182,6 @@ private fun Footer(app: AppState, sync: AppStore, now: Long) {
             UsageMeter("5h", "5h", c.usage5h, usageWindow(report, UsageWindowKind.FiveHour), now)
             UsageMeter("week", "7d", c.usageWeek, usageWindow(report, UsageWindowKind.Week), now)
         }
-    }
-}
-
-@Composable
-private fun HostRow(app: AppState) {
-    val c = Yhtye.colors
-    var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(HOST_TICK_MS)
-            tick = System.currentTimeMillis()
-        }
-    }
-    val age = pingAgeSeconds(tick, app.host.lastPingAt)
-    val tone = hostTone(app.connection, age)
-    val state = hostToneLabel(tone, app.connection)
-    val dot = when (tone) {
-        HostTone.Ok -> c.doneBar
-        HostTone.Busy -> c.accent
-        HostTone.Bad -> c.handBar
-    }
-    Row(Modifier.fillMaxWidth().testTag("host"), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-        Box(Modifier.size(7.dp).background(dot, CircleShape).semantics { contentDescription = state }.testTag("host-dot"))
-        Text(
-            app.host.name ?: "—",
-            color = c.tx2,
-            fontFamily = MonoFont,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        YIcon(YIcons.Clock, c.tx3, 12.dp)
-        Text(
-            age?.let(::formatPingAge) ?: "—",
-            color = c.tx3,
-            fontFamily = MonoFont,
-            fontSize = 11.5.sp,
-            modifier = Modifier.semantics { contentDescription = if (age == null) "まだ応答がありません" else "最後の ping からの経過" },
-        )
     }
 }
 
