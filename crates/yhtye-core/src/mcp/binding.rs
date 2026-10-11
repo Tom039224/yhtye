@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::domain::Role;
 
 /// Who is calling: the session's role and what it is bound to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SessionBinding {
     /// Yhtye's key of the agent session (not the ACP session id).
     pub session: String,

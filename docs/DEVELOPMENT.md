@@ -137,6 +137,9 @@ pnpm check:layout                                  # 実ブラウザで「ペー
 cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
 cargo test -p yhtye-core -- --ignored --test-threads=1   # 実エージェント (Claude Code は Haiku)
 cargo clippy --workspace --all-targets && cargo fmt --check
+pnpm gen:types                                     # Rust の API 型から TS (src/api/generated) と Kotlin (mobile/…/api/generated) を再生成
+pnpm check:types                                   # 生成物が Rust の API 型と一致するか (cargo test にも含まれる)
+pnpm gen:kotlin / pnpm check:kotlin                # Kotlin の型と契約サンプルだけ
 pnpm tauri build --debug --no-bundle               # アプリのデバッグビルド (target/debug/yhtye)
 pnpm tauri build                                   # 配布用バイナリ
 ```
@@ -205,6 +208,21 @@ cd mobile
 ./gradlew :shared:allTests               # 共通モジュールのユニットテスト (JVM 上で実行)
 ./gradlew :androidApp:lint               # Android lint
 ```
+
+### API 型 (Rust から生成)
+
+`mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/api/generated/` は Rust の API 型
+(`ApiCommand` / `ApiResponse` / `ApiEvent` / `ApiError` / `WsRequest` / `WsServerMessage` / `/pair` の型など) から生成する。
+手で編集せず、Rust の型を変えたら `pnpm gen:types` (TS と Kotlin) か `pnpm gen:kotlin` を実行してコミットする
+(`cargo test` / `pnpm check:types` が生成物のズレで失敗する)。仕組みは
+[`architecture/core-design.md`](architecture/core-design.md) §2。
+
+- 読み書きは必ず `ApiJson` (`shared/api/ApiJson.kt`) で行う。タグ付きの型は `ApiCommand.Serializer` のような
+  明示した serializer を持つ (`ApiJson.encodeToString(ApiCommand.Serializer, cmd)`。プロパティの型としてなら自動で使われる)。
+- PC 側が新しくて知らない variant・enum 値は `Unrecognized` になる (例外にならない)。`when` では必ず扱う。
+- 契約テスト: Rust が書いた全 variant の JSON (`commonTest/.../api/generated/ContractSamples.kt`、同じく生成) を
+  `ContractTest` が読んで書き戻し、同じ JSON になることを確かめる (`./gradlew :shared:allTests`)。
+  Rust の型に variant を足したら `crates/yhtye-core/src/api/typegen/kotlin/samples.rs` にサンプルを足す (無いと Rust のテストが失敗する)。
 
 依存のバージョンは `mobile/gradle/libs.versions.toml` にまとめてある。AGP 9 から Kotlin が AGP に内蔵されたので、
 `androidApp` には `org.jetbrains.kotlin.android` を適用しない。共通モジュールの Android ターゲットは

@@ -65,6 +65,22 @@
 - AGP 9 では KMP の `androidTarget()` (`com.android.library`) が非推奨のため、`com.android.kotlin.multiplatform.library` を使う。
 - バックアップ・端末間転送は無効 (端末トークンは Keystore の鍵で暗号化するので、別端末に戻しても使えない)。
 
+### 実装で決めたこと (T-59: API 型の Kotlin 生成)
+
+- 方式は **schemars の JSON Schema + Rust 内の小さな生成器** (typeshare は内部タグ付き enum を Kotlin に出せない)。
+  ts-rs と同じテストの運用 (`pnpm gen:kotlin` で更新、生成物とずれたら `cargo test` が失敗)。詳細は
+  [`core-design.md`](../architecture/core-design.md) §2。
+- kotlinx.serialization のプラグインが作る多態 (sealed + `classDiscriminator`) は使わず、タグ付き enum は手書きの
+  `TaggedSerializer` で読み書きする。知らないタグを `Unrecognized` で受けるため (プラグインの多態は例外になる)、
+  隣接タグ (`AgentEvent` の `data`、`AgentOutput` の `update`) とタグ名の違い (`kind` / `code` / `by`) を同じ仕組みで扱うため。
+- 前方互換: 知らない応答・イベント・enum 値は `Unrecognized` (生の JSON つき)、増えたフィールドは無視 (`ApiJson`)。
+  `Unrecognized` は送れない (エンコードが失敗する)。
+- ACP のペイロード (エージェントの出力の中身など) は TS と同じく型を写さず `JsonElement`。画面で要る部分は段階 3 で読む。
+- u32 / usize も `Long` にする (`Int` だと u32 の上限を表せない)。
+- `/pair` の要求・応答・エラー本文も Rust 側に型 (`remote::{PairRequest, PairResponse, RemoteError}`) を作って生成する。
+- 契約テストは Rust が本物の型で書いた全 variant の JSON を Kotlin で読み書きして比べる (180 件)。Kotlin のテストは
+  Gradle でだけ走る (CI にはまだ Gradle のジョブが無い。生成物のズレは cargo のテストが CI で検出する)。
+
 ## ペアリング
 
 | 項目 | 内容 |
@@ -87,7 +103,7 @@
    完了条件: Tailscale 上の別端末 (またはスクリプト) から、ペアリング → トークンでコマンド実行 → 失効後は拒否、が通る。
    トークン無し・誤り・他ユーザーの端末・ローカル専用コマンドは拒否される。
 2. **Android の基盤 (通信とペアリング)**: Gradle (KMP 共通 + Android アプリ) の雛形、API 型の Kotlin 生成
-   (typeshare か JSON Schema 経由かはこの段階で決める)、Ktor の WS クライアント、QR 読み取り (CameraX + ML Kit)
+   (JSON Schema 経由に決定、T-59)、Ktor の WS クライアント、QR 読み取り (CameraX + ML Kit)
    と手入力、Keystore への保存、再接続。
    完了条件: 実機から Tailscale 経由でペアリングし、最小の画面でプロジェクト一覧が出る。
 3. **GUI**: Compose の画面。画面構成・操作 (チャット、タスク状況、通知など) は段階 3 の前に詰める。

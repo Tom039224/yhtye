@@ -1,13 +1,15 @@
 //! The UI-facing API (`core-design.md` §2): the event stream ([`ApiEvent`]),
 //! the [`Snapshot`], and the commands of [`crate::runtime::Core`]
 //! ([`ApiCommand`] → [`ApiResponse`] / [`ApiError`]). The TypeScript types in
-//! `src/api/generated/` are generated from these with ts-rs (see `typegen`).
+//! `src/api/generated/` are generated from these with ts-rs, and the Kotlin
+//! types of the Android client from their schemars JSON Schemas (see `typegen`).
 
 mod command;
 #[cfg(test)]
 mod typegen;
 mod wire;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -40,7 +42,7 @@ pub use wire::{WsReply, WsRequest, WsServerMessage};
 ///
 /// App-wide events ([`ApiEventBody::is_local_only`]: remote access) have an
 /// empty `project`, `seq` 0 and are live.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 pub struct ApiEvent {
     pub seq: u64,
     /// Milliseconds since the Unix epoch.
@@ -51,7 +53,7 @@ pub struct ApiEvent {
 }
 
 /// Kind of a coalesced text block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TextKind {
     Message,
@@ -59,7 +61,7 @@ pub enum TextKind {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiEventBody {
     /// A state change (apply it with the same reducer as [`State::apply`]).
@@ -195,7 +197,7 @@ impl ApiEventBody {
 
 /// The state of a project as of event `seq`: the domain state, the agent
 /// sessions (`agent_sessions`, derived from the same events) and the chats.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 pub struct Snapshot {
     pub seq: u64,
     pub state: State,

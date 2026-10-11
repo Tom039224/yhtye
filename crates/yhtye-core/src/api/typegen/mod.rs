@@ -8,6 +8,11 @@
 //! timestamps stay far below 2^53); ACP schema payloads inside
 //! [`crate::acp::AgentEvent`] are `unknown` (the UI narrows them at runtime,
 //! `src/api/acp.ts`), so the ACP crate's types are not mirrored by hand.
+//!
+//! The Kotlin types of the Android client are generated from the same Rust
+//! types in [`kotlin`] (`pnpm gen:kotlin`).
+
+mod kotlin;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

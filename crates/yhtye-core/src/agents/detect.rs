@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -178,9 +179,10 @@ pub const HARNESS_SPECS: [HarnessSpec; 7] = [
 ];
 
 /// Where an executable was found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename = "HarnessPathSource")]
+#[schemars(rename = "HarnessPathSource")]
 pub enum PathSource {
     /// The path the user gave.
     Override,
@@ -193,7 +195,7 @@ pub enum PathSource {
 }
 
 /// One command a harness needs, and where it was found.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct HarnessRequirement {
     pub command: String,
     /// The absolute path, `None` when not found.
@@ -201,7 +203,7 @@ pub struct HarnessRequirement {
 }
 
 /// Whether a harness can be used, and why (the settings panel shows it).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct HarnessDetection {
     pub id: String,
     pub label: String,

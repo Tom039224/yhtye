@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use sqlx::{FromRow, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use ts_rs::TS;
@@ -15,7 +16,7 @@ use crate::domain::{Chat, DomainEvent, chat_of_session};
 
 /// A chat as the UI lists it (`Snapshot.chats`, `list_chats`). Its branch is
 /// not stored: the UI reads what the worktree has checked out (Stage 8e).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct ChatInfo {
     pub id: String,
     /// The chat's worktree, as `git worktree list` shows it.
