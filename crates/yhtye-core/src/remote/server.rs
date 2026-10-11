@@ -16,6 +16,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -58,22 +59,39 @@ pub(super) async fn serve(listener: tokio::net::TcpListener, ctx: ServerCtx) {
     }
 }
 
-#[derive(Deserialize)]
+/// Body of `POST /pair`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct PairRequest {
-    code: String,
-    device_name: String,
+pub struct PairRequest {
+    /// The pairing code shown on the PC.
+    pub code: String,
+    /// The name the device is listed under (trimmed, at most
+    /// [`super::MAX_DEVICE_NAME_CHARS`] characters).
+    pub device_name: String,
 }
 
-#[derive(Serialize)]
-struct PairResponse {
-    device_id: String,
-    token: String,
-    server_id: String,
+/// Answer of a successful `POST /pair`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PairResponse {
+    pub device_id: String,
+    /// The device token: `Authorization: Bearer <token>` on `/ws`.
+    pub token: String,
+    /// Identifies this Yhtye (the QR code's `sid`).
+    pub server_id: String,
+}
+
+/// Body of every refused HTTP request of the remote server (`/pair`, `/ws`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RemoteError {
+    /// Why, meant to be shown to the user.
+    pub error: String,
 }
 
 fn refuse(status: StatusCode, why: &str) -> Response {
-    (status, Json(serde_json::json!({ "error": why }))).into_response()
+    let body = RemoteError {
+        error: why.to_string(),
+    };
+    (status, Json(body)).into_response()
 }
 
 /// `Err`: why a peer that is not this PC's Tailscale user is refused.

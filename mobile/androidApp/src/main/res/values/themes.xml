@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 起動直後 (Compose の描画前) の窓の背景。中身の配色は Compose の MaterialTheme が決める -->
+    <style name="Theme.Yhtye" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -44,7 +45,7 @@ const EAGER_EFFORT_MODELS: usize = 12;
 type EnvLookup = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
 
 /// One model a harness offers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct ModelOption {
     /// The value to select (`haiku`).
     pub value: String,
@@ -57,7 +58,7 @@ pub struct ModelOption {
 }
 
 /// One effort (thought level) a model supports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct EffortOption {
     /// The value to select (`high`).
     pub value: String,
@@ -66,7 +67,7 @@ pub struct EffortOption {
 }
 
 /// The efforts of one model of a harness.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct ModelEfforts {
     pub harness: String,
     pub model: String,
@@ -75,7 +76,7 @@ pub struct ModelEfforts {
 
 /// The models of one harness. Empty `models`: it has no model option (only its
 /// own default can be used).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct HarnessModels {
     pub harness: String,
     pub models: Vec<ModelOption>,

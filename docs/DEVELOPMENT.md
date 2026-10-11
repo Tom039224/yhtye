@@ -25,6 +25,7 @@ docs/planned/        未着手の機能案
 src/                 React フロントエンド
 src-tauri/           Tauri シェル (Rust)
 crates/              yhtye-core (ドメインコア・ACP・MCP)、yhtye-dev-bridge (開発用 WS ブリッジ)
+mobile/              Android クライアント (Gradle。Kotlin Multiplatform の共通モジュール + Compose アプリ)
 ```
 
 ## 前提
@@ -136,6 +137,9 @@ pnpm check:layout                                  # 実ブラウザで「ペー
 cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
 cargo test -p yhtye-core -- --ignored --test-threads=1   # 実エージェント (Claude Code は Haiku)
 cargo clippy --workspace --all-targets && cargo fmt --check
+pnpm gen:types                                     # Rust の API 型から TS (src/api/generated) と Kotlin (mobile/…/api/generated) を再生成
+pnpm check:types                                   # 生成物が Rust の API 型と一致するか (cargo test にも含まれる)
+pnpm gen:kotlin / pnpm check:kotlin                # Kotlin の型と契約サンプルだけ
 pnpm tauri build --debug --no-bundle               # アプリのデバッグビルド (target/debug/yhtye)
 pnpm tauri build                                   # 配布用バイナリ
 ```
@@ -177,3 +181,95 @@ CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロント�
 ヘッドレスでディスプレイは無く、Vite のポートは空きから自動で選ぶ。失敗したときは全状態のスクリーンショットを
 アーティファクト `layout-shots` に残す (7 日)。手元で CI と同じ条件にするには
 `env -u DISPLAY -u WAYLAND_DISPLAY CI=1 YHTYE_LAYOUT_SHOTS=/tmp/yhtye-shots pnpm check:layout`。
+
+## Android クライアント (`mobile/`)
+
+Tailscale 経由で PC の Yhtye を操作する Android アプリ。設計は
+[`planned/android-client.md`](planned/android-client.md)。リポジトリ直下の cargo / pnpm とは独立した Gradle プロジェクト。
+
+| モジュール | 中身 |
+|---|---|
+| `mobile/shared` | Kotlin Multiplatform (今は Android ターゲットのみ)。通信・認証・データモデルを置く。`commonMain` に Android 依存を入れない (将来 iOS を足せるように) |
+| `mobile/androidApp` | Jetpack Compose (Material 3) の画面と、Android 固有の部分 (Keystore・カメラ・通知) |
+
+前提は JDK 17 と Android SDK (compileSdk 37 の `platforms;android-37.0`)。SDK の場所は `mobile/local.properties`
+(コミットしない) に書く。`ANDROID_HOME` が設定されていれば不要。
+
+```sh
+echo "sdk.dir=$HOME/Android/Sdk" > mobile/local.properties
+~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0"   # 足りなければ
+```
+
+```sh
+cd mobile
+./gradlew build                          # 全部 (ユニットテスト・lint・debug/release の APK)
+./gradlew :androidApp:assembleDebug      # デバッグ APK → androidApp/build/outputs/apk/debug/androidApp-debug.apk
+./gradlew :androidApp:installDebug       # adb でつないだ実機・エミュレータに入れる
+./gradlew :shared:allTests               # 共通モジュールのユニットテスト (JVM 上で実行)
+./gradlew :androidApp:lint               # Android lint
+```
+
+### API 型 (Rust から生成)
+
+`mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/api/generated/` は Rust の API 型
+(`ApiCommand` / `ApiResponse` / `ApiEvent` / `ApiError` / `WsRequest` / `WsServerMessage` / `/pair` の型など) から生成する。
+手で編集せず、Rust の型を変えたら `pnpm gen:types` (TS と Kotlin) か `pnpm gen:kotlin` を実行してコミットする
+(`cargo test` / `pnpm check:types` が生成物のズレで失敗する)。仕組みは
+[`architecture/core-design.md`](architecture/core-design.md) §2。
+
+- 読み書きは必ず `ApiJson` (`shared/api/ApiJson.kt`) で行う。タグ付きの型は `ApiCommand.Serializer` のような
+  明示した serializer を持つ (`ApiJson.encodeToString(ApiCommand.Serializer, cmd)`。プロパティの型としてなら自動で使われる)。
+- PC 側が新しくて知らない variant・enum 値は `Unrecognized` になる (例外にならない)。`when` では必ず扱う。
+- 契約テスト: Rust が書いた全 variant の JSON (`commonTest/.../api/generated/ContractSamples.kt`、同じく生成) を
+  `ContractTest` が読んで書き戻し、同じ JSON になることを確かめる (`./gradlew :shared:allTests`)。
+  Rust の型に variant を足したら `crates/yhtye-core/src/api/typegen/kotlin/samples.rs` にサンプルを足す (無いと Rust のテストが失敗する)。
+
+依存のバージョンは `mobile/gradle/libs.versions.toml` にまとめてある。AGP 9 から Kotlin が AGP に内蔵されたので、
+`androidApp` には `org.jetbrains.kotlin.android` を適用しない。共通モジュールの Android ターゲットは
+旧来の `androidTarget()` (`com.android.library`) ではなく `com.android.kotlin.multiplatform.library` の
+`kotlin { android { ... } }` で宣言する (ユニットテストは `androidHostTest`、`commonTest` もそこで走る)。
+
+### 本物の PC 側サーバーとの結合テスト
+
+`shared` の `RealServerTest` (JVM のホストテスト) は、`remote_server` の example ([`architecture/core-design.md`](architecture/core-design.md) §18.6) を起動して本物の Tailscale 越しに
+ペアリング → WS で `Ping` / `ListProjects` → 失効 → `Revoked` を通す。この PC が Tailscale につながっていること
+(`tailscale ip -4`)。通常の `./gradlew build` では飛ばされる。
+
+```sh
+cd mobile
+YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealServerTest*'   # ポートは YHTYE_REAL_SERVER_PORT (既定 14230)
+```
+
+### 実機での動作確認
+
+前提: 実機が USB デバッグで `adb devices` に出ていて、Tailscale アプリで PC と同じ tailnet (同じユーザー) に入っていること。
+
+1. GUI 無しでサーバーを起動し、プロジェクトを開いてペアリングコードを出す (デスクトップアプリや `pnpm dev:browser` の
+   「設定 → リモート接続」でもよい)。データは一時ディレクトリ (アプリの DB は触らない)。
+
+   ```sh
+   git init -q /tmp/yhtye-demo-project
+   cargo run -p yhtye-core --example remote_server -- --port 1423
+   # 標準入力で:
+   open /tmp/yhtye-demo-project
+   code            # → {"type":"pairing_code","pairing":{"code":"…","uri":"yhtye://pair?…"}}
+   ```
+
+2. アプリを入れ、ディープリンクでペアリング画面を開く (`&` を含むので URI は引用符で囲み、`adb shell` にもう一段の引用符で渡す)。
+
+   ```sh
+   cd mobile && ./gradlew :androidApp:installDebug
+   adb shell am start -a android.intent.action.VIEW -d "'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'"
+   ```
+
+   端末名を確かめて「ペアリングする」→ ホームに接続状態とプロジェクト一覧が出る。
+
+3. 失効: サーバーの標準入力で `devices` → `revoke <端末 ID>`。アプリは「この端末は PC から外されました」の案内付きで
+   ペアリングの始めの画面に戻る。
+4. 手入力: 「手入力する」でホスト (`tailscale ip -4` の 100.x か MagicDNS 名)・ポート・コード (`code` で新しく出す) を入れる。
+   `adb shell input tap <x> <y>` / `adb shell input text <文字列>` でも操作できる (座標は `adb shell uiautomator dump` で調べる)。
+5. QR: PC の「設定 → リモート接続」に出る QR (example サーバーなら `code` の `uri` を `qrencode -t ansiutf8 '<uri>'` で
+   端末に表示) を、アプリの「QR コードを読む」で映す。初回はカメラの許可を求められる。
+6. スクリーンショットは `adb exec-out screencap -p > shot.png` (画面が消えていると真っ黒になる。`adb shell input keyevent KEYCODE_WAKEUP`
+   と `adb shell wm dismiss-keyguard` で起こし、`adb shell svc power stayon usb` で消えないようにする。終わったら `stayon false`)。
+   `adb shell input text` は端末の IME を通るので、日本語 IME だと全角や仮名になることがある (アプリは全角の英数字を半角として読む)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。

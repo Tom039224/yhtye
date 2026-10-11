@@ -17,6 +17,7 @@ use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ErrorData, RoleServer, ServerHandler};
+use schemars::JsonSchema;
 use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -32,7 +33,7 @@ use crate::domain::ToolError;
 pub const MCP_SERVER_NAME: &str = "yhtye";
 
 /// One tool call as seen by the server (for logging / observation).
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 pub struct ToolCallRecord {
     pub binding: SessionBinding,
     pub tool: String,

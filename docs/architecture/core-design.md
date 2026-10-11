@@ -20,7 +20,7 @@ Cargo.toml                    [workspace] members = crates/*, src-tauri
 crates/
   yhtye-core/                 ライブラリ。Tauri 非依存
     src/
-      api/        ApiEvent / Snapshot (3a)、ApiCommand / ApiResponse (serde + ts-rs で TS 型を生成)
+      api/        ApiEvent / Snapshot (3a)、ApiCommand / ApiResponse (serde。typegen/ で TS 型 (ts-rs) と Kotlin 型を生成)
       acp/        ACP クライアント: ハーネス起動・セッション・イベント型付け・自動承認
       mcp/        Yhtye MCP サーバー (rmcp + axum, streamable HTTP)
       domain/     状態機械 (純粋関数。I/O なし)
@@ -38,6 +38,7 @@ src/                          React フロントエンド
   api/          transport.ts (抽象) / tauri.ts / ws.ts / generated/ (ts-rs 出力)
   store/        イベント駆動の状態ストア
   ...
+mobile/                       Android クライアント (Gradle。shared/ の api/generated/ は Rust から生成、§2)
 ```
 
 ## 2. 公開 API (`yhtye_core::api` / `runtime::Core`)
@@ -159,18 +160,55 @@ pub struct CoreConfig {
     `agent_text` として 1 回だけ保存・配信される。UI はストリーミング表示をこの
     `agent_text` で置き換える。トークン単位の行を DB に積まないための選択。
   - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord> }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4)。
-  - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen.rs` のテスト)。`src/api/generated/` に型ごとの
+  - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen/mod.rs` のテスト)。`src/api/generated/` に型ごとの
     ファイル + `index.ts` を出す。テスト `generated_typescript_is_up_to_date` が生成物とコミット済み
     ファイルの一致を検査し (`cargo test` に含まれる)、`pnpm gen:types` で更新する。`u64` は `number`
     (seq とミリ秒時刻は 2^53 より十分小さい)。`AgentEvent` 内の ACP スキーマ型は `unknown` で出し、
     UI は `src/api/acp.ts` で必要なフィールドだけ実行時に検査して読む (ACP の型を手で写さない)。
+  - Kotlin 型生成 (Android クライアント、T-59): `api/typegen/kotlin/` のテスト。API 型に `schemars::JsonSchema` を
+    derive し (ts-rs の `#[ts(type/as)]` には `#[schemars(with = ...)]` を対にして付ける)、schemars が serde の属性を
+    解釈して出す JSON Schema を **serialize と deserialize の 2 つの契約**で読み、小さな生成器
+    (`model.rs` → `emit.rs`) が kotlinx.serialization のクラスを
+    `mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/api/generated/`
+    (パッケージ `io.github.tom039224.yhtye.shared.api.generated`、型ごとに 1 ファイル) に書く。
+    - 対応: struct → `data class` (プロパティは camelCase、JSON のキーは `@SerialName`)。`Option<T>` → `T? = null`
+      (Rust と同じく null を書く)。Rust が既定値のとき書かないフィールド (`skip_serializing_if`) → `@EncodeDefault(NEVER)`、
+      `#[serde(default)]` の非 null → スキーマの `default` を既定値に。文字列 enum → `enum class` (`wire` 名つき)。
+      内部・隣接タグ付き enum → `sealed interface` + `data class` / `data object` の variant を手書きの `TaggedSerializer`
+      (`shared/api/ApiSerializers.kt`) で読み書き (隣接タグは内容キー `data` / `update` を 1 フィールドとして持つ variant。
+      単位 variant は `{"type":"ping"}`)。タグ無し・外部タグ付き (`Result`) → キーの有無で variant を選ぶ `UntaggedSerializer`
+      (newtype variant は `value class`、名前は `#[schemars(title = "...")]`)。u32 / usize / u64 / i64 → `Long`、
+      32 bit 以下 → `Int`、f64 → `Double`、`serde_json::Value` と ACP の型 → `JsonElement`、同じ型のタプル → `List`。
+      インラインのオブジェクトは持ち主の中の入れ子クラス (`AgentEvent.Exited.Data`)。variant と同名の型の参照は完全修飾。
+    - 失敗させるもの: 知らないスキーマのキーワード・インライン enum・型の混ざったタプル・タグと同名のフィールドなどで
+      生成が panic する。API 型のファイルに検査済みでない `#[serde(...)]` (現在は `tag` / `content` / `rename_all` /
+      `rename` / `default` / `skip_serializing_if` (`Option::is_none` / `Vec::is_empty`) / `deny_unknown_fields` /
+      `untagged` だけ) が現れるとテスト `api_types_use_only_supported_serde_attributes` が失敗する (`flatten` などは
+      スキーマに現れ方が違うため、足すときは生成物とサンプルを確かめてから許可する)。
+    - 前方互換: 生成されたタグ付き・タグ無しの型と文字列 enum はどれも `Unrecognized` を持ち、知らないタグ・形・値
+      (PC が新しい) はそこに入る (生の JSON を `raw` に保持。`UnrecognizedVariant`)。クラッシュしないが、知らないものを
+      送り返さないよう `Unrecognized` のエンコードは失敗する。増えたフィールドは共通の Json 設定 `ApiJson`
+      (`shared/api/ApiJson.kt`、手書き: `ignoreUnknownKeys` / `encodeDefaults` / `explicitNulls`) が無視する。
+    - 契約サンプル (`samples.rs`): すべてのコマンド・応答・イベント (ドメインイベント・エージェントイベント・出力・
+      エラーを含む)・`ApiError`・WS 封筒・リモートの HTTP 型について、各 variant と各 enum 値の代表 JSON を**本物の Rust の
+      型で**書き出す (コマンドは一度 Rust で読んでから書く)。テスト `contract_samples_cover_every_variant_and_match_the_model`
+      が、全 variant が網羅されていること、サンプルに生成器のモデルに無いキーが無く、常に書かれるはずのキーが欠けていない
+      ことを検査する。サンプルは `mobile/shared/src/commonTest/.../api/generated/ContractSamples.kt` に生成され、
+      Kotlin の `ContractTest` が全部を読んで書き戻し、意味的に (キー順と 1 / 1.0 の表記以外) 同じ JSON になることを確かめる。
+      コマンドのサンプルは Rust が読めるものなので、Kotlin が同じ JSON を書けることがそのまま「Kotlin の書いた
+      `ApiCommand` を Rust が読める」ことの確認になる。
+    - ズレ検出: `generated_kotlin_is_up_to_date` が生成物 (型とサンプル) とコミット済みファイルの一致を検査する。
+      `pnpm gen:kotlin` / `pnpm check:kotlin` (Kotlin だけ)。`pnpm gen:types` / `pnpm check:types` は TS と Kotlin の両方。
+    - この方式にした理由: typeshare は内部タグ付き enum を Kotlin に出せない。ts-rs の出力は TS の文字列で構造が取れない。
+      syn でソースを読む案は serde 属性の解釈を自前で持つことになる。schemars なら解釈は serde 準拠のライブラリに任せ、
+      生成器はスキーマの形だけを扱えばよく、その形が実際の serde の出力と合うことをサンプルで検査できる。
 - **クライアント同期の規則**: 接続時に `snapshot` (その時点の `seq` を含む) を取り、
   以降 `seq > snapshot.seq` の durable イベントだけ状態に適用する。durable イベント間の取りこぼし
   (seq の飛び) を検知したら `ListEvents` で欠けた分を取る (Stage 4 の実装。snapshot の取り直しでもよい)。live イベントは表示用で、状態には畳み込まない。
   履歴 (過去の会話・エージェント出力) はイベントログから読む (`Orchestration::events` /
   `Store::session_events`、Stage 4 で `ListEvents` に)。
 - WS ブリッジのメッセージ型 `WsRequest` / `WsReply` / `WsServerMessage` も `api::wire` に定義済み (§10、ブリッジ本体は Stage 5)。
-- Rust の API 型から ts-rs で `src/api/generated/*.ts` を生成し、手書きの重複定義をしない。
+- Rust の API 型から ts-rs で `src/api/generated/*.ts` を、schemars 経由で Android の Kotlin 型を生成し、手書きの重複定義をしない。
 
 ## 3. `acp` モジュール
 
@@ -1316,6 +1354,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - 要求 `{"code", "device_name"}` (JSON、4 KiB まで) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
   400 (JSON や端末名が不正。端末名は前後の空白と制御文字を除いて 1〜64 文字)、401 (コードが違う / 有効なコードが無い)、403 (whois)。
+  型は `remote::{PairRequest, PairResponse, RemoteError}` (`/ws` を拒否するときの本文も `RemoteError`)。TS には出さず、Kotlin には生成する (§2)。
 - コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
   無視する。有効 5 分、1 回使ったら無効、誤り 5 回で無効、新しく発行したら古いのは無効 (同時に 1 つ)。比較は定数時間。
   サーバーを止めるとコードも無効。コードの発行はサーバーの起動中だけ (`invalid_state`)。
@@ -1370,6 +1409,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
   (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
+  `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。
 - `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
   リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
   誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、

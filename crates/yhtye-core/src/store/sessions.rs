@@ -2,6 +2,7 @@
 //! same transaction: which ACP session each Yhtye session key last used, whether
 //! it can be restored, and whether a turn was running.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Sqlite, SqlitePool, Transaction};
 use ts_rs::TS;
@@ -13,7 +14,7 @@ use crate::agents::AgentChoice;
 use crate::api::{ApiEvent, ApiEventBody};
 use crate::domain::Role;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Live,
@@ -34,7 +35,7 @@ impl SessionStatus {
 }
 
 /// One row of `agent_sessions` (also part of [`crate::api::Snapshot`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct SessionRecord {
     pub session_key: String,
     pub role: Role,

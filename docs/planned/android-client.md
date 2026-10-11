@@ -1,7 +1,8 @@
 # 計画中の機能: Android クライアント (Tailscale 経由で PC の Yhtye を操作)
 
 - 日付: 2026-10-11
-- 状態: 設計確定。段階 1 の PC 側サーバーと認証は実装済み (T-55、[`core-design.md`](../architecture/core-design.md) §18)。設定画面 (GUI) と Android は未実装
+- 状態: 設計確定。段階 1 (PC 側サーバーと認証 T-55、設定画面 T-56、[`core-design.md`](../architecture/core-design.md) §18) と
+  段階 2 (Android の基盤: 雛形 T-58、型生成 T-59、通信・ペアリング・保存・最小画面 T-61) は実装済み。段階 3 (GUI) は未着手
 - ブランチ: `feature/android_client`
 - 目的: Tailscale でつながった Android 端末から、PC で動いている Yhtye (コア) を操作する。
 
@@ -57,6 +58,79 @@
   リモート接続の状態・端末の変化のイベント (`remote_status_changed` / `remote_devices_changed`) もリモートには流さない。
 - Tailscale のアドレスやログイン状態が起動後に変わっても追従しない (再起動か設定のオン/オフで取り直す)。
 
+### 実装で決めたこと (T-58: Android の雛形)
+
+- Gradle プロジェクトは `mobile/` (`shared` = KMP、`androidApp` = Compose)。手順は [`DEVELOPMENT.md`](../DEVELOPMENT.md)。
+- applicationId / namespace はデスクトップと同じ `io.github.tom039224.yhtye` (OS が違うので衝突しない)。
+  共通モジュールの namespace とパッケージは `io.github.tom039224.yhtye.shared`。
+- AGP 9 では KMP の `androidTarget()` (`com.android.library`) が非推奨のため、`com.android.kotlin.multiplatform.library` を使う。
+- バックアップ・端末間転送は無効 (端末トークンは Keystore の鍵で暗号化するので、別端末に戻しても使えない)。
+
+### 実装で決めたこと (T-59: API 型の Kotlin 生成)
+
+- 方式は **schemars の JSON Schema + Rust 内の小さな生成器** (typeshare は内部タグ付き enum を Kotlin に出せない)。
+  ts-rs と同じテストの運用 (`pnpm gen:kotlin` で更新、生成物とずれたら `cargo test` が失敗)。詳細は
+  [`core-design.md`](../architecture/core-design.md) §2。
+- kotlinx.serialization のプラグインが作る多態 (sealed + `classDiscriminator`) は使わず、タグ付き enum は手書きの
+  `TaggedSerializer` で読み書きする。知らないタグを `Unrecognized` で受けるため (プラグインの多態は例外になる)、
+  隣接タグ (`AgentEvent` の `data`、`AgentOutput` の `update`) とタグ名の違い (`kind` / `code` / `by`) を同じ仕組みで扱うため。
+- 前方互換: 知らない応答・イベント・enum 値は `Unrecognized` (生の JSON つき)、増えたフィールドは無視 (`ApiJson`)。
+  `Unrecognized` は送れない (エンコードが失敗する)。
+- ACP のペイロード (エージェントの出力の中身など) は TS と同じく型を写さず `JsonElement`。画面で要る部分は段階 3 で読む。
+- u32 / usize も `Long` にする (`Int` だと u32 の上限を表せない)。
+- `/pair` の要求・応答・エラー本文も Rust 側に型 (`remote::{PairRequest, PairResponse, RemoteError}`) を作って生成する。
+- 契約テストは Rust が本物の型で書いた全 variant の JSON を Kotlin で読み書きして比べる (180 件)。Kotlin のテストは
+  Gradle でだけ走る (CI にはまだ Gradle のジョブが無い。生成物のズレは cargo のテストが CI で検出する)。
+
+### 実装で決めたこと (T-61: 通信・ペアリング・保存・最小画面)
+
+- **共通モジュール** (`shared/commonMain`。Android 依存なし):
+  - `pairing/`: `parsePairingUri` / `parseManualEntry` (コードは空白・`-`・小文字を許して正規化、8 文字・PC と同じ文字種でなければ
+    その場で誤り。ホスト・ポート・コードとも**全角の英数字・記号は半角にする**: 実機の日本語 IME が `１００．８９…` を入れた)、
+    `PairingClient` (`POST /pair`)、`TailscaleHosts`。
+  - `credentials/`: `Credentials` (サーバー ID・接続先の候補・ポート・端末 ID・端末名・トークン。`toString` はトークンを伏せる) と
+    `CredentialStore` (境界)。
+  - `client/`: `YhtyeClient` (WS RPC)、`WsTransport` (接続の境界。テストは偽物)、`KtorWsTransport`。Android の
+    `HttpClient` (OkHttp。接続 10 秒、WS の ping 15 秒) は `androidMain` の `createHttpClient()`。
+- **接続先は Tailscale のアドレスだけ** (100.64.0.0/10・fd7a:115c:a1e0::/48・`*.ts.net`)。QR・手入力のどちらも読むときに検査する
+  (短い MagicDNS 名 `pc` や LAN の IP は受け付けない)。Android の network security config は IP の範囲を書けないので、
+  平文 (`http://` / `ws://`) はアプリ全体で許し (`network_security_config.xml`、理由はファイル内)、相手を限るのはこの検査に任せた。
+  アプリは PC 以外と通信しない (ML Kit は端末内のモデル)。
+- **ペアリング**: 候補を QR の順 (MagicDNS 名 → IP) に 1 つ 10 秒まで試し、**HTTP の応答が返った先で決める** (401 が返ったら
+  他の候補は試さない。同じ PC なのでコードの試行回数を無駄にするだけ)。届いた先を候補の先頭にして保存する。
+  応答の `server_id` が QR の `sid` と違えば失敗 (`WrongServer`。PC 側には登録されてしまうので案内に書く)。手入力は `sid` が
+  無いので照合しない。失敗の種類: コード誤り/期限切れ (401。PC の説明文で区別できるが画面では 1 つの案内)、他ユーザー (403)、
+  端末名 (400)、届かない、取り違え、その他。端末名は PC と同じ規則 (制御文字と前後の空白を除いて 1〜64 コードポイント) で先に検査。
+- **WS の拒否の理由**: Ktor の OkHttp エンジンはハンドシェイクの失敗で 401 以外の状態コードを例外の文言にしか残さない。
+  そこで失敗したら同じ先へ普通の `GET /ws` (同じ `Authorization`) を送り、その状態コードで決める (PC は upgrade の前に
+  whois → トークンの順で検査するので同じ答えになる)。応答が無ければ「届かない」として次の候補へ。
+- **`YhtyeClient`**:
+  - 状態は `Idle` / `Connecting` / `Connected(session)` / `WaitingToReconnect(attempt, delayMs, reason)` / `Revoked` (401) /
+    `Rejected(message)` (403)。`Connected` の `session` は接続のたびに増え、利用側はその変化で状態を取り直す (ホームは
+    プロジェクト一覧を取り直す)。
+  - 再接続の待ちは 1 秒から倍々で 30 秒まで (ジッタなし。相手は 1 台の PC)。つながったら 0 に戻し、切れた後は 1 秒から。
+    `start()` は待ち中なら待たずにすぐ試す (アプリが前面に戻ったとき・「今すぐ再接続」)。
+  - 401 では再接続をやめる (`Revoked`。`start()` も効かない)。403 は止まるが `start()` でやり直せる (whois の一時的な失敗も 403 なので)。
+  - `call(cmd, timeoutMs = 30 秒)`: つながっていなければ時間内につながるのを待つ。失敗は `ApiException` (PC のエラー)、
+    `RpcTimeoutException` (送ったが応答なし)、`ConnectionLostException` (応答前に切れた。**再送しない**: PC では実行されたかもしれない)、
+    `NotConnectedException` (時間内につながらない・失効・拒否)。知らない形の応答・壊れたメッセージは捨てる。
+  - イベントは `SharedFlow` (1024 件。あふれたら古いものから捨てる。取りこぼしは `seq` の飛びで分かる、§10 の同期規則)。
+  - `start` / `stop` / `close` は 1 本のコルーチンで順に処理し (どのスレッドから呼んでもよい)、状態と接続と応答待ちは Mutex で守る。
+- **Android**:
+  - `KeystoreCredentialStore`: Preferences DataStore に保存し、トークンだけ Keystore の AES-256-GCM 鍵 (StrongBox があればそこ、
+    取り出し不可、認証不要 = 裏での再接続にも使える) で暗号化。サーバー ID と端末 ID を認証付きデータにする。復号できなければ
+    保存内容を捨てて未ペアリングに戻る。解除のときは鍵も消す。
+  - アプリが前面にある間だけつなぐ (`ProcessLifecycleOwner`。回転では切れない)。裏に回ったら切り、前面に戻ったらつなぎ直して
+    取り直す (通知などで裏でもつなぐかは段階 3 で決める)。
+  - 失効 (401) を検出したら端末内の認証情報を消し、ペアリングの始めの画面に案内を出す。
+  - 画面は Compose の状態だけで切り替える (ナビゲーションのライブラリは使わない): 始め → QR / 手入力 → 端末名 (初期値は
+    `Build.MODEL`) → ホーム (接続状態・プロジェクト一覧 (引っ張って更新)・メニューの「ペアリング解除」)。
+  - QR は CameraX の `LifecycleCameraController` + `MlKitAnalyzer` + ML Kit のバーコード (端末内モデルの `barcode-scanning`)。
+    カメラを拒否されたら、設定を開くボタンと手入力を出す。`yhtye://pair` 以外の QR は「Yhtye 用ではない」と出して読み続ける。
+  - ディープリンク `yhtye://pair?...` (`singleTop`) はペアリング画面の端末名の確認に直接進む。ペアリング済みなら
+    「解除して新しくペアリングするか」を聞く。
+- PC の example サーバー (`remote_server`) に `open <path>` (プロジェクトを開く) を足した (結合テストと実機確認用)。
+
 ## ペアリング
 
 | 項目 | 内容 |
@@ -79,7 +153,7 @@
    完了条件: Tailscale 上の別端末 (またはスクリプト) から、ペアリング → トークンでコマンド実行 → 失効後は拒否、が通る。
    トークン無し・誤り・他ユーザーの端末・ローカル専用コマンドは拒否される。
 2. **Android の基盤 (通信とペアリング)**: Gradle (KMP 共通 + Android アプリ) の雛形、API 型の Kotlin 生成
-   (typeshare か JSON Schema 経由かはこの段階で決める)、Ktor の WS クライアント、QR 読み取り (CameraX + ML Kit)
+   (JSON Schema 経由に決定、T-59)、Ktor の WS クライアント、QR 読み取り (CameraX + ML Kit)
    と手入力、Keystore への保存、再接続。
    完了条件: 実機から Tailscale 経由でペアリングし、最小の画面でプロジェクト一覧が出る。
 3. **GUI**: Compose の画面。画面構成・操作 (チャット、タスク状況、通知など) は段階 3 の前に詰める。

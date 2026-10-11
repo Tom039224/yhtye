@@ -13,8 +13,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:layout": "node scripts/check-layout.mjs",
-    "gen:types": "YHTYE_UPDATE_TS=1 cargo test -p yhtye-core --lib api::typegen",
+    "gen:types": "YHTYE_UPDATE_TS=1 YHTYE_UPDATE_KOTLIN=1 cargo test -p yhtye-core --lib api::typegen",
     "check:types": "cargo test -p yhtye-core --lib api::typegen",
+    "gen:kotlin": "YHTYE_UPDATE_KOTLIN=1 cargo test -p yhtye-core --lib api::typegen::kotlin",
+    "check:kotlin": "cargo test -p yhtye-core --lib api::typegen::kotlin",
     "tauri": "tauri",
     "record:fixtures": "YHTYE_RECORD_FIXTURE=1 cargo test -p yhtye-core --test core_facade"
   },
