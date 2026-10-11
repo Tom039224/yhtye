@@ -4,6 +4,7 @@
 //! {
 //!   "load_session": true,
 //!   "modes": ["default", "bypassPermissions"],
+//!   "modes_as_option": false,   // true: report the mode only as a `mode` config option (OpenCode)
 //!   "models": ["default", "haiku"],
 //!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
 //!   "effort_id": "reasoning",   // id of that option (default "effort"; category stays thought_level)
@@ -17,6 +18,7 @@
 //!   "attempt_file": null,       // a file counting the processes that did (it outlives them)
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
+//!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
 //!   "turns": [
 //!     { "match": "hello", "actions": [ {"message": "hi"}, {"end": "end_turn"} ] },
 //!     { "actions": [ {"sleep": 50}, "wait_cancel" ] }
@@ -37,6 +39,15 @@
 //! global settings), and `"report_writes"` reports every `session/set_mode` and
 //! `session/set_config_option` received, in order, as `writes:modes=<ids>;options=<ids>`.
 //!
+//! OpenCode-like behaviour: `modes_as_option` leaves `modes` out of the session
+//! responses and reports the current mode as the select option `mode` instead
+//! (`session/set_mode` still works for the listed `modes`).
+//!
+//! Grok-Build-like behaviour: `"modes": []` leaves `modes` out of the session
+//! responses (the agent has none), and `vendor_notifications` are sent with their
+//! own (unknown) methods before the `session/new` / `session/load` response and at
+//! the start of every turn, like `grok`'s `_x.ai/...` notifications.
+//!
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
 //!
@@ -53,6 +64,9 @@ pub struct Scenario {
     pub load_session: bool,
     #[serde(default = "default_modes")]
     pub modes: Vec<String>,
+    /// The mode is reported as the `mode` config option, not as `modes`.
+    #[serde(default)]
+    pub modes_as_option: bool,
     #[serde(default = "default_models")]
     pub models: Vec<String>,
     /// Models that have an `effort` select option, with its values (after a
@@ -95,6 +109,10 @@ pub struct Scenario {
     /// request to the client; the outcome is reported as a message.
     #[serde(default)]
     pub vendor_requests: bool,
+    /// Notifications with vendor methods, sent before the `session/new` /
+    /// `session/load` response and at the start of every turn.
+    #[serde(default)]
+    pub vendor_notifications: Vec<VendorNotification>,
     #[serde(default)]
     pub turns: Vec<Turn>,
 }
@@ -180,6 +198,15 @@ pub enum Action {
     },
     /// Reports `mcp:tools:<name>,<name>,...` (the session's `tools/list`).
     McpList,
+}
+
+/// A notification the client does not know (see [`Scenario::vendor_notifications`]).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VendorNotification {
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]

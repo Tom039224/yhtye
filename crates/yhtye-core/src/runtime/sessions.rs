@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::emitter::Emitter;
@@ -13,6 +13,7 @@ pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::OrchestrationConfig;
 use crate::acp::{AgentError, AgentEvent, AgentHandle};
+use crate::agents::StartScope;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
@@ -46,13 +47,6 @@ pub fn agent_ref(binding: &SessionBinding) -> Option<AgentRef> {
         step: binding.step?,
     })
 }
-
-/// Most agent processes that are being started at the same time. A start (the
-/// handshake, `session/load`, the mode and config calls) takes seconds and often
-/// much longer for a restored session; many at once made them time out, so the
-/// ones beyond this wait for a start to finish (T-48). Running sessions are not
-/// counted.
-pub(super) const MAX_CONCURRENT_STARTS: usize = 4;
 
 /// An agent event tagged with its session key and launch number.
 pub(super) type AgentMsg = (String, u64, AgentEvent);
@@ -122,9 +116,10 @@ pub(super) struct Sessions {
     /// Stored sessions to restore (`session/load`), by session key.
     pub(super) resume: HashMap<String, StoredSession>,
     pub(super) spawning: JoinSet<Spawned>,
-    /// One permit per start that may run now ([`MAX_CONCURRENT_STARTS`]); closed
-    /// on shutdown, which fails the starts still waiting.
-    pub(super) start_slots: Arc<Semaphore>,
+    /// This project's access to the start permits, which the catalog shares by
+    /// every project ([`crate::agents::MAX_CONCURRENT_STARTS`] at a time); closed
+    /// on shutdown, which fails the starts of this project still waiting.
+    pub(super) start_slots: StartScope,
     /// Shutdowns in progress; each yields its session key and launch number.
     pub(super) stopping: JoinSet<(String, u64)>,
 }
@@ -137,6 +132,7 @@ impl Sessions {
         agent_tx: mpsc::UnboundedSender<AgentMsg>,
         resume: HashMap<String, StoredSession>,
     ) -> Self {
+        let start_slots = cfg.agents.start_slots().scope();
         Self {
             cfg,
             host: Some(host),
@@ -147,7 +143,7 @@ impl Sessions {
             starting: HashMap::new(),
             resume,
             spawning: JoinSet::new(),
-            start_slots: Arc::new(Semaphore::new(MAX_CONCURRENT_STARTS)),
+            start_slots,
             stopping: JoinSet::new(),
         }
     }
@@ -229,10 +225,22 @@ impl Sessions {
         self.failed_text(key, e.to_string());
     }
 
+    /// Reports that the start of `key` is given up.
     pub(super) fn failed_text(&self, key: &str, error: String) {
+        self.emit_failed(key, error, false);
+    }
+
+    /// Reports a failed start of `key` that another one follows (the session is
+    /// still starting; see [`ApiEventBody::SessionFailed`]).
+    pub(super) fn failed_retrying(&self, key: &str, error: String) {
+        self.emit_failed(key, error, true);
+    }
+
+    fn emit_failed(&self, key: &str, error: String, retrying: bool) {
         self.emit.send(ApiEventBody::SessionFailed {
             session: key.to_string(),
             error,
+            retrying,
         });
     }
 
@@ -331,6 +339,25 @@ impl Sessions {
                 live.queued.push_front(text);
             }
         }
+    }
+
+    /// Sends `text` to the idle session `key` right away, bypassing the queue:
+    /// fails with [`AgentError::Busy`] unless it is idle (nothing is queued for
+    /// later), [`AgentError::Closed`] if it is not live.
+    pub(super) fn prompt_now(&mut self, key: &str, text: &str) -> Result<(), AgentError> {
+        if !self.is_live(key) {
+            return Err(AgentError::Closed);
+        }
+        if !self.is_idle(key) {
+            return Err(AgentError::Busy);
+        }
+        let live = self.live.get(key).ok_or(AgentError::Closed)?;
+        live.handle.prompt_text(text)?;
+        self.emit.send(ApiEventBody::Prompted {
+            session: key.to_string(),
+            text: text.to_string(),
+        });
+        Ok(())
     }
 
     /// Queues `text` for the live session `key` and sends it if it is idle.
@@ -462,5 +489,107 @@ impl Sessions {
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+
+    use super::*;
+    use crate::acp::HarnessConfig;
+    use crate::agents::{AgentCatalog, MAX_CONCURRENT_STARTS};
+    use crate::domain::DomainConfig;
+    use crate::git::NoopGit;
+    use crate::mcp::TokenRegistry;
+    use crate::runtime::port::LoopPort;
+
+    async fn sessions(agents: &Arc<AgentCatalog>, project: &str) -> Sessions {
+        let cfg = Arc::new(OrchestrationConfig {
+            project: project.into(),
+            project_dir: PathBuf::from("/tmp"),
+            agents: agents.clone(),
+            mcp_bind: "127.0.0.1:0".parse().expect("addr"),
+            domain: DomainConfig::default(),
+            git: Arc::new(NoopGit::new("/tmp", None)),
+            db_path: PathBuf::from("/tmp/unused.sqlite3"),
+        });
+        let (port, _tools) = LoopPort::new();
+        let host = McpHost::start(
+            "127.0.0.1:0".parse().expect("addr"),
+            TokenRegistry::new(),
+            Arc::new(port),
+            None,
+        )
+        .await
+        .expect("mcp host");
+        let (agent_tx, _agents_rx) = mpsc::unbounded_channel();
+        Sessions::new(cfg, host, Emitter::default(), agent_tx, HashMap::new())
+    }
+
+    fn catalog() -> Arc<AgentCatalog> {
+        let h = HarnessConfig::plain("unused", vec![]);
+        Arc::new(AgentCatalog::fixed(h.clone(), h.clone(), h))
+    }
+
+    #[tokio::test]
+    async fn projects_of_one_catalog_share_the_limit_on_concurrent_starts() {
+        let agents = catalog();
+        let (a, b) = (sessions(&agents, "a").await, sessions(&agents, "b").await);
+
+        // `a` fills every permit with starts that do not finish ...
+        let (release, held) = tokio::sync::watch::channel(false);
+        let mut holders = Vec::new();
+        for _ in 0..MAX_CONCURRENT_STARTS {
+            let (scope, mut held) = (a.start_slots.clone(), held.clone());
+            holders.push(tokio::spawn(async move {
+                scope
+                    .run(async move { held.wait_for(|r| *r).await.is_ok() })
+                    .await
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // ... so a start of `b` waits instead of getting a permit of its own.
+        let other = {
+            let scope = b.start_slots.clone();
+            tokio::spawn(async move { scope.run(async { "started" }).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!other.is_finished(), "b's start waits for a's");
+
+        release.send(true).expect("holders are waiting");
+        for holder in holders {
+            assert!(holder.await.expect("joined").is_some());
+        }
+        assert_eq!(other.await.expect("joined"), Some("started"));
+    }
+
+    #[tokio::test]
+    async fn shutting_one_project_down_does_not_close_the_starts_of_another() {
+        let agents = catalog();
+        let (mut a, b) = (sessions(&agents, "a").await, sessions(&agents, "b").await);
+        let a_scope = a.start_slots.clone();
+        a.shutdown().await;
+
+        assert_eq!(a_scope.run(async { 1 }).await, None, "a is closed");
+        assert_eq!(b.start_slots.run(async { 2 }).await, Some(2), "b is not");
+    }
+
+    #[tokio::test]
+    async fn catalogs_do_not_share_permits() {
+        let (one, two) = (catalog(), catalog());
+        let (a, b) = (sessions(&one, "a").await, sessions(&two, "b").await);
+        let (release, held) = oneshot::channel::<()>();
+        let holder = {
+            let scope = a.start_slots.clone();
+            tokio::spawn(async move { scope.run(async { held.await.ok() }).await })
+        };
+        // One permit of `a`'s catalog is taken; `b` has all of its own.
+        assert_eq!(b.start_slots.run(async { 3 }).await, Some(3));
+        release.send(()).expect("holder is waiting");
+        assert!(holder.await.expect("joined").is_some());
     }
 }

@@ -107,7 +107,7 @@ export interface AppState {
   projects: ProjectInfo[];
   project: ProjectView | null;
   errors: AppError[];
-  busy: { opening: boolean; sending: boolean };
+  busy: { opening: boolean; sending: boolean; compacting: boolean };
   git: GitView | null;
   usage: UsageView;
   host: HostView;
@@ -151,7 +151,7 @@ export class AppStore {
       projects: [],
       project: null,
       errors: [],
-      busy: { opening: false, sending: false },
+      busy: { opening: false, sending: false, compacting: false },
       git: null,
       usage: { report: null, error: null, loading: false },
       host: { name: null, lastPingAt: null },
@@ -220,6 +220,21 @@ export class AppStore {
     const view = this.state.project;
     if (!view?.selectedChat) return;
     await this.run({ type: "cancel_orchestrator_turn", project: view.info.id, chat: view.selectedChat }, "accepted");
+  }
+
+  /**
+   * Has the selected chat's idle orchestrator compact its context (`/compact`,
+   * sent as is). Refusals (not running, in a turn) are shown as errors.
+   */
+  async compactChat(): Promise<void> {
+    const view = this.state.project;
+    if (!view?.selectedChat || this.state.busy.compacting) return;
+    this.set({ busy: { ...this.state.busy, compacting: true } });
+    try {
+      await this.run({ type: "compact_chat", project: view.info.id, chat: view.selectedChat }, "accepted");
+    } finally {
+      this.set({ busy: { ...this.state.busy, compacting: false } });
+    }
   }
 
   /**

@@ -140,7 +140,8 @@ pub struct CoreConfig {
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
   - `session_started { session, role, task, pid, acp_session_id, resumed }` /
-    `session_failed { session, error }` / `session_stopped { session, suspended }` /
+    `session_failed { session, error, retrying }` (`retrying`: このあとにも起動が続く = 復元の再試行・新しいセッションへの切り替えの途中の失敗。`false` は起動を諦めた最終の失敗。古いログには無く、`false` として読む) /
+    `session_stopped { session, suspended }` /
     `session_interrupted { session }` (3b: 起動時、前回動いていたセッション。`suspended` は
     Yhtye の終了で止めた = 次回の起動で復元する)
   - `agent { session, event: AgentEvent }` — エージェントの出力とライフサイクル
@@ -216,7 +217,7 @@ impl AgentHandle {
   (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode`
   (`modes` に無ければ `Unsupported`) → `model` 指定があれば `set_config_option`
   (応答の現在値が要求値と違えば起動失敗)。各段に `HarnessConfig::startup_timeout`。
-  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`)・モデル・effort を現在値として返していれば、
+  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`。OpenCode のように `modes` を持たず config option `mode` だけで返すエージェントは `AgentInfo::current_mode()` が両方を見る)・モデル・effort を現在値として返していれば、
   その `set_mode` / `set_config_option` は送らない** (T-46: 復元後の `set_mode` がタイムアウトして会話を失った事故があった。送っても何も変わらない要求を省く)。
 - **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
   単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
@@ -273,8 +274,9 @@ pub enum AgentOutput {
 `fn outcome_for(Option<&PermissionOption>) -> RequestPermissionOutcome` は純粋関数。
 `allow_always` → `allow_once` の順に kind で選び、どちらも無ければ `Cancelled`。
 **配列の先頭を選ぶことはしない。** ハンドラ内で即応答する (ブロックしない)。
-**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin、MiniMax Code) は kind が `allow_once` で
-id が `switch_` / `plan_` で始まらず `_always` で終わらないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6)。
+**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin、MiniMax Code、Google Antigravity、Grok Build) は kind が `allow_once` で
+id が `switch_` / `plan_` で始まらず `always` / `for_session` を含まないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6・§11・§12.2。
+`always` / `for_session` を含む、への拡張は T-29。以前は `_always` で終わるもの。MiniMax Code の `allow-once` / `allow-always` のようなハイフン形の id も kind と含む語で同じく判定される)。
 
 ### 3.4 `HarnessConfig`
 
@@ -288,6 +290,7 @@ pub struct HarnessConfig {
     pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
     pub client_info: Option<ClientInfoOverride>,   // T-5: initialize の clientInfo の上書き。None (既定) = "yhtye" (acp-harnesses.md §10.4)
     pub permission_policy: PermissionPolicy,   // T-5: Default | OnceOnly (§3.3)
+    pub login_hint: Option<String>,            // T-34: session/new・session/load が認証エラー (-32000) のとき起動エラーの後ろに付ける案内 (Antigravity だけ。acp-harnesses.md §13.7)
 }
 // HarnessConfig::claude_code("haiku") が Claude Code 用の既定値、
 // オーケストレータも同じ設定 (Stage 8d で組み込みツールの制限 = `claude_code_orchestrator` を廃止。`orchestration-model.md` §8.1)。
@@ -717,6 +720,7 @@ Stage 4 の構成 (`src/`):
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+  `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。
 - これで ACP・MCP・状態機械・git を含む全経路を LLM なしで決定的にテストする。
@@ -831,24 +835,39 @@ UI は一覧にある値しか選ばせず、`create_task` は行との完全一
 `requires_model = true`、`model_source = Acp`、effort の config id は実際の `thinkingEffort` (モデルの後にだけ出る option)。probe はモデルの切り替えなし。
 preset の `unusable_models` (一覧に出るが選ぶと拒否されるモデル。MiniMax Code の thinking なしの Flash Preview) は `probe_models` が一覧から除く。
 
+**T-29 (Grok Build)**: `HarnessPreset::grok_build(command)` ([`acp-harnesses.md`](acp-harnesses.md) §12): 全役割 `HarnessConfig::grok_build` (`grok agent --no-leader stdio`、
+**モードは設定しない** (grok はモードを出さない)、`--always-approve` なし、`FirstPrompt`、`PermissionPolicy::OnceOnly`、注記なし、継承した `RUST_LOG` を除く)、
+`requires_model = false`、`model_source = Acp`、effort の config id は実際の `reasoning_effort` (`effort_config_id = Some(..)`)。probe はモデルの切り替えなし。grok 1.0.46 の実機で、実装エージェントとして
+Yhtye の MCP 経由の `report_step_done` まで確認した。
+
+**T-34 (Google Antigravity)**: `HarnessPreset::antigravity(command)` ([`acp-harnesses.md`](acp-harnesses.md) §13): 全役割 `HarnessConfig::antigravity` (`agy_acp_server` を**引数なし**で起動、環境は触らない
+(`GEMINI_HOME` も継承)、**mode は設定しない**、既定のモデル `ANTIGRAVITY_DEFAULT_MODEL` (`gemini-3.8-flash-low`)、`FirstPrompt`、`PermissionPolicy::OnceOnly`、注記なし、`client_info` なし、
+`login_hint` = `ANTIGRAVITY_LOGIN_HINT`)、`requires_model = false` (サーバーの既定はバイナリの定数)、`model_source = Acp`、probe はモデルの切り替えなし。
+**`effort_config_id` は `Option<String>` になり、Antigravity は `None`** (effort の option が無く、思考レベルはモデルの id): `probe_models` は全モデルを `efforts: Some([])` にして
+`set_config_option` を呼ばず、`get_efforts` はサーバーを起動せず空を返し、`HarnessPreset::config` は effort を送らない (保存は既存の `check_efforts` が「このモデルには effort が無い」と拒否する)。
+`startup.rs` の `session/new` / `session/load` は、`-32000` (認証が必要) のエラーに `HarnessConfig::login_hint` を付ける (ほかのエラー、ほかのハーネスは従来どおり)。
+
 **ハーネス検出の一般化と登録簿の動的化 (Devin 対応, T-6、`agents/detect.rs` / `agents/installed.rs` / `runtime/core/harnesses.rs`)**:
 登録は「インストール済みのものだけ」に一般化した。
 
 - **検出** (`detect_harnesses`、純粋関数): 実行ファイルの検索だけで `--version` は実行しない。`PATH` (絶対パスの項目、実行可能な通常ファイル) →
   既知の場所 (`KNOWN_DIRS` = `~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは `HARNESS_SPECS`:
-  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin`、minimax-code = `mcode` (claude CLI は不要)。UTF-8 でないパスは数えない。
-  `HarnessSpec` の `root_env` / `extra_dirs` でハーネス専用の探す場所を足せる (T-26): minimax-code は `PATH` → `$MCODE_INSTALL_ROOT/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.minimax-code/bin`
-  (インストーラの標準の場所で、fish などでは `PATH` に入らない)。ほかのハーネスは足さない。
+  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin`、minimax-code = `mcode`、antigravity = `agy_acp_server.par`、grok-build = `grok` (claude CLI は不要)。UTF-8 でないパスは数えない。
+  `HarnessSpec` の `root_env` / `extra_dirs` でハーネス専用の探す場所を足せる (T-26。T-29 の grok-build も同じ形を使う): minimax-code は `PATH` → `$MCODE_INSTALL_ROOT/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.minimax-code/bin`、
+  grok-build は `PATH` → `$GROK_HOME/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.grok/bin` (どちらもインストーラの標準の場所で、fish などでは `PATH` に入らない)。ほかのハーネスは足さない (antigravity は下記)。`root_env` の下で探すディレクトリは `root_subdirs` (minimax-code・grok-build = `bin`、
+  antigravity = `""` (展開したディレクトリそのもの) と `bin`)。`HarnessSpec::aliases` は主実行ファイルの別名で、同じディレクトリでは主の名前の次に見る
+  (`PATH` が先、の順は名前によらない): antigravity は `agy_acp_server.par` (主) と `agy_acp_server`、探す場所は `PATH` → `$AGY_ACP_SERVER_HOME` と `$AGY_ACP_SERVER_HOME/bin` (絶対パスのとき) →
+  共通の既知の場所 → `~/.local/share/agy-acp-server` → `~/.gemini/antigravity-acp/bin`。拡張子付きの名前でも「実行可能な通常ファイル」かだけを見る。
 - **`HarnessDetection { id, label, installed, resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }`**
   (ts-rs で `src/api/generated/`)。`installed` = 必要なコマンドがすべて見つかった (手動パスがあるならそれが使える)。`resolved_path` は主実行ファイル (`HarnessSpec::main`)。
 - **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code / codex は npx のパス、
-  opencode / devin / minimax-code は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
+  opencode / devin / minimax-code / antigravity / grok-build は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
   (`Detected::with_found_npx`。使用量のプローブは起動時に 1 回だけ作り、再検出では作り直さない)。
 - **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx) **だけ**を置き換える (codex の `npx` は自動検出のみ)。
   保存時に「絶対パスかつ実行可能な通常ファイル」を検査する (`check_executable_path`、`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは
   未インストール扱い (`override_error` に理由。検索にはフォールバックしない)。
-- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > minimax-code > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin = 未指定、
-  minimax-code = `MINIMAX_CODE_DEFAULT_MODEL` (最も安い Flash Preview thinking)、
+- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > minimax-code > antigravity > grok-build > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
+  minimax-code = `MINIMAX_CODE_DEFAULT_MODEL` (最も安い Flash Preview thinking)、antigravity = `ANTIGRAVITY_DEFAULT_MODEL` (Flash の `low`)、
   codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。1 つも無くても Core は起動し、エージェント開始時に
   「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`、`NO_HARNESS_MESSAGE`)。
 - **登録簿の動的化**: `AgentCatalog` の登録簿 (`Registry { presets, builtin }`) は `RwLock` に入り、`AgentCatalog::refresh(presets, builtin)` が**丸ごと入れ替える**
@@ -1070,6 +1089,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 | `create_branch{project, name, from?}` | ブランチを Yhtye の作業ツリーに作り (§17.4) 最初のチャットを作る。名前不正・`yhtye/` 始まりは `invalid_argument`、既存は `conflict`、`from` が無ければ `not_found` | `chat{chat}` |
 | `send_user_message{project, chat, text}` | (変更) チャットを指定。遅延起動 (§17.3)。`branch_missing` は `invalid_state` | `accepted` |
 | `cancel_orchestrator_turn{project, chat}` | (変更) チャットを指定 | `accepted` |
+| `compact_chat{project, chat}` | (追加) チャットのオーケストレータに素の `/compact` を 1 件、受信箱を通さず `prompt_text` で送る (`render_batch` の見出しが付くとスラッシュコマンドにならないため)。起動済みでアイドルのときだけ。未知のチャットは `not_found`、未起動・起動中・ターン中は `invalid_state`。そのターン中に届いた受信箱はターン終了後に配信し、ターン終了は `OrchestratorTurnEnded` にしない (グループ完了の催促を出さない)。チャットのタイトルにはしない | `accepted` |
 
 - イベント: `domain { chat_created }` / `domain { chat_titled }` (durable)。ブランチ作成は git の状態なのでドメインイベントにせず、
   UI は `chat_created` と `create_branch` の応答で `GetGitOverview` を読み直す。
@@ -1200,9 +1220,10 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **再試行** (`runtime/launch.rs` の `Sessions::restore_failed`): 復元を伴う起動が失敗 (`initialize` / `session/load` / `set_mode` / `set_config_option` の失敗・タイムアウトのどれでも) したら、
   同じ保存済みセッションを**新しいエージェントプロセス**で最大 `ResumeRetry::retries` (既定 `DEFAULT_RESUME_RETRIES` = 2) 回、毎回 `ResumeRetry::delay`
   (既定 `DEFAULT_RESUME_RETRY_DELAY` = 3 秒) 空けて試す。方針は `AgentCatalog::with_resume_retry` で変える (テストは短い待ちを使う)。
-  再試行のたびに `session_failed` (`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
+  再試行のたびに `session_failed` (`retrying: true`。`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
   `Starting` が復元対象 (`resume`)・失敗回数 (`failed_restores`) を持つ。
-- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed`: `could not restore the session <id> (<理由>); starting a new session`)。
+- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed` (`retrying: true`): `could not restore the session <id> (<理由>); starting a new session`)。
+  新しいセッションの起動が失敗したときの `session_failed` が `retrying: false` (最終)。フロントの `ProjectView.resuming` は最終の失敗 (と `session_started` / `session_stopped`) で下ろし、`retrying: true` では下ろさない (T-54)。
 - **旧 ID を失わない**: 復元を諦めて (または `session/load` 非対応で `session/new` になって) 新しいセッションになったとき、`session_started.lost_acp_session_id` に旧 ACP セッション ID を載せる。
   マイグレーション `0009_lost_acp_session.sql` の `agent_sessions.lost_acp_session_id` に保存され (`SessionRecord.lost_acp_session_id`)、
   失われなかった次の起動では消さない (`COALESCE`。別のセッションを諦めたときだけ置き換わる。履歴は `session_started` のイベントログに全て残る)。後で `session/load` にこの ID を渡して手で復元できる。
@@ -1210,7 +1231,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `could not restore the previous session (<id>); started a new session` として出す。タスクカードの活動ログ (`taskInfo.ts`) もエラー行として拾う。`store/sessions.ts` は `agent_sessions` の導出を移植している。
 - テスト: 偽エージェントに `fault_attempts` + `attempt_file` (先頭 N 個のプロセスだけ `fail_at` / `exit_at` / `hang_at` が効く) を足した。`tests/orchestration_fake_restart.rs`
   (復元後の `set_mode` がタイムアウトしても再試行で同じ ACP セッションに復元できる / 再試行が全滅したら旧 ID が DB とイベントに残り新しいセッションで続く / `session/load` 非対応でも旧 ID を残す)、
-  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。
+  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない。モードが config option `mode` だけで報告される場合も同じ)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。
 
 ### 17.11 チャットのオーケストレータは開いたときと通知のときだけ起動する (T-48)
 
@@ -1228,15 +1249,16 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **通知のとき**: 変更なし。`flush_inbox` はループの毎回、未配達の項目があるチャットで、セッションが無ければ `start_lazily` する。アプリ起動直後の `flush_inbox` が、
   未配達の項目のあるチャット (と、`Restart` が積んだ `merge_result` のチャット) を起動して届ける。タスクは起動時に再開されるので、グループが終われば `group_settled` が持ち主のチャットを起動する。
   **制限**: ターン中に止まったオーケストレータは、通知もユーザーが開くこともなければ起動しない (例: 全タスクが終わって `finish_group` を呼ぶ直前に落ちた場合。開くと `restarted` で再開する)。
-- **同時起動数** (`runtime/sessions.rs` の `MAX_CONCURRENT_STARTS` = 4、`launch.rs` の `with_start_slot`): エージェントプロセスの**起動**(initialize から `session/load` / `set_mode` まで) は 4 つまで同時で、
-  残りは待つ。許可は起動が終わる (または失敗する) まで持ち、動いているセッションは数えない。T-46 の再試行の待ち時間 (`ResumeRetry::delay`) は許可を持たずに待つ。`shutdown` は許可を閉じ、
-  待っている起動は `Closed` で捨てる (起動前なので `session_failed` も出さない)。
+- **同時起動数** (`agents/start_slots.rs` の `MAX_CONCURRENT_STARTS` = 4、`StartSlots` / `StartScope::run`): エージェントプロセスの**起動**(initialize から `session/load` / `set_mode` まで) は 4 つまで同時で、
+  残りは待つ。許可は `AgentCatalog` が持つ `StartSlots` 1 つを**全プロジェクトで共有**する (プロジェクトごとに作ると開いているプロジェクトの数だけ上限が掛け算され、`resume_unfinished` が複数プロジェクトを開いたときに起動ストームが戻る。T-54)。
+  各 `Sessions` は `StartSlots::scope()` で自分の `StartScope` を持ち、`shutdown` はその scope だけを閉じる (許可は閉じない): そのプロジェクトで許可待ちの起動は `Closed` で捨て (起動前なので `session_failed` も出さない)、他のプロジェクトの待ちには影響しない。
+  許可は起動が終わる (または失敗する) まで持ち、動いているセッションは数えない。T-46 の再試行の待ち時間 (`ResumeRetry::delay`) は許可を持たずに待つ。
 - **フロント** (`store/app.ts`): `selectChat` と、プロジェクトの読み込み完了・再接続後の `selectedChat` で `open_chat` を呼ぶ。`chat_opened{starting: true}` の間は `ProjectView.resuming[chat]` を立て、
   その `orchestrator:<chat>` の `session_started` / `session_stopped` で下ろす。会話のコンポーザは「起動中…」、ヘッダのバッジは回転するアイコン (`starting`)。`suspended` / `interrupted` のバッジは警告ではなく空の丸 (未起動) にした。
 - テスト: `tests/orchestration_fake_restart.rs` (再起動で起動したのはタスクのエージェントだけ・開くと `session/load` で復元され「ターンが途中で切れた」を受け取る・未起動のチャットへのユーザーによるタスクのキャンセル通知が届く・
   オーケストレータは `group_settled` で起動し最初のプロンプトに `restarted` が同梱される)、`tests/orchestration_fake_chats.rs` (起動時にどのチャットも起動しない・開くと live だったチャットだけ復元・
   open グループのチャットは `group_settled` で起動しアイドルのチャットは起動しない)、`tests/core_chats.rs` (`open_chat` の API と、live のチャットだけではプロジェクトを開かない)、
-  `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`launch.rs` の単体テスト (同時起動数・閉じた許可)、
+  `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`agents/start_slots.rs` と `runtime/sessions.rs` の単体テスト (同時起動数・プロジェクトをまたいだ共有・閉じた scope は他に影響しない)、
   vitest (`appChats.test.ts` `project.test.ts` `App.test.tsx`)。
 
 ### 17.12 バックグラウンドのプロジェクトの動作中表示 (T-49)
@@ -1246,7 +1268,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **core**: `ProjectInfo.running`。開いているプロジェクトで、live なエージェントセッションの `turn_running` があるか、タスクが `running` / `merging` のとき `true` (フロントの `hasRunningWork` と同じ基準。
   開いていなければ常に `false`)。`list_projects` と `open_project` が返す。`Orchestration::is_running` → `Cmd::Running` → `Driver::has_running_work` で、`snapshot` と同じく発行待ちのイベントを流してから読む。
-  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。
+  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。プロジェクトごとの問い合わせは `futures::future::join_all` で**並行**に行い
+  (`project_infos`)、忙しいプロジェクトが N 個あっても一覧は 1 回のタイムアウトで返る (直列だと N 秒かかり、UI が最後のプロジェクトを開き直す起動も遅れる。T-54)。
 - **フロント** (`store/app.ts`、`store/activity.ts`): 表示中でない (または何も表示していない) プロジェクトのイベントを捨てる前に `changesActivity` で見て、ターンの開始・終了 (`prompted` / `turn_ended`)、
   セッションの起動・停止・中断、タスクの状態変化 (`task_*` / `group_cancelled` / `chat_deleted`) なら 200ms の間引きで `list_projects` を読み直し、`open` / `running` だけを `projects` に取り込む
   (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
