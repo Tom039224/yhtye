@@ -7,6 +7,11 @@ targetSdk = "37"
 minSdk = "26"
 compose-bom = "2026.09.00"
 activity-compose = "1.13.0"
+camerax = "1.6.2"
+datastore = "1.2.1"
+lifecycle = "2.11.0"
+# 端末内にモデルを持つ版 (Google Play 開発者サービスからのダウンロードを待たない)
+mlkit-barcode-scanning = "17.3.0"
 core-ktx = "1.19.1"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
@@ -14,7 +19,15 @@ ktor = "3.6.0"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+androidx-camera-mlkit-vision = { module = "androidx.camera:camera-mlkit-vision", version.ref = "camerax" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore" }
+androidx-lifecycle-process = { module = "androidx.lifecycle:lifecycle-process", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-ui = { module = "androidx.compose.ui:ui" }
@@ -27,8 +40,10 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor" }
+mlkit-barcode-scanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcode-scanning" }
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 
 [plugins]

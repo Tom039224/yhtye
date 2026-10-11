@@ -6,8 +6,10 @@
 //! ```
 //!
 //! Commands on stdin (the local-only API): `code` (a new pairing code),
-//! `devices`, `revoke <device id>`, `status`, `quit`. The data directory
-//! defaults to a temporary one (the app's database is not touched).
+//! `devices`, `revoke <device id>`, `status`, `quit`; and `open <path>` (opens a
+//! git repository as a project, so that a client's project list is not empty).
+//! The data directory defaults to a temporary one (the app's database is not
+//! touched).
 
 use std::io::BufRead;
 use std::path::PathBuf;
@@ -56,10 +58,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ["revoke", id] => ApiCommand::RevokeRemoteDevice {
                 device: (*id).to_string(),
             },
+            ["open", path] => ApiCommand::OpenProject {
+                path: (*path).to_string(),
+            },
             ["quit"] => break,
             [] => continue,
             _ => {
-                eprintln!("commands: code | devices | status | revoke <id> | quit");
+                eprintln!("commands: code | devices | status | revoke <id> | open <path> | quit");
                 continue;
             }
         };

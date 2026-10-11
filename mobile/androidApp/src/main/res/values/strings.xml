@@ -1,4 +1,89 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Yhtye</string>
+
+    <!-- 共通 -->
+    <string name="back">戻る</string>
+    <string name="cancel">キャンセル</string>
+    <string name="retry">再試行</string>
+
+    <!-- ペアリング: 始め -->
+    <string name="pairing_title">PC とペアリング</string>
+    <string name="pairing_intro">PC の Yhtye で「設定 → リモート接続」を開き、表示された QR コードを読み取ってください。この端末と PC が同じ Tailscale のアカウントでつながっている必要があります。</string>
+    <string name="pairing_scan">QR コードを読む</string>
+    <string name="pairing_manual">手入力する</string>
+    <string name="pairing_revoked">この端末は PC から外されました (失効)。使い続けるには、もう一度ペアリングしてください。</string>
+    <string name="pairing_link_invalid">受け取ったペアリングのリンクを読めませんでした: %1$s</string>
+
+    <!-- 入力の誤り -->
+    <string name="input_not_pairing_uri">Yhtye のペアリング用ではありません</string>
+    <string name="input_unsupported_version">新しい形式です。アプリを更新してください (版 %1$s)</string>
+    <string name="input_missing_host">ホスト名か IP アドレスを入れてください</string>
+    <string name="input_not_tailscale">Tailscale のアドレス (100.x.y.z か ….ts.net) ではありません: %1$s</string>
+    <string name="input_invalid_port">ポートは 1〜65535 の数です</string>
+    <string name="input_missing_code">コードを入れてください</string>
+    <string name="input_invalid_code">コードは 8 文字です (0・O・1・I・L は使いません)</string>
+
+    <!-- QR の読み取り -->
+    <string name="scan_title">QR コードを読む</string>
+    <string name="scan_hint">PC に表示された QR コードを画面に映してください</string>
+    <string name="scan_not_yhtye">Yhtye のペアリング用の QR コードではありません</string>
+    <string name="camera_permission_needed">QR コードを読むにはカメラの許可が必要です。</string>
+    <string name="camera_permission_denied">カメラが許可されていません。設定で許可するか、手入力でペアリングしてください。</string>
+    <string name="camera_permission_request">カメラを許可する</string>
+    <string name="open_app_settings">設定を開く</string>
+    <string name="camera_unavailable">カメラを使えませんでした: %1$s</string>
+
+    <!-- 手入力 -->
+    <string name="manual_title">手入力でペアリング</string>
+    <string name="manual_intro">PC の「設定 → リモート接続」に出ているホスト・ポート・コードを入れてください。</string>
+    <string name="manual_host">ホスト名 または IP アドレス</string>
+    <string name="manual_host_placeholder">pc.tailnet.ts.net / 100.x.y.z</string>
+    <string name="manual_port">ポート</string>
+    <string name="manual_code">コード (8 文字)</string>
+    <string name="manual_code_placeholder">ABCD-2345</string>
+    <string name="next">次へ</string>
+
+    <!-- 確認 -->
+    <string name="confirm_title">端末名の確認</string>
+    <string name="confirm_target">接続先: %1$s (ポート %2$d)</string>
+    <string name="confirm_device_name">この端末の名前 (PC の端末一覧に出ます)</string>
+    <string name="confirm_device_name_invalid">1〜64 文字で入れてください</string>
+    <string name="confirm_pair">ペアリングする</string>
+
+    <!-- ペアリングの失敗 -->
+    <string name="fail_code_rejected">コードが違うか、期限が切れています (有効 5 分・1 回限り・5 回間違えると無効)。PC で新しいコードを出してください。</string>
+    <string name="fail_other_user">PC に拒否されました。この端末が PC と同じ Tailscale ユーザーのものか確かめてください。</string>
+    <string name="fail_bad_request">PC が受け付けませんでした。</string>
+    <string name="fail_unreachable">PC に届きませんでした (%1$s)。Tailscale がつながっているか、PC の「リモート接続」がオンかを確かめてください。</string>
+    <string name="fail_wrong_server">QR コードと違う PC が応答しました。接続先を確かめてください (応答した PC の端末一覧に、この端末が登録されています)。</string>
+    <string name="fail_server_error">PC でエラーが起きました (%1$d)。</string>
+    <string name="fail_detail">PC からの説明: %1$s</string>
+
+    <!-- ホーム -->
+    <string name="home_unpair">ペアリング解除</string>
+    <string name="home_menu">メニュー</string>
+    <string name="home_projects">プロジェクト</string>
+    <string name="home_no_projects">開いたことのあるプロジェクトはありません。</string>
+    <string name="home_project_open">開いている</string>
+    <string name="home_project_running">作業中</string>
+    <string name="home_load_failed">一覧を取得できませんでした: %1$s</string>
+    <string name="home_device">この端末: %1$s</string>
+    <string name="unpair_title">ペアリングを解除しますか?</string>
+    <string name="unpair_message">この端末に保存した接続情報を消します。PC の端末一覧からは消えないので、必要なら PC で失効させてください。</string>
+
+    <!-- 接続状態 -->
+    <string name="state_idle">切断中</string>
+    <string name="state_connecting">接続しています…</string>
+    <string name="state_connected">接続済み</string>
+    <string name="state_waiting">再接続を待っています (%1$d 秒後)</string>
+    <string name="state_waiting_reason">直前のエラー: %1$s</string>
+    <string name="state_reconnect_now">今すぐ再接続</string>
+    <string name="state_rejected">PC に接続を拒否されました。この端末が PC と同じ Tailscale ユーザーのものか確かめてください。</string>
+    <string name="state_revoked">この端末は PC から外されました。</string>
+
+    <!-- ペアリングし直し -->
+    <string name="repair_title">ペアリングし直しますか?</string>
+    <string name="repair_message">新しいペアリングの情報を受け取りました。今のペアリングを解除して、新しい PC とペアリングしますか?</string>
+    <string name="repair_confirm">解除して続ける</string>
 </resources>
