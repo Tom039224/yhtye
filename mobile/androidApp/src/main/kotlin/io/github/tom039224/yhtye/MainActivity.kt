@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import io.github.tom039224.yhtye.background.OpenChatIntent
 import io.github.tom039224.yhtye.ui.YhtyeRoot
 
 class MainActivity : ComponentActivity() {
@@ -27,8 +28,12 @@ class MainActivity : ComponentActivity() {
         receive(intent)
     }
 
-    /** `yhtye://pair?...` (QR をカメラ以外で読んだとき・adb での確認) をペアリング画面に渡す。 */
+    /**
+     * `yhtye://pair?...` (QR をカメラ以外で読んだとき・adb での確認) をペアリング画面に、完了の通知のタップをそのチャットを
+     * 開く頼みとして Session に渡す。
+     */
     private fun receive(intent: Intent?) {
+        OpenChatIntent.parse(intent)?.let { (project, chat) -> session.requestOpenChat(project, chat) }
         if (intent?.action != Intent.ACTION_VIEW) return
         intent.dataString?.let(session::receiveLink)
     }

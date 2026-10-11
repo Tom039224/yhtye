@@ -39,6 +39,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.background.OpenChatRequest
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.LocalActionScope
@@ -53,7 +54,9 @@ import io.github.tom039224.yhtye.ui.panels.MainView
 import io.github.tom039224.yhtye.ui.panels.RUNS_EMPTY
 import io.github.tom039224.yhtye.ui.panels.RightPanel
 import io.github.tom039224.yhtye.ui.panels.RightPanelMemory
+import io.github.tom039224.yhtye.ui.settings.DevicePane
 import io.github.tom039224.yhtye.ui.settings.SettingsScreen
+import io.github.tom039224.yhtye.ui.settings.UnavailableDevicePane
 import io.github.tom039224.yhtye.ui.shell.Panel
 import io.github.tom039224.yhtye.ui.shell.PanelShell
 import io.github.tom039224.yhtye.ui.shell.ScreenStack
@@ -111,7 +114,8 @@ private const val NOW_TICK_MS = 30_000L
  *   積んだ画面が開いている間はパネルのスワイプを止める。
  * - タスクの `@` (右パネルのボタン・行の右→左スワイプ・詳細のメニュー) はコンポーザにメンションを積んで中央に戻る。
  * - ■ (タスク・グループの中止) は確認してから同期層へ。
- * - T-71 の設定画面は [SettingsScreen] を差し替える (レールの一番下の「設定」から [Stacked.Settings] で開く)。
+ * - 設定 ([SettingsScreen]) はレールの一番下の「設定」から [Stacked.Settings] で開く。
+ * - 完了の通知のタップ ([openChat]) は、積んだ画面とパネルを閉じて、そのプロジェクトのチャットを中央に出す。
  */
 @Composable
 fun MainScreen(
@@ -121,6 +125,9 @@ fun MainScreen(
     onUnpair: () -> Unit,
     modifier: Modifier = Modifier,
     gestureInsets: WindowInsets = WindowInsets.systemGestures,
+    device: DevicePane = UnavailableDevicePane,
+    openChat: OpenChatRequest? = null,
+    onOpenChatHandled: (OpenChatRequest) -> Unit = {},
 ) {
     val model: MainViewModel = viewModel(key = deviceId) { MainViewModel() }
     val app by sync.state.collectAsStateWithLifecycle()
@@ -146,6 +153,15 @@ fun MainScreen(
             shell.hide()
         }
         Unit
+    }
+    LaunchedEffect(openChat) {
+        val request = openChat ?: return@LaunchedEffect
+        stackedKey = null
+        cancelKey = null
+        view = MainView.Work
+        shell.hide()
+        sync.showChat(request.project, request.chat)
+        onOpenChatHandled(request)
     }
     CompositionLocalProvider(LocalActionScope provides scope) {
         Box(modifier.fillMaxSize()) {
@@ -198,7 +214,7 @@ fun MainScreen(
                         onMention = addMention,
                         onCancel = requestCancel,
                     )
-                    Stacked.Settings -> SettingsScreen(app, onBack = { stackedKey = null }, onUnpair = onUnpair)
+                    Stacked.Settings -> SettingsScreen(app, sync.settings, device, onBack = { stackedKey = null }, onUnpair = onUnpair)
                 }
             }
         }

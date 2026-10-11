@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -188,6 +189,25 @@ class AppStore(
             report<ApiResponse.Accepted>(ApiCommand.SendUserMessage(view.info.id, chat, text)) != null
         } finally {
             set { it.copy(busy = it.busy.copy(sending = false)) }
+        }
+    }
+
+    /**
+     * 通知のタップ: [project] の [chat] を出す (別のプロジェクトなら開く)。アプリを通知から起動したときは、つながって一覧が
+     * 読めるまで待つ (最後のプロジェクトを開き直す途中も待つ)。プロジェクトかチャットが無ければ false。
+     */
+    suspend fun showChat(project: String, chat: String): Boolean {
+        state.first { it.connection is ConnectionState.Connected && it.projectsLoaded }
+        state.first { !it.busy.opening }
+        return onConfined {
+            if (_state.value.project?.info?.id != project) {
+                val info = _state.value.projects.find { it.id == project } ?: return@onConfined false
+                openProject(info.path)
+            }
+            val view = _state.value.project
+            if (view?.info?.id != project || view.phase != LoadPhase.Ready || view.chats.none { it.id == chat }) return@onConfined false
+            selectChatNow(chat)
+            true
         }
     }
 

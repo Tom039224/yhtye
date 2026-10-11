@@ -291,3 +291,13 @@ YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealSer
    会話の確認には偽エージェントを使う (`cargo build -p yhtye-fake-agent` して `--fake-agent target/debug/yhtye-fake-agent
    --fake-orchestrator '<シナリオの JSON>'`。形式は `crates/yhtye-fake-agent/src/scenario.rs`。`match` で発言ごとに返事を変えられ、
    `message` を `sleep` で区切るとストリーミングになり、`wait_cancel` で中止ボタンを試せる)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。
+7. 常駐 (Foreground Service) と通知の確認 (T-71。結果は [`planned/android-client.md`](planned/android-client.md) の「実装で決めたこと (T-71)」):
+   - 偽エージェントのシナリオに `{"match":"slow","actions":[{"message":"started"},{"sleep":75000},{"message":"done\nmore"},{"end":"end_turn"}]}` のような長いターンを入れ
+     (`--fake-agent` / `--fake-orchestrator` には**絶対パス**を渡す。相対パスだとモデル一覧の探索が失敗する)、そのチャットから別のチャットに切り替える・ホームに戻る・画面を消すなどして完了を待つ。
+   - サービスと通知の状態は `adb shell dumpsys activity services io.github.tom039224.yhtye` (`isForeground=true`、`types=0x40000000` = specialUse) と
+     `adb shell dumpsys notification --noredact` (自分のパッケージの行だけを見る。端末の他のアプリの通知が混ざる)。ロック画面の通知は `adb shell input keyevent KEYCODE_SLEEP` →
+     `KEYCODE_WAKEUP` のあと `uiautomator dump` で探してタップできる (通知シェードは動くものがあると `uiautomator` が「idle にならない」と失敗する)。`uiautomator dump` も
+     アニメーションが続く画面では失敗して古い /sdcard/ui.xml が残るので、前に消してから取る。
+   - Doze: `adb shell dumpsys battery unplug` と `adb shell dumpsys deviceidle force-idle` (深い Doze を強制)、終わったら `dumpsys deviceidle unforce` と `dumpsys battery reset`。
+   - 設定が PC に反映されたかは、もう 1 つのクライアント (別の端末としてペアリングした WebSocket クライアント。Python の `websockets` で `get_agent_settings` / `list_secret_env` を送る) で見られる。
+   - `BOOT_COMPLETED` はシェルから送れない (保護された放送)。同じ除外を受ける `adb install -r` (= `MY_PACKAGE_REPLACED`) で、アプリを開かずにサービスが始まることを確かめられる。

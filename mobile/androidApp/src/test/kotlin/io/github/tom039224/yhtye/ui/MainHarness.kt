@@ -3,6 +3,7 @@ package io.github.tom039224.yhtye.ui
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -11,9 +12,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import io.github.tom039224.yhtye.YhtyeTheme
+import io.github.tom039224.yhtye.background.OpenChatRequest
 import io.github.tom039224.yhtye.shared.api.generated.Snapshot
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
+import io.github.tom039224.yhtye.ui.settings.DevicePane
+import io.github.tom039224.yhtye.ui.settings.UnavailableDevicePane
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +36,13 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
     private var scope: CoroutineScope? = null
     var unpaired = 0
 
+    /** 設定の「この端末」(テストが差し替える)。 */
+    var device: DevicePane = UnavailableDevicePane
+
+    /** 通知のタップで頼まれたチャット (テストが入れる)。画面が開き終えたら [handled] に積む。 */
+    val openChat = mutableStateOf<OpenChatRequest?>(null)
+    val handled = mutableListOf<OpenChatRequest>()
+
     /** [snapshot] のプロジェクトを開いて画面を出す。[configure] はコアの答え (プロジェクトの一覧・git) を変える。 */
     fun open(snapshot: Snapshot = recording.end, insets: WindowInsets = WindowInsets(0), configure: TestCore.() -> Unit = {}) {
         core = TestCore(snapshot, recording.events.filter { !it.live && it.seq <= snapshot.seq }).apply(configure)
@@ -42,7 +53,19 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
         sync.start()
         rule.setContent {
             YhtyeTheme(darkTheme = true) {
-                MainScreen("device", sync, onReconnect = {}, onUnpair = { unpaired++ }, gestureInsets = insets)
+                MainScreen(
+                    "device",
+                    sync,
+                    onReconnect = {},
+                    onUnpair = { unpaired++ },
+                    gestureInsets = insets,
+                    device = device,
+                    openChat = openChat.value,
+                    onOpenChatHandled = {
+                        handled += it
+                        openChat.value = null
+                    },
+                )
             }
         }
         s.launch { sync.refreshProjects() }

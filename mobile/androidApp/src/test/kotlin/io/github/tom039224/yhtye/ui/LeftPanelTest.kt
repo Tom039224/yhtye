@@ -186,15 +186,11 @@ class LeftPanelTest {
     }
 
     @Test
-    fun `settings opens from the rail and holds the unpairing until the real settings`() {
+    fun `settings opens from the rail and the back button closes it`() {
         h.open()
         h.openLeft()
         rule.onNodeWithTag("rail-settings").performClick()
         h.settle { h.exists("settings") }
-        rule.onNodeWithTag("unpair").performClick()
-        rule.onNodeWithTag("unpairConfirm").performClick()
-        rule.waitForIdle()
-        assertEquals(1, h.unpaired)
         rule.onNodeWithTag("settings-back").performClick()
         h.settle { !h.exists("settings") }
     }
