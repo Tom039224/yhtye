@@ -6,6 +6,7 @@
 
 use std::net::IpAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,19 +37,26 @@ struct FakeTailscale {
     /// `Err`: Tailscale is "stopped".
     up: Mutex<bool>,
     /// The user every peer belongs to.
-    peer_user: Mutex<u64>,
+    peer_user: u64,
+    /// `whois` lookups so far.
+    whois_calls: AtomicUsize,
 }
 
 impl FakeTailscale {
     fn new() -> Arc<Self> {
+        Self::with_peer_user(ME)
+    }
+
+    fn with_peer_user(peer_user: u64) -> Arc<Self> {
         Arc::new(Self {
             up: Mutex::new(true),
-            peer_user: Mutex::new(ME),
+            peer_user,
+            whois_calls: AtomicUsize::new(0),
         })
     }
 
-    fn set_peer_user(&self, user: u64) {
-        *self.peer_user.lock().unwrap() = user;
+    fn whois_calls(&self) -> usize {
+        self.whois_calls.load(Ordering::SeqCst)
     }
 }
 
@@ -68,7 +76,8 @@ impl Tailscale for FakeTailscale {
     }
 
     async fn whois(&self, _ip: IpAddr) -> Result<u64, TailscaleError> {
-        Ok(*self.peer_user.lock().unwrap())
+        self.whois_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.peer_user)
     }
 }
 
@@ -340,24 +349,22 @@ async fn pairing_connecting_local_only_commands_and_revocation() {
         "unknown device"
     );
 
-    // Another Tailscale user's device is refused before anything else, and its
-    // tries do not use up the code.
-    let code = new_code(&core).await;
-    tailscale.set_peer_user(SOMEONE_ELSE);
-    for _ in 0..=MAX_FAILURES {
-        assert_eq!(pair(&base, "WRONGCDE", "Evil").await.0, 403);
-    }
-    assert_eq!(pair(&base, &code.code, "Evil").await.0, 403);
-    assert_eq!(
-        http_status(connect(&ws_url, Some(&token_a)).await.unwrap_err()),
-        403
-    );
-    tailscale.set_peer_user(ME);
+    // Every request so far came from 127.0.0.1: one `whois` for all of them.
+    assert_eq!(tailscale.whois_calls(), 1, "the answer is kept");
 
-    // Five wrong tries drop the code.
-    for _ in 0..MAX_FAILURES {
+    let code = new_code(&core).await;
+    // Five wrong tries drop the code; the status is reported only when it is dropped.
+    drain(&mut local_events);
+    for _ in 0..MAX_FAILURES - 1 {
         assert_eq!(pair(&base, "WRONGCDE", "Pixel").await.0, 401);
     }
+    assert_eq!(
+        status_events(&mut local_events),
+        0,
+        "the code is still valid"
+    );
+    assert_eq!(pair(&base, "WRONGCDE", "Pixel").await.0, 401);
+    assert_eq!(status_events(&mut local_events), 1, "the code was dropped");
     let (st, body) = pair(&base, &code.code, "Pixel").await;
     assert_eq!(st, 401, "{body}");
     assert!(
@@ -405,6 +412,79 @@ async fn pairing_connecting_local_only_commands_and_revocation() {
     assert_eq!(r["ok"]["type"], "pong");
     core.shutdown().await;
     closed(&mut ws).await;
+}
+
+/// Throws away the events received so far.
+fn drain(events: &mut tokio::sync::broadcast::Receiver<yhtye_core::api::ApiEvent>) {
+    status_events(events);
+}
+
+/// `remote_status_changed` events received since the last look.
+fn status_events(
+    events: &mut tokio::sync::broadcast::Receiver<yhtye_core::api::ApiEvent>,
+) -> usize {
+    use tokio::sync::broadcast::error::TryRecvError;
+    let mut n = 0;
+    loop {
+        match events.try_recv() {
+            Ok(ev) => n += usize::from(matches!(ev.body, ApiEventBody::RemoteStatusChanged { .. })),
+            Err(TryRecvError::Lagged(_)) => {}
+            Err(_) => return n,
+        }
+    }
+}
+
+/// Another Tailscale user's device is refused before anything else (its tries
+/// do not use up the code), every time, while `whois` runs once.
+#[tokio::test]
+async fn another_users_device_is_refused_first_and_looked_up_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let tailscale = FakeTailscale::with_peer_user(SOMEONE_ELSE);
+    let core = Core::start(config(dir.path(), tailscale.clone()))
+        .await
+        .expect("core");
+    let port = free_port();
+    assert!(enable(&core, port).await.running);
+    let base = format!("http://127.0.0.1:{port}");
+    let ws_url = format!("ws://127.0.0.1:{port}/ws");
+    let code = new_code(&core).await;
+    for _ in 0..=MAX_FAILURES {
+        assert_eq!(pair(&base, "WRONGCDE", "Evil").await.0, 403);
+    }
+    assert_eq!(pair(&base, &code.code, "Evil").await.0, 403);
+    let token = "0".repeat(64);
+    assert_eq!(
+        http_status(connect(&ws_url, Some(&token)).await.unwrap_err()),
+        403
+    );
+    assert_eq!(
+        status(&core, ApiCommand::GetRemoteStatus)
+            .await
+            .pairing_expires_at_ms,
+        Some(code.expires_at_ms),
+        "the code's tries were not used"
+    );
+    assert_eq!(tailscale.whois_calls(), 1, "the refusal is kept too");
+    assert!(
+        devices(&core, ApiCommand::ListRemoteDevices)
+            .await
+            .is_empty()
+    );
+
+    // Restarting the server forgets the answers.
+    let restarted = status(
+        &core,
+        ApiCommand::SetRemoteSettings {
+            enabled: false,
+            port: None,
+        },
+    )
+    .await;
+    assert!(!restarted.running);
+    enable(&core, port).await;
+    assert_eq!(pair(&base, "WRONGCDE", "Evil").await.0, 403);
+    assert_eq!(tailscale.whois_calls(), 2);
+    core.shutdown().await;
 }
 
 #[tokio::test]
