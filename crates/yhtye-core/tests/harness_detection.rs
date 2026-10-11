@@ -779,11 +779,17 @@ async fn starting_an_agent_with_nothing_installed_says_what_to_check() {
         matches!(&e.body, ApiEventBody::SessionFailed { .. })
     })
     .await;
-    let Some(ApiEventBody::SessionFailed { session, error }) = seen.last().map(|e| &e.body) else {
+    let Some(ApiEventBody::SessionFailed {
+        session,
+        error,
+        retrying,
+    }) = seen.last().map(|e| &e.body)
+    else {
         panic!("failed");
     };
     assert_eq!(session, ORCHESTRATOR_SESSION);
     assert_eq!(error, "使えるハーネスがありません (設定 › ハーネス を確認)");
+    assert!(!retrying, "no harness: nothing follows");
     core.shutdown().await;
 }
 

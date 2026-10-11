@@ -4,6 +4,7 @@
 //! {
 //!   "load_session": true,
 //!   "modes": ["default", "bypassPermissions"],
+//!   "modes_as_option": false,   // true: report the mode only as a `mode` config option (OpenCode)
 //!   "models": ["default", "haiku"],
 //!   "efforts": {"haiku": ["low", "high"]},   // models with an `effort` option
 //!   "effort_id": "reasoning",   // id of that option (default "effort"; category stays thought_level)
@@ -38,6 +39,10 @@
 //! global settings), and `"report_writes"` reports every `session/set_mode` and
 //! `session/set_config_option` received, in order, as `writes:modes=<ids>;options=<ids>`.
 //!
+//! OpenCode-like behaviour: `modes_as_option` leaves `modes` out of the session
+//! responses and reports the current mode as the select option `mode` instead
+//! (`session/set_mode` still works for the listed `modes`).
+//!
 //! Grok-Build-like behaviour: `"modes": []` leaves `modes` out of the session
 //! responses (the agent has none), and `vendor_notifications` are sent with their
 //! own (unknown) methods before the `session/new` / `session/load` response and at
@@ -59,6 +64,9 @@ pub struct Scenario {
     pub load_session: bool,
     #[serde(default = "default_modes")]
     pub modes: Vec<String>,
+    /// The mode is reported as the `mode` config option, not as `modes`.
+    #[serde(default)]
+    pub modes_as_option: bool,
     #[serde(default = "default_models")]
     pub models: Vec<String>,
     /// Models that have an `effort` select option, with its values (after a

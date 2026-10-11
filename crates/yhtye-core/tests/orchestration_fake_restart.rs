@@ -143,16 +143,35 @@ fn lost(events: &[ApiEvent], session: &str) -> Vec<Option<String>> {
         .collect()
 }
 
-/// What the user was told went wrong with the start of `session`.
-fn failures(events: &[ApiEvent], session: &str) -> Vec<String> {
+/// What the user was told went wrong with the start of `session`, with whether
+/// another start followed (`retrying`).
+fn failure_events(events: &[ApiEvent], session: &str) -> Vec<(String, bool)> {
     events
         .iter()
         .filter_map(|e| match &e.body {
-            ApiEventBody::SessionFailed { session: s, error } if s == session => {
-                Some(error.clone())
-            }
+            ApiEventBody::SessionFailed {
+                session: s,
+                error,
+                retrying,
+            } if s == session => Some((error.clone(), *retrying)),
             _ => None,
         })
+        .collect()
+}
+
+/// What the user was told went wrong with the start of `session`.
+fn failures(events: &[ApiEvent], session: &str) -> Vec<String> {
+    failure_events(events, session)
+        .into_iter()
+        .map(|(error, _)| error)
+        .collect()
+}
+
+/// Whether each failure of `session`'s start was followed by another start.
+fn retrying(events: &[ApiEvent], session: &str) -> Vec<bool> {
+    failure_events(events, session)
+        .into_iter()
+        .map(|(_, retrying)| retrying)
         .collect()
 }
 
@@ -336,7 +355,7 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         assert_eq!(starts.len(), 1, "{session}: {starts:?}");
         assert!(!starts[0].1, "{session} is a new session");
         assert!(events.iter().any(|e| matches!(&e.body,
-            ApiEventBody::SessionFailed { session: s, error }
+            ApiEventBody::SessionFailed { session: s, error, .. }
                 if s == session && error.contains("could not restore"))));
     }
     // The sessions that could not be restored are named, not forgotten.
@@ -345,6 +364,8 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         assert_eq!(lost(&events, session), [Some(old_id.clone())], "{session}");
         let told = failures(&events, session);
         assert!(told.iter().all(|t| t.contains(&old_id)), "{told:?}");
+        // The new session started, so no failure was the last word.
+        assert!(retrying(&events, session).iter().all(|r| *r), "{session}");
         let sessions = orch.store().sessions("P-1").await.expect("sessions");
         let record = sessions.iter().find(|r| r.session_key == *session);
         let record = record.expect("the session is recorded");
@@ -428,6 +449,11 @@ async fn a_restore_that_times_out_is_tried_again_with_a_new_agent_process() {
     );
     assert!(told[0].contains(&old_impl[0].0), "{told:?}");
     assert!(told[0].contains("trying again (1/2)"), "{told:?}");
+    assert_eq!(
+        retrying(&events, IMPLEMENTER),
+        [true],
+        "another start followed"
+    );
     // It continued the step instead of redoing it.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
@@ -471,6 +497,8 @@ async fn when_every_try_fails_the_old_acp_session_id_is_kept() {
         told.iter().all(|t| t.contains("session/set_mode")),
         "{told:?}"
     );
+    // Every one of them was followed by another start (the last by the new session).
+    assert_eq!(retrying(&events, IMPLEMENTER), [true, true, true]);
     // The step starts over in the new session.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
@@ -483,6 +511,39 @@ async fn when_every_try_fails_the_old_acp_session_id_is_kept() {
     assert_eq!(record.acp_session_id, starts[0].0);
     assert_eq!(record.lost_acp_session_id.as_deref(), Some(old_id.as_str()));
     shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn only_the_failure_that_gives_the_start_up_is_final() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    run_until_quit(dir.path()).await;
+
+    // The agent cannot even be started: both retries of the restore fail, so
+    // does the new session that replaces it.
+    let cfg = config(
+        dir.path(),
+        fake_harness(orchestrator_after_restart(json!({}))),
+        fake_harness(implementer_after_restart(json!({"fail_at": "initialize"}))),
+        fake_harness(json!({})),
+    );
+    let (orch, mut rx) = Orchestration::start(cfg).await.expect("restarts");
+    let mut events = Vec::new();
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        matches!(&e.body, ApiEventBody::SessionFailed { session, retrying: false, .. }
+            if session == IMPLEMENTER)
+    })
+    .await;
+
+    let told = failure_events(&events, IMPLEMENTER);
+    assert_eq!(
+        told.iter()
+            .map(|(_, retrying)| *retrying)
+            .collect::<Vec<_>>(),
+        [true, true, true, false],
+        "{told:?}"
+    );
+    assert!(told[3].0.contains("initialize"), "{told:?}");
+    orch.shutdown().await;
 }
 
 /// The second run's implementer holds its resumed turn, so the task stays open

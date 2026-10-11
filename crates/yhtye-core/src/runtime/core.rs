@@ -9,12 +9,14 @@ mod harnesses;
 pub use harnesses::DetectionConfig;
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use futures::future::join_all;
 use tokio::sync::broadcast;
 
 use super::chats::ChatTarget;
@@ -567,15 +569,10 @@ impl Core {
     async fn list_projects(&self) -> Result<Vec<ProjectInfo>, ApiError> {
         let records = self.inner.store.projects().await?;
         let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
-        let mut projects = Vec::with_capacity(records.len());
-        for r in &records {
-            let running = match open.get(&r.id) {
-                Some(orch) => is_running(&r.id, orch).await,
-                None => false,
-            };
-            projects.push(project_info(r, open.contains_key(&r.id), running));
-        }
-        Ok(projects)
+        Ok(project_infos(&records, |r| {
+            open.get(&r.id).map(|orch| is_running(&r.id, orch))
+        })
+        .await)
     }
 
     async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
@@ -727,6 +724,27 @@ async fn is_running(project: &str, orch: &Orchestration) -> bool {
     }
 }
 
+/// The listing of `records`, in order. `running` asks whether work is on in a
+/// project that is open (`None`: it is not open). The projects are asked all at
+/// once: a busy one costs up to `RUNNING_QUERY_TIMEOUT`, and N busy ones must
+/// not cost N times that (the UI waits for the listing before it reopens the
+/// last project).
+async fn project_infos<'a, Q: Future<Output = bool>>(
+    records: &'a [ProjectRecord],
+    running: impl Fn(&'a ProjectRecord) -> Option<Q>,
+) -> Vec<ProjectInfo> {
+    join_all(records.iter().map(|r| {
+        let query = running(r);
+        async move {
+            match query {
+                Some(query) => project_info(r, true, query.await),
+                None => project_info(r, false, false),
+            }
+        }
+    }))
+    .await
+}
+
 fn dir_name(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),
@@ -833,6 +851,46 @@ mod tests {
             path: PathBuf::from("/x"),
             created_ms: 0,
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn busy_projects_cost_one_timeout_together_not_one_each() {
+        let records: Vec<ProjectRecord> = (0..5).map(|i| record(&format!("p{i}"))).collect();
+        let started = tokio::time::Instant::now();
+        // Every open project is busy until the timeout (which then counts it as running).
+        let infos = project_infos(&records, |_| {
+            Some(async {
+                tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
+                true
+            })
+        })
+        .await;
+        assert_eq!(started.elapsed(), RUNNING_QUERY_TIMEOUT);
+        assert!(infos.iter().all(|p| p.open && p.running));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_listing_keeps_the_order_and_tells_open_from_running() {
+        let records = [record("a"), record("b"), record("c")];
+        let infos = project_infos(&records, |r| match r.id.as_str() {
+            // `a` answers late, `b` at once: the order is still the records'.
+            "a" => Some(Box::pin(async {
+                tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
+                true
+            })
+                as std::pin::Pin<Box<dyn Future<Output = bool>>>),
+            "b" => Some(Box::pin(async { false })),
+            _ => None,
+        })
+        .await;
+        let flags: Vec<_> = infos
+            .iter()
+            .map(|p| (p.id.as_str(), p.open, p.running))
+            .collect();
+        assert_eq!(
+            flags,
+            [("a", true, true), ("b", true, false), ("c", false, false)]
+        );
     }
 
     #[test]

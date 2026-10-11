@@ -13,6 +13,7 @@ use ts_rs::TS;
 use super::settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, RoleSettings, effective,
 };
+use super::start_slots::StartSlots;
 use crate::acp::{
     AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, GROK_BUILD_EFFORT_CONFIG_ID, HarnessConfig,
     MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
@@ -489,6 +490,8 @@ pub struct AgentCatalog {
     /// The secret environment variables every agent process gets (Stage 7e).
     secrets: Arc<Secrets>,
     resume_retry: ResumeRetry,
+    /// The limit on agent starts at the same time, for every project together.
+    start_slots: StartSlots,
 }
 
 impl AgentCatalog {
@@ -500,6 +503,7 @@ impl AgentCatalog {
             layers: RwLock::new(Layers::default()),
             secrets: Arc::new(Secrets::none()),
             resume_retry: ResumeRetry::default(),
+            start_slots: StartSlots::default(),
         }
     }
 
@@ -514,6 +518,13 @@ impl AgentCatalog {
     #[must_use]
     pub fn resume_retry(&self) -> ResumeRetry {
         self.resume_retry
+    }
+
+    /// The permits to start agent processes, shared by every project that uses
+    /// this catalog.
+    #[must_use]
+    pub fn start_slots(&self) -> &StartSlots {
+        &self.start_slots
     }
 
     /// Uses `secrets` for the environment of every agent this catalog launches.
