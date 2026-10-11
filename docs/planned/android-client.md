@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-11
 - 状態: 設計確定。段階 1 (PC 側サーバーと認証 T-55、設定画面 T-56、[`core-design.md`](../architecture/core-design.md) §18) と
-  段階 2 (Android の基盤: 雛形 T-58、型生成 T-59、通信・ペアリング・保存・最小画面 T-61) は実装済み。段階 3 (GUI) は画面構成と操作を HTML モックで決めた段階 (下の「段階 3: GUI の決定事項」、T-62 / T-63)。Compose の実装は未着手
+  段階 2 (Android の基盤: 雛形 T-58、型生成 T-59、通信・ペアリング・保存・最小画面 T-61) は実装済み。段階 3 (GUI) は画面構成と操作を HTML モックで決めた段階 (下の「段階 3: GUI の決定事項」、T-62 / T-63)。同期層 (T-66) は実装済み、Compose の画面は未着手
 - ブランチ: `feature/android_client`
 - 目的: Tailscale でつながった Android 端末から、PC で動いている Yhtye (コア) を操作する。
 
@@ -130,6 +130,77 @@
   - ディープリンク `yhtye://pair?...` (`singleTop`) はペアリング画面の端末名の確認に直接進む。ペアリング済みなら
     「解除して新しくペアリングするか」を聞く。
 - PC の example サーバー (`remote_server`) に `open <path>` (プロジェクトを開く) を足した (結合テストと実機確認用)。
+
+### 実装で決めたこと (T-66: 同期層)
+
+PC の GUI と同じ方式でコアの状態を写し取る同期層。画面 (3 パネル) は次のタスク。
+
+- **置き場所**: `shared/commonMain/.../shared/sync/` (Android 依存なし)。PC の `src/store/*.ts` と、表示用の導出のうちロジックだけのもの
+  (`src/ui/taskInfo.ts` / `branchTree.ts` / `projectActivity.ts` / `labels.ts`) をファイル単位で移した:
+  `Domain.kt` (domain.ts)、`Sessions.kt` (sessions.ts)、`Chats.kt` (chats.ts)、`Transcript.kt` (transcript.ts)、`Acp.kt` (api/acp.ts)、
+  `ProjectView.kt` (project.ts)、`EventRules.kt` (eventRules.ts + activity.ts + projectActivity.ts)、`AppStore.kt` (app.ts)、
+  `SettingsCommands.kt` (settingsCommands.ts)、`ClientPrefs.kt` (prefs.ts + drafts.ts)、`TaskInfo.kt` / `BranchTree.kt` / `Labels.kt` (ui の同名)、
+  `UsersTurn.kt` (新規: ユーザーの番の検知)。関数名・規則・文言は PC と同じ (`deleteBlocker` などの日本語も同じ文)。
+- **`AppStore`** (PC と同名): `state: StateFlow<AppState>` (不変の data class。`ProjectView` は PC と同じ範囲: スナップショット + 畳み込んだ状態、チャット、
+  選択中のチャット、未読、起動中、セッション、会話、ストリーミング途中の本文、文脈の使用量、圧縮中、履歴の読み込み位置)。同期の手順は PC と同じ
+  (スナップショット → 直近 400 件の履歴 → 溜めたイベント、`seq` の飛びと未知の durable の後の live で `list_events`、`cursor` 以下は捨てる、
+  再接続・`resync` で追いつき、`projects_changed` → `list_projects`、`settings_changed` → `settings.changes`、git の読み直しの契機)。
+  操作は楽観的に状態を変えずイベントを待つ (PC と同じく、作ったチャットの一覧への追加と改名・削除の応答はすぐ反映)。
+  依存する要求は `suspend` で応答を待ってから次を送る (例: `create_chat` → git の読み直し → 選択 → `open_chat`)。
+- **コアへの窓口** `client.CoreConnection` (状態・イベント・`call`) を足し、`YhtyeClient` が実装する。同期層のテストは偽のコア (PC の `FakeCore` の移植) で動かす。
+  要求と違う種類の応答は `UnexpectedReplyException` (`RpcException` の仲間)。
+- **並行性**: 状態の変更は呼び出し側のディスパッチャを `limitedParallelism(1)` にした上で 1 本ずつ (JS のイベントループと同じく、中断点の間で
+  交互に進む)。公開の `suspend` 関数はどのスレッドから呼んでもよい。イベントの購読・接続状態の監視・タイマー (git 400 ms、動作中 200 ms、
+  使用量 5 分、ping 3 秒) は同じスコープのコルーチン。
+- **アクティビティから独立**: `Session` (Application が持つ、プロセスに 1 つ) がペアリングごとに `YhtyeClient` と `AppStore` を作り
+  (`Session.Phase.Paired.sync`)、解除・失効で閉じる。画面が無くても接続さえ保てば同期層は動き続ける (裏での常駐は後続タスク。今は T-61 のまま
+  裏に回ると接続を止める)。
+- **PC と変えたところ**:
+  - 再接続は `ConnectionState.Connected.session` の変化で判断する (StateFlow は途中の切断を飛ばし得るので、番号が変われば切断を見ていなくても
+    再接続として扱いストリーミングを捨てる)。close 1013 (コアの送信が追いつかない) は `YhtyeClient` がほかの切断と同じく再接続する。
+  - 使用量と ping は**前面にある間だけ** (`setForeground`。裏で電池を使わない)。前面に戻ったら git を読み直す (PC のウィンドウのフォーカスに当たる)。
+  - 下書きは端末の設定に残す (`PrefsDrafts`。PC はメモリだけ。Android は裏でプロセスが殺されるため)。最後のプロジェクト (`yhtye.lastProject`)・
+    プロジェクトごとのチャット (`yhtye.chat.<id>`) は PC と同じ鍵。保存の境界は `ClientPrefs` で、Android は SharedPreferences (`yhtye.client`、
+    秘密は無いので暗号化しない) の `SharedPreferencesPrefs`。ペアリングの解除・失効で全部消す (別の PC のものを残さない)。未読は PC と同じくメモリだけ。
+  - `AppState.projectsLoaded` (一覧を一度でも読めたか: 読む前の空とプロジェクトが無い空を分ける) を足した。
+  - 失敗の扱い: PC の `run` に当たる操作は `AppState.errors` (5 件まで、`<コマンドの type> failed: <コアの message>`) に積む。PC で reject する操作
+    (`createBranch` / `renameChat` / `deleteChat` / 設定) は `RpcException` (コアのエラーは `ApiException`) を投げる。
+  - 設定 (`AppStore.settings`): `setAgentSettings(project, role, settings, expectedRevision)` は `Saved` か、`conflict` なら今の設定を読み直して
+    `Conflict(latest, message)` を返す (画面は PC と同じ文を出して `latest` を表示する)。リモート接続の設定は PC 専用なので無い。
+  - 時間の掛かる要求 (`open_project` / `create_chat` / `create_branch` / `retry_group_merge`) の待ち時間は 180 秒 (PC の WS と同じ)。他は `YhtyeClient` の既定 30 秒。
+- **ユーザーの番の検知** (`AppStore.usersTurns: SharedFlow<UsersTurn>`。通知は後続タスク): オーケストレータのターンが正常に終わり (`turn_ended` が
+  `end_turn`。中止・エラー・ユーザーが頼んだ `/compact` のターンは除く)、そのチャットの受信箱が空で、走っているグループ (`active` / `finishing`) が無く、
+  次のターンが始まっていない (`isUsersTurn`)。`merge_blocked` は含む。表示中のプロジェクトは畳み込んだビューで、スナップショットより後のイベント
+  だけ (履歴の読み込みでは出さない。再接続の追いつきで見つけた切断中のターンの終わりは 1 回出す)。表示していないプロジェクトは生のイベントから
+  最後の発話と `/compact` だけを覚え、正常なターンの終わりで `get_snapshot` して同じ条件を確かめる (取りこぼしたイベントは追わない)。
+  `UsersTurn` はプロジェクト・チャット・題・そのターンの最後の発話 (通知はその 1 行目、`firstLine`)・時刻。表示中かどうかの判断は受け取る側。
+- **最小画面**: ホームのプロジェクト一覧は同期層の `state.projects` から出し、PC と同じ規則のリング (`projectRing`: 動作中なら回る緑、そうでなければ
+  中を抜いた緑) を付けた。つながったら最後に開いていたプロジェクトを開く (PC の `reopenLast`)。
+- **example サーバー**: `remote_server` に `--fake-agent` と各役割のシナリオの引数を足した (core-design §18.6)。
+- **確認**: `./gradlew build` (lint を含む) が通る。同期層の `commonTest` 159 件 (下の対応表 + Kotlin で足したケース)。本物のコアとの結合テスト
+  `SyncRealServerTest` (DEVELOPMENT.md): 2 つの端末をペアリングし、A がプロジェクトを開く → B の一覧に出る (`projects_changed`) → A がチャットを作る →
+  B にも出て選ばれる → A が送る → 両方の会話にユーザーの発言と返事、タスクが `running` を経て `done`、グループがマージされ `hello.txt` が main に入る →
+  両方がユーザーの番を 1 回だけ検知 (最後の発話は「Done: hello.txt is on main.」) → B の改名が A に届く。実機は接続されていなかったので
+  (`adb devices` が空) 実機での確認はしていない。
+
+#### 移植したテストの対応表 (PC の vitest → `shared/src/commonTest/.../sync/`)
+
+| PC (vitest) | Kotlin (commonTest) | 備考 |
+|---|---|---|
+| `store/domain.test.ts` | `DomainTest` | 記録 (`src/test/fixtures/fake-*.json`) は同じファイルをリポジトリから読む (`readFixture`、JVM の actual)。3 つの記録を空から・開始スナップショットから畳んでコアの最終状態とセッションに一致。「入力を変えない」は不変の data class なので最終状態と入力の比較だけ。知らないイベントで状態が変わらないことを追加 |
+| `store/sessions.test.ts` | `ChatsAndSessionsTest` (前半) | |
+| `store/chats.test.ts` | `ChatsAndSessionsTest` (中ほど) | 空の引数の `chatOfUserCall` を追加 |
+| `store/drafts.test.ts` | `ChatsAndSessionsTest` (後半) | `memoryDrafts` → `PrefsDrafts(MemoryPrefs())`。同じ保存先なら残ることと、空の下書きを保存先に残さないことを追加 |
+| `store/transcript.test.tsx` | `TranscriptTest` | 描画 (`TranscriptView`) の確認は画面のタスクへ。前のページとのツール呼び出しの合流 (`prependTranscripts`) を追加 |
+| `store/project.test.ts` | `ProjectViewTest` | 「印の無い古いログの `session_failed`」は Kotlin の型で `retrying` が必須なので無い |
+| `store/activity.test.ts` | `ActivityTest` (前半) | |
+| `ui/projectActivity.test.ts` | `ActivityTest` (後半) | |
+| `ui/branchTree.test.ts` | `BranchTreeTest` | `awaiting` のチャットを木のディレクトリ名の下に出すことを追加 |
+| `store/app.test.ts` | `AppStoreTest` | 同期・遅延の履歴・バックグラウンドの動作中。途中の切断を見ずに番号が変わった再接続、最初の接続で最後のプロジェクトを開く、全部読んだ履歴が最初から読んだものと一致、を追加 |
+| `store/appChats.test.ts` | `AppStoreChatsTest` | チャットの選択と記憶・`open_chat`・送信・作成・改名・削除・下書き・ping。PC で reject するものは例外。前面の間だけ ping と使用量を読み、前面に戻ると git を読み直すことを追加 |
+| `store/multiClient.test.ts` | `MultiClientTest` | `projects_changed` / `settings_changed` / `resync` / 再接続のヒント / `session_starting` / `Snapshot.starting` / 他で削除・作成されたチャット / git の `awaiting`。`expected_revision` の保存と `conflict` (PC は `ui/SettingsSync.test.tsx` の画面で確かめていたもの) を追加 |
+| (新規) | `UsersTurnTest` | ユーザーの番: 条件の境界 (受信箱・グループの状態ごと・次のターン・消えたチャット)、中止・エラー・サブエージェント・`/compact`、履歴、切断中のターン、表示していないプロジェクト (スナップショット) |
+| `client` 側の既存 | `YhtyeClientTest` | 切断で再接続し `session` が増えることは T-61 のテストが確かめている (close コードによらず同じ経路なので 1013 も同じ) |
 
 ## ペアリング
 

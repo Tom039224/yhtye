@@ -42,7 +42,7 @@ class YhtyeClient(
     private val transport: WsTransport,
     private val scope: CoroutineScope,
     private val config: Config = Config(),
-) {
+) : CoreConnection {
     data class Config(
         /** [call] の既定の待ち時間。プロジェクトを開くなど時間の掛かる要求は個別に延ばす。 */
         val callTimeoutMs: Long = 30_000,
@@ -54,13 +54,13 @@ class YhtyeClient(
     )
 
     private val _state = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
-    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+    override val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     private val _events = MutableSharedFlow<ApiEvent>(
         extraBufferCapacity = config.eventBufferSize,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val events: SharedFlow<ApiEvent> = _events.asSharedFlow()
+    override val events: SharedFlow<ApiEvent> = _events.asSharedFlow()
 
     /** [connection] と [pending] と [_state] の更新を守る。[_state] が Connected の間だけ [connection] がある。 */
     private val lock = Mutex()
@@ -118,7 +118,12 @@ class YhtyeClient(
      * @throws ConnectionLostException 応答の前に切れた (再送はしない。PC では実行されたかもしれない)。
      * @throws NotConnectedException 時間内につながらなかった、または失効・拒否されている。
      */
-    suspend fun call(command: ApiCommand, timeoutMs: Long = config.callTimeoutMs): ApiResponse {
+    override suspend fun call(command: ApiCommand): ApiResponse = call(command, config.callTimeoutMs)
+
+    /**
+     * [command] を実行して応答を返す (待ち時間を [timeoutMs] に変える)。失敗は [call] と同じ。
+     */
+    override suspend fun call(command: ApiCommand, timeoutMs: Long): ApiResponse {
         val reply = CompletableDeferred<ApiResponse>()
         var requestId: Long? = null
         try {

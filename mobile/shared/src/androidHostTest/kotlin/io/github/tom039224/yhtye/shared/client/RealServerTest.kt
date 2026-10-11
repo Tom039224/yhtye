@@ -18,14 +18,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assume.assumeTrue
 import java.io.File
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
-import kotlin.test.fail
 
 /**
  * 本物のサーバー (`cargo run -p yhtye-core --example remote_server`) と本物の Tailscale での結合テスト。
@@ -46,8 +43,8 @@ class RealServerTest {
         val port = System.getenv("YHTYE_REAL_SERVER_PORT")?.toInt() ?: DEFAULT_TEST_PORT
         val project = createTempDirectory("yhtye-it-project").toFile()
         val data = createTempDirectory("yhtye-it-data").toFile()
-        run(project, "git", "init", "-q")
-        val server = ExampleServer.start(repositoryRoot(), port, data)
+        ExampleServer.run(project, "git", "init", "-q")
+        val server = ExampleServer.start(ExampleServer.repositoryRoot(), port, data)
         val http = createHttpClient()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
@@ -108,68 +105,8 @@ class RealServerTest {
         assertTrue("\"type\":\"remote_devices\"" in devices, devices)
     }
 
-    private fun repositoryRoot(): File {
-        var dir: File? = File(System.getProperty("user.dir").orEmpty()).absoluteFile
-        while (dir != null) {
-            if (File(dir, "Cargo.toml").isFile && File(dir, "mobile").isDirectory) return dir
-            dir = dir.parentFile
-        }
-        fail("the repository root (Cargo.toml + mobile/) was not found above ${System.getProperty("user.dir")}")
-    }
-
-    /** `cargo run --example remote_server` を標準入出力で操作する。 */
-    private class ExampleServer(private val process: Process) {
-        private val lines = LinkedBlockingQueue<String>()
-
-        init {
-            Thread {
-                process.inputStream.bufferedReader().forEachLine { lines.put(it) }
-            }.apply { isDaemon = true }.start()
-        }
-
-        /** 起動時の `set_remote_settings` の応答 (ビルドを含むので長く待つ)。 */
-        fun firstLine(): String = lines.poll(BUILD_TIMEOUT_MINUTES, TimeUnit.MINUTES)
-            ?: fail("the example server printed nothing")
-
-        /** 標準入力のコマンドを 1 つ送り、応答の 1 行を返す。 */
-        fun command(line: String): String {
-            process.outputStream.write("$line\n".toByteArray())
-            process.outputStream.flush()
-            return lines.poll(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS) ?: fail("no answer to `$line`")
-        }
-
-        fun quit() {
-            runCatching {
-                process.outputStream.write("quit\n".toByteArray())
-                process.outputStream.flush()
-            }
-            if (!process.waitFor(QUIT_TIMEOUT_SECONDS, TimeUnit.SECONDS)) process.destroyForcibly()
-        }
-
-        companion object {
-            fun start(root: File, port: Int, data: File): ExampleServer {
-                val process = ProcessBuilder(
-                    "cargo", "run", "-q", "-p", "yhtye-core", "--example", "remote_server", "--",
-                    "--port", port.toString(), "--data-dir", data.absolutePath,
-                )
-                    .directory(root)
-                    .redirectError(ProcessBuilder.Redirect.INHERIT)
-                    .start()
-                return ExampleServer(process)
-            }
-        }
-    }
-
-    private fun run(dir: File, vararg command: String) {
-        val exit = ProcessBuilder(*command).directory(dir).inheritIO().start().waitFor()
-        assertEquals(0, exit, command.joinToString(" "))
-    }
-
     private companion object {
         const val DEFAULT_TEST_PORT = 14230
         const val STATE_TIMEOUT_MS = 30_000L
-        const val BUILD_TIMEOUT_MINUTES = 10L
-        const val COMMAND_TIMEOUT_SECONDS = 60L
-        const val QUIT_TIMEOUT_SECONDS = 15L
     }
 }

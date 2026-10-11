@@ -242,6 +242,11 @@ cd mobile
 YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealServerTest*'   # ポートは YHTYE_REAL_SERVER_PORT (既定 14230)
 ```
 
+同期層 (`shared/sync/`、T-66) の `SyncRealServerTest` も同じ環境変数で動く (上のコマンドの `*RealServerTest*` に含まれる)。
+`cargo build -p yhtye-fake-agent` した偽エージェントを `remote_server --fake-agent` に渡し、2 つの端末をペアリングして、
+プロジェクトを開く → チャット作成 → 送信 → グループ・タスク → マージ → オーケストレータの報告 (ユーザーの番) を両方の同期層の状態で確かめる。
+ポートは `YHTYE_SYNC_SERVER_PORT` (既定 14231)。
+
 ### 実機での動作確認
 
 前提: 実機が USB デバッグで `adb devices` に出ていて、Tailscale アプリで PC と同じ tailnet (同じユーザー) に入っていること。

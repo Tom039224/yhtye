@@ -27,7 +27,7 @@ fun YhtyeRoot(session: Session) {
         }
         is Session.Phase.Unpaired -> PairingFlow(session, current.revoked, incoming)
         is Session.Phase.Paired -> {
-            HomeScreen(current.credentials, current.client, onUnpair = session::unpair)
+            HomeScreen(current.credentials, current.client, current.sync, onUnpair = session::unpair)
             when (incoming) {
                 is Session.Incoming.Target -> RepairDialog(
                     onConfirm = session::unpair, // ペアリング前の画面が受け取ったリンクを使う
