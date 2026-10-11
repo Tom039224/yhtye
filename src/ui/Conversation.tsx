@@ -23,11 +23,12 @@ interface Props {
 }
 
 export const NEW_CHAT_TITLE = "新しいチャット";
+const NONE: string[] = [];
 const NO_CHAT_HINT = "サイドバーの「新しいチャット」から始めます";
 
 /** Where the chat's worktree is now (its branch, detached, gone; unknown until git is read). */
-function chatPlace(overview: GitOverview | null, chat: ChatInfo | null): Place {
-  return chat ? placeOf(chat, overview) : { kind: "unknown" };
+function chatPlace(overview: GitOverview | null, chat: ChatInfo | null, awaiting: string[]): Place {
+  return chat ? placeOf(chat, overview, awaiting.includes(chat.id)) : { kind: "unknown" };
 }
 
 export function Conversation({ view, mentions, onRemoveMention, onClearMentions }: Props) {
@@ -43,7 +44,8 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const session = orchestratorSession(view, chat?.id ?? null);
   const resuming = chat ? Boolean(view.resuming[chat.id]) : false;
   const overview = useAppState((s) => (s.git?.project === view.info.id ? s.git.overview : null));
-  const place = chatPlace(overview, chat);
+  const awaiting = useAppState((s) => (s.git?.project === view.info.id ? s.git.awaiting : NONE));
+  const place = chatPlace(overview, chat, awaiting);
   const placeText = placeLabel(place);
   const scroller = useRef<HTMLDivElement>(null);
   useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, chat?.id);

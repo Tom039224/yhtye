@@ -237,19 +237,41 @@ PC の GUI と Android が 1 つのコアを同時に操作する場合の調査
 `runtime/driver.rs`、`runtime/orchestration.rs`。SQLite は WAL・busy_timeout 5s)。
 同じチャットへの同時送信は受信箱に別々に積まれ、二重実行の後勝ち側は `invalid_state` / `not_found` になる。
 
-本実装 (段階 3) で入れる修正 (優先度順):
+本実装 (段階 3) で入れる修正 (優先度順)。1〜8・10 は T-65 で対応した (詳細は [`core-design.md`](../architecture/core-design.md) §19。
+Android の画面側の対応は後続タスク):
 
 1. コア: 設定用の Mutex で `set_agent_settings` と `set_secret` / `delete_secret` を直列化する (DB とメモリ・キーリングの食い違い防止)。
+   **対応済み (T-65)**: `Core` の `settings_lock` が検証から反映 (DB → メモリ / キーリング) まで囲む (`runtime/core/settings.rs`)。
 2. コア + PC + Android: アプリ全体向けイベント `projects_changed` (他の端末で開いたプロジェクトが一覧に出ない)。
+   **対応済み (T-65)**: `projects_changed { project }` (project 空・seq 0・live、リモートにも流す) をプロジェクトの新規登録・初回の open で出す。
+   PC は受けて `refreshProjects`。チャットの無いプロジェクトに他の端末がチャットを作ったら、それを表示する (`open_chat` も送る)。
 3. コア + PC: `settings_changed` のヒントイベント、`SetAgentSettings` に期待する版を渡して不一致なら `conflict` (古い設定画面からの上書き防止)。
+   **対応済み (T-65)**: `settings_changed { kind: agent_settings|harnesses|secrets, project?, revision? }`。`AgentSettingsView.revision`
+   (全層で 1 つ、増えるだけ) を `set_agent_settings.expected_revision` に渡すと不一致で `conflict`。PC の 3 つの設定画面は通知で読み直し、
+   編集中ならバナー (「他の端末で設定が変更されました … 再読込」)。エージェント設定は保存に版を付け、`conflict` なら知らせて読み直す。
 4. コア + クライアント: WS の送信キューを有界にし、取りこぼし (`Lagged`) で `resync` を送る。クライアントは追いつき処理をする。
+   **対応済み (T-65)**: WS の送信キューは 1024。あふれたらプロジェクトの live は捨て、durable とアプリ全体のイベントは接続を閉じる
+   (close 1013、再接続に任せる)。応答は捨てない。
+   WS セッションと Tauri の `forward_events` の `Lagged` でその接続に `resync` (アプリ全体向け live)。PC は `list_events` で追いつき、
+   プロジェクト一覧・git・表示中のチャット・設定画面を読み直す。
 5. コア + GUI: 二重実行で負けた側にエラーを出さない (冪等化か、直前のイベントで目標状態なら握りつぶす)。
+   **対応済み (T-65)**: すべてコアで冪等化 (目標状態なら `accepted`、何も記録しない): `cancel_task` / `cancel_group` (既に中止)、
+   `retry_group_merge` (既にマージ済み)、`delete_chat` (削除済みの `C-<n>`。一度も無い ID は `not_found`)、`compact_chat` (圧縮のターン中)。
+   GUI で握りつぶすものは無い。
 6. PC: 選択中のチャットが他の端末で削除されたときの切り替え (`openChat` と記憶の更新)、`chat_created` で git の概要を即時に読み直す。
+   **対応済み (T-65)**: 切り替え先を記憶して `open_chat`、消えたチャットの下書きを消す。`chat_created` で git を即時に読み直し、
+   その間はそのチャットの作業ツリーを「見つからない」でなく不明として扱う (`GitView.awaiting`)。
 7. コア: 「起動中」をスナップショットかイベントで共有する (今は要求した端末しか知らない)。
+   **対応済み (T-65)**: 両方。live イベント `session_starting { session }` と `Snapshot.starting` (起動中のセッションのキー)。PC は両方から「起動中」を出す。
 8. Tauri: 単一インスタンスの保証 (同じデータで 2 つ起動するとコアが 2 つになる)。
+   **対応済み (T-65)**: データディレクトリの `yhtye.lock` を排他ロック (`src-tauri/src/data_lock.rs`)。取れなければ理由を出して終了する
+   (`tauri-plugin-single-instance` はアプリの識別子単位でデータディレクトリと一致しないため使わない。既存ウィンドウの前面化はしない)。
+   開発用ブリッジはロックしない。
 9. 要判断: リモート端末に許す `Set*` コマンドの範囲 (特に `SetHarnessPath` は任意の実行ファイルを指定できる)。
+   **決定済み**: 今のまま (PC と同等)。
 10. 文書化: 同じ接続内でも要求の実行順は保証されない。依存する要求は応答を待ってから送る。
     Android は PC と同じ同期方式 (スナップショット + `list_events` + cursor、git の読み直しの契機、復帰時の一覧の読み直し) を踏襲する。
+    **対応済み (T-65)**: core-design §10 と `ws.rs` の doc に書いた。Android の同期層は §19.1 のイベントも扱う。
 11. 将来: git 処理の非同期化 (今はマージ中にそのプロジェクトの全コマンドが待つ)、ストリーミング途中の本文をスナップショットに含める。
 
 保留: チャット単位の「操作権」ロック (片方が操作中ならもう片方は閲覧のみ、取得で奪う)。データの整合はコアの直列化で守られるので、

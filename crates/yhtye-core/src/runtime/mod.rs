@@ -11,6 +11,7 @@ mod host;
 mod launch;
 mod orchestration;
 mod port;
+mod repeats;
 mod sessions;
 mod transcript;
 

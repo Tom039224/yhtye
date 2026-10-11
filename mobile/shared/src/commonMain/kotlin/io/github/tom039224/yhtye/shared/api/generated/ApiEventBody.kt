@@ -131,6 +131,58 @@ sealed interface ApiEventBody {
     ) : ApiEventBody
 
     /**
+     * Live: the session is being started (also a retry of a failed restore).
+     * It ends with `session_started`, `session_stopped` or a `session_failed`
+     * without `retrying`. The sessions starting when a snapshot is taken are
+     * in [`Snapshot::starting`] (T-65: every client sees "starting", not only
+     * the one whose request started it).
+     */
+    @Serializable
+    data class SessionStarting(
+        val session: String,
+    ) : ApiEventBody
+
+    /**
+     * App-wide (`project` is empty, `live`, `seq` 0): a project was registered
+     * or opened (its orchestration started in this process); clients re-read
+     * `list_projects`.
+     */
+    @Serializable
+    data class ProjectsChanged(
+        val project: String,
+    ) : ApiEventBody
+
+    /**
+     * App-wide: settings were changed by some client. A hint: a settings
+     * screen on display reads them again (`get_agent_settings`,
+     * `get_harnesses`, `list_secret_env`).
+     */
+    @Serializable
+    data class SettingsChanged(
+        val kind: SettingsKind,
+        /**
+         * The project whose agent settings layer changed (`None`: the global
+         * layer, or a kind without projects).
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val project: String? = null,
+        /**
+         * For `agent_settings`: the new [`AgentSettingsView::revision`].
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val revision: Long? = null,
+    ) : ApiEventBody
+
+    /**
+     * App-wide, sent to one client only: it fell behind and events were
+     * dropped for it (durable ones are in the log, app-wide and live ones are
+     * lost). It catches up: `list_events` from its cursor, `list_projects`,
+     * and the settings and git overview on display.
+     */
+    @Serializable
+    data object Resync : ApiEventBody
+
+    /**
      * App-wide (`project` is empty, `live`, `seq` 0): remote access started,
      * stopped, failed, or its pairing code was issued, used or dropped.
      * Local only: not sent to remote devices.
@@ -169,6 +221,10 @@ sealed interface ApiEventBody {
             TaggedVariant<ApiEventBody>("agent_text", AgentText.serializer()) { it is AgentText },
             TaggedVariant<ApiEventBody>("tool_called", ToolCalled.serializer()) { it is ToolCalled },
             TaggedVariant<ApiEventBody>("prompted", Prompted.serializer()) { it is Prompted },
+            TaggedVariant<ApiEventBody>("session_starting", SessionStarting.serializer()) { it is SessionStarting },
+            TaggedVariant<ApiEventBody>("projects_changed", ProjectsChanged.serializer()) { it is ProjectsChanged },
+            TaggedVariant<ApiEventBody>("settings_changed", SettingsChanged.serializer()) { it is SettingsChanged },
+            TaggedVariant<ApiEventBody>("resync", Resync.serializer()) { it is Resync },
             TaggedVariant<ApiEventBody>("remote_status_changed", RemoteStatusChanged.serializer()) { it is RemoteStatusChanged },
             TaggedVariant<ApiEventBody>("remote_devices_changed", RemoteDevicesChanged.serializer()) { it is RemoteDevicesChanged },
         ),

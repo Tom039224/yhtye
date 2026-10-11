@@ -9,7 +9,9 @@
 //! Requests run concurrently (opening a project takes a while; a cancel must
 //! not wait behind it), so replies may come out of order. A request is not
 //! aborted when the client leaves (a half-run `OpenProject` must finish; its
-//! reply is just dropped).
+//! reply is just dropped). Requests of one connection are not run in the order
+//! they were sent either: a client that needs one to follow another waits for
+//! the first reply (`core-design.md` §10).
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use futures::{SinkExt, StreamExt};
@@ -17,7 +19,9 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::{ApiError, ApiErrorCode, ApiEvent, WsReply, WsRequest, WsServerMessage};
+use crate::api::{
+    ApiError, ApiErrorCode, ApiEvent, ApiEventBody, WsReply, WsRequest, WsServerMessage,
+};
 use crate::runtime::Core;
 
 /// What a session may do besides the commands every client may run.
@@ -35,10 +39,20 @@ impl SessionPolicy {
     pub const REMOTE: Self = Self { local: false };
 }
 
+/// Messages queued for one client's socket. Bounded, so a client that stops
+/// reading cannot make the core hold an ever-growing backlog: when it is full,
+/// a project's live events are dropped and anything else closes the connection
+/// (see [`forward_events`]); the client reconnects and catches up.
+pub const OUT_QUEUE: usize = 1024;
+
+/// Close code of a client dropped for falling behind (1013 "try again later").
+const BEHIND: u16 = 1013;
+
 /// Serves one client until it leaves or `cancel` fires (then the socket is
 /// closed at once, even while requests are still running).
 ///
-/// A writer task owns the socket's sink; events and replies are queued to it.
+/// A writer task owns the socket's sink; events and replies are queued to it
+/// ([`OUT_QUEUE`]).
 pub async fn run_session(
     socket: WebSocket,
     core: Core,
@@ -46,19 +60,24 @@ pub async fn run_session(
     cancel: CancellationToken,
 ) {
     let (mut sink, mut stream) = socket.split();
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(OUT_QUEUE);
     // Subscribe before reading requests so no event after a reply is missed.
     let events = core.subscribe();
-    let writer_cancel = cancel.clone();
+    // Fired by `cancel`, or when this client fell too far behind.
+    let session = cancel.child_token();
+    let behind = CancellationToken::new();
+    let writer_session = session.clone();
+    let writer_behind = behind.clone();
     let writer = tokio::spawn(async move {
         loop {
             let text = tokio::select! {
                 text = out_rx.recv() => text,
-                () = writer_cancel.cancelled() => {
+                () = writer_session.cancelled() => {
                     // A reconnect tells the client why (a revoked device gets 401).
-                    let frame = CloseFrame {
-                        code: close_code::AWAY,
-                        reason: "closed by the server".into(),
+                    let frame = if writer_behind.is_cancelled() {
+                        CloseFrame { code: BEHIND, reason: "fell behind; reconnect".into() }
+                    } else {
+                        CloseFrame { code: close_code::AWAY, reason: "closed by the server".into() }
                     };
                     let _ = sink.send(Message::Close(Some(frame))).await;
                     None
@@ -71,11 +90,21 @@ pub async fn run_session(
         }
         let _ = sink.close().await;
     });
-    let forwarder = tokio::spawn(forward_events(events, out_tx.clone(), policy));
+    let forwarder = tokio::spawn({
+        let out = out_tx.clone();
+        let session = session.clone();
+        async move {
+            if forward_events(events, out, policy).await == Forwarded::Behind {
+                tracing::warn!("a WebSocket client fell behind; closing its connection");
+                behind.cancel();
+                session.cancel();
+            }
+        }
+    });
     loop {
         let msg = tokio::select! {
             msg = stream.next() => msg,
-            () = cancel.cancelled() => break,
+            () = session.cancelled() => break,
         };
         match msg {
             Some(Ok(Message::Text(text))) => handle_request(&core, text.as_str(), &out_tx, policy),
@@ -88,43 +117,55 @@ pub async fn run_session(
     let _ = writer.await;
 }
 
+/// Why [`forward_events`] stopped.
+#[derive(Debug, PartialEq, Eq)]
+enum Forwarded {
+    /// The client left or the core closed.
+    Done,
+    /// The queue was full for something that must not be dropped (a durable
+    /// event, or an app-wide one such as `resync`): the connection is closed.
+    Behind,
+}
+
+/// Queues the core's events for one client. A project's live events that do
+/// not fit are dropped (the streamed text comes again as the block's
+/// `agent_text`); a durable or app-wide one (a hint the client must not miss)
+/// that does not fit ends the session ([`Forwarded::Behind`]: the client
+/// reconnects, and catches up and reads everything again).
+/// When the client's subscription lags behind the core's buffer, it is sent a
+/// `resync` hint: what was skipped must be read again.
 async fn forward_events(
     mut events: broadcast::Receiver<ApiEvent>,
-    out: mpsc::UnboundedSender<String>,
+    out: mpsc::Sender<String>,
     policy: SessionPolicy,
-) {
+) -> Forwarded {
     loop {
-        match events.recv().await {
-            Ok(event) => {
-                if !policy.local && event.body.is_local_only() {
-                    continue;
-                }
-                if out
-                    .send(to_json(&WsServerMessage::Event { event }))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            // The client sees a seq gap and catches up with ListEvents.
+        let event = match events.recv().await {
+            Ok(event) => event,
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 tracing::warn!("a WebSocket client fell behind; {n} events skipped");
+                ApiEvent::app_wide(ApiEventBody::Resync)
             }
-            Err(broadcast::error::RecvError::Closed) => return,
+            Err(broadcast::error::RecvError::Closed) => return Forwarded::Done,
+        };
+        if !policy.local && event.body.is_local_only() {
+            continue;
+        }
+        let droppable = event.live && !event.body.is_app_wide();
+        match out.try_send(to_json(&WsServerMessage::Event { event })) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) if droppable => {}
+            Err(mpsc::error::TrySendError::Full(_)) => return Forwarded::Behind,
+            Err(mpsc::error::TrySendError::Closed(_)) => return Forwarded::Done,
         }
     }
 }
 
-fn handle_request(
-    core: &Core,
-    text: &str,
-    out: &mpsc::UnboundedSender<String>,
-    policy: SessionPolicy,
-) {
+fn handle_request(core: &Core, text: &str, out: &mpsc::Sender<String>, policy: SessionPolicy) {
     let request = match parse_request(text) {
         Ok(r) => r,
         Err(Some((id, err))) => {
-            let _ = out.send(to_json(&WsServerMessage::Reply(WsReply::Err { id, err })));
+            send_reply(out, WsReply::Err { id, err });
             return;
         }
         Err(None) => {
@@ -142,7 +183,7 @@ fn handle_request(
             ApiErrorCode::Forbidden,
             "this command can only be run on the PC itself",
         );
-        let _ = out.send(to_json(&WsServerMessage::Reply(WsReply::Err { id, err })));
+        send_reply(out, WsReply::Err { id, err });
         return;
     }
     let core = core.clone();
@@ -152,7 +193,18 @@ fn handle_request(
             Ok(ok) => WsReply::Ok { id, ok },
             Err(err) => WsReply::Err { id, err },
         };
-        let _ = out.send(to_json(&WsServerMessage::Reply(reply)));
+        // Waits for room: a reply is never dropped (the client may be reading
+        // slowly; if it left, the queue is closed and the send fails).
+        let _ = out.send(to_json(&WsServerMessage::Reply(reply))).await;
+    });
+}
+
+/// Queues an error reply in the background (the reader must not wait on a
+/// client that does not read, and replies are never dropped).
+fn send_reply(out: &mpsc::Sender<String>, reply: WsReply) {
+    let out = out.clone();
+    tokio::spawn(async move {
+        let _ = out.send(to_json(&WsServerMessage::Reply(reply))).await;
     });
 }
 
@@ -211,5 +263,102 @@ mod tests {
             assert!(!cmd.is_local_only(), "{json}");
         }
         assert_eq!(SessionPolicy::LOCAL, SessionPolicy { local: true });
+    }
+
+    fn event(seq: u64, live: bool) -> ApiEvent {
+        ApiEvent {
+            seq,
+            ts_ms: 0,
+            project: "p".into(),
+            live,
+            body: ApiEventBody::Prompted {
+                session: "s".into(),
+                text: "t".into(),
+            },
+        }
+    }
+
+    fn body_type(text: &str) -> String {
+        let v: Value = serde_json::from_str(text).expect("json");
+        v["event"]["body"]["type"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_drops_live_events_and_closes_on_a_durable_one() {
+        let (tx, rx) = broadcast::channel(16);
+        let (out, mut queued) = mpsc::channel(2);
+        tx.send(event(1, false)).expect("send");
+        tx.send(event(1, true)).expect("send");
+        tx.send(event(1, true)).expect("send"); // full: dropped
+        tx.send(event(2, false)).expect("send"); // full: the client is behind
+        let forwarded = forward_events(rx, out, SessionPolicy::LOCAL).await;
+        assert_eq!(forwarded, Forwarded::Behind);
+        let first: Value = serde_json::from_str(&queued.recv().await.expect("one")).expect("json");
+        let second: Value = serde_json::from_str(&queued.recv().await.expect("two")).expect("json");
+        assert_eq!(
+            (
+                first["event"]["live"].clone(),
+                second["event"]["live"].clone()
+            ),
+            (Value::Bool(false), Value::Bool(true))
+        );
+        assert!(queued.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_full_queue_closes_on_an_app_wide_hint_too() {
+        let (tx, rx) = broadcast::channel(16);
+        let (out, _queued) = mpsc::channel(1);
+        tx.send(event(1, true)).expect("send");
+        tx.send(ApiEvent::app_wide(ApiEventBody::SettingsChanged {
+            kind: crate::api::SettingsKind::Secrets,
+            project: None,
+            revision: None,
+        }))
+        .expect("send");
+        let forwarded = forward_events(rx, out, SessionPolicy::LOCAL).await;
+        assert_eq!(forwarded, Forwarded::Behind);
+    }
+
+    #[tokio::test]
+    async fn a_lagging_subscription_gets_a_resync_hint() {
+        let (tx, rx) = broadcast::channel(2);
+        for seq in 1..=5 {
+            tx.send(event(seq, false)).expect("send");
+        }
+        drop(tx);
+        let (out, mut queued) = mpsc::channel(16);
+        let forwarded = forward_events(rx, out, SessionPolicy::LOCAL).await;
+        assert_eq!(forwarded, Forwarded::Done);
+        let mut types = Vec::new();
+        while let Ok(text) = queued.try_recv() {
+            types.push(body_type(&text));
+        }
+        // The skipped events are not sent; a resync comes first, then what is left.
+        assert_eq!(types, ["resync", "prompted", "prompted"]);
+    }
+
+    #[tokio::test]
+    async fn remote_clients_get_app_wide_events_except_remote_access_ones() {
+        let (tx, rx) = broadcast::channel(16);
+        tx.send(ApiEvent::app_wide(ApiEventBody::RemoteDevicesChanged {
+            devices: Vec::new(),
+        }))
+        .expect("send");
+        tx.send(ApiEvent::app_wide(ApiEventBody::ProjectsChanged {
+            project: "p".into(),
+        }))
+        .expect("send");
+        drop(tx);
+        let (out, mut queued) = mpsc::channel(16);
+        forward_events(rx, out, SessionPolicy::REMOTE).await;
+        assert_eq!(
+            body_type(&queued.try_recv().expect("one")),
+            "projects_changed"
+        );
+        assert!(queued.try_recv().is_err());
     }
 }

@@ -17,7 +17,8 @@ use crate::agents::{
 };
 use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse,
-    LoggedEvent, ProjectInfo, Snapshot, TextKind, WsReply, WsRequest, WsServerMessage,
+    LoggedEvent, ProjectInfo, SettingsKind, Snapshot, TextKind, WsReply, WsRequest,
+    WsServerMessage,
 };
 use crate::domain::{DomainEvent, Role, ToolError};
 use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
@@ -173,7 +174,8 @@ fn commands() -> Vec<Sample> {
         ),
         (
             "set_agent_settings/reviewer",
-            json!({"type": "set_agent_settings", "role": "reviewer", "settings": role_settings}),
+            json!({"type": "set_agent_settings", "role": "reviewer", "settings": role_settings,
+                "expected_revision": 1_790_766_538_443_u64}),
         ),
         (
             "list_harness_models",
@@ -383,6 +385,7 @@ fn snapshot() -> Snapshot {
             session_record("T-1/1", "reviewer", SessionStatus::Suspended, true),
             session_record("T-2/0", "implementer", SessionStatus::Interrupted, false),
         ],
+        starting: vec!["orchestrator:C-2".into()],
         chats: vec![chat_info("C-1", Some("Docs")), chat_info("C-2", None)],
     }
 }
@@ -478,6 +481,7 @@ fn responses() -> Vec<Sample> {
         project: Some("repo".into()),
         project_layer: Some(AgentSettingsLayer::default()),
         effective: settings,
+        revision: 1_790_766_538_443,
     };
     let global_view = AgentSettingsView {
         project: None,
@@ -1169,6 +1173,43 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             },
         ),
         (
+            "session_starting".into(),
+            ApiEventBody::SessionStarting {
+                session: "orchestrator:C-2".into(),
+            },
+        ),
+        (
+            "projects_changed".into(),
+            ApiEventBody::ProjectsChanged {
+                project: "repo".into(),
+            },
+        ),
+        (
+            "settings_changed/agent_settings".into(),
+            ApiEventBody::SettingsChanged {
+                kind: SettingsKind::AgentSettings,
+                project: Some("repo".into()),
+                revision: Some(1_790_766_538_444),
+            },
+        ),
+        (
+            "settings_changed/harnesses".into(),
+            ApiEventBody::SettingsChanged {
+                kind: SettingsKind::Harnesses,
+                project: None,
+                revision: None,
+            },
+        ),
+        (
+            "settings_changed/secrets".into(),
+            ApiEventBody::SettingsChanged {
+                kind: SettingsKind::Secrets,
+                project: None,
+                revision: None,
+            },
+        ),
+        ("resync".into(), ApiEventBody::Resync),
+        (
             "remote_status_changed".into(),
             ApiEventBody::RemoteStatusChanged {
                 status: remote_status(true),
@@ -1196,11 +1237,15 @@ fn events() -> Vec<Sample> {
     bodies()
         .into_iter()
         .map(|(name, body)| {
-            let local = body.is_local_only();
+            let app_wide = body.is_app_wide();
             let event = ApiEvent {
-                seq: if local { 0 } else { 17 },
+                seq: if app_wide { 0 } else { 17 },
                 ts_ms: 1_790_766_538_443,
-                project: if local { String::new() } else { "repo".into() },
+                project: if app_wide {
+                    String::new()
+                } else {
+                    "repo".into()
+                },
                 live: body.is_live(),
                 body,
             };

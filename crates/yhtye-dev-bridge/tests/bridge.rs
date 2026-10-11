@@ -1,136 +1,22 @@
 //! The bridge over a real WebSocket with the real core and fake agents:
 //! access control, request/reply matching, errors, and pushed events.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
+mod common;
 
-use futures::{SinkExt, StreamExt};
-use serde_json::{Value, json};
-use tokio::net::TcpStream;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::{Error as WsError, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
-use yhtye_core::acp::{HarnessConfig, ModelSelect};
+use common::{
+    TIMEOUT, TOKEN, connect, fake_agent_bin, fake_harness, next_json, reply, send, temp_repo,
+    until_event,
+};
+use serde_json::json;
+use tokio_tungstenite::tungstenite::Error as WsError;
 use yhtye_core::agents::{AgentChoice, HarnessPreset};
 use yhtye_core::runtime::{Core, CoreConfig};
 use yhtye_dev_bridge::{BridgeConfig, serve};
-
-const TIMEOUT: Duration = Duration::from_secs(30);
-const TOKEN: &str = "test-token";
-
-type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn fake_agent_bin() -> PathBuf {
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "--quiet", "-p", "yhtye-fake-agent"])
-        .current_dir(workspace_root())
-        .status()
-        .expect("run cargo build");
-    assert!(status.success(), "building yhtye-fake-agent failed");
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map_or_else(|| workspace_root().join("target"), PathBuf::from)
-        .join("debug/yhtye-fake-agent")
-}
-
-fn fake_harness(bin: &Path, script: Value) -> HarnessConfig {
-    let mut h = HarnessConfig::plain(bin.display().to_string(), vec![]);
-    h.env.insert("YHTYE_FAKE_SCRIPT".into(), script.to_string());
-    h.mode_after_new = Some("bypassPermissions".into());
-    h.model = Some(ModelSelect {
-        config_id: "model".into(),
-        value: "haiku".into(),
-    });
-    h.startup_timeout = Duration::from_secs(10);
-    h
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("LC_ALL", "C")
-        .status()
-        .expect("git")
-        .success();
-    assert!(ok, "git {args:?}");
-}
-
-/// A repository with one commit, and a data directory next to it.
-fn temp_repo(root: &Path) -> (PathBuf, PathBuf) {
-    let repo = root.join("repo");
-    let data = root.join("data");
-    std::fs::create_dir_all(&repo).expect("mkdir");
-    std::fs::create_dir_all(&data).expect("mkdir");
-    git(&repo, &["init", "-q", "-b", "main"]);
-    git(&repo, &["config", "user.name", "Test"]);
-    git(&repo, &["config", "user.email", "test@example.com"]);
-    std::fs::write(repo.join("README.md"), "# test\n").expect("write");
-    git(&repo, &["add", "-A"]);
-    git(&repo, &["commit", "-qm", "initial"]);
-    (repo, data)
-}
-
-async fn connect(port: u16, token: &str, origin: Option<&str>) -> Result<Ws, WsError> {
-    let mut req = format!("ws://127.0.0.1:{port}/ws?token={token}")
-        .into_client_request()
-        .expect("request");
-    if let Some(o) = origin {
-        req.headers_mut()
-            .insert("origin", o.parse().expect("header"));
-    }
-    connect_async(req).await.map(|(ws, _)| ws)
-}
 
 fn http_status(e: WsError) -> u16 {
     match e {
         WsError::Http(resp) => resp.status().as_u16(),
         other => panic!("expected an HTTP refusal, got {other}"),
-    }
-}
-
-async fn send(ws: &mut Ws, text: String) {
-    ws.send(Message::Text(text.into())).await.expect("send");
-}
-
-async fn next_json(ws: &mut Ws) -> Value {
-    loop {
-        let msg = tokio::time::timeout(TIMEOUT, ws.next())
-            .await
-            .expect("a message in time")
-            .expect("open")
-            .expect("ok");
-        if let Message::Text(t) = msg {
-            return serde_json::from_str(t.as_str()).expect("json");
-        }
-    }
-}
-
-/// Reads until the reply to `id`; events seen meanwhile are collected.
-async fn reply(ws: &mut Ws, id: u64, events: &mut Vec<Value>) -> Value {
-    loop {
-        let msg = next_json(ws).await;
-        if msg.get("event").is_some() {
-            events.push(msg["event"].clone());
-        } else if msg["id"] == json!(id) {
-            return msg;
-        }
-    }
-}
-
-async fn until_event(ws: &mut Ws, events: &mut Vec<Value>, f: impl Fn(&Value) -> bool) {
-    loop {
-        let msg = next_json(ws).await;
-        if let Some(ev) = msg.get("event") {
-            events.push(ev.clone());
-            if f(ev) {
-                return;
-            }
-        }
     }
 }
 
@@ -263,10 +149,17 @@ async fn the_api_round_trips_over_the_websocket() {
         reply(&mut ws, 10, &mut events).await["ok"]["type"],
         "accepted"
     );
+    // Again (as a second client that lost the race would): accepted.
     let cmd = json!({"id": 11, "cmd": {"type": "delete_chat", "project": project, "chat": "C-2"}});
     send(&mut ws, cmd.to_string()).await;
     assert_eq!(
-        reply(&mut ws, 11, &mut events).await["err"]["code"],
+        reply(&mut ws, 11, &mut events).await["ok"]["type"],
+        "accepted"
+    );
+    let cmd = json!({"id": 12, "cmd": {"type": "delete_chat", "project": project, "chat": "C-9"}});
+    send(&mut ws, cmd.to_string()).await;
+    assert_eq!(
+        reply(&mut ws, 12, &mut events).await["err"]["code"],
         "not_found"
     );
     let msg = json!({"id": 6, "cmd": {"type": "send_user_message", "project": project,
