@@ -13,6 +13,7 @@ describe("Icon", () => {
     expect(svg).toHaveAttribute("aria-hidden", "true");
     expect(svg).toHaveAttribute("width", "20");
     expect(svg).toHaveAttribute("stroke", "currentColor");
+    expect(svg).toHaveAttribute("data-icon", "send");
   });
 });
 

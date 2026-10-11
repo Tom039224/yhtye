@@ -6,13 +6,17 @@
 //! [`RemoteService`] belongs to the [`Core`]; it is driven by the local-only
 //! commands ([`crate::api::ApiCommand::is_local_only`]) and reports changes as
 //! app-wide events ([`ApiEventBody::RemoteStatusChanged`] /
-//! [`ApiEventBody::RemoteDevicesChanged`]).
+//! [`ApiEventBody::RemoteDevicesChanged`]). The read-only view of the clients
+//! ([`Clients`]: `list_clients` / [`ApiEventBody::ClientsChanged`]) is for
+//! every client, remote devices too.
 
+mod clients;
 mod pairing;
 mod server;
 mod tailscale;
 mod whois;
 
+pub use clients::{ClientDevice, ClientKind, ClientServer, Clients};
 pub use pairing::{CODE_LEN, CODE_TTL_MS, MAX_FAILURES, token_hash};
 pub use server::{PairRequest, PairResponse, RemoteError};
 pub use tailscale::{Tailscale, TailscaleCli, TailscaleError, TailscaleSelf, is_tailscale_address};
@@ -31,7 +35,7 @@ use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
 use crate::api::{ApiError, ApiEvent, ApiEventBody};
-use crate::runtime::Core;
+use crate::runtime::{Core, host_name};
 use crate::store::{DeviceRecord, Store};
 use pairing::Pairing;
 use whois::WhoisCache;
@@ -286,6 +290,11 @@ impl RemoteService {
         self.shared.devices().await
     }
 
+    /// This PC and the paired devices, for every client to show.
+    pub(crate) async fn clients(&self) -> Result<Clients, ApiError> {
+        Ok(Clients::new(host_name(), &self.shared.devices().await?))
+    }
+
     /// Forgets a device and closes its connections at once.
     pub(crate) async fn revoke(&self, device: &str) -> Result<Vec<RemoteDevice>, ApiError> {
         {
@@ -299,9 +308,7 @@ impl RemoteService {
         }
         tracing::info!("revoked remote device {device}");
         let devices = self.shared.devices().await?;
-        self.shared.emit(ApiEventBody::RemoteDevicesChanged {
-            devices: devices.clone(),
-        });
+        self.shared.emit_device_changes(&devices);
         Ok(devices)
     }
 
@@ -430,7 +437,7 @@ impl Shared {
         self.emit(ApiEventBody::RemoteStatusChanged { status });
     }
 
-    /// An app-wide event: not stored, no project (see [`ApiEventBody::is_local_only`]).
+    /// An app-wide event: not stored, no project (see [`ApiEventBody::is_app_wide`]).
     fn emit(&self, body: ApiEventBody) {
         let _ = self.events.send(ApiEvent::app_wide(body));
     }
@@ -452,9 +459,20 @@ impl Shared {
 
     async fn emit_devices(&self) {
         match self.devices().await {
-            Ok(devices) => self.emit(ApiEventBody::RemoteDevicesChanged { devices }),
+            Ok(devices) => self.emit_device_changes(&devices),
             Err(e) => tracing::warn!("could not list the remote devices: {e}"),
         }
+    }
+
+    /// A device was paired, revoked, connected or disconnected: the settings
+    /// panel's list (local only) and the clients' view (for everyone).
+    fn emit_device_changes(&self, devices: &[RemoteDevice]) {
+        self.emit(ApiEventBody::RemoteDevicesChanged {
+            devices: devices.to_vec(),
+        });
+        self.emit(ApiEventBody::ClientsChanged {
+            clients: Clients::new(host_name(), devices),
+        });
     }
 
     /// The device whose token this is. Every stored hash is compared in

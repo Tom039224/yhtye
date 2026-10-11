@@ -279,6 +279,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "{\"type\":\"revoke_remote_device\",\"device\":\"dev-0123456789abcdef\"}",
     ),
     ContractSample(
+        "ApiCommand",
+        "list_clients",
+        ApiCommand.Serializer,
+        "{\"type\":\"list_clients\"}",
+    ),
+    ContractSample(
         "WsRequest",
         "ping",
         WsRequest.serializer(),
@@ -415,6 +421,18 @@ internal val contractSamples: List<ContractSample> = listOf(
         "remote_devices",
         ApiResponse.Serializer,
         "{\"type\":\"remote_devices\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "clients",
+        ApiResponse.Serializer,
+        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "clients/no_devices",
+        ApiResponse.Serializer,
+        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[]}}",
     ),
     ContractSample(
         "ApiError",
@@ -883,6 +901,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "remote_devices_changed",
         ApiEvent.serializer(),
         "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"remote_devices_changed\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "clients_changed",
+        ApiEvent.serializer(),
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"clients_changed\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}}",
     ),
     ContractSample(
         "ApiEvent",

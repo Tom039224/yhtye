@@ -19,10 +19,10 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use yhtye_core::api::{ApiCommand, ApiEventBody, ApiResponse};
 use yhtye_core::remote::{
-    MAX_FAILURES, PairingCode, RemoteDevice, RemoteStatus, Tailscale, TailscaleCli, TailscaleError,
-    TailscaleSelf, token_hash,
+    ClientKind, Clients, MAX_FAILURES, PairingCode, RemoteDevice, RemoteStatus, Tailscale,
+    TailscaleCli, TailscaleError, TailscaleSelf, token_hash,
 };
-use yhtye_core::runtime::{Core, CoreConfig};
+use yhtye_core::runtime::{Core, CoreConfig, host_name};
 use yhtye_core::secrets::MemoryBackend;
 use yhtye_core::store::{Store, db_path};
 
@@ -592,5 +592,162 @@ async fn real_tailscale_round_trip() {
     let refused = http_status(connect(&ws_url, Some(&token)).await.unwrap_err());
     println!("reconnect after revoke → HTTP {refused}");
     assert_eq!(refused, 401);
+    core.shutdown().await;
+}
+
+async fn clients(core: &Core) -> Clients {
+    match core
+        .command(ApiCommand::ListClients)
+        .await
+        .expect("clients")
+    {
+        ApiResponse::Clients { clients } => clients,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+/// The `clients` of `clients_changed` events received since the last look.
+fn client_events(
+    events: &mut tokio::sync::broadcast::Receiver<yhtye_core::api::ApiEvent>,
+) -> Vec<Clients> {
+    use tokio::sync::broadcast::error::TryRecvError;
+    let mut out = Vec::new();
+    loop {
+        match events.try_recv() {
+            Ok(ev) => {
+                if let ApiEventBody::ClientsChanged { clients } = ev.body {
+                    assert!(ev.project.is_empty() && ev.live && ev.seq == 0);
+                    out.push(clients);
+                }
+            }
+            Err(TryRecvError::Lagged(_)) => {}
+            Err(_) => return out,
+        }
+    }
+}
+
+/// Reads events until a `clients_changed` that `pred` accepts.
+async fn client_event(ws: &mut Ws, pred: impl Fn(&Value) -> bool) -> Value {
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let Some(Ok(Message::Text(t))) = ws.next().await else {
+                panic!("closed before the event");
+            };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let clients = &v["event"]["body"]["clients"];
+            if v["event"]["body"]["type"] == "clients_changed" && pred(clients) {
+                return clients.clone();
+            }
+        }
+    })
+    .await
+    .expect("clients_changed in time")
+}
+
+fn device<'a>(clients: &'a Value, id: &str) -> Option<&'a Value> {
+    clients["devices"]
+        .as_array()
+        .expect("devices")
+        .iter()
+        .find(|d| d["id"] == id)
+}
+
+/// `list_clients` and `clients_changed` are for every client, remote devices
+/// too, and carry no token: pairing, connecting, disconnecting and revoking
+/// are reported to the PC and to a connected device.
+#[tokio::test]
+async fn every_client_sees_the_clients_and_their_changes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let core = Core::start(config(dir.path(), FakeTailscale::new()))
+        .await
+        .expect("core");
+    let mut local_events = core.subscribe();
+
+    let empty = clients(&core).await;
+    assert_eq!(empty.server.host, host_name());
+    assert!(empty.devices.is_empty(), "no device paired yet");
+
+    let port = enable(&core, free_port()).await.addresses[0].clone();
+    let base = format!("http://{port}");
+    let ws_url = format!("ws://{port}/ws");
+    let (_, a) = pair(&base, &new_code(&core).await.code, "Pixel 9").await;
+    let (_, b) = pair(&base, &new_code(&core).await.code, "Tablet").await;
+    let (id_a, token_a) = (
+        a["device_id"].as_str().unwrap(),
+        a["token"].as_str().unwrap(),
+    );
+    let (id_b, token_b) = (
+        b["device_id"].as_str().unwrap(),
+        b["token"].as_str().unwrap(),
+    );
+    let paired = client_events(&mut local_events);
+    assert_eq!(
+        paired.iter().map(|c| c.devices.len()).collect::<Vec<_>>(),
+        [1, 2],
+        "one event per pairing"
+    );
+    let listed = clients(&core).await;
+    assert_eq!(listed.devices.len(), 2);
+    assert_eq!(listed.devices[0].name, "Pixel 9", "oldest first");
+    assert!(
+        listed
+            .devices
+            .iter()
+            .all(|d| d.kind == ClientKind::Android && !d.connected)
+    );
+
+    // A remote device may read the list; it holds no token or hash.
+    let mut ws_a = connect(&ws_url, Some(token_a)).await.expect("a connects");
+    let r = call(
+        &mut ws_a,
+        1,
+        json!({"type": "list_clients"}),
+        &mut Vec::new(),
+    )
+    .await;
+    assert_eq!(r["ok"]["type"], "clients", "{r}");
+    let seen = &r["ok"]["clients"];
+    assert_eq!(seen["server"]["host"], host_name());
+    assert_eq!(device(seen, id_a).expect("a")["connected"], true);
+    assert_eq!(device(seen, id_b).expect("b")["connected"], false);
+    assert_eq!(device(seen, id_a).expect("a")["kind"], "android");
+    let text = r.to_string();
+    for secret in [token_a, token_b, &token_hash(token_a), &token_hash(token_b)] {
+        assert!(!text.contains(secret), "a token leaks: {text}");
+    }
+    assert!(!text.contains("token"), "{text}");
+
+    // B connects, then leaves: A hears both, and so does the PC.
+    drain(&mut local_events);
+    let ws_b = connect(&ws_url, Some(token_b)).await.expect("b connects");
+    client_event(&mut ws_a, |c| {
+        device(c, id_b).is_some_and(|d| d["connected"] == true)
+    })
+    .await;
+    drop(ws_b);
+    let left = client_event(&mut ws_a, |c| {
+        device(c, id_b).is_some_and(|d| d["connected"] == false)
+    })
+    .await;
+    assert!(device(&left, id_b).expect("b")["last_seen_ms"].is_u64());
+    let local = client_events(&mut local_events);
+    let b_states: Vec<bool> = local
+        .iter()
+        .filter_map(|c| c.devices.iter().find(|d| d.id == id_b).map(|d| d.connected))
+        .collect();
+    assert_eq!(b_states, [true, false], "connect and disconnect");
+
+    // Revoking B removes it from the view everywhere.
+    devices(
+        &core,
+        ApiCommand::RevokeRemoteDevice {
+            device: id_b.into(),
+        },
+    )
+    .await;
+    client_event(&mut ws_a, |c| device(c, id_b).is_none()).await;
+    let after = client_events(&mut local_events);
+    assert_eq!(after.len(), 1, "one event for the revocation");
+    assert_eq!(after[0].devices.len(), 1);
     core.shutdown().await;
 }

@@ -212,6 +212,7 @@ fun applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state: State? = null): Tr
         ApiEventBody.Resync,
         is ApiEventBody.RemoteStatusChanged,
         is ApiEventBody.RemoteDevicesChanged,
+        is ApiEventBody.ClientsChanged,
         is ApiEventBody.Unrecognized,
         -> t
     }

@@ -19,6 +19,7 @@ fun isAppWide(ev: ApiEvent): Boolean = when (ev.body) {
     ApiEventBody.Resync,
     is ApiEventBody.RemoteStatusChanged,
     is ApiEventBody.RemoteDevicesChanged,
+    is ApiEventBody.ClientsChanged,
     -> true
     else -> false
 }

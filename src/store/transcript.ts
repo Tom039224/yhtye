@@ -176,6 +176,7 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
     case "resync":
     case "remote_status_changed":
     case "remote_devices_changed":
+    case "clients_changed":
       // App-wide, never a project's.
       return t;
   }

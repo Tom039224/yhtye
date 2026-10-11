@@ -11,8 +11,10 @@
 // - other clients (T-65): app-wide events (empty `project`) say that the project
 //   list or the settings changed, or that events were dropped for this client
 //   (`resync`: catch up like after a reconnect).
+// - clients (T-73): the PC and the paired devices for the host footer, read on
+//   every (re)connect and resync and replaced by each `clients_changed`.
 
-import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, ChatInfo, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
 import { upsertChat } from "./chats";
@@ -111,6 +113,8 @@ export interface AppState {
   git: GitView | null;
   usage: UsageView;
   host: HostView;
+  /** The paired devices (the core's `list_clients`), as the core ordered them. */
+  clients: ClientDevice[];
 }
 
 export class AppStore extends SettingsCommands {
@@ -129,6 +133,8 @@ export class AppStore extends SettingsCommands {
   private usageTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
+  /** Bumped by every read and `clients_changed`: only the newest one is kept. */
+  private clientsToken = 0;
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
   /** Unsent composer text per chat (kept while another chat or project is shown). */
@@ -151,6 +157,7 @@ export class AppStore extends SettingsCommands {
       git: null,
       usage: { report: null, error: null, loading: false },
       host: { name: null, lastPingAt: null },
+      clients: [],
     };
   }
 
@@ -536,6 +543,7 @@ export class AppStore extends SettingsCommands {
     }
     this.startUsagePolling();
     this.startPinging();
+    void this.refreshClients();
     const reconnect = this.everOpen;
     this.everOpen = true;
     const view = this.state.project;
@@ -561,6 +569,10 @@ export class AppStore extends SettingsCommands {
       case "resync":
         this.catchUpAll();
         return;
+      case "clients_changed":
+        this.clientsToken++; // newer than a read on its way
+        this.set({ clients: body.clients.devices });
+        return;
       default:
         return; // remote access: `onRemoteEvent`
     }
@@ -573,6 +585,7 @@ export class AppStore extends SettingsCommands {
    */
   private catchUpAll(): void {
     void this.refreshProjects();
+    void this.refreshClients();
     this.settingsChanges.emit(EVERYTHING);
     const view = this.state.project;
     if (view?.phase !== "ready") return;
@@ -625,6 +638,20 @@ export class AppStore extends SettingsCommands {
       // Missed; the next ping tries again.
     } finally {
       this.pinging = false;
+    }
+  }
+
+  /**
+   * Reads the paired devices. A failure is not shown: the footer keeps the
+   * last list, and the next reconnect or resync reads again.
+   */
+  private async refreshClients(): Promise<void> {
+    const token = ++this.clientsToken;
+    try {
+      const r = await this.invoke({ type: "list_clients" }, "clients");
+      if (token === this.clientsToken) this.set({ clients: r.clients.devices });
+    } catch {
+      // Kept as it was (see above).
     }
   }
 

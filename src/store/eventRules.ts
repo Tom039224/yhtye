@@ -16,6 +16,7 @@ export function isAppWide(ev: ApiEvent): boolean {
     case "resync":
     case "remote_status_changed":
     case "remote_devices_changed":
+    case "clients_changed":
       return true;
     default:
       return false;

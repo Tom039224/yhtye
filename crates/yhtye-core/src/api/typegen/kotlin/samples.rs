@@ -24,7 +24,7 @@ use crate::domain::{DomainEvent, Role, ToolError};
 use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{
-    PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError, RemoteStatus,
+    Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError, RemoteStatus,
 };
 use crate::store::{ChatInfo, SessionRecord, SessionStatus};
 use crate::usage::{UsageReport, UsageWindow, UsageWindowKind};
@@ -225,6 +225,7 @@ fn commands() -> Vec<Sample> {
             "revoke_remote_device",
             json!({"type": "revoke_remote_device", "device": "dev-0123456789abcdef"}),
         ),
+        ("list_clients", json!({"type": "list_clients"})),
     ];
     cases
         .into_iter()
@@ -459,6 +460,10 @@ fn devices() -> Vec<RemoteDevice> {
     ]
 }
 
+fn clients() -> Clients {
+    Clients::new("pc".into(), &devices())
+}
+
 fn responses() -> Vec<Sample> {
     let settings = AgentSettings {
         orchestrator: role_settings(),
@@ -675,6 +680,13 @@ fn responses() -> Vec<Sample> {
         (
             "remote_devices",
             ApiResponse::RemoteDevices { devices: devices() },
+        ),
+        ("clients", ApiResponse::Clients { clients: clients() }),
+        (
+            "clients/no_devices",
+            ApiResponse::Clients {
+                clients: Clients::new("pc".into(), &[]),
+            },
         ),
     ];
     cases
@@ -1218,6 +1230,10 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
         (
             "remote_devices_changed".into(),
             ApiEventBody::RemoteDevicesChanged { devices: devices() },
+        ),
+        (
+            "clients_changed".into(),
+            ApiEventBody::ClientsChanged { clients: clients() },
         ),
     ]);
     out.extend(tool_call_records());

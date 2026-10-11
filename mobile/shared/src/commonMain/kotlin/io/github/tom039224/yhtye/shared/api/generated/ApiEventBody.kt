@@ -201,6 +201,16 @@ sealed interface ApiEventBody {
         val devices: List<RemoteDevice>,
     ) : ApiEventBody
 
+    /**
+     * App-wide, with every `remote_devices_changed` (a device was paired,
+     * revoked, connected or disconnected): the read-only view of `list_clients`.
+     * Sent to remote devices too.
+     */
+    @Serializable
+    data class ClientsChanged(
+        val clients: Clients,
+    ) : ApiEventBody
+
     /** A `type` this client does not know (from a newer Yhtye). Cannot be sent. */
     data class Unrecognized(
         /** The unknown `type`. */
@@ -227,6 +237,7 @@ sealed interface ApiEventBody {
             TaggedVariant<ApiEventBody>("resync", Resync.serializer()) { it is Resync },
             TaggedVariant<ApiEventBody>("remote_status_changed", RemoteStatusChanged.serializer()) { it is RemoteStatusChanged },
             TaggedVariant<ApiEventBody>("remote_devices_changed", RemoteDevicesChanged.serializer()) { it is RemoteDevicesChanged },
+            TaggedVariant<ApiEventBody>("clients_changed", ClientsChanged.serializer()) { it is ClientsChanged },
         ),
         ::Unrecognized,
     )
