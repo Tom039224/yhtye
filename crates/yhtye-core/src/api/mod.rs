@@ -81,10 +81,22 @@ pub enum ApiEventBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         cwd: Option<String>,
+        /// The ACP session this start meant to restore but could not (it is a
+        /// new session instead); kept so the old one can be restored later.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        lost_acp_session_id: Option<String>,
     },
+    /// A start of the session failed. `retrying` tells a failure on the way from
+    /// the one that gives the start up.
     SessionFailed {
         session: String,
         error: String,
+        /// Another start of this session follows (a failed restore is tried
+        /// again, or replaced by a new session), so it is still starting. False:
+        /// the start is given up and nothing follows. Older logs lack it (the
+        /// two were not told apart); read it as false.
+        retrying: bool,
     },
     /// The session was shut down (or its process exited) and its token revoked.
     SessionStopped {

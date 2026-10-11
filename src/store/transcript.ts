@@ -132,11 +132,18 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
       return push(t, session, { ...base, kind: "yhtye_tool", tool: r.tool, by: r.binding.session, ok, detail });
     }
     case "session_started": {
+      // A restore that was given up on: say which ACP session the conversation
+      // was lost with, so it can be restored by hand.
+      const lost = body.lost_acp_session_id ?? null;
       const started = push(t, body.session, {
         ...base,
         kind: "lifecycle",
-        text: body.resumed ? "session restored (session/load)" : "session started",
-        error: false,
+        text: lost
+          ? `could not restore the previous session (${lost}); started a new session`
+          : body.resumed
+            ? "session restored (session/load)"
+            : "session started",
+        error: lost !== null,
       });
       const replaced = body.replaced ?? null;
       if (!replaced) return started;

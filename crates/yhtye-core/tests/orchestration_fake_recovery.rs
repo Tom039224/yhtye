@@ -160,7 +160,7 @@ async fn failing_sub_agent_start_raises_agent_crashed() {
     })
     .await;
     assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionFailed { session, error }
+        ApiEventBody::SessionFailed { session, error, retrying: false }
             if session == "T-1/implementer" && error.contains("session/new"))));
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(

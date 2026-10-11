@@ -108,7 +108,8 @@ pub struct CoreConfig {
     400 ms 後にまとめて読み直す (イベントに git の内容は載せない。git の真実は git にある)。
   - **履歴の遅延読み込み** (Stage 5 の課題): 新しいコマンドは足さない。seq は 1 から欠番なしなので、
     snapshot の seq を S として `ListEvents{after_seq: S-400}` から読み (会話・出力は直近 400 件分だけ)、
-    それより前は UI の「さらに前の履歴を読み込む」で `after_seq` をずらして 400 件ずつ前に足す。
+    それより前は、トランスクリプト先頭の番兵 (IntersectionObserver) が見えたら自動で `after_seq` をずらして 400 件ずつ前に足す
+    (失敗したら止めて再試行ボタンを出す。IntersectionObserver がなければ「さらに前の履歴を読み込む」ボタン)。
     状態は snapshot から作るので過去のイベントは不要。前に足したページは単独で畳み込んでから連結する
     (ページをまたぐツール呼び出しは開始位置に 1 つにまとめる)。同期規則 (cursor から先を順に畳み込む) は不変。
   - **`SessionStopped` の順序** (flaky テストの原因の 1 つ): Yhtye が止めたセッションの停止タスクは
@@ -130,14 +131,17 @@ pub struct CoreConfig {
   **T-6 (§15.2、§15.7)**: `get_harnesses` / `detect_harnesses` / `set_harness_path{harness, path?}` (ハーネスの検出状態・再検出・手動パス)。
   **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
   `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
+  **T-48 (§17.11)**: `open_chat{project, chat}` (チャットを開いた: 未起動なら復元して起動、応答 `chat_opened{starting}`)。
+  **T-49 (§17.12)**: `ProjectInfo` に `running` (動作中か) が付く。
   `ApiResponse` = `projects` / `project` / `snapshot` / `events` / `accepted` / `git_overview` / `usage` /
-  `agent_settings` / `harness_models` (T-6 で `harnesses`、Stage 8 で `chats` / `chat`)。
+  `agent_settings` / `harness_models` (T-6 で `harnesses`、Stage 8 で `chats` / `chat`、T-48 で `chat_opened`)。
   `ApiError { code: invalid_argument|not_found|invalid_state|conflict|forbidden|unavailable|internal, message }`。
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
   - `session_started { session, role, task, pid, acp_session_id, resumed }` /
-    `session_failed { session, error }` / `session_stopped { session, suspended }` /
+    `session_failed { session, error, retrying }` (`retrying`: このあとにも起動が続く = 復元の再試行・新しいセッションへの切り替えの途中の失敗。`false` は起動を諦めた最終の失敗。古いログには無く、`false` として読む) /
+    `session_stopped { session, suspended }` /
     `session_interrupted { session }` (3b: 起動時、前回動いていたセッション。`suspended` は
     Yhtye の終了で止めた = 次回の起動で復元する)
   - `agent { session, event: AgentEvent }` — エージェントの出力とライフサイクル
@@ -213,8 +217,25 @@ impl AgentHandle {
   (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode`
   (`modes` に無ければ `Unsupported`) → `model` 指定があれば `set_config_option`
   (応答の現在値が要求値と違えば起動失敗)。各段に `HarnessConfig::startup_timeout`。
+  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`。OpenCode のように `modes` を持たず config option `mode` だけで返すエージェントは `AgentInfo::current_mode()` が両方を見る)・モデル・effort を現在値として返していれば、
+  その `set_mode` / `set_config_option` は送らない** (T-46: 復元後の `set_mode` がタイムアウトして会話を失った事故があった。送っても何も変わらない要求を省く)。
 - **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
   単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
+- **Yhtye が異常終了したとき** (SIGKILL・クラッシュ・abort・連続再起動。通常の終了処理が走らない場合) も
+  エージェントを残さない。Linux で 3 層 (`acp/parent_death.rs`, `acp/orphan.rs`):
+  1. 起動時に `prctl(PR_SET_PDEATHSIG, SIGKILL)` を `pre_exec` で設定し、Yhtye (を起動したスレッド) が
+     死んだら直接の子 (`npx` 等) をカーネルが落とす。ただし孫 (`node` → `claude`) は残るので、
+  2. グループごとに見張り役の `/bin/sh` (別プロセスグループ) を 1 つ立てる。Yhtye が書き込み側を持つ
+     パイプを stdin で待ち、Yhtye が死んで EOF になったらそのグループ全体に SIGKILL する。正常終了時は
+     `GroupKillGuard` が 1 行書いて見張りを降ろす。
+  3. 起動中のグループは `<データ dir>/agent-processes/<pgid>.json` に記録する (リーダーの pid・起動時刻
+     (`/proc/<pid>/stat` の starttime)・boot_id・起動した Yhtye の pid と起動時刻)。`Core::start` が最初に
+     この記録を調べ、持ち主の Yhtye が生きていなければ、リーダーの pid と起動時刻が一致するグループ
+     (リーダーが先に死んでいれば、同じ pgid で動いている残党) だけに SIGTERM → 1.5 秒後に SIGKILL を送る。
+     pid の再利用・再起動 (boot_id 違い)・自分のグループ・pgid < 2 は殺さず記録だけ捨てる。持ち主が
+     まだ生きている (別インスタンス・終了処理中) 記録は触らない。判定は純関数 `orphan::judge`。
+  グループを抜けて `setsid` した孫はグループ kill では落ちない (従来どおり)。Linux 以外では 1〜3 は
+  何もしない (従来どおり stdin の EOF に頼る)。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
   `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
   グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
@@ -548,13 +569,15 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 [`orchestration-model.md`](orchestration-model.md) §10 の実装。
 
-> **Stage 8 で変更 (§17.3)**: オーケストレータの起動・復元は**チャットごと**で、復元対象のチャット (live / open グループあり / 未配達の受信箱あり) だけを起動時に復元し、
-> 他は最初の送信で遅延起動する。以下の 2・3 は各チャットに適用する。
+> **Stage 8 で変更 (§17.3)、T-48 で再変更 (§17.11)**: オーケストレータの起動・復元は**チャットごと**で、**アプリ起動時には 1 つも起動しない**。
+> チャットを開いたとき (`open_chat`) か、そのチャット宛ての通知 (受信箱の項目) が届いたときに遅延起動して復元する。以下の 2・3 はそのとき各チャットに適用する
+> (3 の `restarted` はドメインの `Restart` ではなく起動時の `TellOrchestrator` が作る)。
 
 1. `Orchestration::start` が DB からプロジェクトの状態を読む。`agent_sessions` のうち復元対象
    (`stopped` 以外) を `session_interrupted` として配信し、そのキー → ACP セッション ID を
    セッション管理に渡す (各キーで 1 回だけ使う)。
 2. オーケストレータを起動する。保存済みセッションがあれば `session/load`、失敗したら
+   新しいエージェントプロセスで数秒空けて再試行し (§17.10)、それでも失敗したら
    新しいセッション (`session_failed` に理由)。
 3. ドメインに `Restart { orchestrator: { had_session, restored, turn_was_running } }`:
    `running` / `merging` のタスク → `interrupted`。help の返答待ちだったエージェントは
@@ -697,6 +720,7 @@ Stage 4 の構成 (`src/`):
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+  `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。
 - これで ACP・MCP・状態機械・git を含む全経路を LLM なしで決定的にテストする。
@@ -1027,14 +1051,14 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 > Stage 8e で、ブランチから作業ツリーを解決するのはチャットの作成時だけになり、起動・マージはチャットの作業ツリー (固定) で行う (§17.8)。
 
-- `Orchestration::start` は**オーケストレータを起動しない**。DB から `State` を読み、復元対象のチャット (orchestration-model §10:
-  セッションが `stopped` 以外 / open グループあり / 未配達の受信箱あり) だけを `Restart` に渡して起動する。
-  `Core::resume_unfinished` の判定 (active / finishing のグループか未配達の受信箱があるプロジェクトだけ開く) に、「live だったチャットのセッションがある」を足す。
+- `Orchestration::start` は**オーケストレータを起動しない**。DB から `State` を読み、`Restart` でタスクを `interrupted` にして再開するだけで、
+  チャットのオーケストレータは起動時には起動しない (**T-48**: 以前は live だった・open グループあり・未配達の受信箱ありのチャットを起動時に復元していた。§17.11)。
+  `Core::resume_unfinished` は active / finishing のグループか未配達の受信箱があるプロジェクトだけ開く (live だったチャットのセッションは理由にならない)。
 - `runtime::sessions` はオーケストレータを**キー `orchestrator:<chatId>` の通常のセッション**として扱う (数はチャット数まで)。
   MCP トークンの束縛 (`SessionBinding`) がチャット ID を持ち、`create_group` などはここからチャットを知る。
 - 起動 (`ensure_orchestrator(chat)`): ① `resolve_branch_worktree(branch)` (§17.4) で cwd を決める (失敗 = `branch_missing` → 送信は `invalid_state`)、
   ② `agent_sessions` に記録があり cwd が一致すれば `session/load`、③ 失敗 / 不一致 / 記録なし なら新しいセッション
-  (記録ありだったときは `restarted` に要約)。起動するのは (a) `SendUserMessage`、(b) そのチャット宛ての受信箱の項目があるとき、(c) 復元対象。
+  (記録ありだったときは `restarted` に要約)。起動するのは (a) `SendUserMessage`、(b) そのチャット宛ての受信箱の項目があるとき、(c) ユーザーがチャットを開いたとき (`open_chat`、T-48)。
 - `flush_inbox(chat)` はチャットごと。そのチャットのセッションが**無い / 終了している**ときは起動してから送る (今の「アイドルになるまで待つ」だけの挙動を変える)。
   `on_exited` (オーケストレータ) は `SessionStopped` を出し `turn_running` を下ろすだけで再起動はしない。起動に失敗しても受信箱は残し、自動の再試行はしない。
 - `CancelOrchestratorTurn{chat}` はそのチャットのセッションにだけ `session/cancel`。セッションが無ければ `accepted` (何もしない)。
@@ -1071,7 +1095,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   UI は `chat_created` と `create_branch` の応答で `GetGitOverview` を読み直す。
 - `ProjectInfo` は変えない。`GetSnapshot` の `Snapshot` に `chats` を足す (§17.2)。TS 型は `pnpm gen:types` で再生成。
 - テスト: 偽エージェントで — チャット 2 つが別 cwd (別ブランチ) で並行 / 同一ブランチの 2 つ目のグループが `conflict` / 遅延起動 (作成だけでは
-  プロセスが起きない) / 終了後の送信で再起動 / `session/load` 失敗で `restarted` / 起動時に live のチャットだけ復元 / グループ通知が持ち主のチャットへ。
+  プロセスが起きない) / 終了後の送信で再起動 / `session/load` 失敗で `restarted` / (T-48 で変更: 起動時にはどのチャットも起動せず、開くか通知が届いたチャットだけ復元、§17.11) / グループ通知が持ち主のチャットへ。
   実 git (`TempRepo`) で — 既存の作業ツリーの再利用 (メイン・管理外) / Yhtye 管理の作成 / 消えたディレクトリの再作成 / detached HEAD / ブランチの外部削除。
 
 ### 17.6 実装メモ (Stage 8a で仕様から具体化・変えたところ)
@@ -1090,7 +1114,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   チャットごとに「そのとき最新だった項目の id」を覚えて、それより新しい項目 (または新しい送信・アプリ起動) があるまで再試行しない。
 - `GitService` に `branch_exists` も足した (チャット作成・送信・`create_group` の存在確認)。`list_branches` は trait ではなく自由関数 `git::list_branches(dir)`。
   `create_branch` は開始点が `-` で始まる場合を `FromMissing` にする (オプションとして解釈させない)。
-- `Orchestration::start` はオーケストレータを起動せずすぐ戻る。起動時に復元するチャットの起動も背景 (ループの最初) で行う。
+- `Orchestration::start` はオーケストレータを起動せずすぐ戻る。チャットの起動は背景で行い、起動時に行うのは未配達の受信箱があるチャットだけ (T-48 から。ほかは開いたときか通知のとき、§17.11)。
 - `create_chat` / `create_branch` は、登録済みだが開いていないプロジェクトに対して `unavailable`、未登録なら `not_found`。
 - フロントエンド (8a の暫定): 型検査を保つため、`AppStore` はチャット `C-1` 固定で送る (無ければメインクローンのブランチで `create_chat`)。オーケストレータのセッションキーは `orchestrator:C-1` 固定。8b で選択中のチャットに置き換える。
 
@@ -1187,3 +1211,67 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - 作業ツリーとブランチには触れない (チャットの削除は会話の記録の削除)。
 - フロントエンド: `store/domain.ts` と `store/chats.ts` に `chat_deleted` の畳み込み (Rust の `remove_chat` と同じ)、`store/project.ts` の `forgetChat` が会話・セッション・ストリーム・未読の印を捨て、表示中のチャットなら次のチャットを選ぶ。
   `AppStore.renameChat` / `deleteChat` はコアの拒否で reject し (行内の編集・確認が表示する)、成功時はイベントを待たずに反映する。
+
+### 17.10 復元の再試行と失われたセッション ID (T-46)
+
+アプリ再起動後の `session/load` 系の起動が失敗すると、以前は即座に `session/new` で新しいセッションを作り、`agent_sessions.acp_session_id` を上書きしていたため、
+一時的な不調 (実際の事故: `session/load` は通ったが直後の `session/set_mode` が 120 秒でタイムアウト) でも旧セッションの会話が完全に失われた。
+
+- **再試行** (`runtime/launch.rs` の `Sessions::restore_failed`): 復元を伴う起動が失敗 (`initialize` / `session/load` / `set_mode` / `set_config_option` の失敗・タイムアウトのどれでも) したら、
+  同じ保存済みセッションを**新しいエージェントプロセス**で最大 `ResumeRetry::retries` (既定 `DEFAULT_RESUME_RETRIES` = 2) 回、毎回 `ResumeRetry::delay`
+  (既定 `DEFAULT_RESUME_RETRY_DELAY` = 3 秒) 空けて試す。方針は `AgentCatalog::with_resume_retry` で変える (テストは短い待ちを使う)。
+  再試行のたびに `session_failed` (`retrying: true`。`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
+  `Starting` が復元対象 (`resume`)・失敗回数 (`failed_restores`) を持つ。
+- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed` (`retrying: true`): `could not restore the session <id> (<理由>); starting a new session`)。
+  新しいセッションの起動が失敗したときの `session_failed` が `retrying: false` (最終)。フロントの `ProjectView.resuming` は最終の失敗 (と `session_started` / `session_stopped`) で下ろし、`retrying: true` では下ろさない (T-54)。
+- **旧 ID を失わない**: 復元を諦めて (または `session/load` 非対応で `session/new` になって) 新しいセッションになったとき、`session_started.lost_acp_session_id` に旧 ACP セッション ID を載せる。
+  マイグレーション `0009_lost_acp_session.sql` の `agent_sessions.lost_acp_session_id` に保存され (`SessionRecord.lost_acp_session_id`)、
+  失われなかった次の起動では消さない (`COALESCE`。別のセッションを諦めたときだけ置き換わる。履歴は `session_started` のイベントログに全て残る)。後で `session/load` にこの ID を渡して手で復元できる。
+- **見える化**: フロントの会話 (`store/transcript.ts`) は `lost_acp_session_id` のある `session_started` を、「session started」の代わりにエラー行
+  `could not restore the previous session (<id>); started a new session` として出す。タスクカードの活動ログ (`taskInfo.ts`) もエラー行として拾う。`store/sessions.ts` は `agent_sessions` の導出を移植している。
+- テスト: 偽エージェントに `fault_attempts` + `attempt_file` (先頭 N 個のプロセスだけ `fail_at` / `exit_at` / `hang_at` が効く) を足した。`tests/orchestration_fake_restart.rs`
+  (復元後の `set_mode` がタイムアウトしても再試行で同じ ACP セッションに復元できる / 再試行が全滅したら旧 ID が DB とイベントに残り新しいセッションで続く / `session/load` 非対応でも旧 ID を残す)、
+  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない。モードが config option `mode` だけで報告される場合も同じ)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。
+
+### 17.11 チャットのオーケストレータは開いたときと通知のときだけ起動する (T-48)
+
+実障害: アプリを再起動すると、live だった全チャット (約 13) のオーケストレータを一斉に `session/load` し、5 チャットが 120 秒でタイムアウトして会話を失った (T-46 が旧 ID の保持と再試行を入れた、その根本対策)。
+
+- **起動時に何も起動しない**: `Driver::restart` は `DomainCommand::Restart` (引数なし) で `running` / `merging` を `interrupted` にし、各タスクを `ResumeTask` するだけ。
+  以前の `Restarted { chats, records }`・`plan_restore`・`Stored::chats_to_restore` は無くなり、`Restart` が受信箱に積んでいた `restarted` (`tell_orchestrator`) も、
+  オーケストレータを**起動するとき**の `TellOrchestrator` (`start_lazily` / `start_from`) だけが作る。`agent_sessions` の記録 (`turn_running` を含む) は起動前に何度アプリを再起動しても残る。
+- **未起動のチャットの状態**: `Orchestration::start` は復元可能なセッション (`stopped` 以外) を `session_interrupted` として配信する。チャットのセッションは起動されないまま `interrupted` で残り
+  (`suspended` から変わる。次の起動までに再び配信しない = 会話に「interrupted by a restart」が毎回増えない)、UI は「停止中 (開くと再開)」として扱う。
+- **開いたとき**: `open_chat{project, chat}` (`Orchestration::open_chat` → `Driver::open_chat`)。チャットが無ければ `not_found`。すでに live なら `starting: false`、起動中なら `true`。
+  作業ツリーが無い (読み取り専用) なら起動しない。復元するものがある (= 保存されたセッションが `stopped` 以外 / open なグループ / 受信箱の項目) ときだけ `start_from` で起動する
+  (以前の「起動時に復元するチャット」と同じ条件)。一度も使っていない・自分で終了した・何も待っていないチャットは起動せず、最初の送信で従来どおり起動する。
+  以前の起動の失敗 (`orchestrators.failed`) はユーザーが開いたことで忘れ、やり直す。応答は起動を始めた時点で返る (起動自体はバックグラウンドで、`session_started` / `session_failed` が続く)。
+- **通知のとき**: 変更なし。`flush_inbox` はループの毎回、未配達の項目があるチャットで、セッションが無ければ `start_lazily` する。アプリ起動直後の `flush_inbox` が、
+  未配達の項目のあるチャット (と、`Restart` が積んだ `merge_result` のチャット) を起動して届ける。タスクは起動時に再開されるので、グループが終われば `group_settled` が持ち主のチャットを起動する。
+  **制限**: ターン中に止まったオーケストレータは、通知もユーザーが開くこともなければ起動しない (例: 全タスクが終わって `finish_group` を呼ぶ直前に落ちた場合。開くと `restarted` で再開する)。
+- **同時起動数** (`agents/start_slots.rs` の `MAX_CONCURRENT_STARTS` = 4、`StartSlots` / `StartScope::run`): エージェントプロセスの**起動**(initialize から `session/load` / `set_mode` まで) は 4 つまで同時で、
+  残りは待つ。許可は `AgentCatalog` が持つ `StartSlots` 1 つを**全プロジェクトで共有**する (プロジェクトごとに作ると開いているプロジェクトの数だけ上限が掛け算され、`resume_unfinished` が複数プロジェクトを開いたときに起動ストームが戻る。T-54)。
+  各 `Sessions` は `StartSlots::scope()` で自分の `StartScope` を持ち、`shutdown` はその scope だけを閉じる (許可は閉じない): そのプロジェクトで許可待ちの起動は `Closed` で捨て (起動前なので `session_failed` も出さない)、他のプロジェクトの待ちには影響しない。
+  許可は起動が終わる (または失敗する) まで持ち、動いているセッションは数えない。T-46 の再試行の待ち時間 (`ResumeRetry::delay`) は許可を持たずに待つ。
+- **フロント** (`store/app.ts`): `selectChat` と、プロジェクトの読み込み完了・再接続後の `selectedChat` で `open_chat` を呼ぶ。`chat_opened{starting: true}` の間は `ProjectView.resuming[chat]` を立て、
+  その `orchestrator:<chat>` の `session_started` / `session_stopped` で下ろす。会話のコンポーザは「起動中…」、ヘッダのバッジは回転するアイコン (`starting`)。`suspended` / `interrupted` のバッジは警告ではなく空の丸 (未起動) にした。
+- テスト: `tests/orchestration_fake_restart.rs` (再起動で起動したのはタスクのエージェントだけ・開くと `session/load` で復元され「ターンが途中で切れた」を受け取る・未起動のチャットへのユーザーによるタスクのキャンセル通知が届く・
+  オーケストレータは `group_settled` で起動し最初のプロンプトに `restarted` が同梱される)、`tests/orchestration_fake_chats.rs` (起動時にどのチャットも起動しない・開くと live だったチャットだけ復元・
+  open グループのチャットは `group_settled` で起動しアイドルのチャットは起動しない)、`tests/core_chats.rs` (`open_chat` の API と、live のチャットだけではプロジェクトを開かない)、
+  `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`agents/start_slots.rs` と `runtime/sessions.rs` の単体テスト (同時起動数・プロジェクトをまたいだ共有・閉じた scope は他に影響しない)、
+  vitest (`appChats.test.ts` `project.test.ts` `App.test.tsx`)。
+
+### 17.12 バックグラウンドのプロジェクトの動作中表示 (T-49)
+
+左上のプロジェクト切替のリングは「動作中のチャットがあれば回る緑、なければ中を抜いた緑」(開いていないプロジェクトも後者。グレーはチャット行だけ)。
+表示中のプロジェクトはストアが持つビュー (`hasRunningWork`) で決められるが、表示していないプロジェクトのイベントはストアに入れないので、動作中かどうかを core から取る。
+
+- **core**: `ProjectInfo.running`。開いているプロジェクトで、live なエージェントセッションの `turn_running` があるか、タスクが `running` / `merging` のとき `true` (フロントの `hasRunningWork` と同じ基準。
+  開いていなければ常に `false`)。`list_projects` と `open_project` が返す。`Orchestration::is_running` → `Cmd::Running` → `Driver::has_running_work` で、`snapshot` と同じく発行待ちのイベントを流してから読む。
+  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。プロジェクトごとの問い合わせは `futures::future::join_all` で**並行**に行い
+  (`project_infos`)、忙しいプロジェクトが N 個あっても一覧は 1 回のタイムアウトで返る (直列だと N 秒かかり、UI が最後のプロジェクトを開き直す起動も遅れる。T-54)。
+- **フロント** (`store/app.ts`、`store/activity.ts`): 表示中でない (または何も表示していない) プロジェクトのイベントを捨てる前に `changesActivity` で見て、ターンの開始・終了 (`prompted` / `turn_ended`)、
+  セッションの起動・停止・中断、タスクの状態変化 (`task_*` / `group_cancelled` / `chat_deleted`) なら 200ms の間引きで `list_projects` を読み直し、`open` / `running` だけを `projects` に取り込む
+  (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
+  回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
+- テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。

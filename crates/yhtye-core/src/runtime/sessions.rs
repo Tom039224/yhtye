@@ -13,6 +13,7 @@ pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::OrchestrationConfig;
 use crate::acp::{AgentError, AgentEvent, AgentHandle};
+use crate::agents::StartScope;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
@@ -67,13 +68,32 @@ pub(super) struct Starting {
     pub(super) queued: VecDeque<String>,
     /// Replaces the first queued prompt if the stored session is not restored.
     pub(super) fallback: Option<String>,
-    /// Started with `session/load` of a stored ACP session.
-    pub(super) resuming: bool,
+    /// The stored ACP session this start restores with `session/load`.
+    pub(super) resume: Option<StoredSession>,
+    /// Restores of `resume` that failed before this one (tried with a new process).
+    pub(super) failed_restores: u32,
+    /// The stored ACP session that could not be restored and that this start
+    /// replaces with a new session.
+    pub(super) lost: Option<String>,
     pub(super) cwd: PathBuf,
     /// What the session was started with (a failed restore starts it again).
     pub(super) pick: AgentPick,
     /// The harness × model it runs.
     pub(super) agent: Picked,
+}
+
+impl Starting {
+    /// The stored ACP session this start gave up on: the one that failed to be
+    /// restored, or the one the agent could not load at all (`restored` false
+    /// although a session was to be restored).
+    pub(super) fn lost_session(&self, restored: bool) -> Option<String> {
+        self.lost.clone().or_else(|| {
+            self.resume
+                .as_ref()
+                .filter(|_| !restored)
+                .map(|r| r.acp_session_id.clone())
+        })
+    }
 }
 
 /// Result of a background `spawn_agent`.
@@ -96,6 +116,10 @@ pub(super) struct Sessions {
     /// Stored sessions to restore (`session/load`), by session key.
     pub(super) resume: HashMap<String, StoredSession>,
     pub(super) spawning: JoinSet<Spawned>,
+    /// This project's access to the start permits, which the catalog shares by
+    /// every project ([`crate::agents::MAX_CONCURRENT_STARTS`] at a time); closed
+    /// on shutdown, which fails the starts of this project still waiting.
+    pub(super) start_slots: StartScope,
     /// Shutdowns in progress; each yields its session key and launch number.
     pub(super) stopping: JoinSet<(String, u64)>,
 }
@@ -108,6 +132,7 @@ impl Sessions {
         agent_tx: mpsc::UnboundedSender<AgentMsg>,
         resume: HashMap<String, StoredSession>,
     ) -> Self {
+        let start_slots = cfg.agents.start_slots().scope();
         Self {
             cfg,
             host: Some(host),
@@ -118,6 +143,7 @@ impl Sessions {
             starting: HashMap::new(),
             resume,
             spawning: JoinSet::new(),
+            start_slots,
             stopping: JoinSet::new(),
         }
     }
@@ -199,10 +225,22 @@ impl Sessions {
         self.failed_text(key, e.to_string());
     }
 
+    /// Reports that the start of `key` is given up.
     pub(super) fn failed_text(&self, key: &str, error: String) {
+        self.emit_failed(key, error, false);
+    }
+
+    /// Reports a failed start of `key` that another one follows (the session is
+    /// still starting; see [`ApiEventBody::SessionFailed`]).
+    pub(super) fn failed_retrying(&self, key: &str, error: String) {
+        self.emit_failed(key, error, true);
+    }
+
+    fn emit_failed(&self, key: &str, error: String, retrying: bool) {
         self.emit.send(ApiEventBody::SessionFailed {
             session: key.to_string(),
             error,
+            retrying,
         });
     }
 
@@ -243,6 +281,7 @@ impl Sessions {
             agent: Some(starting.agent.agent.clone()),
             replaced: starting.agent.replaced.clone(),
             cwd: Some(starting.cwd.display().to_string()),
+            lost_acp_session_id: starting.lost_session(handle.info().resumed),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {
@@ -268,8 +307,8 @@ impl Sessions {
     ) -> Option<(SessionBinding, String)> {
         self.revoke(token);
         match starting {
-            Some(st) if st.resuming => {
-                self.retry_fresh(binding, st, &e.to_string());
+            Some(st) if st.resume.is_some() => {
+                self.restore_failed(binding, st, &e.to_string());
                 None
             }
             other => {
@@ -419,9 +458,19 @@ impl Sessions {
         let mut suspended: HashSet<String> = self.starting.keys().cloned().collect();
         suspended.extend(self.live.keys().cloned());
         self.starting.clear();
+        self.start_slots.close();
         while let Some(res) = self.spawning.join_next().await {
-            if let Ok(spawned) = res {
-                self.on_spawned(spawned);
+            match res {
+                // A start that was still waiting for a slot never began.
+                Ok(Spawned {
+                    token,
+                    result: Err(AgentError::Closed),
+                    ..
+                }) => self.revoke(&token),
+                Ok(spawned) => {
+                    self.on_spawned(spawned);
+                }
+                Err(_) => {}
             }
         }
         let keys: Vec<String> = self.live.keys().cloned().collect();
@@ -440,5 +489,107 @@ impl Sessions {
         if let Some(host) = self.host.take() {
             host.shutdown().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+
+    use super::*;
+    use crate::acp::HarnessConfig;
+    use crate::agents::{AgentCatalog, MAX_CONCURRENT_STARTS};
+    use crate::domain::DomainConfig;
+    use crate::git::NoopGit;
+    use crate::mcp::TokenRegistry;
+    use crate::runtime::port::LoopPort;
+
+    async fn sessions(agents: &Arc<AgentCatalog>, project: &str) -> Sessions {
+        let cfg = Arc::new(OrchestrationConfig {
+            project: project.into(),
+            project_dir: PathBuf::from("/tmp"),
+            agents: agents.clone(),
+            mcp_bind: "127.0.0.1:0".parse().expect("addr"),
+            domain: DomainConfig::default(),
+            git: Arc::new(NoopGit::new("/tmp", None)),
+            db_path: PathBuf::from("/tmp/unused.sqlite3"),
+        });
+        let (port, _tools) = LoopPort::new();
+        let host = McpHost::start(
+            "127.0.0.1:0".parse().expect("addr"),
+            TokenRegistry::new(),
+            Arc::new(port),
+            None,
+        )
+        .await
+        .expect("mcp host");
+        let (agent_tx, _agents_rx) = mpsc::unbounded_channel();
+        Sessions::new(cfg, host, Emitter::default(), agent_tx, HashMap::new())
+    }
+
+    fn catalog() -> Arc<AgentCatalog> {
+        let h = HarnessConfig::plain("unused", vec![]);
+        Arc::new(AgentCatalog::fixed(h.clone(), h.clone(), h))
+    }
+
+    #[tokio::test]
+    async fn projects_of_one_catalog_share_the_limit_on_concurrent_starts() {
+        let agents = catalog();
+        let (a, b) = (sessions(&agents, "a").await, sessions(&agents, "b").await);
+
+        // `a` fills every permit with starts that do not finish ...
+        let (release, held) = tokio::sync::watch::channel(false);
+        let mut holders = Vec::new();
+        for _ in 0..MAX_CONCURRENT_STARTS {
+            let (scope, mut held) = (a.start_slots.clone(), held.clone());
+            holders.push(tokio::spawn(async move {
+                scope
+                    .run(async move { held.wait_for(|r| *r).await.is_ok() })
+                    .await
+            }));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // ... so a start of `b` waits instead of getting a permit of its own.
+        let other = {
+            let scope = b.start_slots.clone();
+            tokio::spawn(async move { scope.run(async { "started" }).await })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!other.is_finished(), "b's start waits for a's");
+
+        release.send(true).expect("holders are waiting");
+        for holder in holders {
+            assert!(holder.await.expect("joined").is_some());
+        }
+        assert_eq!(other.await.expect("joined"), Some("started"));
+    }
+
+    #[tokio::test]
+    async fn shutting_one_project_down_does_not_close_the_starts_of_another() {
+        let agents = catalog();
+        let (mut a, b) = (sessions(&agents, "a").await, sessions(&agents, "b").await);
+        let a_scope = a.start_slots.clone();
+        a.shutdown().await;
+
+        assert_eq!(a_scope.run(async { 1 }).await, None, "a is closed");
+        assert_eq!(b.start_slots.run(async { 2 }).await, Some(2), "b is not");
+    }
+
+    #[tokio::test]
+    async fn catalogs_do_not_share_permits() {
+        let (one, two) = (catalog(), catalog());
+        let (a, b) = (sessions(&one, "a").await, sessions(&two, "b").await);
+        let (release, held) = oneshot::channel::<()>();
+        let holder = {
+            let scope = a.start_slots.clone();
+            tokio::spawn(async move { scope.run(async { held.await.ok() }).await })
+        };
+        // One permit of `a`'s catalog is taken; `b` has all of its own.
+        assert_eq!(b.start_slots.run(async { 3 }).await, Some(3));
+        release.send(()).expect("holder is waiting");
+        assert!(holder.await.expect("joined").is_some());
     }
 }

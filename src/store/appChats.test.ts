@@ -84,6 +84,81 @@ describe("chat selection", () => {
   });
 });
 
+describe("opening a chat brings its orchestrator back", () => {
+  const sessionStarted = (seq: number, chat: string) =>
+    ev(seq, {
+      type: "session_started",
+      session: orchestratorKey(chat),
+      role: "orchestrator",
+      task: null,
+      pid: 1,
+      acp_session_id: "acp-1",
+      resumed: true,
+      agent: null,
+    });
+
+  it("asks the core to open the chat that is shown when the project loads", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(transport.callsOf("open_chat")).toHaveLength(1));
+    expect(transport.callsOf("open_chat")[0]).toEqual({ type: "open_chat", project: "repo", chat: "C-2" });
+  });
+
+  it("asks again for each chat that is selected, but not for the one already shown", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(transport.callsOf("open_chat")).toHaveLength(1));
+    s.selectChat("C-2");
+    s.selectChat("C-1");
+    await vi.waitFor(() => expect(transport.callsOf("open_chat")).toHaveLength(2));
+    expect(transport.callsOf("open_chat")[1]).toEqual({ type: "open_chat", project: "repo", chat: "C-1" });
+    // An unknown chat is not selected, so nothing is asked.
+    s.selectChat("C-9");
+    expect(transport.callsOf("open_chat")).toHaveLength(2);
+  });
+
+  it("shows the chat as starting until its session is up", async () => {
+    core.starting.add("C-1");
+    const s = newStore();
+    await open(s);
+    s.selectChat("C-1");
+    await vi.waitFor(() => expect(view(s).resuming).toEqual({ "C-1": true }));
+    transport.emit(sessionStarted(5, "C-1"));
+    expect(view(s).resuming).toEqual({});
+    expect(view(s).sessions.find((x) => x.session_key === orchestratorKey("C-1"))?.status).toBe("live");
+  });
+
+  it("stops showing the chat as starting when its start fails for good, not when a retry follows", async () => {
+    core.starting.add("C-1");
+    const s = newStore();
+    await open(s);
+    s.selectChat("C-1");
+    await vi.waitFor(() => expect(view(s).resuming).toEqual({ "C-1": true }));
+    const failed = (seq: number, retrying: boolean) =>
+      ev(seq, { type: "session_failed", session: orchestratorKey("C-1"), error: "boom", retrying });
+    transport.emit(failed(5, true));
+    expect(view(s).resuming).toEqual({ "C-1": true });
+    transport.emit(failed(6, false));
+    expect(view(s).resuming).toEqual({});
+  });
+
+  it("is not starting when the core has nothing to start", async () => {
+    const s = newStore();
+    await open(s);
+    s.selectChat("C-1");
+    await vi.waitFor(() => expect(transport.callsOf("open_chat")).toHaveLength(2));
+    expect(view(s).resuming).toEqual({});
+  });
+
+  it("shows an error when the core refuses to open the chat", async () => {
+    core.failures.set("open_chat", new CommandError("not_found", "no chat C-2"));
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().errors.map((e) => e.message)).toEqual(["open_chat failed: no chat C-2"]));
+    expect(view(s).resuming).toEqual({});
+  });
+});
+
 describe("transcripts per chat", () => {
   it("keeps each chat's conversation under its own orchestrator session", async () => {
     const s = newStore();
@@ -130,7 +205,7 @@ describe("commands", () => {
     s.selectChat("C-1");
     expect(await s.sendMessage("two")).toBe(true);
     await s.cancelTurn();
-    expect(transport.calls.slice(-3)).toEqual([
+    expect(transport.calls.filter((c) => c.type !== "open_chat").slice(-3)).toEqual([
       { type: "send_user_message", project: "repo", chat: "C-2", text: "one" },
       { type: "send_user_message", project: "repo", chat: "C-1", text: "two" },
       { type: "cancel_orchestrator_turn", project: "repo", chat: "C-1" },
@@ -233,6 +308,28 @@ describe("renaming and deleting chats", () => {
     expect(view(s).chats.map((c) => c.id)).toEqual(["C-1"]);
     expect(view(s).state?.groups.map((g) => g.id)).toEqual(["G-1"]);
     expect(view(s).transcripts[orchestratorKey("C-2")]).toBeUndefined();
+  });
+
+  it("forgets a deleted chat's draft, and keeps it when the core refuses", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set("repo", "C-2", "typed");
+    s.drafts.set("repo", "C-1", "other");
+    core.failures.set("delete_chat", new CommandError("invalid_state", "chat C-2 still has group G-2"));
+    await expect(s.deleteChat("C-2")).rejects.toMatchObject({ code: "invalid_state" });
+    expect(s.drafts.get("repo", "C-2")).toBe("typed");
+    core.failures.delete("delete_chat");
+    await s.deleteChat("C-2");
+    expect(s.drafts.get("repo", "C-2")).toBe("");
+    expect(s.drafts.get("repo", "C-1")).toBe("other");
+  });
+
+  it("keeps drafts when the project is opened again", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set("repo", "C-1", "typed");
+    await open(s);
+    expect(s.drafts.get("repo", "C-1")).toBe("typed");
   });
 
   it("keeps the chat and rejects with the refusal when the core will not delete it", async () => {

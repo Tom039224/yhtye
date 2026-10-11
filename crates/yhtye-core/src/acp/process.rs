@@ -1,5 +1,7 @@
 //! Agent subprocess management: launch in its own process group, forward stderr,
 //! and terminate the whole group so wrapper launchers (`npx` → `node`) leave no orphans.
+//! If Yhtye itself dies first, `parent_death` ends the group and `orphan` sweeps
+//! what is left at the next start.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -13,6 +15,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::config::HarnessConfig;
 use super::events::{AgentError, AgentEvent};
+use super::orphan::{self, Registration};
+use super::parent_death::{self, Watchdog};
 use crate::secrets::SecretEnv;
 
 /// Number of stderr lines kept for error messages.
@@ -67,26 +71,40 @@ impl StderrTail {
 }
 
 /// Kills the agent's process group (SIGKILL) when dropped, unless it already exited
-/// and was cleaned up via [`terminate`].
+/// and was cleaned up via [`terminate`]. While it lives, the group is also recorded
+/// on disk and watched, so a Yhtye that dies without dropping it leaves no orphan
+/// (`parent_death`, `orphan`).
 pub(crate) struct GroupKillGuard {
     pgid: Option<rustix::process::Pid>,
+    /// The on-disk record the next start sweeps by; removed with the guard.
+    registration: Option<Registration>,
+    /// Kills the group if Yhtye dies; stood down with the guard.
+    watchdog: Option<Watchdog>,
 }
 
 impl GroupKillGuard {
+    fn new(pgid: Option<rustix::process::Pid>, command: &str) -> Self {
+        Self {
+            pgid,
+            registration: pgid.and_then(|pgid| orphan::register(pgid, command)),
+            watchdog: pgid.and_then(Watchdog::start),
+        }
+    }
+
     fn signal(&self, signal: rustix::process::Signal) {
         if let Some(pgid) = self.pgid {
             // ESRCH just means the group is already gone.
             let _ = rustix::process::kill_process_group(pgid, signal);
         }
     }
-}
 
-impl GroupKillGuard {
     /// Kills whatever is left of the group (a launcher may exit while descendants
     /// keep running) and stops tracking it.
     fn disarm(&mut self) {
         self.signal(rustix::process::Signal::KILL);
         self.pgid = None;
+        self.registration = None;
+        self.watchdog = None;
     }
 }
 
@@ -142,6 +160,7 @@ pub(crate) fn spawn_process(
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
+    parent_death::arm_child(&mut cmd);
     let spawn_error = |message: String| AgentError::Spawn {
         command: harness.command.clone(),
         message,
@@ -153,12 +172,11 @@ pub(crate) fn spawn_process(
             cwd.display()
         ))
     })?;
-    let group = GroupKillGuard {
-        pgid: child
-            .id()
-            .and_then(|id| i32::try_from(id).ok())
-            .and_then(rustix::process::Pid::from_raw),
-    };
+    let pgid = child
+        .id()
+        .and_then(|id| i32::try_from(id).ok())
+        .and_then(rustix::process::Pid::from_raw);
+    let group = GroupKillGuard::new(pgid, &harness.command);
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import type { ProjectView } from "../store/project";
-import { BottomPanel, outputTask, useBottomTab } from "./BottomPanel";
+import { BottomPanel } from "./BottomPanel";
+import { useBottomTabs } from "./bottomTabs";
 import { Conversation } from "./Conversation";
 import { bottomBounds, rightBounds } from "./layout";
 import { addMention, type Mention, removeMention } from "./mentions";
@@ -17,19 +18,17 @@ const BOTTOM_HEIGHT = "--bottom-height";
  * The boundaries can be dragged; the sizes are kept (see layout.ts).
  */
 export function Workspace({ view }: { view: ProjectView }) {
-  const [selectedTask, setSelectedTask] = useState<string | null>(null);
   // Mentions belong to the chat whose composer they are in.
   const [mentionsByChat, setMentionsByChat] = useState<Record<string, Mention[]>>({});
   const chat = view.selectedChat ?? "";
   const mentions = mentionsByChat[chat] ?? [];
   const setMentions = (f: (m: Mention[]) => Mention[]) => setMentionsByChat((all) => ({ ...all, [chat]: f(all[chat] ?? []) }));
-  // A selected task belongs to the previous chat's column.
-  useEffect(() => setSelectedTask(null), [chat]);
 
   const { sizes, setSize } = useLayoutSizes();
-  const [tab, setTab] = useBottomTab(selectedTask);
+  // The open task tabs belong to the chat's column: they start over with another chat.
+  const { tabs, open, show, close } = useBottomTabs(chat);
   // The git panel and the agent output are sized separately: the output wants more room.
-  const bottomKey = outputTask(tab, selectedTask) === null ? "git" : "output";
+  const bottomKey = tabs.active === null ? "git" : "output";
   const workspace = useRef<HTMLDivElement>(null);
   const right = useRef<HTMLDivElement>(null);
   const bottom = () => right.current?.querySelector<HTMLElement>(":scope > .bottom") ?? null;
@@ -53,8 +52,8 @@ export function Workspace({ view }: { view: ProjectView }) {
       <div className="right" ref={right}>
         <TaskColumn
           view={view}
-          selectedTask={selectedTask}
-          onSelectTask={setSelectedTask}
+          selectedTask={tabs.active}
+          onSelectTask={open}
           onMention={(m) => setMentions((list) => addMention(list, m))}
         />
         <Resizer
@@ -66,13 +65,7 @@ export function Workspace({ view }: { view: ProjectView }) {
           onResize={(px) => setSizeVar(workspace.current, BOTTOM_HEIGHT, px)}
           onCommit={(px) => setSize(bottomKey, px)}
         />
-        <BottomPanel
-          view={view}
-          selectedTask={selectedTask}
-          tab={tab}
-          onTab={setTab}
-          onCloseTask={() => setSelectedTask(null)}
-        />
+        <BottomPanel view={view} tabs={tabs} onShow={show} onClose={close} />
       </div>
     </div>
   );

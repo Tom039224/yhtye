@@ -7,8 +7,9 @@ import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
 import { type CompactState, ContextBar } from "./ContextBar";
 import { EmptyState } from "./EmptyState";
-import { Icon, IconButton } from "./Icon";
+import { Icon } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
+import { OlderHistory } from "./OlderHistory";
 import { type Place, placeLabel, placeOf } from "./branchTree";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
@@ -40,6 +41,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const scoped = useMemo(() => (view.state ? scopeState(view.state, chat?.id ?? null) : null), [view.state, chat?.id]);
   const queued = useMemo(() => new Set((scoped?.inbox ?? []).map((e) => e.id)), [scoped]);
   const session = orchestratorSession(view, chat?.id ?? null);
+  const resuming = chat ? Boolean(view.resuming[chat.id]) : false;
   const overview = useAppState((s) => (s.git?.project === view.info.id ? s.git.overview : null));
   const place = chatPlace(overview, chat);
   const placeText = placeLabel(place);
@@ -88,7 +90,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
           </span>
         ) : null}
         <span className="spacer" />
-        <SessionBadge status={session?.status} running={session?.turn_running ?? false} />
+        <SessionBadge status={session?.status} running={session?.turn_running ?? false} starting={resuming} />
       </header>
       <div className="scroll" ref={scroller}>
         {!chat ? (
@@ -100,7 +102,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             agentLabel="orchestrator"
             queued={queued}
             state={view.state}
-            before={<OlderHistory view={view} />}
+            before={<OlderHistory view={view} scroller={scroller} />}
           />
         ) : (
           <EmptyState icon="message" text="会話はまだありません" />
@@ -108,12 +110,16 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
       </div>
       {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
-        key={chat?.id ?? "none"}
+        key={chat ? `${view.info.id}/${chat.id}` : "none"}
+        initialText={chat ? store.drafts.get(view.info.id, chat.id) : ""}
+        onTextChange={(text) => {
+          if (chat) store.drafts.set(view.info.id, chat.id, text);
+        }}
         disabled={disabledReason !== null}
         disabledReason={chat ? disabledReason : null}
         sending={sending}
         turnRunning={session?.turn_running ?? false}
-        starting={queued.size > 0 && session?.status !== "live"}
+        starting={resuming || (queued.size > 0 && session?.status !== "live")}
         mentions={mentions}
         onRemoveMention={onRemoveMention}
         onSend={send}
@@ -139,23 +145,6 @@ export function compactState(o: {
   if (o.status !== "live") return { kind: "disabled", reason: "オーケストレータが起動していないため圧縮できません" };
   if (o.turnRunning) return { kind: "disabled", reason: "作業中は圧縮できません (ターン終了後に押せます)" };
   return { kind: "ready" };
-}
-
-/** "Load older history" while the start of the log is not loaded (lazy history). */
-export function OlderHistory({ view }: { view: ProjectView }) {
-  const store = useStore();
-  if (view.historyStart <= 1) return null;
-  const loading = view.loadingOlder;
-  return (
-    <IconButton
-      icon={loading ? "loader" : "chevrons-up"}
-      spin={loading}
-      className="load-older"
-      label={loading ? "読み込み中…" : `さらに前の履歴を読み込む (#${view.historyStart - 1} まで)`}
-      disabled={loading || view.phase !== "ready"}
-      onClick={() => void store.loadOlderHistory()}
-    />
-  );
 }
 
 /**
@@ -197,14 +186,32 @@ function WaitBanner({ state }: { state: State }) {
 
 /**
  * The orchestrator's state, by shape as well as colour: a hollow ring not
- * started, a filled green dot idle, a blue dot with a halo working, and the
- * alert icon when the session needs attention. The words are the tooltip.
+ * running (never started, or suspended until the chat is opened or gets
+ * something), a spinner while it starts, a filled green dot idle, a blue dot
+ * with a halo working, and the alert icon when the session needs attention.
+ * The words are the tooltip.
  */
-function SessionBadge({ status, running }: { status: string | undefined; running: boolean }) {
-  const label = !status ? "not started" : status === "live" ? (running ? "working" : "idle") : status;
+function SessionBadge({ status, running, starting }: { status: string | undefined; running: boolean; starting: boolean }) {
+  const label = starting
+    ? "starting"
+    : !status
+      ? "not started"
+      : status === "live"
+        ? running
+          ? "working"
+          : "idle"
+        : status;
   const title = `オーケストレータ: ${label}`;
   const words = <span className="sr-only">{label}</span>;
-  if (status && status !== "live") {
+  if (starting) {
+    return (
+      <span className="status-icon" title={title} data-testid="orchestrator-status">
+        <Icon name="loader" size={14} spin />
+        {words}
+      </span>
+    );
+  }
+  if (status && status !== "live" && !PAUSED.has(status)) {
     return (
       <span className="status-icon status-icon-bad" title={title} data-testid="orchestrator-status">
         <Icon name="alert" size={14} />
@@ -212,10 +219,17 @@ function SessionBadge({ status, running }: { status: string | undefined; running
       </span>
     );
   }
-  const tone = !status ? "" : running ? " status-dot-working" : " status-dot-idle";
+  const tone = !status || PAUSED.has(status) ? "" : running ? " status-dot-working" : " status-dot-idle";
   return (
     <span className={`status-dot${tone}`} title={title} data-testid="orchestrator-status">
       {words}
     </span>
   );
 }
+
+/**
+ * Sessions that are not running because Yhtye was restarted: the orchestrator is
+ * brought back when the chat is opened or has something to receive, so this is
+ * not a problem to flag.
+ */
+const PAUSED: ReadonlySet<string> = new Set(["suspended", "interrupted"]);

@@ -37,6 +37,9 @@
   --accent-hover: #e8b884;
   --accent-strong: #e0a45c;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* The user's own message: a bubble tinted with the accent, on the chat surface. */
+  --user-bubble-bg: color-mix(in srgb, var(--accent) 11%, var(--surface-chat));
+  --user-bubble-border: color-mix(in srgb, var(--accent) 26%, var(--surface-chat));
 
   /* Status: fixed hue, lightness/chroma varied (tokens.md "ステータス"). */
   --status-implementing-fg: oklch(0.86 0.07 250);

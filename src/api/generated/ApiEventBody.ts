@@ -23,7 +23,19 @@ replaced?: AgentChoice,
 /**
  * The directory it was started in (Stage 8; absent in older logs).
  */
-cwd?: string, } | { "type": "session_failed", session: string, error: string, } | { "type": "session_stopped", session: string, 
+cwd?: string, 
+/**
+ * The ACP session this start meant to restore but could not (it is a
+ * new session instead); kept so the old one can be restored later.
+ */
+lost_acp_session_id?: string, } | { "type": "session_failed", session: string, error: string, 
+/**
+ * Another start of this session follows (a failed restore is tried
+ * again, or replaced by a new session), so it is still starting. False:
+ * the start is given up and nothing follows. Older logs lack it (the
+ * two were not told apart); read it as false.
+ */
+retrying: boolean, } | { "type": "session_stopped", session: string, 
 /**
  * Stopped because Yhtye shut down; it is restored on the next start.
  */
