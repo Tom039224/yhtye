@@ -15,6 +15,7 @@ use crate::agents::{
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
+use crate::remote::{PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
@@ -245,6 +246,48 @@ pub enum ApiCommand {
     DeleteSecretEnv {
         name: String,
     },
+    /// Remote access (`core-design.md` §18): its settings, whether it is
+    /// listening and where, and why not. Local only (like every `*remote*` /
+    /// pairing command; see [`ApiCommand::is_local_only`]).
+    GetRemoteStatus,
+    /// Turns remote access on or off and sets its port (`port` absent: keep
+    /// it; default 1423). Stored, and applied at once: starts, restarts or stops
+    /// the server. Turning it on when it failed to start tries again. A failure
+    /// to start (Tailscale missing or stopped, the port taken) is not an error
+    /// of the command: it is the status's `error`. `invalid_argument` for port 0.
+    SetRemoteSettings {
+        enabled: bool,
+        #[serde(default)]
+        #[ts(optional)]
+        port: Option<u16>,
+    },
+    /// Issues a pairing code (valid for 5 minutes, once; the previous code stops
+    /// working) and the QR code's URI. `invalid_state` unless the server is running.
+    CreatePairingCode,
+    /// The paired devices, oldest first.
+    ListRemoteDevices,
+    /// Forgets a paired device and closes its connections at once; its token
+    /// stops working. `not_found` for an unknown device.
+    RevokeRemoteDevice {
+        device: String,
+    },
+}
+
+impl ApiCommand {
+    /// Commands that only the PC itself may run: a paired remote device may
+    /// not change remote access, issue pairing codes or manage devices (it
+    /// could otherwise add devices or keep itself from being revoked).
+    #[must_use]
+    pub fn is_local_only(&self) -> bool {
+        matches!(
+            self,
+            Self::GetRemoteStatus
+                | Self::SetRemoteSettings { .. }
+                | Self::CreatePairingCode
+                | Self::ListRemoteDevices
+                | Self::RevokeRemoteDevice { .. }
+        )
+    }
 }
 
 /// Everything the settings panel shows (`core-design.md` §15.7).
@@ -362,6 +405,18 @@ pub enum ApiResponse {
     /// core does not detect harnesses (tests).
     Harnesses {
         harnesses: Vec<HarnessDetection>,
+    },
+    /// Answer of `get_remote_status` and `set_remote_settings`.
+    RemoteStatus {
+        status: RemoteStatus,
+    },
+    /// Answer of `create_pairing_code`.
+    PairingCode {
+        pairing: PairingCode,
+    },
+    /// Answer of `list_remote_devices` and `revoke_remote_device`.
+    RemoteDevices {
+        devices: Vec<RemoteDevice>,
     },
 }
 

@@ -1,6 +1,7 @@
 //! The Tauri shell (`core-design.md` §9): starts the [`Core`] with the
 //! production configuration, forwards `yhtye_command` to it, emits every core
-//! event as `yhtye://event`, and shuts every agent down when the app exits.
+//! event as `yhtye://event`, starts remote access if it is on, and shuts every
+//! agent down (and remote access) when the app exits.
 
 mod legacy_data;
 mod webkit_env;
@@ -116,6 +117,12 @@ pub fn run() {
             let resume = core.clone();
             tauri::async_runtime::spawn(async move {
                 resume.resume_unfinished().await;
+            });
+            // Remote access (Android client), if the settings turn it on; it
+            // stops with `Core::shutdown` on exit.
+            let remote = core.clone();
+            tauri::async_runtime::spawn(async move {
+                remote.start_remote().await;
             });
             app.manage(core);
             exit_on_signal(handle);

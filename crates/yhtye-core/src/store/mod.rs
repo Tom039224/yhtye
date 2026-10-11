@@ -15,6 +15,7 @@ mod chats;
 mod codec;
 mod events;
 mod projection;
+mod remote;
 mod sessions;
 mod settings;
 
@@ -32,6 +33,7 @@ use crate::domain::{DomainConfig, State};
 
 pub use chats::ChatInfo;
 pub use events::StoredEvent;
+pub use remote::DeviceRecord;
 pub use sessions::{SessionRecord, SessionStatus};
 pub use settings::StoredAgentSettings;
 
@@ -249,6 +251,49 @@ impl Store {
         now_ms: u64,
     ) -> Result<(), StoreError> {
         settings::set_harness_path(&self.pool, harness, path, now_ms).await
+    }
+
+    /// Every paired remote device, oldest first.
+    pub async fn remote_devices(&self) -> Result<Vec<DeviceRecord>, StoreError> {
+        remote::devices(&self.pool).await
+    }
+
+    pub async fn add_remote_device(&self, device: &DeviceRecord) -> Result<(), StoreError> {
+        remote::add_device(&self.pool, device).await
+    }
+
+    /// Removes a paired device; whether it existed.
+    pub async fn remove_remote_device(&self, id: &str) -> Result<bool, StoreError> {
+        remote::remove_device(&self.pool, id).await
+    }
+
+    /// Records that a device connected at `now_ms`.
+    pub async fn touch_remote_device(&self, id: &str, now_ms: u64) -> Result<(), StoreError> {
+        remote::touch_device(&self.pool, id, now_ms).await
+    }
+
+    /// An app-wide setting (JSON text), if set.
+    pub async fn app_setting(&self, key: &str) -> Result<Option<String>, StoreError> {
+        remote::app_setting(&self.pool, key).await
+    }
+
+    pub async fn set_app_setting(
+        &self,
+        key: &str,
+        value: &str,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        remote::set_app_setting(&self.pool, key, value, now_ms).await
+    }
+
+    /// An app-wide setting, storing `value` first if it is not set.
+    pub async fn app_setting_or_insert(
+        &self,
+        key: &str,
+        value: &str,
+        now_ms: u64,
+    ) -> Result<String, StoreError> {
+        remote::app_setting_or_insert(&self.pool, key, value, now_ms).await
     }
 }
 
