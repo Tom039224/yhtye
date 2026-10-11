@@ -12,14 +12,16 @@ mod openrouter;
 mod settings;
 
 pub use catalog::{
-    AgentCatalog, CLAUDE_CODE, CODEX, DEFAULT_RESUME_RETRIES, DEFAULT_RESUME_RETRY_DELAY, DEVIN,
-    HarnessInfo, HarnessPreset, MINIMAX_CODE, MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE,
-    OPENCODE, Resolved, ResumeRetry,
+    ANTIGRAVITY, AgentCatalog, CLAUDE_CODE, CODEX, DEFAULT_RESUME_RETRIES,
+    DEFAULT_RESUME_RETRY_DELAY, DEVIN, GROK_BUILD, HarnessInfo, HarnessPreset, MINIMAX_CODE,
+    MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved, ResumeRetry,
 };
 pub use codex_config::{codex_home, configured_provider, model_provider};
 pub use detect::{
-    CODEX_COMMAND, DEVIN_COMMAND, HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec,
-    KNOWN_DIRS, MINIMAX_CODE_COMMAND, MINIMAX_CODE_INSTALL_DIR, MINIMAX_CODE_ROOT_ENV, NPX_COMMAND,
+    ANTIGRAVITY_COMMAND, ANTIGRAVITY_COMMAND_ALIAS, ANTIGRAVITY_INSTALL_DIRS, ANTIGRAVITY_ROOT_ENV,
+    CODEX_COMMAND, DEVIN_COMMAND, GROK_BUILD_COMMAND, GROK_BUILD_INSTALL_DIR, GROK_BUILD_ROOT_ENV,
+    HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec, KNOWN_DIRS,
+    MINIMAX_CODE_COMMAND, MINIMAX_CODE_INSTALL_DIR, MINIMAX_CODE_ROOT_ENV, NPX_COMMAND,
     OPENCODE_COMMAND, PathSource, check_executable_path, detect_harnesses, find_command,
     find_in_path, harness_spec, known_dirs,
 };

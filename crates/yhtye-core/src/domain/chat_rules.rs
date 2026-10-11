@@ -20,6 +20,10 @@ pub const MAX_RENAMED_TITLE_CHARS: usize = 80;
 /// Prefix of Yhtye's internal branches (`yhtye/<groupId>`); a chat cannot work on one.
 pub const INTERNAL_BRANCH_PREFIX: &str = "yhtye/";
 
+/// What the user's "compact" button sends to a chat's orchestrator, as the
+/// whole prompt (a slash command is recognised only at the start of one).
+pub const COMPACT_PROMPT: &str = "/compact";
+
 /// Prefix of the session key of a chat's orchestrator (`orchestrator:<chatId>`).
 const ORCHESTRATOR_SESSION_PREFIX: &str = "orchestrator:";
 

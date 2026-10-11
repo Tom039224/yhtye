@@ -9,6 +9,9 @@ import { chatOfUserCall, isOrchestratorKey, orchestratorKey } from "./chats";
 /** Session key of tool calls the user made through the UI (runtime::USER_SESSION). */
 export const USER = "user";
 
+/** What the "compact" button sends to an orchestrator as the whole prompt (domain::COMPACT_PROMPT). */
+export const COMPACT_PROMPT = "/compact";
+
 interface Base {
   seq: number;
   ts: number;
@@ -18,6 +21,8 @@ export type TranscriptItem =
   | (Base & { kind: "user"; inboxId: number; text: string })
   | (Base & { kind: "notice"; inboxId: number; inboxKind: InboxKind; attrs: [string, string][]; body: string })
   | (Base & { kind: "prompt"; text: string })
+  /** The user had the orchestrator compact its context (`/compact`). */
+  | (Base & { kind: "compact" })
   | (Base & { kind: "text"; textKind: TextKind; text: string })
   | (Base & {
       kind: "tool";
@@ -107,10 +112,10 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
           });
     }
     case "prompted":
-      // The orchestrator's prompts are its inbox batches, shown as user / notice items.
-      return isOrchestratorKey(body.session)
-        ? t
-        : push(t, body.session, { ...base, kind: "prompt", text: body.text });
+      // The orchestrator's prompts are its inbox batches, shown as user / notice
+      // items, or the user's `/compact` (sent as is, not through the inbox).
+      if (!isOrchestratorKey(body.session)) return push(t, body.session, { ...base, kind: "prompt", text: body.text });
+      return body.text === COMPACT_PROMPT ? push(t, body.session, { ...base, kind: "compact" }) : t;
     case "agent_text":
       return push(t, body.session, { ...base, kind: "text", textKind: body.kind, text: body.text });
     case "tool_called": {

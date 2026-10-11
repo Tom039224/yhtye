@@ -193,6 +193,13 @@ function Item({
           turn ended: {item.outcome}
         </div>
       );
+    case "compact":
+      return (
+        <div className="lifecycle mono dim" data-testid="compact-item">
+          <Icon name="minimize" size={12} />
+          コンテキストを圧縮しました (/compact)
+        </div>
+      );
     case "lifecycle":
       return (
         <div className={`lifecycle mono ${item.error ? "error-text" : "dim"}`}>

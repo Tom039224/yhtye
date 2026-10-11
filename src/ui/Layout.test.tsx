@@ -330,7 +330,8 @@ describe("lazy history", () => {
     const view = () => store.getState().project;
     await act(async () => {});
     expect(view()?.historyStart).toBe(LAST - 9);
-    expect(screen.getByRole("status")).toHaveTextContent("読み込み中…");
+    // Scoped: the context bar under the composer is a status too.
+    expect(within(document.querySelector<HTMLElement>(".older-history")!).getByRole("status")).toHaveTextContent("読み込み中…");
 
     core.failures.set("list_events", new CommandError("transport", "bridge restarted"));
     io.visible = true;
