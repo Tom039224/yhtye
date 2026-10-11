@@ -680,6 +680,37 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .harness-path { color: var(--text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .harness-note { font: 400 10.5px/1.4 var(--font-mono); color: var(--text-faint); white-space: nowrap; }
 
+/* Settings › リモート接続 (RemoteSettingsSection). */
+.text-button {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border-card); border-radius: 5px;
+  background: var(--surface-chip-dim); font: 500 11.5px/1.5 var(--font-mono); color: var(--text-body); white-space: nowrap;
+}
+.text-button:hover:not(:disabled) { border-color: var(--border-hover); background: var(--surface-hover-strong); }
+.text-button:disabled { opacity: 0.5; }
+.remote-block {
+  display: flex; flex-direction: column; gap: 12px; padding: 12px 14px;
+  border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-inset);
+}
+.remote-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.remote-switch { display: inline-flex; align-items: center; gap: 8px; font: 600 13px/1.4 var(--font-text); color: var(--text-primary); cursor: pointer; }
+.remote-switch input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+.remote-port { display: flex; align-items: center; gap: 6px; }
+.remote-port .agent-search { width: 84px; }
+.remote-port .agent-search[aria-invalid="true"] { border-color: var(--status-handling-bar); }
+.remote-error { align-items: center; flex-wrap: wrap; }
+.remote-error > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.remote-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font: 400 11.5px/1.6 var(--font-mono); }
+.remote-facts dt { color: var(--text-faint); }
+.remote-facts dd { margin: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; color: var(--text-body); overflow-wrap: anywhere; }
+.remote-pairing { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
+.qr-code { flex: none; border-radius: 6px; }
+.remote-manual { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 220px; }
+.remote-code { font: 600 20px/1.3 var(--font-mono); letter-spacing: 0.08em; color: var(--text-primary); }
+.remote-devices { display: flex; flex-direction: column; gap: 8px; }
+.remote-heading { margin: 4px 0 0; font: 600 12px/1.4 var(--font-text); color: var(--text-muted); }
+.remote-device { flex-wrap: wrap; }
+.remote-device .secret-name { overflow-wrap: anywhere; min-width: 0; }
+
 /* ---- branches tree (Stage 8) ---------------------------------------------- */
 
 .section-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 8px 4px 14px; }

@@ -14,13 +14,17 @@ import type {
   AgentSettingsView,
   ApiCommand,
   ApiEvent,
+  ApiEventBody,
   ApiResponse,
   ChatInfo,
   GitOverview,
   HarnessDetection,
   HarnessModels,
   ModelEfforts,
+  PairingCode,
   ProjectInfo,
+  RemoteDevice,
+  RemoteStatus,
   RoleSettings,
   UsageReport,
 } from "../api/generated";
@@ -112,6 +116,9 @@ export interface AppState {
   usage: UsageView;
   host: HostView;
 }
+
+/** The remote access events: the server's status, and the paired devices. */
+export type RemoteEventBody = Extract<ApiEventBody, { type: "remote_status_changed" | "remote_devices_changed" }>;
 
 type Expect<T extends ApiResponse["type"]> = Extract<ApiResponse, { type: T }>;
 
@@ -694,6 +701,42 @@ export class AppStore {
 
   async deleteSecretEnv(name: string): Promise<string[]> {
     return (await this.invoke({ type: "delete_secret_env", name }, "secret_env")).names;
+  }
+
+  // ---- remote access (core-design.md §18) ----------------------------------
+  // Local-only commands for the settings' "リモート接続" section. Failures
+  // reject for the section to show; a server that fails to start is not a
+  // failure but the status's `error`.
+
+  async getRemoteStatus(): Promise<RemoteStatus> {
+    return (await this.invoke({ type: "get_remote_status" }, "remote_status")).status;
+  }
+
+  /** Turns remote access on or off (`port`: also change it). Enabling it again retries a failed start. */
+  async setRemoteSettings(enabled: boolean, port?: number): Promise<RemoteStatus> {
+    const cmd: ApiCommand = port === undefined ? { type: "set_remote_settings", enabled } : { type: "set_remote_settings", enabled, port };
+    return (await this.invoke(cmd, "remote_status")).status;
+  }
+
+  /** A new pairing code (the previous one stops working). Only while the server runs. */
+  async createPairingCode(): Promise<PairingCode> {
+    return (await this.invoke({ type: "create_pairing_code" }, "pairing_code")).pairing;
+  }
+
+  async listRemoteDevices(): Promise<RemoteDevice[]> {
+    return (await this.invoke({ type: "list_remote_devices" }, "remote_devices")).devices;
+  }
+
+  /** Forgets a paired device; its connections are closed at once. */
+  async revokeRemoteDevice(device: string): Promise<RemoteDevice[]> {
+    return (await this.invoke({ type: "revoke_remote_device", device }, "remote_devices")).devices;
+  }
+
+  /** Receives the app-wide remote access events (they belong to no project). */
+  onRemoteEvent(handler: (body: RemoteEventBody) => void): () => void {
+    return this.transport.subscribe((ev) => {
+      if (ev.body.type === "remote_status_changed" || ev.body.type === "remote_devices_changed") handler(ev.body);
+    });
   }
 
   // ---- helpers --------------------------------------------------------------

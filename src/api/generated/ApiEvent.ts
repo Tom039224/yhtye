@@ -15,6 +15,9 @@ import type { ApiEventBody } from "./ApiEventBody";
  * `seq > snapshot.seq`; on a gap between durable events, fetch the missing ones
  * with [`ApiCommand::ListEvents`] (or take a new snapshot). Live events are for
  * display only and never folded into state.
+ *
+ * App-wide events ([`ApiEventBody::is_local_only`]: remote access) have an
+ * empty `project`, `seq` 0 and are live.
  */
 export type ApiEvent = { seq: number, 
 /**

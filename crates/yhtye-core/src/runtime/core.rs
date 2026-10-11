@@ -32,6 +32,7 @@ use crate::api::{
 };
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
+use crate::remote::{RemoteService, Tailscale, TailscaleCli};
 use crate::secrets::{
     KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
     validate_secret_value,
@@ -76,6 +77,9 @@ pub struct CoreConfig {
     /// Where the values of the secret environment variables live (the OS
     /// credential store; tests use an in-memory one).
     pub secret_backend: Arc<dyn SecretBackend>,
+    /// This PC on Tailscale, for remote access (the `tailscale` command; tests
+    /// use a fake).
+    pub tailscale: Arc<dyn Tailscale>,
 }
 
 impl CoreConfig {
@@ -93,6 +97,7 @@ impl CoreConfig {
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
             secret_backend: Arc::new(KeyringBackend::new()),
+            tailscale: Arc::new(TailscaleCli),
         }
     }
 
@@ -127,6 +132,7 @@ struct Inner {
     agents: Arc<AgentCatalog>,
     models: ModelService,
     secrets: Arc<Secrets>,
+    remote: RemoteService,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -162,6 +168,8 @@ impl Core {
             agents.set(row.project.as_deref(), row.role, Some(row.settings));
         }
         let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
+        let remote =
+            RemoteService::new(store.clone(), cfg.tailscale.clone(), events.clone()).await?;
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -174,6 +182,7 @@ impl Core {
                 agents,
                 models,
                 secrets,
+                remote,
                 closed: AtomicBool::new(false),
             }),
         })
@@ -401,6 +410,35 @@ impl Core {
                     names: self.inner.secrets.names(),
                 })
             }
+            ApiCommand::GetRemoteStatus => Ok(ApiResponse::RemoteStatus {
+                status: self.inner.remote.status().await,
+            }),
+            ApiCommand::SetRemoteSettings { enabled, port } => {
+                if enabled && self.inner.closed.load(Ordering::SeqCst) {
+                    return Err(ApiError::unavailable("Yhtye is shutting down"));
+                }
+                Ok(ApiResponse::RemoteStatus {
+                    status: self.inner.remote.set_settings(self, enabled, port).await?,
+                })
+            }
+            ApiCommand::CreatePairingCode => Ok(ApiResponse::PairingCode {
+                pairing: self.inner.remote.create_pairing_code().await?,
+            }),
+            ApiCommand::ListRemoteDevices => Ok(ApiResponse::RemoteDevices {
+                devices: self.inner.remote.devices().await?,
+            }),
+            ApiCommand::RevokeRemoteDevice { device } => Ok(ApiResponse::RemoteDevices {
+                devices: self.inner.remote.revoke(&device).await?,
+            }),
+        }
+    }
+
+    /// Starts remote access if its stored settings enable it (the app calls it
+    /// once after starting; `core-design.md` §18). A failure to start is kept
+    /// in the status (`GetRemoteStatus`), not returned.
+    pub async fn start_remote(&self) {
+        if !self.inner.closed.load(Ordering::SeqCst) {
+            self.inner.remote.start_if_enabled(self).await;
         }
     }
 
@@ -557,6 +595,8 @@ impl Core {
     /// and refuses later opens.
     pub async fn shutdown(&self) {
         self.inner.closed.store(true, Ordering::SeqCst);
+        // First: remote clients must not start work while the projects stop.
+        self.inner.remote.shutdown().await;
         self.inner.usage.close().await;
         self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;

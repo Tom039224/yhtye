@@ -15,6 +15,7 @@ use crate::acp::{AgentEvent, AgentOutput};
 use crate::agents::AgentChoice;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
+use crate::remote::{RemoteDevice, RemoteStatus};
 use crate::store::{ChatInfo, SessionRecord};
 
 pub use command::{
@@ -36,6 +37,9 @@ pub use wire::{WsReply, WsRequest, WsServerMessage};
 /// `seq > snapshot.seq`; on a gap between durable events, fetch the missing ones
 /// with [`ApiCommand::ListEvents`] (or take a new snapshot). Live events are for
 /// display only and never folded into state.
+///
+/// App-wide events ([`ApiEventBody::is_local_only`]: remote access) have an
+/// empty `project`, `seq` 0 and are live.
 #[derive(Debug, Clone, Serialize, TS)]
 pub struct ApiEvent {
     pub seq: u64,
@@ -128,23 +132,45 @@ pub enum ApiEventBody {
         session: String,
         text: String,
     },
+    /// App-wide (`project` is empty, `live`, `seq` 0): remote access started,
+    /// stopped, failed, or its pairing code was issued, used or dropped.
+    /// Local only: not sent to remote devices.
+    RemoteStatusChanged {
+        status: RemoteStatus,
+    },
+    /// App-wide like `remote_status_changed`: a device was paired, revoked,
+    /// connected or disconnected. Local only.
+    RemoteDevicesChanged {
+        devices: Vec<RemoteDevice>,
+    },
 }
 
 impl ApiEventBody {
     /// Live events are streamed to clients but not stored (see [`ApiEvent`]).
     #[must_use]
     pub fn is_live(&self) -> bool {
+        self.is_local_only()
+            || matches!(
+                self,
+                Self::Agent {
+                    event: AgentEvent::Output(
+                        AgentOutput::MessageChunk(_)
+                            | AgentOutput::ThoughtChunk(_)
+                            | AgentOutput::UserMessageChunk(_)
+                            | AgentOutput::Usage(_)
+                    ),
+                    ..
+                }
+            )
+    }
+
+    /// App-wide events about remote access, for the PC's own UI only (the
+    /// counterpart of [`ApiCommand::is_local_only`]).
+    #[must_use]
+    pub fn is_local_only(&self) -> bool {
         matches!(
             self,
-            Self::Agent {
-                event: AgentEvent::Output(
-                    AgentOutput::MessageChunk(_)
-                        | AgentOutput::ThoughtChunk(_)
-                        | AgentOutput::UserMessageChunk(_)
-                        | AgentOutput::Usage(_)
-                ),
-                ..
-            }
+            Self::RemoteStatusChanged { .. } | Self::RemoteDevicesChanged { .. }
         )
     }
 
@@ -152,7 +178,9 @@ impl ApiEventBody {
     #[must_use]
     pub fn session(&self) -> Option<&str> {
         match self {
-            Self::Domain { .. } => None,
+            Self::Domain { .. }
+            | Self::RemoteStatusChanged { .. }
+            | Self::RemoteDevicesChanged { .. } => None,
             Self::SessionStarted { session, .. }
             | Self::SessionFailed { session, .. }
             | Self::SessionStopped { session, .. }

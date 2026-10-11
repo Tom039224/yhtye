@@ -159,7 +159,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 9);
+    assert_eq!(applied, 10);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -171,12 +171,14 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         [
             "agent_sessions",
             "agent_settings",
+            "app_settings",
             "chats",
             "events",
             "harness_paths",
             "helps",
             "inbox",
             "projects",
+            "remote_devices",
             "secret_env_names",
             "steps",
             "task_deps",
@@ -193,7 +195,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 9);
+    assert_eq!(applied, 10);
 }
 
 #[tokio::test]
@@ -915,4 +917,46 @@ async fn a_renamed_chat_is_stored_with_its_new_title() {
     let renamed = chats.iter().find(|c| c.id == "C-2").expect("C-2");
     assert_eq!(renamed.title.as_deref(), Some("my name"));
     assert_eq!(store.load_state("P-1").await.expect("load"), Some(after));
+}
+
+#[tokio::test]
+async fn remote_devices_and_app_settings_are_stored() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let device = DeviceRecord {
+        id: "dev-1".into(),
+        name: "Pixel".into(),
+        token_hash: "ab".repeat(32),
+        created_ms: 5,
+        last_seen_ms: None,
+    };
+    store.add_remote_device(&device).await.expect("add");
+    let mut dup = device.clone();
+    dup.id = "dev-2".into();
+    assert!(
+        store.add_remote_device(&dup).await.is_err(),
+        "token hashes are unique"
+    );
+    store.touch_remote_device("dev-1", 9).await.expect("touch");
+    let listed = store.remote_devices().await.expect("list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].last_seen_ms, Some(9));
+    assert!(store.remove_remote_device("dev-1").await.expect("remove"));
+    assert!(!store.remove_remote_device("dev-1").await.expect("remove"));
+
+    assert_eq!(store.app_setting("k").await.expect("get"), None);
+    let first = store
+        .app_setting_or_insert("k", "a", 1)
+        .await
+        .expect("insert");
+    let second = store
+        .app_setting_or_insert("k", "b", 2)
+        .await
+        .expect("keep");
+    assert_eq!((first.as_str(), second.as_str()), ("a", "a"));
+    store.set_app_setting("k", "c", 3).await.expect("set");
+    assert_eq!(
+        store.app_setting("k").await.expect("get").as_deref(),
+        Some("c")
+    );
 }

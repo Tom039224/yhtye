@@ -17,7 +17,10 @@ import type {
   HarnessModels,
   RoleSettings,
   LoggedEvent,
+  PairingCode,
   ProjectInfo,
+  RemoteDevice,
+  RemoteStatus,
   Snapshot,
   UsageReport,
 } from "../api/generated";
@@ -105,6 +108,8 @@ export class FakeCore {
   secretValues: Record<string, string> = {};
   /** Makes the secret commands fail like an unavailable OS keyring. */
   secretError: string | null = null;
+  /** Remote access served by the remote commands (`get_remote_status` ...). */
+  remote = new FakeRemote();
   /** Makes `create_branch` fail (an invalid or existing name). */
   branchError: CommandError | null = null;
   /** The host name `ping` answers with. */
@@ -229,9 +234,79 @@ export class FakeCore {
         this.secretNames = this.secretNames.filter((n) => n !== cmd.name);
         delete this.secretValues[cmd.name];
         return { type: "secret_env", names: [...this.secretNames] };
+      case "get_remote_status":
+        return { type: "remote_status", status: this.remote.status() };
+      case "set_remote_settings":
+        return { type: "remote_status", status: this.remote.set(cmd.enabled, cmd.port) };
+      case "create_pairing_code":
+        return { type: "pairing_code", pairing: this.remote.pair() };
+      case "list_remote_devices":
+        return { type: "remote_devices", devices: [...this.remote.devices] };
+      case "revoke_remote_device":
+        return { type: "remote_devices", devices: this.remote.revoke(cmd.device) };
       default:
         return { type: "accepted" };
     }
+  }
+}
+
+/** The core's remote access in miniature: a server that starts unless `startError` says why not. */
+export class FakeRemote {
+  enabled = false;
+  port = 1423;
+  running = false;
+  error: string | null = null;
+  /** Why the server fails to start (Tailscale stopped, ...); `null`: it starts. */
+  startError: string | null = null;
+  /** This PC on the tailnet while running. */
+  ip = "100.64.0.7";
+  dnsName: string | null = "pc.tailnet.ts.net";
+  devices: RemoteDevice[] = [];
+  /** The code `pair` issues next. */
+  nextCode = "ABCD2345";
+  /** How long a code lasts. */
+  codeTtlMs = 5 * 60_000;
+  pairingExpiresAt: number | null = null;
+
+  status(): RemoteStatus {
+    return {
+      enabled: this.enabled,
+      port: this.port,
+      running: this.running,
+      addresses: this.running ? [`${this.ip}:${this.port}`, `[fd7a:115c:a1e0::7]:${this.port}`] : [],
+      ip: this.running ? this.ip : null,
+      dns_name: this.running ? this.dnsName : null,
+      server_id: "0123456789abcdef0123456789abcdef",
+      error: this.error,
+      pairing_expires_at_ms: this.pairingExpiresAt !== null && Date.now() < this.pairingExpiresAt ? this.pairingExpiresAt : null,
+    };
+  }
+
+  set(enabled: boolean, port: number | undefined): RemoteStatus {
+    if (port === 0) throw new CommandError("invalid_argument", "the port must be 1-65535");
+    this.enabled = enabled;
+    this.port = port ?? this.port;
+    this.pairingExpiresAt = null;
+    this.running = enabled && this.startError === null;
+    this.error = enabled ? this.startError : null;
+    return this.status();
+  }
+
+  pair(): PairingCode {
+    if (!this.running) throw new CommandError("invalid_state", "remote access is not running");
+    this.pairingExpiresAt = Date.now() + this.codeTtlMs;
+    const host = this.dnsName ? `host=${this.dnsName}&` : "";
+    return {
+      code: this.nextCode,
+      expires_at_ms: this.pairingExpiresAt,
+      uri: `yhtye://pair?v=1&${host}ip=${this.ip}&port=${this.port}&code=${this.nextCode}&sid=${this.status().server_id}`,
+    };
+  }
+
+  revoke(device: string): RemoteDevice[] {
+    if (!this.devices.some((d) => d.id === device)) throw new CommandError("not_found", `unknown device ${device}`);
+    this.devices = this.devices.filter((d) => d.id !== device);
+    return [...this.devices];
   }
 }
 

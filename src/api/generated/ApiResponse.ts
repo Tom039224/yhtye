@@ -6,7 +6,10 @@ import type { HarnessDetection } from "./HarnessDetection";
 import type { HarnessModels } from "./HarnessModels";
 import type { LoggedEvent } from "./LoggedEvent";
 import type { ModelEfforts } from "./ModelEfforts";
+import type { PairingCode } from "./PairingCode";
 import type { ProjectInfo } from "./ProjectInfo";
+import type { RemoteDevice } from "./RemoteDevice";
+import type { RemoteStatus } from "./RemoteStatus";
 import type { Snapshot } from "./Snapshot";
 import type { UsageReport } from "./UsageReport";
 
@@ -18,4 +21,4 @@ more: boolean, } | { "type": "accepted" } | { "type": "chats", chats: Array<Chat
 /**
  * The chat's orchestrator is being started (now, or by an earlier call).
  */
-starting: boolean, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, };
+starting: boolean, } | { "type": "git_overview", git: GitOverview, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, } | { "type": "remote_status", status: RemoteStatus, } | { "type": "pairing_code", pairing: PairingCode, } | { "type": "remote_devices", devices: Array<RemoteDevice>, };
