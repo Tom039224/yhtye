@@ -133,6 +133,16 @@ object YIcons {
         "M9 8h6",
         "M17 16h6",
     )
+    val Globe = lineIcon(
+        "globe",
+        circle(12f, 12f, 8.5f),
+        "M3.5 12h17",
+        "M12 3.5c2.4 2.3 3.6 5.1 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.1-3.6-8.5S9.6 5.8 12 3.5",
+    )
+    val Terminal = lineIcon("terminal", "M4.5 6.5h15v11h-15z", "M8 10.5l2.5 2L8 14.5", "M12.5 15h3.5")
+    val Key = lineIcon("key", circle(8f, 15.5f, 3.5f), "M10.5 13L19 4.5", "M16.5 7l2.5 2.5", "M13.5 10l2 2")
+    val Star = lineIcon("star", "M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.2l-4.8 2.7 1-5.4-4-3.8 5.4-.7z")
+    val Phone = lineIcon("phone", rect(7f, 3.5f, 10f, 17f, 2f), "M11 17.5h2")
     val Activity = lineIcon("activity", "M22 12h-4l-3 9L9 3l-3 9H2")
     val Flag = lineIcon("flag", "M4 22V4", "M4 4h13l-2 4 2 4H4")
     val Help = lineIcon("help", circle(12f, 12f, 10f), "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", "M12 17h.01")

@@ -1,6 +1,7 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.AgentChoice
+import io.github.tom039224.yhtye.shared.api.generated.AgentRole
 import io.github.tom039224.yhtye.shared.api.generated.AgentSettings
 import io.github.tom039224.yhtye.shared.api.generated.AgentSettingsLayer
 import io.github.tom039224.yhtye.shared.api.generated.AgentSettingsView
@@ -10,11 +11,16 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.EffortOption
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
+import io.github.tom039224.yhtye.shared.api.generated.HarnessDetection
+import io.github.tom039224.yhtye.shared.api.generated.HarnessModels
 import io.github.tom039224.yhtye.shared.api.generated.LoggedEvent
+import io.github.tom039224.yhtye.shared.api.generated.ModelEfforts
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
+import io.github.tom039224.yhtye.shared.api.generated.RoleSettings
 import io.github.tom039224.yhtye.shared.api.generated.Snapshot
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
 import io.github.tom039224.yhtye.shared.client.ApiException
@@ -65,6 +71,13 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     /** エージェント設定の版 (`set_agent_settings` のたびに増える)。 */
     var agentRevision = 1_000L
     var agentSettingsSaves = 0
+
+    /** 設定画面のコマンド用のメモリ上の設定 (null のものは既定の答え)。 */
+    var agentView: AgentSettingsView? = null
+    val harnessModels = HashMap<String, HarnessModels>()
+    val modelEfforts = HashMap<String, List<EffortOption>>()
+    var detections: List<HarnessDetection> = emptyList()
+    val secrets = mutableListOf<String>()
 
     /** 答える前に呼ぶ (押し込むイベントを挟む・応答を止める)。 */
     var before: (suspend (ApiCommand) -> Unit)? = null
@@ -151,13 +164,62 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
             }
             agentRevision += 1
             agentSettingsSaves += 1
+            agentView = saved(command)
             ApiResponse.AgentSettings(agentSettings(command.project))
+        }
+        is ApiCommand.ListHarnessModels ->
+            ApiResponse.HarnessModels(harnessModels[command.harness] ?: refuse(ApiErrorCode.NotFound, "no harness ${command.harness}"))
+        is ApiCommand.ListModelEfforts ->
+            ApiResponse.ModelEfforts(ModelEfforts(command.harness, command.model, modelEfforts[modelKey(command.harness, command.model)].orEmpty()))
+        ApiCommand.GetHarnesses, ApiCommand.DetectHarnesses -> ApiResponse.Harnesses(detections)
+        is ApiCommand.SetHarnessPath -> {
+            detections = detections.map {
+                if (it.id == command.harness) it.copy(overridePath = command.path, installed = command.path != null || it.installed) else it
+            }
+            ApiResponse.Harnesses(detections)
+        }
+        ApiCommand.ListSecretEnv -> ApiResponse.SecretEnv(secrets.toList())
+        is ApiCommand.SetSecretEnv -> {
+            if (command.name !in secrets) secrets += command.name
+            ApiResponse.SecretEnv(secrets.toList())
+        }
+        is ApiCommand.DeleteSecretEnv -> {
+            secrets -= command.name
+            ApiResponse.SecretEnv(secrets.toList())
         }
         else -> ApiResponse.Accepted
     }
 
+    /** 保存の後の設定: 全体か [command] のプロジェクトの層のその役割を置き換えた形。 */
+    private fun saved(command: ApiCommand.SetAgentSettings): AgentSettingsView? {
+        val current = agentView ?: return null
+        fun AgentSettingsLayer.with(): AgentSettingsLayer = when (command.role) {
+            AgentRole.Orchestrator -> copy(orchestrator = command.settings)
+            AgentRole.Implementer -> copy(implementer = command.settings)
+            AgentRole.Investigator -> copy(investigator = command.settings)
+            AgentRole.Reviewer -> copy(reviewer = command.settings)
+            AgentRole.Unrecognized -> this
+        }
+        val global = if (command.project == null) current.global.with() else current.global
+        val layer = if (command.project != null) (current.projectLayer ?: AgentSettingsLayer()).with() else current.projectLayer
+        fun pick(role: AgentRole, fallback: RoleSettings): RoleSettings =
+            (layer?.of(role) ?: global.of(role)) ?: fallback
+        val eff = current.effective
+        return current.copy(
+            global = global,
+            projectLayer = layer,
+            effective = AgentSettings(
+                pick(AgentRole.Orchestrator, eff.orchestrator),
+                pick(AgentRole.Implementer, eff.implementer),
+                pick(AgentRole.Investigator, eff.investigator),
+                pick(AgentRole.Reviewer, eff.reviewer),
+            ),
+        )
+    }
+
     /** エージェント設定の最小の形 (中身は使わない。版だけを見る)。 */
     private fun agentSettings(project: String?): AgentSettingsView {
+        agentView?.let { return it.copy(project = project, revision = agentRevision) }
         val builtin = AgentChoice("claude-code", "haiku")
         val empty = AgentSettingsLayer()
         val role = io.github.tom039224.yhtye.shared.api.generated.RoleSettings(emptyList(), builtin)
