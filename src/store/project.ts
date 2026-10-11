@@ -156,9 +156,19 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
   };
 }
 
-/** A chat is no longer resuming once its orchestrator's session started or stopped. */
+/**
+ * A chat is no longer resuming once its orchestrator's session started or
+ * stopped, or its start failed for good. A failure with a retry behind it
+ * (`retrying`: a failed restore tried again, or replaced by a new session) is
+ * not the end: the session is still starting. Older logs lack the flag; their
+ * failures count as final.
+ */
 function settleResuming(resuming: ProjectView["resuming"], body: ApiEventBody): ProjectView["resuming"] {
-  if (body.type !== "session_started" && body.type !== "session_stopped") return resuming;
+  const settles =
+    body.type === "session_started" ||
+    body.type === "session_stopped" ||
+    (body.type === "session_failed" && !body.retrying);
+  if (!settles) return resuming;
   if (!isOrchestratorKey(body.session)) return resuming;
   const chat = chatOfOrchestratorKey(body.session);
   if (!resuming[chat]) return resuming;

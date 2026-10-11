@@ -331,6 +331,38 @@ async fn a_mode_and_model_the_agent_already_has_are_not_set_again() {
 }
 
 #[tokio::test]
+async fn a_mode_reported_only_as_a_config_option_is_not_set_again() {
+    // OpenCode reports its mode as the `mode` option, with no `modes` state.
+    let script = |modes: serde_json::Value| {
+        json!({
+            "modes": modes,
+            "modes_as_option": true,
+            "models": ["haiku", "default"],
+            "turns": [{"actions": ["report_writes"]}, {"actions": ["report_writes"]}]
+        })
+    };
+
+    // Already in the wanted mode: no `session/set_mode`, for a new session and
+    // for a restored one alike.
+    let h = fake_harness(script(json!(["bypassPermissions", "default"])));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=;options="
+    );
+    assert_eq!(
+        startup_writes(&h, resume("prev-123")).await,
+        "writes:modes=;options="
+    );
+
+    // In another mode: it is still set.
+    let h = fake_harness(script(json!(["default", "bypassPermissions"])));
+    assert_eq!(
+        startup_writes(&h, SpawnOptions::default()).await,
+        "writes:modes=bypassPermissions;options="
+    );
+}
+
+#[tokio::test]
 async fn an_effort_the_agent_already_has_is_not_set_again() {
     let script = json!({
         "models": ["haiku", "default"],

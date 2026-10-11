@@ -1,7 +1,8 @@
 //! Which harness × model runs each role (Stage 7b, `core-design.md` §15):
 //! the settings and their resolution ([`settings`], pure), the harness
 //! registry ([`catalog`]) and the model listing read from the harnesses
-//! ([`models`]), and which harnesses are installed ([`detect`], [`installed`]).
+//! ([`models`]), which harnesses are installed ([`detect`], [`installed`]) and
+//! the limit on agent starts at the same time ([`start_slots`]).
 
 mod catalog;
 mod codex_config;
@@ -10,6 +11,7 @@ mod installed;
 mod models;
 mod openrouter;
 mod settings;
+mod start_slots;
 
 pub use catalog::{
     ANTIGRAVITY, AgentCatalog, CLAUDE_CODE, CODEX, DEFAULT_RESUME_RETRIES,
@@ -39,3 +41,4 @@ pub use settings::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, Candidate, MAX_NOTE_CHARS,
     PickError, RoleSettings, effective,
 };
+pub use start_slots::{MAX_CONCURRENT_STARTS, StartScope, StartSlots};

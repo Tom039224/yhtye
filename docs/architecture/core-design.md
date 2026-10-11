@@ -140,7 +140,8 @@ pub struct CoreConfig {
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
   - `session_started { session, role, task, pid, acp_session_id, resumed }` /
-    `session_failed { session, error }` / `session_stopped { session, suspended }` /
+    `session_failed { session, error, retrying }` (`retrying`: このあとにも起動が続く = 復元の再試行・新しいセッションへの切り替えの途中の失敗。`false` は起動を諦めた最終の失敗。古いログには無く、`false` として読む) /
+    `session_stopped { session, suspended }` /
     `session_interrupted { session }` (3b: 起動時、前回動いていたセッション。`suspended` は
     Yhtye の終了で止めた = 次回の起動で復元する)
   - `agent { session, event: AgentEvent }` — エージェントの出力とライフサイクル
@@ -216,7 +217,7 @@ impl AgentHandle {
   (`mcp_servers`, `_meta.systemPrompt.append`) → `mode_after_new` があれば `set_mode`
   (`modes` に無ければ `Unsupported`) → `model` 指定があれば `set_config_option`
   (応答の現在値が要求値と違えば起動失敗)。各段に `HarnessConfig::startup_timeout`。
-  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`)・モデル・effort を現在値として返していれば、
+  **`session/load` / `session/new` の応答が既に目標のモード (`modes.currentModeId`。OpenCode のように `modes` を持たず config option `mode` だけで返すエージェントは `AgentInfo::current_mode()` が両方を見る)・モデル・effort を現在値として返していれば、
   その `set_mode` / `set_config_option` は送らない** (T-46: 復元後の `set_mode` がタイムアウトして会話を失った事故があった。送っても何も変わらない要求を省く)。
 - **プロセス管理**: `tokio::process` で `process_group(0)` として起動し、プロセスグループ
   単位で止める (`npx` → `node` → `claude` のような多段起動でも孤児を残さない)。
@@ -719,6 +720,7 @@ Stage 4 の構成 (`src/`):
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+  `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。
 - これで ACP・MCP・状態機械・git を含む全経路を LLM なしで決定的にテストする。
@@ -1218,9 +1220,10 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **再試行** (`runtime/launch.rs` の `Sessions::restore_failed`): 復元を伴う起動が失敗 (`initialize` / `session/load` / `set_mode` / `set_config_option` の失敗・タイムアウトのどれでも) したら、
   同じ保存済みセッションを**新しいエージェントプロセス**で最大 `ResumeRetry::retries` (既定 `DEFAULT_RESUME_RETRIES` = 2) 回、毎回 `ResumeRetry::delay`
   (既定 `DEFAULT_RESUME_RETRY_DELAY` = 3 秒) 空けて試す。方針は `AgentCatalog::with_resume_retry` で変える (テストは短い待ちを使う)。
-  再試行のたびに `session_failed` (`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
+  再試行のたびに `session_failed` (`retrying: true`。`restoring the session <id> failed (<理由>); trying again (n/2)`) を出す (起動は最悪 120 秒 × 試行回数かかるため、無言にしない)。
   `Starting` が復元対象 (`resume`)・失敗回数 (`failed_restores`) を持つ。
-- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed`: `could not restore the session <id> (<理由>); starting a new session`)。
+- **全滅したら** 従来どおり新しいセッションで同じステップをやり直す (`session_failed` (`retrying: true`): `could not restore the session <id> (<理由>); starting a new session`)。
+  新しいセッションの起動が失敗したときの `session_failed` が `retrying: false` (最終)。フロントの `ProjectView.resuming` は最終の失敗 (と `session_started` / `session_stopped`) で下ろし、`retrying: true` では下ろさない (T-54)。
 - **旧 ID を失わない**: 復元を諦めて (または `session/load` 非対応で `session/new` になって) 新しいセッションになったとき、`session_started.lost_acp_session_id` に旧 ACP セッション ID を載せる。
   マイグレーション `0009_lost_acp_session.sql` の `agent_sessions.lost_acp_session_id` に保存され (`SessionRecord.lost_acp_session_id`)、
   失われなかった次の起動では消さない (`COALESCE`。別のセッションを諦めたときだけ置き換わる。履歴は `session_started` のイベントログに全て残る)。後で `session/load` にこの ID を渡して手で復元できる。
@@ -1228,7 +1231,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `could not restore the previous session (<id>); started a new session` として出す。タスクカードの活動ログ (`taskInfo.ts`) もエラー行として拾う。`store/sessions.ts` は `agent_sessions` の導出を移植している。
 - テスト: 偽エージェントに `fault_attempts` + `attempt_file` (先頭 N 個のプロセスだけ `fail_at` / `exit_at` / `hang_at` が効く) を足した。`tests/orchestration_fake_restart.rs`
   (復元後の `set_mode` がタイムアウトしても再試行で同じ ACP セッションに復元できる / 再試行が全滅したら旧 ID が DB とイベントに残り新しいセッションで続く / `session/load` 非対応でも旧 ID を残す)、
-  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。
+  `tests/acp_fake_lifecycle.rs` (現在値と同じなら `set_mode` / `set_config_option` を送らない。モードが config option `mode` だけで報告される場合も同じ)、`store/tests.rs`、vitest (`transcript.test.tsx`、`sessions.test.ts`)。
 
 ### 17.11 チャットのオーケストレータは開いたときと通知のときだけ起動する (T-48)
 
@@ -1246,15 +1249,16 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **通知のとき**: 変更なし。`flush_inbox` はループの毎回、未配達の項目があるチャットで、セッションが無ければ `start_lazily` する。アプリ起動直後の `flush_inbox` が、
   未配達の項目のあるチャット (と、`Restart` が積んだ `merge_result` のチャット) を起動して届ける。タスクは起動時に再開されるので、グループが終われば `group_settled` が持ち主のチャットを起動する。
   **制限**: ターン中に止まったオーケストレータは、通知もユーザーが開くこともなければ起動しない (例: 全タスクが終わって `finish_group` を呼ぶ直前に落ちた場合。開くと `restarted` で再開する)。
-- **同時起動数** (`runtime/sessions.rs` の `MAX_CONCURRENT_STARTS` = 4、`launch.rs` の `with_start_slot`): エージェントプロセスの**起動**(initialize から `session/load` / `set_mode` まで) は 4 つまで同時で、
-  残りは待つ。許可は起動が終わる (または失敗する) まで持ち、動いているセッションは数えない。T-46 の再試行の待ち時間 (`ResumeRetry::delay`) は許可を持たずに待つ。`shutdown` は許可を閉じ、
-  待っている起動は `Closed` で捨てる (起動前なので `session_failed` も出さない)。
+- **同時起動数** (`agents/start_slots.rs` の `MAX_CONCURRENT_STARTS` = 4、`StartSlots` / `StartScope::run`): エージェントプロセスの**起動**(initialize から `session/load` / `set_mode` まで) は 4 つまで同時で、
+  残りは待つ。許可は `AgentCatalog` が持つ `StartSlots` 1 つを**全プロジェクトで共有**する (プロジェクトごとに作ると開いているプロジェクトの数だけ上限が掛け算され、`resume_unfinished` が複数プロジェクトを開いたときに起動ストームが戻る。T-54)。
+  各 `Sessions` は `StartSlots::scope()` で自分の `StartScope` を持ち、`shutdown` はその scope だけを閉じる (許可は閉じない): そのプロジェクトで許可待ちの起動は `Closed` で捨て (起動前なので `session_failed` も出さない)、他のプロジェクトの待ちには影響しない。
+  許可は起動が終わる (または失敗する) まで持ち、動いているセッションは数えない。T-46 の再試行の待ち時間 (`ResumeRetry::delay`) は許可を持たずに待つ。
 - **フロント** (`store/app.ts`): `selectChat` と、プロジェクトの読み込み完了・再接続後の `selectedChat` で `open_chat` を呼ぶ。`chat_opened{starting: true}` の間は `ProjectView.resuming[chat]` を立て、
   その `orchestrator:<chat>` の `session_started` / `session_stopped` で下ろす。会話のコンポーザは「起動中…」、ヘッダのバッジは回転するアイコン (`starting`)。`suspended` / `interrupted` のバッジは警告ではなく空の丸 (未起動) にした。
 - テスト: `tests/orchestration_fake_restart.rs` (再起動で起動したのはタスクのエージェントだけ・開くと `session/load` で復元され「ターンが途中で切れた」を受け取る・未起動のチャットへのユーザーによるタスクのキャンセル通知が届く・
   オーケストレータは `group_settled` で起動し最初のプロンプトに `restarted` が同梱される)、`tests/orchestration_fake_chats.rs` (起動時にどのチャットも起動しない・開くと live だったチャットだけ復元・
   open グループのチャットは `group_settled` で起動しアイドルのチャットは起動しない)、`tests/core_chats.rs` (`open_chat` の API と、live のチャットだけではプロジェクトを開かない)、
-  `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`launch.rs` の単体テスト (同時起動数・閉じた許可)、
+  `domain/tests/restart.rs` と `domain/tests/chats.rs` (`Restart` は誰にも `restarted` を積まず、`TellOrchestrator` が積む)、`agents/start_slots.rs` と `runtime/sessions.rs` の単体テスト (同時起動数・プロジェクトをまたいだ共有・閉じた scope は他に影響しない)、
   vitest (`appChats.test.ts` `project.test.ts` `App.test.tsx`)。
 
 ### 17.12 バックグラウンドのプロジェクトの動作中表示 (T-49)
@@ -1264,7 +1268,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **core**: `ProjectInfo.running`。開いているプロジェクトで、live なエージェントセッションの `turn_running` があるか、タスクが `running` / `merging` のとき `true` (フロントの `hasRunningWork` と同じ基準。
   開いていなければ常に `false`)。`list_projects` と `open_project` が返す。`Orchestration::is_running` → `Cmd::Running` → `Driver::has_running_work` で、`snapshot` と同じく発行待ちのイベントを流してから読む。
-  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。
+  ドライバが 1 秒答えない (マージ中など) プロジェクトは `true` として一覧を待たせない (`RUNNING_QUERY_TIMEOUT`)。プロジェクトごとの問い合わせは `futures::future::join_all` で**並行**に行い
+  (`project_infos`)、忙しいプロジェクトが N 個あっても一覧は 1 回のタイムアウトで返る (直列だと N 秒かかり、UI が最後のプロジェクトを開き直す起動も遅れる。T-54)。
 - **フロント** (`store/app.ts`、`store/activity.ts`): 表示中でない (または何も表示していない) プロジェクトのイベントを捨てる前に `changesActivity` で見て、ターンの開始・終了 (`prompted` / `turn_ended`)、
   セッションの起動・停止・中断、タスクの状態変化 (`task_*` / `group_cancelled` / `chat_deleted`) なら 200ms の間引きで `list_projects` を読み直し、`open` / `running` だけを `projects` に取り込む
   (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、

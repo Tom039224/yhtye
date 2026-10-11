@@ -120,7 +120,7 @@ pub async fn until_healthy(
 ) {
     until(rx, seen, timeout, |ev| {
         match &ev.body {
-            ApiEventBody::SessionFailed { session, error } => {
+            ApiEventBody::SessionFailed { session, error, .. } => {
                 panic!("{session} failed to start: {error}")
             }
             ApiEventBody::Domain {

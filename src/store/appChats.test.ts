@@ -128,6 +128,20 @@ describe("opening a chat brings its orchestrator back", () => {
     expect(view(s).sessions.find((x) => x.session_key === orchestratorKey("C-1"))?.status).toBe("live");
   });
 
+  it("stops showing the chat as starting when its start fails for good, not when a retry follows", async () => {
+    core.starting.add("C-1");
+    const s = newStore();
+    await open(s);
+    s.selectChat("C-1");
+    await vi.waitFor(() => expect(view(s).resuming).toEqual({ "C-1": true }));
+    const failed = (seq: number, retrying: boolean) =>
+      ev(seq, { type: "session_failed", session: orchestratorKey("C-1"), error: "boom", retrying });
+    transport.emit(failed(5, true));
+    expect(view(s).resuming).toEqual({ "C-1": true });
+    transport.emit(failed(6, false));
+    expect(view(s).resuming).toEqual({});
+  });
+
   it("is not starting when the core has nothing to start", async () => {
     const s = newStore();
     await open(s);

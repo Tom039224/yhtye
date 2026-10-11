@@ -146,9 +146,10 @@ pub(crate) async fn open_session(
     };
     // What the agent already reports as current is not set again: it saves a
     // request that can hang (a `set_mode` timeout cost a restored session) and
-    // it changes nothing.
+    // it changes nothing. The mode is in `modes` or, for OpenCode, only in the
+    // `mode` config option.
     if let Some(mode) = &p.harness.mode_after_new
-        && !in_mode(&info, mode)
+        && info.current_mode() != Some(mode.as_str())
     {
         set_mode(cx, &mut info, mode, timeout).await?;
     }
@@ -176,14 +177,6 @@ pub(crate) async fn open_session(
         }
     }
     Ok(info)
-}
-
-/// Whether the agent's `modes` state (of `session/new` / `session/load`) says
-/// `mode` is the current one.
-fn in_mode(info: &AgentInfo, mode: &str) -> bool {
-    info.modes
-        .as_ref()
-        .is_some_and(|m| &*m.current_mode_id.0 == mode)
 }
 
 /// Whether the select option `config_id` currently has `value`.

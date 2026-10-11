@@ -281,7 +281,7 @@ impl Fake {
 
     /// The modes, `None` when the scenario has none (the field is left out).
     fn modes(&self) -> Option<SessionModeState> {
-        if self.scenario.modes.is_empty() {
+        if self.scenario.modes.is_empty() || self.scenario.modes_as_option {
             return None;
         }
         let available = self
@@ -293,10 +293,14 @@ impl Fake {
         Some(SessionModeState::new(self.lock().mode.clone(), available))
     }
 
-    /// The config options now: the permission mode when the scenario has one,
-    /// the model, plus the effort when the current model has efforts.
+    /// The config options now: the mode when the scenario reports it as an
+    /// option, the permission mode when the scenario has one, the model, plus the
+    /// effort when the current model has efforts.
     fn options(&self) -> Vec<SessionConfigOption> {
         let mut options = Vec::new();
+        if let Some(mode) = self.mode_option() {
+            options.push(mode);
+        }
         if let Some(permission) = self.permission_mode_option() {
             options.push(permission);
         }
@@ -318,6 +322,23 @@ impl Fake {
             );
         }
         options
+    }
+
+    /// The `mode` select option of an agent that reports its mode that way.
+    fn mode_option(&self) -> Option<SessionConfigOption> {
+        if !self.scenario.modes_as_option || self.scenario.modes.is_empty() {
+            return None;
+        }
+        let rows: Vec<_> = self
+            .scenario
+            .modes
+            .iter()
+            .map(|m| SessionConfigSelectOption::new(m.clone(), m.clone()))
+            .collect();
+        Some(
+            SessionConfigOption::select("mode", "Mode", self.lock().mode.clone(), rows)
+                .category(SessionConfigOptionCategory::Mode),
+        )
     }
 
     fn permission_mode_option(&self) -> Option<SessionConfigOption> {
