@@ -20,9 +20,10 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.serialization.json)
-            implementation(libs.ktor.client.core)
+            // 公開する型に現れる (StateFlow、JsonElement、HttpClient) ので api
+            api(libs.kotlinx.coroutines.core)
+            api(libs.kotlinx.serialization.json)
+            api(libs.ktor.client.core)
             implementation(libs.ktor.client.websockets)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
@@ -30,10 +31,22 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.ktor.client.mock)
         }
         androidMain.dependencies {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.ktor.client.okhttp)
         }
+    }
+}
+
+// 本物のサーバーとの結合テスト (RealServerTest) は YHTYE_REAL_SERVER_TEST=1 のときだけ動く。
+// そのときは毎回実行する (サーバー・Tailscale の状態はテストの入力に表れないので、結果を再利用しない)。
+val realServerTest = providers.environmentVariable("YHTYE_REAL_SERVER_TEST").orNull
+tasks.withType<Test>().configureEach {
+    if (realServerTest != null) {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        environment("YHTYE_REAL_SERVER_TEST", realServerTest)
     }
 }
