@@ -117,6 +117,26 @@ object YIcons {
         "m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z",
     )
 
+    val Back = lineIcon("back", "M19 12H5", "M12 19l-7-7 7-7")
+    val ArrowLeft = lineIcon("arrowL", "M19 12H5", "M11 18l-6-6 6-6")
+    val ArrowRight = lineIcon("arrowR", "M5 12h14", "m12 5 7 7-7 7")
+    val History = lineIcon("history", "M3 12a9 9 0 1 0 3-6.7L3 8", "M3 3v5h5", "M12 7v5l4 2")
+    val Sliders = lineIcon(
+        "sliders",
+        "M4 21v-7",
+        "M4 10V3",
+        "M12 21v-9",
+        "M12 8V3",
+        "M20 21v-5",
+        "M20 12V3",
+        "M1 14h6",
+        "M9 8h6",
+        "M17 16h6",
+    )
+    val Activity = lineIcon("activity", "M22 12h-4l-3 9L9 3l-3 9H2")
+    val Flag = lineIcon("flag", "M4 22V4", "M4 4h13l-2 4 2 4H4")
+    val Help = lineIcon("help", circle(12f, 12f, 10f), "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", "M12 17h.01")
+
     /** ターンの中止・タスクの停止 (塗りの角丸の四角)。 */
     val Stop = filledIcon("stop", rect(5f, 5f, 14f, 14f, 2.5f))
 }

@@ -57,6 +57,22 @@ data class YhtyeColors(
     val ringStop: Color,
     val codeBg: Color,
     val scrim: Color,
+    /** 対処中のタスクカード (モックの `--hand-card-*`)。 */
+    val handCardBg: Color,
+    val handCardLine: Color,
+    val handCardTx: Color,
+    val handCardTitle: Color,
+    val handCardMeta: Color,
+    val handCardMetaStrong: Color,
+    val handCardIcon: Color,
+    /** 進み具合のバーの上を流れる光 (`--impl-sheen` / `--rev-sheen`)。 */
+    val implSheen: Color,
+    val revSheen: Color,
+    /** 使用量のメーター (`--usage-5h` / `--usage-week`)。 */
+    val usage5h: Color,
+    val usageWeek: Color,
+    /** 積み重ねた画面 (タスク詳細・設定) の下を暗くする幕 (`--sheet-scrim`)。 */
+    val sheetScrim: Color,
 ) {
     /** `accent` の 14% (メンションのチップ・エージェントの印の地)。 */
     val accentSoft: Color get() = accent.copy(alpha = 0.14f)
@@ -64,6 +80,9 @@ data class YhtyeColors(
     /** ユーザーの吹き出しの地と枠 (`accent` を会話の地に 11% / 26% 混ぜる)。 */
     val bubbleBg: Color get() = mix(accent, bgCenter, 0.11f)
     val bubbleLine: Color get() = mix(accent, bgCenter, 0.26f)
+
+    /** タスクの行をずらしたとき下に見える地 (`accent` をパネルの地に 16% 混ぜる)。 */
+    val mentionUnder: Color get() = mix(accent, bgPanel, 0.16f)
 }
 
 private fun mix(a: Color, b: Color, share: Float): Color = Color(
@@ -114,6 +133,18 @@ val DarkYhtyeColors = YhtyeColors(
     ringStop = Color(0xFF4A453F),
     codeBg = Color(0xFF161514),
     scrim = Color(0x59000000),
+    handCardBg = Color(0xFF291714),
+    handCardLine = Color(0xFF703229),
+    handCardTx = Color(0xFFD8C4B4),
+    handCardTitle = Color(0xFFF0E7DF),
+    handCardMeta = Color(0xFF8E7F74),
+    handCardMetaStrong = Color(0xFFBFA48F),
+    handCardIcon = Color(0xFFC7AB97),
+    implSheen = Color(0x8CC1E2FF),
+    revSheen = Color(0x8CE4D6FF),
+    usage5h = Color(0xFFE0843E),
+    usageWeek = Color(0xFF6FB880),
+    sheetScrim = Color(0x80000000),
 )
 
 /**
@@ -161,6 +192,18 @@ val LightYhtyeColors = YhtyeColors(
     ringStop = Color(0xFFB9B2A7),
     codeBg = Color(0xFFF2EFEA),
     scrim = Color(0x33000000),
+    handCardBg = Color(0xFFFCEEE8),
+    handCardLine = Color(0xFFE7B9A9),
+    handCardTx = Color(0xFF6E4436),
+    handCardTitle = Color(0xFF47281D),
+    handCardMeta = Color(0xFF9A7869),
+    handCardMetaStrong = Color(0xFF7E5848),
+    handCardIcon = Color(0xFFA0705E),
+    implSheen = Color(0x8CFFFFFF),
+    revSheen = Color(0x8CFFFFFF),
+    usage5h = Color(0xFFC86A22),
+    usageWeek = Color(0xFF3E9A5A),
+    sheetScrim = Color(0x40000000),
 )
 
 val LocalYhtyeColors = staticCompositionLocalOf { DarkYhtyeColors }

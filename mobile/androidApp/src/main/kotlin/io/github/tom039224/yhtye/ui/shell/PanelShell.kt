@@ -174,7 +174,7 @@ val LocalPanelShell = staticCompositionLocalOf<PanelShellState?> { null }
  * 3 パネルの骨格。[left] / [right] は狭い端末では中央の下に隠れていて、スワイプかボタンで見える。
  *
  * - 画面の左右端 ([gestureInsets]、既定は `WindowInsets.systemGestures`) から始まったタッチは扱わない (Android の「戻る」)。
- * - 子が先に横の動きを取ったら (横にはみ出したコードブロック・表の `horizontalScroll`、T-69 のタスクカードのスワイプ)
+ * - 子が先に横の動きを取ったら (横にはみ出したコードブロック・表の `horizontalScroll`、右パネルのタスクカードのスワイプ)
  *   その指はパネルを動かさない。縦のスクロールが先に動いたときも同じ。
  * - 最初のタッチスロップを越えた向きで決める。縦ならその指では横に切り替えない。
  * - 1 回のスワイプで動くのは今の位置から隣まで。離した位置と速さで開く/閉じるを決める。
@@ -188,8 +188,10 @@ fun PanelShell(
     center: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     gestureInsets: WindowInsets = WindowInsets.systemGestures,
-    /** 中央の上に積んだ画面 (T-69 のタスク詳細) が開いている間などはパネルを動かさない。 */
+    /** 中央の上に積んだ画面 (タスク詳細・設定) が開いている間などはパネルを動かさない。 */
     swipeEnabled: Boolean = true,
+    /** 右パネルを開けるか (履歴のビューには右パネルが無い。モックと同じ)。 */
+    rightEnabled: Boolean = true,
 ) {
     BoxWithConstraints(modifier.fillMaxSize().background(Yhtye.colors.bgApp)) {
         val sizeClass = WindowSizeClass.BREAKPOINTS_V1.computeWindowSizeClass(maxWidth.value, maxHeight.value)
@@ -206,7 +208,7 @@ fun PanelShell(
             if (wide) {
                 WideLayout(left, right, center)
             } else {
-                NarrowLayout(state, left, right, center, gestureInsets, swipeEnabled, panelWidthPx)
+                NarrowLayout(state, left, right, center, gestureInsets, swipeEnabled, rightEnabled, panelWidthPx)
             }
         }
     }
@@ -232,6 +234,7 @@ private fun NarrowLayout(
     center: @Composable () -> Unit,
     gestureInsets: WindowInsets,
     swipeEnabled: Boolean,
+    rightEnabled: Boolean,
     panelWidthPx: Float,
 ) {
     val c = Yhtye.colors
@@ -250,8 +253,8 @@ private fun NarrowLayout(
             .fillMaxSize()
             .then(
                 if (swipeEnabled) {
-                    Modifier.pointerInput(state, edgeStart, edgeEnd, fling) {
-                        panelDrag(state, edgeStart, edgeEnd, fling, haptic)
+                    Modifier.pointerInput(state, edgeStart, edgeEnd, fling, rightEnabled) {
+                        panelDrag(state, edgeStart, edgeEnd, fling, rightEnabled, haptic)
                     }
                 } else {
                     Modifier
@@ -324,6 +327,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.panelDra
     edgeStart: Float,
     edgeEnd: Float,
     fling: Float,
+    rightEnabled: Boolean,
     haptic: HapticFeedback,
 ) = awaitEachGesture {
     // タップを取る子 (ボタン) は押下を消費するので、消費済みでも受ける
@@ -347,7 +351,7 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.panelDra
     }
     state.stopAnimation()
     val base = state.positionOf(state.open)
-    val lo = if (base > 0f) 0f else -state.panelWidth
+    val lo = if (base > 0f || !rightEnabled) 0f else -state.panelWidth
     val hi = if (base < 0f) 0f else state.panelWidth
     var cancelled = false
     while (true) {

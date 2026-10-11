@@ -6,6 +6,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiError
 import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
@@ -53,8 +54,11 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
     val calls = CopyOnWriteArrayList<ApiCommand>()
     val failures = HashMap<KClass<out ApiCommand>, ApiError>()
 
-    private val worktree = snapshot.chats.firstOrNull()?.worktree ?: "/tmp/repo"
-    private val git = GitOverview(
+    /** `list_projects` の答え (`open_project` はパスが合うものを返す)。 */
+    var projects: List<ProjectInfo> = listOf(PROJECT)
+
+    val worktree = snapshot.chats.firstOrNull()?.worktree ?: "/tmp/repo"
+    var git = GitOverview(
         head = "main",
         headSha = null,
         branches = listOf(GitBranch("main", "m".repeat(40))),
@@ -62,6 +66,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         commits = emptyList(),
         truncated = false,
     )
+
+    /** `create_chat` / `create_branch` が作るチャットの ID。 */
+    var nextChat = "C-9"
 
     inline fun <reified T : ApiCommand> callsOf(): List<T> = calls.filterIsInstance<T>()
 
@@ -80,8 +87,8 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         failures[command::class]?.let { throw ApiException(it) }
         return when (command) {
             ApiCommand.Ping -> ApiResponse.Pong("test-host")
-            ApiCommand.ListProjects -> ApiResponse.Projects(listOf(PROJECT))
-            is ApiCommand.OpenProject -> ApiResponse.Project(PROJECT)
+            ApiCommand.ListProjects -> ApiResponse.Projects(projects)
+            is ApiCommand.OpenProject -> ApiResponse.Project(projects.find { it.path == command.path } ?: PROJECT)
             is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)
             is ApiCommand.ListEvents -> {
                 val after = log.filter { !it.live && it.seq > command.afterSeq }
@@ -95,6 +102,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
                 ApiResponse.Chat(chat.copy(title = command.title))
             }
             is ApiCommand.GetUsage -> throw ApiException(ApiError(ApiErrorCode.Unavailable, "no usage"))
+            is ApiCommand.CreateChat ->
+                ApiResponse.Chat(ChatInfo(nextChat, command.worktree ?: "/tmp/wt/${command.branch}", null, createdMs = 0, lastUsedMs = 0))
+            is ApiCommand.CreateBranch -> ApiResponse.Chat(ChatInfo(nextChat, "/tmp/wt/${command.name}", null, createdMs = 0, lastUsedMs = 0))
             else -> ApiResponse.Accepted
         }
     }
