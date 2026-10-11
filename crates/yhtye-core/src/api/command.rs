@@ -4,6 +4,7 @@
 //! and the WebSocket bridge (`{id, cmd}`, see [`super::WsRequest`]) carry the
 //! same [`ApiCommand`] JSON and return the same [`ApiResponse`] / [`ApiError`].
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -25,7 +26,7 @@ pub const DEFAULT_EVENT_PAGE: u32 = 500;
 /// Largest page size of [`ApiCommand::ListEvents`].
 pub const MAX_EVENT_PAGE: u32 = 2000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApiCommand {
     /// A liveness check of the core: answers with the name of the machine it
@@ -240,6 +241,7 @@ pub enum ApiCommand {
     SetSecretEnv {
         name: String,
         #[ts(type = "string")]
+        #[schemars(with = "String")]
         value: SecretValue,
     },
     /// Removes the value and the name.
@@ -291,7 +293,7 @@ impl ApiCommand {
 }
 
 /// Everything the settings panel shows (`core-design.md` §15.7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct AgentSettingsView {
     pub harnesses: Vec<HarnessInfo>,
     /// Used for a role no layer sets.
@@ -308,7 +310,7 @@ pub struct AgentSettingsView {
 pub const DEFAULT_GRAPH_COMMITS: u32 = 120;
 
 /// A project known to Yhtye.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct ProjectInfo {
     pub id: String,
     /// Display name (the directory name).
@@ -323,7 +325,7 @@ pub struct ProjectInfo {
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema, TS)]
 pub struct LoggedEvent {
     pub seq: u64,
     pub ts_ms: u64,
@@ -331,6 +333,7 @@ pub struct LoggedEvent {
     /// Always `false` (only durable events are stored).
     pub live: bool,
     #[ts(as = "ApiEventBody")]
+    #[schemars(with = "ApiEventBody")]
     pub body: Value,
 }
 
@@ -348,7 +351,7 @@ impl LoggedEvent {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiResponse {
     /// The core is alive; `host` is the name of the machine it runs on.
@@ -420,7 +423,7 @@ pub enum ApiResponse {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiErrorCode {
     InvalidArgument,
@@ -434,7 +437,7 @@ pub enum ApiErrorCode {
 }
 
 /// A failed command. `message` is meant to be shown to the user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, thiserror::Error)]
 #[error("{code:?}: {message}")]
 pub struct ApiError {
     pub code: ApiErrorCode,
