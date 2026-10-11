@@ -56,6 +56,7 @@
 - 待ち受けは IPv4 (100.x) が必須、IPv6 (fd7a:…) は bind できれば併用。QR の `ip` は IPv4。MagicDNS が無効なら `host` を省く。
 - 「リモート接続の設定・ペアリングの発行・端末の失効」に加えて **状態の取得と端末一覧もローカル専用**、
   リモート接続の状態・端末の変化のイベント (`remote_status_changed` / `remote_devices_changed`) もリモートには流さない。
+  表示用のクライアント一覧 (`list_clients` / `clients_changed`、T-73) は別のビューで、リモートからも読めて流れる (core-design §18.8)。
 - Tailscale のアドレスやログイン状態が起動後に変わっても追従しない (再起動か設定のオン/オフで取り直す)。
 
 ### 実装で決めたこと (T-58: Android の雛形)

@@ -39,7 +39,7 @@ const VIEWPORTS = [
 const INTERACTIVE_VIEWPORTS = VIEWPORTS.slice(0, 3);
 const READY_TIMEOUT_MS = 30_000;
 const STRUCTURE = [
-  "html", "body", "#root", ".app", ".titlebar", ".banners", ".body", ".rail", ".sidebar", ".branches", ".workspace",
+  "html", "body", "#root", ".app", ".titlebar", ".banners", ".body", ".rail", ".sidebar", ".branches", ".side-footer", ".workspace",
   ".conversation", ".right", ".tasks", ".bottom", ".statusbar", ".modal-backdrop", ".settings-modal",
 ];
 /** Pop-ups that must lie inside the window and inside every box that clips them. */
@@ -263,6 +263,7 @@ const STATES = [
   { name: "no project open", scenario: "empty" },
   { name: "the recorded run", scenario: "run" },
   { name: "long conversation, many tasks and branches", scenario: "long" },
+  { name: "paired devices under the host (one connected, one offline)", scenario: "devices" },
   { name: "long: conversation scrolled to the end and wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".conversation .scroll", 4000) },
   { name: "long: conversation scrolled to the top and wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".conversation .scroll", -4000) },
   { name: "long: task list wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".tasks .scroll", 4000) },
@@ -331,6 +332,10 @@ const STATES = [
     await click(page, "リモート接続");
     await click(page, "端末を追加");
     await page.getByRole("img", { name: "ペアリング用の QR コード" }).waitFor();
+  } },
+  { name: "long: 12 devices under the host, unfolded", scenario: "long", interactive: true, run: async (page) => {
+    await click(page, "他 9 台");
+    await page.getByRole("button", { name: "折りたたむ" }).waitFor();
   } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
   { name: "run: every control reached with Tab", scenario: "run", interactive: true, tab: 60 },

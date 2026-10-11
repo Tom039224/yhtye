@@ -434,6 +434,9 @@ impl Core {
             ApiCommand::RevokeRemoteDevice { device } => Ok(ApiResponse::RemoteDevices {
                 devices: self.inner.remote.revoke(&device).await?,
             }),
+            ApiCommand::ListClients => Ok(ApiResponse::Clients {
+                clients: self.inner.remote.clients().await?,
+            }),
         }
     }
 

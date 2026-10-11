@@ -372,6 +372,14 @@ sealed interface ApiCommand {
         val device: String,
     ) : ApiCommand
 
+    /**
+     * This PC (its host name) and the paired devices with whether each is
+     * connected (`core-design.md` §18.8): a read-only view for every client,
+     * remote devices too (not local only). `clients_changed` says when it changed.
+     */
+    @Serializable
+    data object ListClients : ApiCommand
+
     /** A `type` this client does not know (from a newer Yhtye). Cannot be sent. */
     data class Unrecognized(
         /** The unknown `type`. */
@@ -417,6 +425,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("create_pairing_code", CreatePairingCode.serializer()) { it is CreatePairingCode },
             TaggedVariant<ApiCommand>("list_remote_devices", ListRemoteDevices.serializer()) { it is ListRemoteDevices },
             TaggedVariant<ApiCommand>("revoke_remote_device", RevokeRemoteDevice.serializer()) { it is RevokeRemoteDevice },
+            TaggedVariant<ApiCommand>("list_clients", ListClients.serializer()) { it is ListClients },
         ),
         ::Unrecognized,
     )

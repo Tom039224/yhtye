@@ -136,6 +136,14 @@ sealed interface ApiResponse {
         val devices: List<RemoteDevice>,
     ) : ApiResponse
 
+    /**
+     * Answer of `list_clients`.
+     */
+    @Serializable
+    data class Clients(
+        val clients: io.github.tom039224.yhtye.shared.api.generated.Clients,
+    ) : ApiResponse
+
     /** A `type` this client does not know (from a newer Yhtye). Cannot be sent. */
     data class Unrecognized(
         /** The unknown `type`. */
@@ -166,6 +174,7 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("remote_status", RemoteStatus.serializer()) { it is RemoteStatus },
             TaggedVariant<ApiResponse>("pairing_code", PairingCode.serializer()) { it is PairingCode },
             TaggedVariant<ApiResponse>("remote_devices", RemoteDevices.serializer()) { it is RemoteDevices },
+            TaggedVariant<ApiResponse>("clients", Clients.serializer()) { it is Clients },
         ),
         ::Unrecognized,
     )

@@ -128,7 +128,25 @@
 .chat-confirm-note { display: block; margin-top: 2px; color: var(--text-dim); font-size: 10.5px; }
 .chat-confirm-actions { display: flex; justify-content: flex-end; gap: 4px; }
 
-/* ---- host footer -------------------------------------------------------------- */
+/* ---- host footer: the server, then the paired devices ------------------------- */
 
-.side-footer .host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-footer { flex-direction: column; align-items: stretch; gap: 4px; }
+.host-row, .client-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.side-footer .host, .client-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-footer .host-sync { flex: none; }
+.client-kind { color: var(--text-dim); }
+.client-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+/* Unfolded, many devices scroll here instead of pushing the branch tree away. */
+.client-list.expanded { position: relative; max-height: 112px; overflow-y: auto; overscroll-behavior: contain; }
+.client-name { font: 400 10.5px/1.4 var(--font-mono); color: var(--text-tertiary); }
+/* Offline: the words and the icon sink. */
+.client-row.offline .client-name { color: var(--text-faint); }
+.client-row.offline .client-kind { color: var(--text-faintest); }
+.client-more {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px; margin-left: -4px;
+  border: 0; border-radius: 4px; background: none; color: var(--text-dim); font: 400 10px/1.5 var(--font-mono); cursor: pointer;
+}
+.client-more:hover { background: var(--surface-hover); color: var(--text-primary); }
+.client-more:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.client-more .caret { transform: rotate(-90deg); }
+.client-more .caret.open { transform: none; }

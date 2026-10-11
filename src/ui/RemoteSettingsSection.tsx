@@ -4,6 +4,7 @@ import type { PairingCode, RemoteDevice, RemoteStatus } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
+import { formatDateTime } from "./labels";
 import { QrCode } from "./QrCode";
 import { useNow } from "./useNow";
 
@@ -27,10 +28,6 @@ export function formatPairingCode(code: string): string {
 export function formatRemaining(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function formatDateTime(ms: number): string {
-  return new Date(ms).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" });
 }
 
 /** The pairing code on screen. */

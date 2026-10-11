@@ -257,6 +257,7 @@ mod tests {
             r#"{"type": "list_projects"}"#,
             r#"{"type": "set_secret_env", "name": "A", "value": "v"}"#,
             r#"{"type": "send_user_message", "project": "p", "chat": "c", "text": "t"}"#,
+            r#"{"type": "list_clients"}"#,
         ];
         for json in anyone {
             let cmd: ApiCommand = serde_json::from_str(json).expect(json);
@@ -352,12 +353,20 @@ mod tests {
             project: "p".into(),
         }))
         .expect("send");
+        tx.send(ApiEvent::app_wide(ApiEventBody::ClientsChanged {
+            clients: crate::remote::Clients::new("pc".into(), &[]),
+        }))
+        .expect("send");
         drop(tx);
         let (out, mut queued) = mpsc::channel(16);
         forward_events(rx, out, SessionPolicy::REMOTE).await;
         assert_eq!(
             body_type(&queued.try_recv().expect("one")),
             "projects_changed"
+        );
+        assert_eq!(
+            body_type(&queued.try_recv().expect("two")),
+            "clients_changed"
         );
         assert!(queued.try_recv().is_err());
     }

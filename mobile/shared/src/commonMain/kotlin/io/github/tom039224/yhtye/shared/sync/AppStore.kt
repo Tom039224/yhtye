@@ -557,7 +557,8 @@ class AppStore(
             is ApiEventBody.ProjectsChanged -> scope.launch { refreshProjects() }
             is ApiEventBody.SettingsChanged -> settings.notify(SettingsChange(body.kind, body.project, body.revision))
             ApiEventBody.Resync -> catchUpAll()
-            else -> Unit // リモート接続のイベントは PC 専用 (届かない)
+            // リモート接続のイベントは PC 専用 (届かない)。クライアント一覧 (`clients_changed`) の表示は後続タスク
+            else -> Unit
         }
     }
 
