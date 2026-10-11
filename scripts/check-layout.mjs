@@ -326,6 +326,12 @@ const STATES = [
     await click(page, "ハーネス");
     await page.getByRole("list", { name: "ハーネス" }).waitFor();
   } },
+  { name: "long: settings (remote access, pairing code shown)", scenario: "long", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "リモート接続");
+    await click(page, "端末を追加");
+    await page.getByRole("img", { name: "ペアリング用の QR コード" }).waitFor();
+  } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
   { name: "run: every control reached with Tab", scenario: "run", interactive: true, tab: 60 },
 ];

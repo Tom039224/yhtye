@@ -1377,3 +1377,18 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   whois は 1 回 (サーバーの再起動で再照合)、コード誤りで状態イベントはコードが無効になった時だけ。コードの期限切れは `pairing.rs` の単体テスト。
   whois のキャッシュ (期限後の再照合、一時エラーを覚えない、同時数が上限を超えない、大きさの上限) は `whois.rs` の単体テスト (tokio の時間を止めて進める)。
   `real_tailscale_round_trip` (`#[ignore]`) は本物の Tailscale で同じ流れ + 127.0.0.1 で待ち受けていないことを確かめる。
+
+### 18.7 設定画面「リモート接続」(T-56)
+
+- `src/ui/RemoteSettingsSection.tsx` (設定モーダルの 4 つ目の項目)。GPUI 移行で作り直す前提の最小限。ストアは
+  `AppStore.getRemoteStatus` / `setRemoteSettings` / `createPairingCode` / `listRemoteDevices` / `revokeRemoteDevice` と、
+  プロジェクトに属さないイベントを受ける `onRemoteEvent` (トランスポートを直接購読する。プロジェクトの同期とは別)。
+- オン/オフはスイッチ。オンにするときは入力中のポートも送る (1〜65535 以外は送らずその場で示す)。ポートだけの保存は
+  `{enabled: 今のまま, port}`。起動失敗は `status.error` をそのまま出し、「再試行」は `{enabled: true}` (ポート省略)。
+- QR は `uqr` (依存なし) で `encode` した行列を React の SVG に描く (白地に黒で固定。URI はページの外に出ない)。手入力用に
+  ホスト (MagicDNS 名、無ければ IP)・ポート・コード (`ABCD-2345` と 4+4 で表示) と残り時間。
+- コードの終わり: 時間切れは `expires_at_ms` と時計で判断。使用済み (や誤り 5 回・再起動) は、`pairing_expires_at_ms` が
+  発行したコードの期限と一致する状態を一度見た後 (応答の前でも後でもよい) に、期限前なのに一致しない状態が来たとき。
+  サーバーが止まればコードの表示ごと消す。どちらの終わりも QR とコードを消して「新しいコード」を出す。
+- 端末一覧は名前・接続中か・最終接続・追加日時と「失効」(確認してから送る)。
+- テストは `src/ui/RemoteSettings.test.tsx` (`FakeCore.remote` = `FakeRemote`)。`pnpm check:layout` に QR 表示中の状態がある。
