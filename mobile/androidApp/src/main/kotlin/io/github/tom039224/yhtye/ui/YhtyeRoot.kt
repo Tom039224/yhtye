@@ -16,7 +16,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.session.Session
 
-/** 画面の切り替え: 読み込み中 → ペアリング前 / ペアリング後 (ホーム)。 */
+/** 画面の切り替え: 読み込み中 → ペアリング前 / ペアリング後 (3 パネルのホーム)。 */
 @Composable
 fun YhtyeRoot(session: Session) {
     val phase by session.phase.collectAsStateWithLifecycle()
@@ -27,7 +27,7 @@ fun YhtyeRoot(session: Session) {
         }
         is Session.Phase.Unpaired -> PairingFlow(session, current.revoked, incoming)
         is Session.Phase.Paired -> {
-            HomeScreen(current.credentials, current.client, current.sync, onUnpair = session::unpair)
+            MainScreen(current.credentials.deviceId, current.sync, onReconnect = current.client::start, onUnpair = session::unpair)
             when (incoming) {
                 is Session.Incoming.Target -> RepairDialog(
                     onConfirm = session::unpair, // ペアリング前の画面が受け取ったリンクを使う
