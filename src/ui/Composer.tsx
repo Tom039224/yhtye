@@ -1,4 +1,4 @@
-import { type KeyboardEvent, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { Icon, IconButton } from "./Icon";
 import type { Mention } from "./mentions";
@@ -26,6 +26,8 @@ interface Props {
   /** Sends `text` (mentions are added by the caller); resolves to whether it was accepted. */
   onSend: (text: string) => Promise<boolean>;
   onCancel: () => void;
+  /** Shown below the composer (the context meter and its compact button). */
+  footer?: ReactNode;
 }
 
 /**
@@ -47,6 +49,7 @@ export function Composer({
   onRemoveMention,
   onSend,
   onCancel,
+  footer,
 }: Props) {
   const [text, setText] = useState(initialText);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -137,6 +140,7 @@ export function Composer({
           </div>
         ) : null}
       </div>
+      {footer}
     </div>
   );
 }

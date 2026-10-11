@@ -45,6 +45,8 @@ pub(super) enum Cmd {
     /// The user opened a chat: its orchestrator is started (restored) if it has
     /// anything to resume. Answers whether it is starting (`not_found`: no such chat).
     OpenChat(String, oneshot::Sender<Result<bool, ToolError>>),
+    /// Sends `/compact` to a chat's idle orchestrator.
+    CompactChat(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// The user renames a chat (chat, title).
@@ -238,6 +240,9 @@ impl Driver {
             }
             Some(Cmd::OpenChat(chat, tx)) => {
                 let _ = tx.send(self.open_chat(chat).await);
+            }
+            Some(Cmd::CompactChat(chat, tx)) => {
+                let _ = tx.send(self.compact_chat(&chat));
             }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);

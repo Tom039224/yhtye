@@ -55,3 +55,30 @@ export function codeToolCalls(code: string | null): string[] {
   }
   return out;
 }
+
+/** How full a session's context is, from ACP's `usage_update` (tokens). */
+export interface ContextUsage {
+  used: number;
+  size: number;
+  /** Cumulative cost of the session, if the agent reports it. */
+  cost: { amount: number; currency: string } | null;
+}
+
+function count(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** `UsageUpdate` (`used`, `size`, optional `cost: {amount, currency}`); `null` if malformed. */
+export function usageInfo(update: unknown): ContextUsage | null {
+  const used = count(field(update, "used"));
+  const size = count(field(update, "size"));
+  if (used === null || size === null) return null;
+  const cost = field(update, "cost");
+  const amount = field(cost, "amount");
+  const currency = str(field(cost, "currency"));
+  return {
+    used,
+    size,
+    cost: typeof amount === "number" && Number.isFinite(amount) && currency ? { amount, currency } : null,
+  };
+}
