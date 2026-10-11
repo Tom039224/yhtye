@@ -194,7 +194,7 @@ private fun ToolLine(item: TranscriptItem.Tool) {
 
 /** ツール呼び出しの状態 (PC の ToolStatus)。 */
 @Composable
-private fun ToolStatusIcon(status: String?) {
+fun ToolStatusIcon(status: String?) {
     val c = Yhtye.colors
     val (icon, color, spin) = when (status) {
         "completed" -> Triple(YIcons.Check, c.doneBar, false)

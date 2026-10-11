@@ -34,7 +34,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.shared.api.generated.State
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
+import io.github.tom039224.yhtye.shared.sync.ProjectView
+import io.github.tom039224.yhtye.shared.sync.Streamed
 import io.github.tom039224.yhtye.shared.sync.TranscriptItem
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.YIcons
@@ -42,8 +45,14 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** 上端の「さらに前の履歴」の行の鍵。 */
 private const val OLDER_KEY = "older"
+
+/** 呼ぶ側が先頭に置く行 (タスク詳細の Step の結果) の鍵。 */
+private const val LEAD_KEY = "lead"
 private const val STREAM_THOUGHT_KEY = "stream-thought"
 private const val STREAM_MESSAGE_KEY = "stream-message"
+
+/** 会話の行ではない (古い履歴の読み込み・先頭の行)。前に足されたかの判断と読んでいた行の記憶から外す。 */
+private fun isFixedKey(key: String): Boolean = key == OLDER_KEY || key == LEAD_KEY
 
 /** 下端からこれより近ければ「最新を見ている」(PC の useAutoScroll の 48px)。 */
 private val NEAR_BOTTOM = 48.dp
@@ -51,16 +60,45 @@ private val NEAR_BOTTOM = 48.dp
 private fun itemKey(item: TranscriptItem): String = "${item.seq}-${item::class.simpleName}"
 
 /**
- * 会話。新しい発言・本文の断片で最新に付いていく (読み返している間は動かさない。PC の useAutoScroll)。
- * 上端まで来たら古い履歴を読む (PC の OlderHistory。読み込みで表示している所は動かない)。
- * チャットが変わったら呼ぶ側が作り直す (最新から始まる)。
+ * 1 つのセッションの会話 (中央はオーケストレータ、タスク詳細はタスクのエージェント)。
+ *
+ * @param queued 受信箱でまだ届いていないユーザーの発言 (受信箱の ID)。
+ * @param state グループのカードの中身 (タスクは今の状態から読む)。
  */
+data class TranscriptSource(
+    val project: ProjectView?,
+    val items: List<TranscriptItem>,
+    val streaming: Streamed?,
+    val queued: Set<Long> = emptySet(),
+    val state: State? = null,
+) {
+    /** 会話の上端より前に読んでいない履歴がある。 */
+    val hasOlder: Boolean get() = (project?.historyStart ?: 1) > 1
+}
+
+/** 中央の会話。 */
 @Composable
 fun TranscriptList(model: ConversationModel, onLoadOlder: () -> Unit, modifier: Modifier = Modifier) {
-    val items = model.items
-    val streaming = model.streaming
+    TranscriptList(TranscriptSource(model.project, model.items, model.streaming, model.queued, model.state), onLoadOlder, modifier)
+}
+
+/**
+ * 会話。新しい発言・本文の断片で最新に付いていく (読み返している間は動かさない。PC の useAutoScroll)。
+ * 上端まで来たら古い履歴を読む (PC の OlderHistory。読み込みで表示している所は動かない)。
+ * チャット (セッション) が変わったら呼ぶ側が作り直す (最新から始まる)。[lead] は一番上に置く行。
+ */
+@Composable
+fun TranscriptList(
+    source: TranscriptSource,
+    onLoadOlder: () -> Unit,
+    modifier: Modifier = Modifier,
+    lead: (@Composable () -> Unit)? = null,
+) {
+    val items = source.items
+    val streaming = source.streaming
     val keys = buildList {
-        if (model.hasOlder) add(OLDER_KEY)
+        if (lead != null) add(LEAD_KEY)
+        if (source.hasOlder) add(OLDER_KEY)
         items.forEach { add(itemKey(it)) }
         if (streaming?.thought?.isNotEmpty() == true) add(STREAM_THOUGHT_KEY)
         if (streaming?.message?.isNotEmpty() == true) add(STREAM_MESSAGE_KEY)
@@ -75,10 +113,11 @@ fun TranscriptList(model: ConversationModel, onLoadOlder: () -> Unit, modifier: 
         modifier = modifier.testTag("transcript"),
         contentPadding = PaddingValues(top = 12.dp, bottom = 8.dp),
     ) {
-        if (model.hasOlder) {
-            item(key = OLDER_KEY) { OlderHistoryRow(model, onLoadOlder) }
+        if (lead != null) item(key = LEAD_KEY) { lead() }
+        if (source.hasOlder) {
+            item(key = OLDER_KEY) { OlderHistoryRow(source.project, onLoadOlder) }
         }
-        items(items, key = ::itemKey) { item -> TranscriptRow(item, model.queued, model.state) }
+        items(items, key = ::itemKey) { item -> TranscriptRow(item, source.queued, source.state) }
         if (streaming?.thought?.isNotEmpty() == true) item(key = STREAM_THOUGHT_KEY) { StreamingThought(streaming.thought) }
         if (streaming?.message?.isNotEmpty() == true) item(key = STREAM_MESSAGE_KEY) { StreamingMessage(streaming.message) }
     }
@@ -95,7 +134,7 @@ private class Follow(private val listState: LazyListState, private val keys: () 
 
     suspend fun onContentChanged() {
         val all = keys()
-        val newHead = all.firstOrNull { it != OLDER_KEY }
+        val newHead = all.firstOrNull { !isFixedKey(it) }
         val prepended = head != null && newHead != head
         head = newHead
         if (all.isEmpty()) return
@@ -125,7 +164,7 @@ private fun rememberFollow(listState: LazyListState, keys: List<String>): Follow
         // 最初に見えている行が変わったときだけ覚える (前に足されて位置がずれたときは覚え直さない)
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect {
             follow.anchor = listState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.key != OLDER_KEY }
+                .firstOrNull { !isFixedKey(it.key as String) }
                 ?.let { (it.key as String) to it.offset }
         }
     }
@@ -151,9 +190,9 @@ private fun distanceToBottom(state: LazyListState): Int {
  * 理由と再試行。どの状態でも同じ高さ (読み込みで会話が動かない)。
  */
 @Composable
-private fun OlderHistoryRow(model: ConversationModel, onLoadOlder: () -> Unit) {
+private fun OlderHistoryRow(project: ProjectView?, onLoadOlder: () -> Unit) {
     val c = Yhtye.colors
-    val view = model.project ?: return
+    val view = project ?: return
     val waiting = view.phase == LoadPhase.Ready && !view.loadingOlder && view.olderError == null
     LaunchedEffect(waiting, view.historyStart) { if (waiting) onLoadOlder() }
     Row(
