@@ -93,6 +93,12 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
         error("condition not reached")
     }
 
+    /** 何も起きないことを確かめるために、アニメーションや遅れて起きる操作 (メンションの確定は 300ms 後) が終わるくらい (約 1 秒) 進める。 */
+    fun settleFor() {
+        var rounds = 0
+        settle { ++rounds >= QUIET_ROUNDS }
+    }
+
     /** 中身が出ているか (パネルは開いているときだけ合成される)。 */
     fun exists(tag: String): Boolean = rule.onAllNodesWithTagCount(tag) > 0
 
@@ -103,6 +109,15 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
 
     fun openRight() {
         rule.onNodeWithTag("open-right").performClick()
+        rule.waitForIdle()
+    }
+
+    /** 画面全体を、タッチスロップを越えてから幅の [pulled] (割合) だけ横へ動かして離す (速さは [dpPerSecond])。 */
+    fun dragScreen(pulled: Float, leftward: Boolean = false, dpPerSecond: Float = SLOW_DP_PER_SECOND) {
+        rule.onRoot().performTouchInput {
+            val from = Offset(width * (if (leftward) 0.9f else 0.1f), height / 2f)
+            dragFrom(from, width * pulled, leftward, dpPerSecond)
+        }
         rule.waitForIdle()
     }
 
@@ -117,6 +132,7 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
     private companion object {
         const val SETTLE_ROUNDS = 200
         const val FRAME_MS = 16L
+        const val QUIET_ROUNDS = 60
     }
 }
 

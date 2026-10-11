@@ -23,6 +23,7 @@ import androidx.compose.ui.test.swipe
 import androidx.compose.ui.unit.dp
 import io.github.tom039224.yhtye.YhtyeTheme
 import io.github.tom039224.yhtye.ui.conversation.Markdown
+import io.github.tom039224.yhtye.ui.shell.PEEK
 import io.github.tom039224.yhtye.ui.shell.Panel
 import io.github.tom039224.yhtye.ui.shell.PanelShell
 import io.github.tom039224.yhtye.ui.shell.PanelShellState
@@ -65,6 +66,17 @@ class PanelShellTest {
         rule.waitForIdle()
     }
 
+    /** 開いたパネルの幅 (px)。 */
+    private val panelWidth get() = width - with(rule.density) { PEEK.toPx() }
+
+    /** [fromX] から、タッチスロップを越えてパネルの幅の [pulledShare] だけ横へ動かして離す (速さは [dpPerSecond])。 */
+    private fun dragPanel(fromX: Float, pulledShare: Float, leftward: Boolean, dpPerSecond: Float = SLOW_DP_PER_SECOND) {
+        val pulled = panelWidth * pulledShare
+        val y = height / 2
+        rule.onRoot().performTouchInput { dragFrom(Offset(fromX, y), pulled, leftward, dpPerSecond) }
+        rule.waitForIdle()
+    }
+
     private fun swipeX(fromX: Float, toX: Float, durationMillis: Long = 300, y: Float = height / 2) {
         rule.onRoot().performTouchInput { swipe(Offset(fromX, y), Offset(toX, y), durationMillis) }
         rule.waitForIdle()
@@ -101,6 +113,59 @@ class PanelShellTest {
         assertNull(shell.open)
 
         swipeX(width * 0.3f, width * 0.45f, durationMillis = 60)
+        assertEquals(Panel.Left, shell.open)
+    }
+
+    // 離す位置のしきい値はパネルの幅の 35%、フリックは 245dp/s (T-72。それまでは 50% と 350dp/s)
+
+    @Test
+    fun `a slow drag opens the left panel just past 35 percent of its width and not just short of it`() {
+        setContent()
+        dragPanel(width * 0.1f, pulledShare = 0.30f, leftward = false)
+        assertNull(shell.open)
+        assertEquals(0f, shell.offset)
+
+        dragPanel(width * 0.1f, pulledShare = 0.40f, leftward = false)
+        assertEquals(Panel.Left, shell.open)
+        assertEquals(panelWidth, shell.offset)
+    }
+
+    @Test
+    fun `a slow drag opens the right panel just past 35 percent of its width and not just short of it`() {
+        setContent()
+        dragPanel(width * 0.9f, pulledShare = 0.30f, leftward = true)
+        assertNull(shell.open)
+
+        dragPanel(width * 0.9f, pulledShare = 0.40f, leftward = true)
+        assertEquals(Panel.Right, shell.open)
+        assertEquals(-panelWidth, shell.offset)
+    }
+
+    @Test
+    fun `a slow drag closes an open panel just past 35 percent of its width and not just short of it`() {
+        setContent()
+        rule.runOnUiThread { shell.show(Panel.Left) }
+        rule.waitForIdle()
+        assertEquals(panelWidth, shell.offset)
+
+        // 開いているパネルの上から左へ
+        dragPanel(panelWidth * 0.8f, pulledShare = 0.30f, leftward = true)
+        assertEquals(Panel.Left, shell.open)
+        assertEquals(panelWidth, shell.offset)
+
+        dragPanel(panelWidth * 0.8f, pulledShare = 0.40f, leftward = true)
+        assertNull(shell.open)
+        assertEquals(0f, shell.offset)
+    }
+
+    @Test
+    fun `a short flick opens a panel above 245 dp per second and goes back below it`() {
+        setContent()
+        // 35% に届かない短さ (20%)。速さだけで決まる
+        dragPanel(width * 0.1f, pulledShare = 0.20f, leftward = false, dpPerSecond = 180f)
+        assertNull(shell.open)
+
+        dragPanel(width * 0.1f, pulledShare = 0.20f, leftward = false, dpPerSecond = 330f)
         assertEquals(Panel.Left, shell.open)
     }
 

@@ -102,6 +102,35 @@ class TaskDetailTest {
         assertTrue(h.exists("right-panel"))
     }
 
+    // 閉じる距離は幅の 24.5%、はじきは 245dp/s (T-72。それまでは 35% と 350dp/s)
+
+    @Test
+    fun `a slow swipe closes the detail just past 24 percent of the width and not just short of it`() {
+        h.open()
+        openDetail("T-1")
+        h.dragScreen(pulled = 0.19f)
+        h.settleFor()
+        assertTrue(h.exists("task-detail"))
+
+        h.dragScreen(pulled = 0.30f)
+        h.settle { !h.exists("task-detail") }
+        // 下の右パネルは開いたまま
+        assertTrue(h.exists("right-panel"))
+    }
+
+    @Test
+    fun `a short flick closes the detail above 245 dp per second and not below it`() {
+        h.open()
+        openDetail("T-1")
+        // 24.5% に届かない短さ (10%)。速さだけで決まる
+        h.dragScreen(pulled = 0.10f, dpPerSecond = 180f)
+        h.settleFor()
+        assertTrue(h.exists("task-detail"))
+
+        h.dragScreen(pulled = 0.10f, dpPerSecond = 330f)
+        h.settle { !h.exists("task-detail") }
+    }
+
     @Test
     fun `a swipe from the screen edge is left to the system back gesture`() {
         h.open(insets = WindowInsets(left = 24.dp, right = 24.dp))
