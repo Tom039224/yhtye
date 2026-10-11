@@ -14,6 +14,9 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
 import io.github.tom039224.yhtye.shared.api.generated.Candidate
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.ClientServer
+import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.EffortOption
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
@@ -84,6 +87,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         truncated = false,
     )
 
+    /** ペアリング済みの端末 (`list_clients`)。 */
+    var devices: List<ClientDevice> = emptyList()
+
     /** `create_chat` / `create_branch` が作るチャットの ID。 */
     var nextChat = "C-9"
 
@@ -125,6 +131,7 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         failures[command::class]?.let { throw ApiException(it) }
         return when (command) {
             ApiCommand.Ping -> ApiResponse.Pong("test-host")
+            ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer("test-host"), devices))
             ApiCommand.ListProjects -> ApiResponse.Projects(projects)
             is ApiCommand.OpenProject -> ApiResponse.Project(projects.find { it.path == command.path } ?: PROJECT)
             is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)

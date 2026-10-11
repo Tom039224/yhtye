@@ -178,6 +178,7 @@ fun MainScreen(
                         view = view,
                         onView = { view = it },
                         memory = model.left,
+                        selfId = deviceId,
                         onChatChosen = shell::hide,
                         onOpenSettings = { stackedKey = Stacked.Settings.key },
                     )

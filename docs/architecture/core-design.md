@@ -1471,6 +1471,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **イベント** `clients_changed { clients: Clients }`: アプリ全体 (project `""`・seq 0・live)。`remote_devices_changed` と同じ契機
   (ペアリング・失効・接続・切断) で、その直後に出す (`Shared::emit_device_changes`)。`is_app_wide()` は真、`is_local_only()` は**偽**で、
   **リモートの WS にも流す**。リモート接続が止まっていても `list_clients` は読める (端末はすべて未接続)。
+- Android の表示は左パネルの下端 (`planned/android-client.md` の T-74。同期層は接続・再接続・`resync` で読み、`clients_changed` で置き換える)。
 - PC の GUI の表示は `docs/design/orchestrator-desktop.md` §3.3 のフッタ。ストア (`store/app.ts`) は接続 (再接続を含む) と `resync` で
   `list_clients` を読み、`clients_changed` で置き換える (読んでいる途中に来たイベントの方が新しいので、その読みの答えは捨てる)。
 - テスト: `remote/clients.rs` (JSON の形)、`ws.rs` (`list_clients` はローカル専用でない、`clients_changed` はリモートに流れる)、

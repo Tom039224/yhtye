@@ -41,7 +41,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-// 中央の上に積む全画面 (タスク詳細・設定。モックの `.screen`)。右から入り、左→右のスワイプ (指に付いてずれる) か
+// 中央の上に積む全画面 (タスク詳細・設定。モックの `.screen`)。右から入り、左→右のスワイプ (指に 1:1 で付いてずれる) か
 // 戻る (予測型を含む) で閉じる。積むのは 1 枚だけ。
 
 /** 開閉のアニメーション (モックの `.screen` の transition .26s)。 */
@@ -142,14 +142,15 @@ fun <T : Any> ScreenStack(
         Box(
             Modifier
                 .fillMaxSize()
+                // ずらす層より前 (外) に置く: 中に置くと、画面がずれた分だけ指の座標も戻り、指の半分しか付いて来ない (T-74)
+                .pointerInput(motion, edgeStart, edgeEnd, fling) {
+                    swipeToClose(motion, edgeStart, edgeEnd, fling) { close() }
+                }
                 .graphicsLayer {
                     translationX = motion.offset.coerceAtMost(width)
                     shadowElevation = SCREEN_SHADOW.toPx()
                 }
                 .background(Yhtye.colors.bgCenter)
-                .pointerInput(motion, edgeStart, edgeEnd, fling) {
-                    swipeToClose(motion, edgeStart, edgeEnd, fling) { close() }
-                }
                 .testTag("stacked-screen"),
         ) { content(current) }
     }
@@ -183,6 +184,8 @@ private suspend fun PointerInputScope.swipeToClose(
         start = change.position
     }
     motion.stop()
+    // 戻る途中で掴み直したら、その位置から指に付いて行く
+    val base = motion.offset.coerceIn(0f, motion.width)
     var cancelled = false
     while (true) {
         val change = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id }
@@ -196,7 +199,7 @@ private suspend fun PointerInputScope.swipeToClose(
             break
         }
         if (change.positionChange() != Offset.Zero) change.consume()
-        motion.offset = (change.position.x - start.x).coerceAtLeast(0f)
+        motion.offset = (base + change.position.x - start.x).coerceAtLeast(0f)
     }
     val velocity = if (cancelled) 0f else tracker.calculateVelocity().x
     if (motion.offset > motion.width * SwipeThresholds.DETAIL_CLOSE_SHARE || velocity > fling) {
