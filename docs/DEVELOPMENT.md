@@ -68,6 +68,8 @@ pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に
   以前の識別子 `com.tom039224.yhtye` のディレクトリが残っていれば、初回起動時に新しい名前へ自動で移す
   (両方あるときは触らない。`src-tauri/src/legacy_data.rs`)。
   Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
+- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する)。
+  並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
 - アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
   次の起動時に自動で開き、中断したタスクを再開する。
 
@@ -206,8 +208,15 @@ cd mobile
 ./gradlew :androidApp:assembleDebug      # デバッグ APK → androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ./gradlew :androidApp:installDebug       # adb でつないだ実機・エミュレータに入れる
 ./gradlew :shared:allTests               # 共通モジュールのユニットテスト (JVM 上で実行)
+./gradlew :androidApp:testDebugUnitTest  # 画面のテスト (Compose UI テストを Robolectric で JVM 上で実行)
 ./gradlew :androidApp:lint               # Android lint
 ```
+
+画面のテスト (`androidApp/src/test/`) は Robolectric で動かす (実機・エミュレータ不要)。Robolectric の Android の版は
+`src/test/resources/robolectric.properties` の `sdk=34` (35 以上は JDK 21 が要る)。同期層は本物の `AppStore` を偽のコア
+(`TestCore`。PC の vitest と同じ記録 `src/test/fixtures/fake-run.json` を読む) の上で動かし、`Dispatchers.Main` の
+コルーチンは `settle` で main looper を回して進める (Compose の `waitUntil` だけでは流れないことがある)。
+ダイアログ (別ウィンドウ) の中の入力欄に `performTextInput` すると main looper が止まらなくなるので、入力欄はダイアログに入れていない。
 
 ### API 型 (Rust から生成)
 
@@ -239,6 +248,11 @@ cd mobile
 cd mobile
 YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealServerTest*'   # ポートは YHTYE_REAL_SERVER_PORT (既定 14230)
 ```
+
+同期層 (`shared/sync/`、T-66) の `SyncRealServerTest` も同じ環境変数で動く (上のコマンドの `*RealServerTest*` に含まれる)。
+`cargo build -p yhtye-fake-agent` した偽エージェントを `remote_server --fake-agent` に渡し、2 つの端末をペアリングして、
+プロジェクトを開く → チャット作成 → 送信 → グループ・タスク → マージ → オーケストレータの報告 (ユーザーの番) を両方の同期層の状態で確かめる。
+ポートは `YHTYE_SYNC_SERVER_PORT` (既定 14231)。
 
 ### 実機での動作確認
 
@@ -272,4 +286,18 @@ YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealSer
    端末に表示) を、アプリの「QR コードを読む」で映す。初回はカメラの許可を求められる。
 6. スクリーンショットは `adb exec-out screencap -p > shot.png` (画面が消えていると真っ黒になる。`adb shell input keyevent KEYCODE_WAKEUP`
    と `adb shell wm dismiss-keyguard` で起こし、`adb shell svc power stayon usb` で消えないようにする。終わったら `stayon false`)。
-   `adb shell input text` は端末の IME を通るので、日本語 IME だと全角や仮名になることがある (アプリは全角の英数字を半角として読む)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。
+   `adb shell input text` は端末の IME を通るので、日本語 IME だと全角や仮名になることがある (アプリは全角の英数字を半角として読む)。
+   会話の入力では Gboard を英字にしてから送る (キーボードの「あa1」をタップ。空白は `%s`)。
+   会話の確認には偽エージェントを使う (`cargo build -p yhtye-fake-agent` して `--fake-agent target/debug/yhtye-fake-agent
+   --fake-orchestrator '<シナリオの JSON>'`。形式は `crates/yhtye-fake-agent/src/scenario.rs`。`match` で発言ごとに返事を変えられ、
+   `message` を `sleep` で区切るとストリーミングになり、`wait_cancel` で中止ボタンを試せる)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。
+7. 常駐 (Foreground Service) と通知の確認 (T-71。結果は [`planned/android-client.md`](planned/android-client.md) の「実装で決めたこと (T-71)」):
+   - 偽エージェントのシナリオに `{"match":"slow","actions":[{"message":"started"},{"sleep":75000},{"message":"done\nmore"},{"end":"end_turn"}]}` のような長いターンを入れ
+     (`--fake-agent` / `--fake-orchestrator` には**絶対パス**を渡す。相対パスだとモデル一覧の探索が失敗する)、そのチャットから別のチャットに切り替える・ホームに戻る・画面を消すなどして完了を待つ。
+   - サービスと通知の状態は `adb shell dumpsys activity services io.github.tom039224.yhtye` (`isForeground=true`、`types=0x40000000` = specialUse) と
+     `adb shell dumpsys notification --noredact` (自分のパッケージの行だけを見る。端末の他のアプリの通知が混ざる)。ロック画面の通知は `adb shell input keyevent KEYCODE_SLEEP` →
+     `KEYCODE_WAKEUP` のあと `uiautomator dump` で探してタップできる (通知シェードは動くものがあると `uiautomator` が「idle にならない」と失敗する)。`uiautomator dump` も
+     アニメーションが続く画面では失敗して古い /sdcard/ui.xml が残るので、前に消してから取る。
+   - Doze: `adb shell dumpsys battery unplug` と `adb shell dumpsys deviceidle force-idle` (深い Doze を強制)、終わったら `dumpsys deviceidle unforce` と `dumpsys battery reset`。
+   - 設定が PC に反映されたかは、もう 1 つのクライアント (別の端末としてペアリングした WebSocket クライアント。Python の `websockets` で `get_agent_settings` / `list_secret_env` を送る) で見られる。
+   - `BOOT_COMPLETED` はシェルから送れない (保護された放送)。同じ除外を受ける `adb install -r` (= `MY_PACKAGE_REPLACED`) で、アプリを開かずにサービスが始まることを確かめられる。

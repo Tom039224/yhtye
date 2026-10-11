@@ -26,6 +26,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        // Compose の UI テストを Robolectric (JVM) で回す。リソース (文字列) を読む
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 kotlin {
@@ -51,5 +56,15 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.compose.ui.tooling.preview)
+    implementation(libs.androidx.window.core)
+    implementation(libs.markdown)
     debugImplementation(libs.compose.ui.tooling)
+    debugImplementation(libs.compose.ui.test.manifest)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.kotlin.test)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 }

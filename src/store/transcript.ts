@@ -168,9 +168,15 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
       return push(t, body.session, { ...base, kind: "lifecycle", text: "interrupted by a restart", error: true });
     case "agent":
       return applyAgentEvent(t, body.session, base, body.event);
+    case "session_starting":
+      // Live: shown as the chat's "starting" badge, not in the transcript.
+      return t;
+    case "projects_changed":
+    case "settings_changed":
+    case "resync":
     case "remote_status_changed":
     case "remote_devices_changed":
-      // App-wide (remote access), never a project's.
+      // App-wide, never a project's.
       return t;
   }
 }

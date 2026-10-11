@@ -23,7 +23,7 @@ mod types;
 
 pub use agent_rules::MAX_NUDGES;
 pub use chat_rules::{
-    COMPACT_PROMPT, INTERNAL_BRANCH_PREFIX, MAX_RENAMED_TITLE_CHARS, MAX_TITLE_CHARS,
+    COMPACT_PROMPT, INTERNAL_BRANCH_PREFIX, MAX_RENAMED_TITLE_CHARS, MAX_TITLE_CHARS, chat_number,
     chat_of_session, check_target_branch, orchestrator_session,
 };
 pub use command::{

@@ -11,4 +11,9 @@ export type Snapshot = { seq: number, state: State, sessions: Array<SessionRecor
 /**
  * The project's chats with their times, most recently used first (Stage 8).
  */
-chats: Array<ChatInfo>, };
+chats: Array<ChatInfo>, 
+/**
+ * Sessions being started (T-65): what `session_starting` said and no
+ * `session_started` / `session_stopped` / final `session_failed` ended yet.
+ */
+starting: Array<string>, };

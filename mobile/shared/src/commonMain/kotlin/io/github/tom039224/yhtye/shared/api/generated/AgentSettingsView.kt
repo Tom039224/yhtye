@@ -27,4 +27,10 @@ data class AgentSettingsView(
      * In effect for `project` (or globally).
      */
     val effective: AgentSettings,
+    /**
+     * Version of all agent settings layers: it grows with every change (also
+     * across restarts of the core), so a larger one is newer. Passed back as
+     * `set_agent_settings`' `expected_revision`.
+     */
+    val revision: Long,
 )

@@ -17,6 +17,7 @@ pub struct WsRequest {
 }
 
 /// Reply to a [`WsRequest`].
+#[allow(clippy::large_enum_variant)] // like `ApiResponse`: short-lived, sent at once
 #[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(untagged)]
 pub enum WsReply {

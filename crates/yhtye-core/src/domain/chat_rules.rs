@@ -33,6 +33,18 @@ pub fn orchestrator_session(chat: &str) -> String {
     format!("{ORCHESTRATOR_SESSION_PREFIX}{chat}")
 }
 
+/// Chat ids are this and a number from 1 (`C-1`, `C-2`, ...), never reused.
+const CHAT_ID_PREFIX: &str = "C-";
+
+/// The number of chat id `id` (`C-3` → 3), if it is one.
+#[must_use]
+pub fn chat_number(id: &str) -> Option<u32> {
+    id.strip_prefix(CHAT_ID_PREFIX)?
+        .parse()
+        .ok()
+        .filter(|n| *n >= 1)
+}
+
 /// The chat whose orchestrator has session key `session`.
 #[must_use]
 pub fn chat_of_session(session: &str) -> Option<&str> {
@@ -44,7 +56,7 @@ impl Tx {
         if worktree.as_os_str().is_empty() {
             return Err(ToolError::invalid_argument("a chat needs a worktree"));
         }
-        let id = format!("C-{}", self.state.counters.chats + 1);
+        let id = format!("{CHAT_ID_PREFIX}{}", self.state.counters.chats + 1);
         let chat = Chat {
             id,
             worktree,
@@ -160,6 +172,14 @@ fn flatten(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_ids_are_numbered_from_one() {
+        assert_eq!(chat_number("C-3"), Some(3));
+        for not_one in ["C-0", "C-", "C-x", "G-1", "c-1", "C--1"] {
+            assert_eq!(chat_number(not_one), None, "{not_one}");
+        }
+    }
 
     #[test]
     fn renamed_titles_are_flattened_but_not_cut() {

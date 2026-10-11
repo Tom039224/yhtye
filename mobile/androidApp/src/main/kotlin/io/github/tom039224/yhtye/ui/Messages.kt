@@ -3,7 +3,6 @@ package io.github.tom039224.yhtye.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import io.github.tom039224.yhtye.R
-import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.pairing.InvalidPairingInput
 import io.github.tom039224.yhtye.shared.pairing.PairingFailure
 
@@ -33,16 +32,3 @@ fun pairingFailureText(failure: PairingFailure): Pair<String, String?> = when (f
     is PairingFailure.WrongServer -> stringResource(R.string.fail_wrong_server) to null
     is PairingFailure.ServerError -> stringResource(R.string.fail_server_error, failure.status) to failure.message
 }
-
-@Composable
-fun connectionStateText(state: ConnectionState): String = when (state) {
-    ConnectionState.Idle -> stringResource(R.string.state_idle)
-    is ConnectionState.Connecting -> stringResource(R.string.state_connecting)
-    is ConnectionState.Connected -> stringResource(R.string.state_connected)
-    is ConnectionState.WaitingToReconnect ->
-        stringResource(R.string.state_waiting, ((state.delayMs + MILLIS_PER_SECOND - 1) / MILLIS_PER_SECOND).toInt())
-    ConnectionState.Revoked -> stringResource(R.string.state_revoked)
-    is ConnectionState.Rejected -> stringResource(R.string.state_rejected)
-}
-
-private const val MILLIS_PER_SECOND = 1_000L

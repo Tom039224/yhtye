@@ -165,7 +165,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const { git, chats, chatStates } = longGit();
     const group = { ...FULL_RUN.end.state.groups[0], id: "G-1", chat: CHAT_ID, title: `グループ ${NO_SPACES}`, status: "active" as const };
     const state: State = { ...emptyState("repo", { max_review_rounds: 2 }), chats: chatStates, groups: [group], tasks, helps };
-    const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats };
+    const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats, starting: [] };
     const core = new FakeCore(PROJECT, snapshot);
     core.log = longLog();
     core.git = git;

@@ -296,7 +296,11 @@ async fn a_request_runs_to_the_merge_through_the_facade() {
     assert_eq!(seqs, (1..=snap.seq).collect::<Vec<_>>());
     let streamed: Vec<u64> = seen.iter().filter(|e| !e.live).map(|e| e.seq).collect();
     assert_eq!(streamed.last(), Some(&snap.seq));
-    assert!(seen.iter().any(|e| e.live), "chunks are streamed live");
+    assert!(
+        seen.iter()
+            .any(|e| e.live && matches!(&e.body, ApiEventBody::Agent { .. })),
+        "chunks are streamed live"
+    );
     assert!(history.iter().any(|e| e.body["type"] == "agent_text"));
 
     record_fixture("fake-run.json", &start, &seen, &snap);
@@ -434,7 +438,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     run(&core, send("hold on")).await;
     until(&mut rx, &mut seen, |e| {
         matches!(&e.body, ApiEventBody::AgentText { text, .. } if text.contains("thinking"))
-            || e.live
+            || (e.live && matches!(&e.body, ApiEventBody::Agent { .. }))
     })
     .await;
     let cancel = ApiCommand::CancelOrchestratorTurn {
@@ -495,16 +499,37 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         r.extra_worktrees()
     );
     assert!(r.branch_exists("yhtye/G-1"), "the group branch is kept");
-    assert_eq!(
-        error_code(&core, cancel_group).await,
-        ApiErrorCode::InvalidState
-    );
+    // Cancelling it again (another client was first) is accepted and does
+    // nothing: no tool call is recorded, the orchestrator is not told twice.
+    let calls = |seen: &[ApiEvent]| {
+        seen.iter()
+            .filter(|e| matches!(&e.body, ApiEventBody::ToolCalled { record } if record.binding.session == USER_SESSION))
+            .count()
+    };
+    run(&core, cancel_group).await;
+    run(&core, cancel_task("T-1")).await;
     until(&mut rx, &mut seen, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, text }
             if session == ORCHESTRATOR_SESSION && text.contains("cancelled group G-1"))
     })
     .await;
     until(&mut rx, &mut seen, orchestrator_turn_ended).await;
+    // T-9 (refused), T-1 and G-1; the repeats added none.
+    assert_eq!(calls(&seen), 3);
+    let notes = seen
+        .iter()
+        .filter(|e| matches!(&e.body, ApiEventBody::Prompted { text, .. } if text.contains("cancelled group G-1")))
+        .count();
+    assert_eq!(notes, 1, "the orchestrator is told once");
+    // The recording ends once both task agents are stopped, so the end snapshot
+    // has nothing the recorded events do not.
+    for task in ["T-1", "T-2"] {
+        let key = format!("{task}/implementer");
+        let stopped = |e: &ApiEvent| matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if *session == key);
+        if !seen.iter().any(stopped) {
+            until(&mut rx, &mut seen, stopped).await;
+        }
+    }
     let end = snapshot(&core, &project).await;
     record_fixture("fake-cancel.json", &start, &seen, &end);
     core.shutdown().await;
@@ -559,7 +584,7 @@ async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
     run(&core, send("hold on")).await;
     until(&mut rx, &mut seen, |e| {
         matches!(&e.body, ApiEventBody::AgentText { text, .. } if text.contains("thinking"))
-            || e.live
+            || (e.live && matches!(&e.body, ApiEventBody::Agent { .. }))
     })
     .await;
     assert_eq!(running_projects(&core).await, vec![project.clone()]);

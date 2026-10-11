@@ -432,13 +432,7 @@ impl Shared {
 
     /// An app-wide event: not stored, no project (see [`ApiEventBody::is_local_only`]).
     fn emit(&self, body: ApiEventBody) {
-        let _ = self.events.send(ApiEvent {
-            seq: 0,
-            ts_ms: now_ms(),
-            project: String::new(),
-            live: true,
-            body,
-        });
+        let _ = self.events.send(ApiEvent::app_wide(body));
     }
 
     async fn devices(&self) -> Result<Vec<RemoteDevice>, ApiError> {

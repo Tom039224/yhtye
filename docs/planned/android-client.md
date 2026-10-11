@@ -2,7 +2,7 @@
 
 - 日付: 2026-10-11
 - 状態: 設計確定。段階 1 (PC 側サーバーと認証 T-55、設定画面 T-56、[`core-design.md`](../architecture/core-design.md) §18) と
-  段階 2 (Android の基盤: 雛形 T-58、型生成 T-59、通信・ペアリング・保存・最小画面 T-61) は実装済み。段階 3 (GUI) は画面構成と操作を HTML モックで決めた段階 (下の「段階 3: GUI の決定事項」、T-62 / T-63)。Compose の実装は未着手
+  段階 2 (Android の基盤: 雛形 T-58、型生成 T-59、通信・ペアリング・保存・最小画面 T-61) は実装済み。段階 3 (GUI) は画面構成と操作を HTML モックで決めた段階 (下の「段階 3: GUI の決定事項」、T-62 / T-63)。同期層 (T-66)、3 パネルの骨格・会話画面 (T-67)、左右パネルとタスク詳細 (T-69) は実装済み。設定・通知・常駐 (T-71) も実装済み (段階 3 の画面は一通り揃った)
 - ブランチ: `feature/android_client`
 - 目的: Tailscale でつながった Android 端末から、PC で動いている Yhtye (コア) を操作する。
 
@@ -131,6 +131,312 @@
     「解除して新しくペアリングするか」を聞く。
 - PC の example サーバー (`remote_server`) に `open <path>` (プロジェクトを開く) を足した (結合テストと実機確認用)。
 
+### 実装で決めたこと (T-66: 同期層)
+
+PC の GUI と同じ方式でコアの状態を写し取る同期層。画面 (3 パネル) は次のタスク。
+
+- **置き場所**: `shared/commonMain/.../shared/sync/` (Android 依存なし)。PC の `src/store/*.ts` と、表示用の導出のうちロジックだけのもの
+  (`src/ui/taskInfo.ts` / `branchTree.ts` / `projectActivity.ts` / `labels.ts`) をファイル単位で移した:
+  `Domain.kt` (domain.ts)、`Sessions.kt` (sessions.ts)、`Chats.kt` (chats.ts)、`Transcript.kt` (transcript.ts)、`Acp.kt` (api/acp.ts)、
+  `ProjectView.kt` (project.ts)、`EventRules.kt` (eventRules.ts + activity.ts + projectActivity.ts)、`AppStore.kt` (app.ts)、
+  `SettingsCommands.kt` (settingsCommands.ts)、`ClientPrefs.kt` (prefs.ts + drafts.ts)、`TaskInfo.kt` / `BranchTree.kt` / `Labels.kt` (ui の同名)、
+  `UsersTurn.kt` (新規: ユーザーの番の検知)。関数名・規則・文言は PC と同じ (`deleteBlocker` などの日本語も同じ文)。
+- **`AppStore`** (PC と同名): `state: StateFlow<AppState>` (不変の data class。`ProjectView` は PC と同じ範囲: スナップショット + 畳み込んだ状態、チャット、
+  選択中のチャット、未読、起動中、セッション、会話、ストリーミング途中の本文、文脈の使用量、圧縮中、履歴の読み込み位置)。同期の手順は PC と同じ
+  (スナップショット → 直近 400 件の履歴 → 溜めたイベント、`seq` の飛びと未知の durable の後の live で `list_events`、`cursor` 以下は捨てる、
+  再接続・`resync` で追いつき、`projects_changed` → `list_projects`、`settings_changed` → `settings.changes`、git の読み直しの契機)。
+  操作は楽観的に状態を変えずイベントを待つ (PC と同じく、作ったチャットの一覧への追加と改名・削除の応答はすぐ反映)。
+  依存する要求は `suspend` で応答を待ってから次を送る (例: `create_chat` → git の読み直し → 選択 → `open_chat`)。
+- **コアへの窓口** `client.CoreConnection` (状態・イベント・`call`) を足し、`YhtyeClient` が実装する。同期層のテストは偽のコア (PC の `FakeCore` の移植) で動かす。
+  要求と違う種類の応答は `UnexpectedReplyException` (`RpcException` の仲間)。
+- **並行性**: 状態の変更は呼び出し側のディスパッチャを `limitedParallelism(1)` にした上で 1 本ずつ (JS のイベントループと同じく、中断点の間で
+  交互に進む)。公開の `suspend` 関数はどのスレッドから呼んでもよい。イベントの購読・接続状態の監視・タイマー (git 400 ms、動作中 200 ms、
+  使用量 5 分、ping 3 秒) は同じスコープのコルーチン。
+- **アクティビティから独立**: `Session` (Application が持つ、プロセスに 1 つ) がペアリングごとに `YhtyeClient` と `AppStore` を作り
+  (`Session.Phase.Paired.sync`)、解除・失効で閉じる。画面が無くても接続さえ保てば同期層は動き続ける (裏での常駐は後続タスク。今は T-61 のまま
+  裏に回ると接続を止める)。
+- **PC と変えたところ**:
+  - 再接続は `ConnectionState.Connected.session` の変化で判断する (StateFlow は途中の切断を飛ばし得るので、番号が変われば切断を見ていなくても
+    再接続として扱いストリーミングを捨てる)。close 1013 (コアの送信が追いつかない) は `YhtyeClient` がほかの切断と同じく再接続する。
+  - 使用量と ping は**前面にある間だけ** (`setForeground`。裏で電池を使わない)。前面に戻ったら git を読み直す (PC のウィンドウのフォーカスに当たる)。
+  - 下書きは端末の設定に残す (`PrefsDrafts`。PC はメモリだけ。Android は裏でプロセスが殺されるため)。最後のプロジェクト (`yhtye.lastProject`)・
+    プロジェクトごとのチャット (`yhtye.chat.<id>`) は PC と同じ鍵。保存の境界は `ClientPrefs` で、Android は SharedPreferences (`yhtye.client`、
+    秘密は無いので暗号化しない) の `SharedPreferencesPrefs`。ペアリングの解除・失効で全部消す (別の PC のものを残さない)。未読は PC と同じくメモリだけ。
+  - `AppState.projectsLoaded` (一覧を一度でも読めたか: 読む前の空とプロジェクトが無い空を分ける) を足した。
+  - 失敗の扱い: PC の `run` に当たる操作は `AppState.errors` (5 件まで、`<コマンドの type> failed: <コアの message>`) に積む。PC で reject する操作
+    (`createBranch` / `renameChat` / `deleteChat` / 設定) は `RpcException` (コアのエラーは `ApiException`) を投げる。
+  - 設定 (`AppStore.settings`): `setAgentSettings(project, role, settings, expectedRevision)` は `Saved` か、`conflict` なら今の設定を読み直して
+    `Conflict(latest, message)` を返す (画面は PC と同じ文を出して `latest` を表示する)。リモート接続の設定は PC 専用なので無い。
+  - 時間の掛かる要求 (`open_project` / `create_chat` / `create_branch` / `retry_group_merge`) の待ち時間は 180 秒 (PC の WS と同じ)。他は `YhtyeClient` の既定 30 秒。
+- **ユーザーの番の検知** (`AppStore.usersTurns: SharedFlow<UsersTurn>`。通知は後続タスク): オーケストレータのターンが正常に終わり (`turn_ended` が
+  `end_turn`。中止・エラー・ユーザーが頼んだ `/compact` のターンは除く)、そのチャットの受信箱が空で、走っているグループ (`active` / `finishing`) が無く、
+  次のターンが始まっていない (`isUsersTurn`)。`merge_blocked` は含む。表示中のプロジェクトは畳み込んだビューで、スナップショットより後のイベント
+  だけ (履歴の読み込みでは出さない。再接続の追いつきで見つけた切断中のターンの終わりは 1 回出す)。表示していないプロジェクトは生のイベントから
+  最後の発話と `/compact` だけを覚え、正常なターンの終わりで `get_snapshot` して同じ条件を確かめる (取りこぼしたイベントは追わない)。
+  `UsersTurn` はプロジェクト・チャット・題・そのターンの最後の発話 (通知はその 1 行目、`firstLine`)・時刻。表示中かどうかの判断は受け取る側。
+- **最小画面**: ホームのプロジェクト一覧は同期層の `state.projects` から出し、PC と同じ規則のリング (`projectRing`: 動作中なら回る緑、そうでなければ
+  中を抜いた緑) を付けた。つながったら最後に開いていたプロジェクトを開く (PC の `reopenLast`)。
+- **example サーバー**: `remote_server` に `--fake-agent` と各役割のシナリオの引数を足した (core-design §18.6)。
+- **確認**: `./gradlew build` (lint を含む) が通る。同期層の `commonTest` 159 件 (下の対応表 + Kotlin で足したケース)。本物のコアとの結合テスト
+  `SyncRealServerTest` (DEVELOPMENT.md): 2 つの端末をペアリングし、A がプロジェクトを開く → B の一覧に出る (`projects_changed`) → A がチャットを作る →
+  B にも出て選ばれる → A が送る → 両方の会話にユーザーの発言と返事、タスクが `running` を経て `done`、グループがマージされ `hello.txt` が main に入る →
+  両方がユーザーの番を 1 回だけ検知 (最後の発話は「Done: hello.txt is on main.」) → B の改名が A に届く。実機は接続されていなかったので
+  (`adb devices` が空) 実機での確認はしていない。
+
+#### 移植したテストの対応表 (PC の vitest → `shared/src/commonTest/.../sync/`)
+
+| PC (vitest) | Kotlin (commonTest) | 備考 |
+|---|---|---|
+| `store/domain.test.ts` | `DomainTest` | 記録 (`src/test/fixtures/fake-*.json`) は同じファイルをリポジトリから読む (`readFixture`、JVM の actual)。3 つの記録を空から・開始スナップショットから畳んでコアの最終状態とセッションに一致。「入力を変えない」は不変の data class なので最終状態と入力の比較だけ。知らないイベントで状態が変わらないことを追加 |
+| `store/sessions.test.ts` | `ChatsAndSessionsTest` (前半) | |
+| `store/chats.test.ts` | `ChatsAndSessionsTest` (中ほど) | 空の引数の `chatOfUserCall` を追加 |
+| `store/drafts.test.ts` | `ChatsAndSessionsTest` (後半) | `memoryDrafts` → `PrefsDrafts(MemoryPrefs())`。同じ保存先なら残ることと、空の下書きを保存先に残さないことを追加 |
+| `store/transcript.test.tsx` | `TranscriptTest` | 描画 (`TranscriptView`) の確認は画面のタスクへ。前のページとのツール呼び出しの合流 (`prependTranscripts`) を追加 |
+| `store/project.test.ts` | `ProjectViewTest` | 「印の無い古いログの `session_failed`」は Kotlin の型で `retrying` が必須なので無い |
+| `store/activity.test.ts` | `ActivityTest` (前半) | |
+| `ui/projectActivity.test.ts` | `ActivityTest` (後半) | |
+| `ui/branchTree.test.ts` | `BranchTreeTest` | `awaiting` のチャットを木のディレクトリ名の下に出すことを追加 |
+| `store/app.test.ts` | `AppStoreTest` | 同期・遅延の履歴・バックグラウンドの動作中。途中の切断を見ずに番号が変わった再接続、最初の接続で最後のプロジェクトを開く、全部読んだ履歴が最初から読んだものと一致、を追加 |
+| `store/appChats.test.ts` | `AppStoreChatsTest` | チャットの選択と記憶・`open_chat`・送信・作成・改名・削除・下書き・ping。PC で reject するものは例外。前面の間だけ ping と使用量を読み、前面に戻ると git を読み直すことを追加 |
+| `store/multiClient.test.ts` | `MultiClientTest` | `projects_changed` / `settings_changed` / `resync` / 再接続のヒント / `session_starting` / `Snapshot.starting` / 他で削除・作成されたチャット / git の `awaiting`。`expected_revision` の保存と `conflict` (PC は `ui/SettingsSync.test.tsx` の画面で確かめていたもの) を追加 |
+| (新規) | `UsersTurnTest` | ユーザーの番: 条件の境界 (受信箱・グループの状態ごと・次のターン・消えたチャット)、中止・エラー・サブエージェント・`/compact`、履歴、切断中のターン、表示していないプロジェクト (スナップショット) |
+| `client` 側の既存 | `YhtyeClientTest` | 切断で再接続し `session` が増えることは T-61 のテストが確かめている (close コードによらず同じ経路なので 1013 も同じ) |
+
+### 実装で決めたこと (T-67: 3 パネルの骨格と会話画面)
+
+ペアリング後のホームを T-61 の最小画面 (`HomeScreen`) から 3 パネルに置き換えた。左右パネルは骨格の確認用の仮の中身。
+
+- **置き場所** (`androidApp/.../ui/`): `MainScreen.kt` (ホーム。`MainViewModel` がメンションを持つ)、`shell/PanelShell.kt` (骨格とジェスチャ)、
+  `conversation/` (中央: `ConversationScreen` / `ConversationModel` (同期層の状態から画面の値を出す純関数) / `TranscriptList` /
+  `TranscriptItems` / `Composer` / `ChatMenu` / `RenameField` / `Markdown` + `MarkdownModel` / `Mentions`)、`panels/PlaceholderPanels.kt`
+  (仮の左右パネル)、`common/` (線のアイコン `YIcons` は PC・モックと同じ lucide の形、リング、空の状態)。`Theme.kt` に Yhtye の色。
+- **骨格** (`PanelShell`): モックの規則どおり。開いたとき中央を 64dp 残し、そこ (覆い) のタップで閉じる。1 回のスワイプで動くのは今の位置から
+  隣まで。離したとき 350dp/s (モックの 0.35px/ms) を超えていればその向き、そうでなければ近い方。開閉が変わったら `HapticFeedbackType.GestureEnd`。
+  - 端: `WindowInsets.systemGestures` の左右から始まった指は扱わない (ジェスチャナビゲーションでは Android の「戻る」。3 ボタンでは幅 0)。
+  - 向き: モックの 10px ではなく Compose の `touchSlop` で決める (子のスクロールと同じしきい値にしないと、子と親のどちらが先に取るかがずれる)。
+  - 優先: 親は Main パスで子の後に見て、子 (縦のリスト・はみ出したコードブロックや表の `horizontalScroll`) が先に動きを取っていたら手を引く。
+    横に決まった後は Initial パスで先に取り、子に渡さない。**端まで行った余りはパネルに渡さない** (nested scroll で親に渡さない。モックと同じく、
+    はみ出した要素の上の横スワイプはその要素のもの)。はみ出していないコードブロック・表はスクロールを付けない (`enabled = maxValue > 0`)
+    ので、その上からでもパネルが開く。
+  - 戻る: `PredictiveBackHandler`。開いているパネルだけを閉じ、指に合わせて中央が戻る (取り消すと元に戻る)。中央では扱わない (アプリを閉じる)。
+  - 幅の広い端末 (`WindowSizeClass` の幅 Expanded、840dp 以上): 左 320dp・中央・右 360dp を並べて常時表示し、ジェスチャ・☰・タスクのボタンは出さない。
+    回転 (横向きの Pixel 8a は 1078dp) でも切り替わる。
+  - 隠れているパネルは合成しない (閉じると中のスクロール位置は戻る。T-69 で要れば状態を持ち上げる)。
+- **中央** (PC の Conversation とモックの中央):
+  - 上部バー: ☰、タイトル (無ければ「新しいチャット」、チャットが無ければ PC と同じ「orchestrator」) + 作業ツリーのブランチのピル
+    (`placeLabel`、見つからなければ警告のアイコン)、オーケストレータの状態 (PC の SessionBadge と同じ形と言葉)、タスク (右パネル)、メニュー。
+    他のチャットで起きたことの印は PC と同じくチャットの一覧の未読の点だけ (☰ に印は付けない)。
+  - メニュー (決定事項「会話の上部のメニュー」): コンテキストの使用量 (PC の ContextBar のメーターと文言)、「コンテキストを圧縮」(押せない理由は
+    PC の文)、名前を変更、削除。**名前の変更はタイトルがその場で入力欄になる** (PC の RenameForm と同じ。✓ / IME の完了で保存、✕ / 戻るで取り消し)。
+    ダイアログにしなかったのは PC に合わせたのと、Robolectric でダイアログ内の入力欄が試せないため。削除は確認のダイアログ (PC の DeleteConfirm の文。
+    `deleteBlocker` の理由があれば「閉じる」だけ)。
+  - 会話: ユーザーの発言は吹き出し、返事は Markdown、ツール呼び出しは 1 行、Yhtye の操作 (`yhtye_tool`) と考えたこと・プロンプトは折りたためる 1 行、
+    受信箱の通知は破線の枠、グループのカード、ターンの終わり・起動と停止の 1 行 (すべて PC の TranscriptView と同じ種類と文)。考えたことは PC と同じく
+    アイコンだけの閉じた折りたたみ (ストリーミング中はアイコンが呼吸する)。時刻はモックと同じく出さない (PC もホバーだけ)。本文は長押しで選択できる。
+  - ストリーミング途中の本文は届くたびに Markdown として描き直し、末尾に点滅するカーソル (モック)。
+  - 自動スクロール (PC の useAutoScroll): 下端から 48dp 以内にいればユーザーが読んでいるとみなして新しい行・断片・入力欄やキーボードで高さが
+    変わったときに最新へ。ユーザーのスクロールでだけ「付いていく」を切り替える。チャットを替えると最新から。
+  - 古い履歴 (PC の OlderHistory): 上端の「読み込み中…」の行が見えたら `loadOlderHistory`、読んだ後も見えていれば次も。失敗は理由と再試行。
+    前に足したときは読んでいた行を同じ位置に残す。
+  - 末尾にグループ待機バナー (PC の WaitBanner の文をモックのように全部見せる + 進み具合のバー)。タップで右パネル。
+  - コンポーザ: 複数行 (128dp まで)、IME に追従 (`ime ∪ navigationBars` の余白。`adjustResize` と edge-to-edge)、送信、ターン中は中止、状態の一言
+    (PC と同じ「起動中…」「作業中 · 送信分はターン終了後に届きます」、送れない理由)、メンションのチップ (タップで外す、積むと弾む)。Enter は改行
+    (スマホのキーボード)。送信は `sendMessage(withMentions(...))` で、受け付けられたら本文とメンションを空にする (会話には足さない。発言はイベントで出る)。
+    下書きは同期層の `drafts` (チャットごと)。
+  - 空の状態は PC の文 (「プロジェクト (git リポジトリ) を開いてください。」「サイドバーの「新しいチャット」から始めます」「会話はまだありません」)。
+    接続が切れたら PC の ConnectionBanner と同じ文 + T-61 の「今すぐ再接続」、同期層のエラー (`AppState.errors`) は閉じられる帯。
+- **Markdown**: JetBrains の `org.jetbrains:markdown` (GFM) で構文木にし、Compose で自前に描く (表・コードブロックの横スクロールと配色を
+  モックに合わせるため)。安全は PC の Markdown.tsx と同じ (生の HTML は出さない、リンクは http(s) / mailto だけで外のブラウザ、画像は代わりの文字)。
+  段落の中の改行は PC (`pre-wrap`) と同じく改行のまま。
+- **色**: ダークは tokens.md・モックの値 (oklch は sRGB に変換)。**ライトは PC にもモックにも無い**ので、同じ流儀 (暖色寄りのグレー、琥珀、
+  ステータスは色相固定) で起こした (`LightYhtyeColors`)。端末のダーク/ライトに従い、Dynamic Color は使わない。Material 3 の部品の配色も同じ値から作る。
+- **メンションを積む API** (T-69 のタスクの行のスワイプから): `MainScreen` の `addMention(Mention(task, title))` (選択中のチャットのコンポーザに積み、
+  パネルを閉じて中央に戻る)。中身は `MentionsState.add(chat, mention)` (チャットごと、`MainViewModel` が持つので回転でも残る。同じタスクは 1 つだけ)。
+  仮の右パネルは PC のタスクカードの `@` と同じボタンでこれを呼ぶ。
+- **T-69 が差し込む所**: `MainScreen` の `PanelShell(left = …, right = …)` の `LeftPanelPlaceholder` / `RightPanelPlaceholder` を本番のパネルに替える。
+  タスク詳細は中央の上に積む画面として `PanelShell` の後に合成し、開いている間は `PanelShell(swipeEnabled = false)`。詳細の `PredictiveBackHandler` は
+  後から合成されるので先に効く (戻るは 詳細 → パネル → 中央)。タスクの行の右→左スワイプは行の中で横の動きを取れば (Main パスで消費すれば)
+  親のパネルのドラッグは手を引く。左→右は取らずにおけばパネルを閉じるドラッグになる。パネルの開閉は `LocalPanelShell.current` (`show` / `hide`)。
+- **仮の左パネル**: プロジェクト一覧 (タップで開く)、チャット (リング・未読の点・経過、タップで出す)、新しいチャット (メインの作業ツリーに作る)、
+  下端にホストとペアリング解除 (スマホの設定画面 T-71 ができるまで)。**仮の右パネル**: 選択中のチャットのグループとタスク (状態の系統のアイコン) と `@`。
+- **テスト** (`androidApp/src/test/`、Robolectric。`./gradlew build` に含まれる): `PanelShellTest` (スワイプで左右が開く・覆いのタップで閉じる・
+  遅いドラッグは戻り速いフリックは開く・1 回で 1 段・端のスワイプは開かない・縦のスワイプは動かない・はみ出したコードブロックはそれ自身がスクロールし
+  パネルは開かない・はみ出していなければ開く・戻るで 1 段閉じて中央では扱わない、幅が広いと常時表示)、`ConversationScreenTest` (本物の `AppStore` を
+  偽のコアで: 会話の表示・送信がコアへの `send_user_message` になり受け付けられたら空になる・空では送らない・ターン中の中止・右パネルの `@` で積んだ
+  メンションが先頭に付いて送られ、チップのタップで外れる・名前の変更 (空は断る)・削除の確認と取り消し・実行中は削除の理由・チャットが無いときの案内・
+  待機バナーの文とタップで右パネル・ストリーミングの表示)、`MarkdownModelTest`、`ConversationModelTest`。
+- **実機 (Pixel 8a、ジェスチャナビゲーション)**: example の `remote_server` + 偽エージェント (Markdown を少しずつ流すターン、`wait_cancel` で止まる
+  ターン、グループとタスクを作るターン) でペアリング → 左パネルからプロジェクトを開きチャットを作成 → 送信・ストリーミング・Markdown (見出し・
+  強調・表・コードブロック・リスト・リンク) → コードブロックの上の横スワイプはコードがスクロールしパネルは開かない → それ以外の横スワイプで右パネル →
+  画面端からの戻るジェスチャで右パネルが閉じる → 中央で左端からのスワイプはアプリの戻る (パネルは開かない) → 中止ボタンで `turn ended: cancelled` →
+  待機バナー (`0/2 完了 · 2 件 対処中`) のタップで右パネル → `@` でチップ → メニューの名前の変更・削除の理由 → ライト (作り直しの後もメンションが残る) →
+  1 回の長いフリックは中央で止まる、を確かめた。横向きでは 3 列の常時表示になった。スクリーンショットは `/tmp/yhtye-android-shots/t67/`。
+  終わったら PC 側で端末を失効させた (アプリは失効の案内に戻る)。
+- **モックとの違い**: メニュー (改名・削除・コンテキスト・圧縮) と接続・エラーの帯はモックに無い (決定事項と PC にあるもの)。名前の変更は上部バーの
+  その場の入力欄。PC にある「session started」などの起動・停止の行を出す (モックには無い)。タイトルの下のピルの文字がわずかに下に寄る。
+  左右パネルの中身は仮 (T-69)。
+
+### 実装で決めたこと (T-69: 左右パネルとタスク詳細)
+
+T-67 の仮の左右パネル (`panels/PlaceholderPanels.kt`、削除) を本番に替え、タスク詳細と仮の設定画面を積み重ねの画面として足した。
+
+- **置き場所** (`androidApp/.../ui/`): `panels/LeftPanel.kt` (レール・ビューの切り替え・下端のホストと使用量)、`panels/ProjectPicker.kt`
+  (ドロップダウンとリポジトリを開く欄・バックグラウンドのチップ)、`panels/BranchTree.kt` (作業ツリーとチャットの木・新しいブランチのフォーム)、
+  `panels/RightPanel.kt` (PC の TaskColumn)、`panels/TaskCard.kt` (PC の TaskCard と行のスワイプ)、`tasks/TaskParts.kt` (状態のチップ・Step の並び・
+  help の文・■ の確認。PC の statusIcons)、`tasks/TaskDetail.kt`、`shell/ScreenStack.kt` (積み重ねの画面)、`settings/SettingsScreen.kt` (仮)、
+  `common/ActionScope.kt`。共通モジュールに `sync/HostStatus.kt` (PC の `hostStatus.ts` と StatusBar の `planLabel` / `formatRemaining`) と
+  そのテスト `HostStatusTest`。
+- **左パネル**: モックどおり左端 56dp のレール (コーディング / 履歴、一番下に設定 = PC と同じ sliders のアイコン)。
+  - 履歴は PC の RunsView と同じ空の状態「現状は何もありません」。PC は履歴でサイドバーごと置き換えるので、モックと同じく左の中身・中央
+    (上部バーは ☰ と「履歴」だけ) とも空の状態にし、右パネルは無い (`PanelShell(rightEnabled = false)`: 右へのドラッグの範囲を 0 までにする)。
+  - プロジェクトのドロップダウン: PC の ProjectPicker と同じ一覧 (コアの順、リング・今のものに ✓)・開く欄 (`/path/to/git/repository`)・文言
+    (「プロジェクトを選択」「プロジェクトを開く」「まだプロジェクトがありません。」)。開いた一覧はモックと同じく下の中身に重ねて出し、外のタップで閉じる
+    (Material の Popup にしなかったのは、モックの見た目と、Robolectric で Popup 内の入力欄が試せないため)。選んでもパネルは開いたまま (PC・モック)。
+  - バックグラウンドのチップ・リングは PC の `backgroundProjects` / `projectRing` (T-66 で移植済み)。
+  - 木: PC の BranchTree と同じ (作業ツリーの既定の開閉は「チャットがあるかメインクローン」、開閉はプロジェクトごとに `MainViewModel` に残す)。
+    チャットの行のタップで選んで中央に戻る。行の「⋯」(改名・削除) はスマホでは会話の上部のメニューにあるので出さない (決定事項)。見つからない
+    作業ツリーの見出しは PC ではアイコン + ツールチップだが、スマホにツールチップが無いので「見つからない作業ツリー」の文を添えた。
+    新しいチャット・他のブランチの新しいチャット・新しいブランチは、作れたら中央に戻る (モック)。新しいブランチのフォームは PC と同じ
+    (名前・開始点 = `HEAD (<head>)` と `yhtye/` 以外のローカルブランチ、✓ / IME の完了、断られたらコアの文をフォームに出す)。
+  - 下端: PC のサイドバーのフッタ (接続の点・ホスト名・最後の ping からの経過 = 1 秒ごとに数え直す) とステータスバー (プラン・5h / 7d のメーター・
+    リセットまで、タップで `refreshUsage(true)`。報告が無ければ「—」)。モックと同じく 2 行で、狭ければ折り返す。
+- **右パネル**: PC の TaskColumn / GroupBar / TaskCard と同じ情報と文言。PC ではツールチップの言葉 (状態の名前) はモックと同じくチップに見せる。
+  過去のグループはモックと同じく「過去のグループ N」(開閉は `MainViewModel` に残す)。help は状態の表示だけ (カードが対処中の色、種類のアイコン、文)。
+  終わったタスク (中止) の Step はコアでは `running` のまま残ることがあるので、動いているようには描かない (モック)。
+- **■ の確認**: タスクの ■ とグループの中止は、タッチの誤操作を防ぐため確認のダイアログを挟む (PC は確認なし。文は PC のボタンの説明
+  「エージェントを停止 (タスクを中止)」「グループを中止」)。ダイアログは `MainScreen` が 1 つだけ持つ (右パネルと詳細のメニューの両方から)。
+- **タスクの行のスワイプ (メンション)**: 行が指に付いて左にずれ、下から `@` が現れる。88dp を超えると `@` が弾み (触覚 `GestureThresholdActivate`)、
+  超えて離すか、40dp 以上で 450dp/s を超えてはじくと確定 (`@` が弾んでカードが戻り、300ms 後に `addMention` → 中央へ)。足りなければ戻る。
+  132dp より先はゴムのように重くする。**判定の規則**: 行は Main パスで親 (`PanelShell` のドラッグ) より先に指を見る。タッチスロップを越えたとき
+  横が縦より大きく、かつ**右→左のときだけ**その指を取り (消費する)、親は消費済みを見て手を引く。左→右・縦は取らないので、左→右は親の
+  「右パネルを閉じる」ドラッグ、縦は一覧のスクロールになる。画面の右端の `systemGestures` から始まった指は取らない (Android の戻る)。
+  行の中のボタン (`@`・■) の上から始めても同じ (動きを消費するのでボタンの押下は取り消される)。
+- **タスク詳細**: 中央の上に積む全画面 (`ScreenStack`)。ヘッダ (戻る・状態のチップ・`T-n · G-n`・題・メニュー)、Step の並びと担当・経過、中断の注記、
+  対処中の help の文、中止の理由、セッションのタブ (PC と同じ並びと点。はみ出したら横スクロール)、出力。出力は中央と同じ `TranscriptList` /
+  `TranscriptRow` (T-67 の `TranscriptList` を `TranscriptSource` で一般化し、Step の結果を先頭の行として渡せるようにした)。
+  メニューは PC にある操作だけ (オーケストレータへ引用 = `addMention`、中止 = ■ と同じ確認)。タスクが消えたら閉じる。
+  - 閉じ方: 左→右のスワイプ (画面が指に付いてずれ、幅の 35% か 350dp/s を超えて離すと閉じ、足りなければ戻る。右→左は何もしない。
+    はみ出したコードブロック・タブの上の横スワイプはその要素のもの)、ヘッダの戻る、`PredictiveBackHandler` (指に合わせてずれる)。
+    積んだ画面は開いたときに合成されるので戻るはパネルより先に効く (詳細 → パネル → 中央)。開いている間は `PanelShell(swipeEnabled = false)`。
+  - 設定も同じ `ScreenStack` に積む (`Stacked.Settings`)。
+- **操作のスコープ**: 同期層への要求は `MainScreen` のスコープ (`LocalActionScope`) で流す。実機で、ドロップダウンでプロジェクトを選ぶと一覧が閉じて
+  その `rememberCoroutineScope` が取り消され、`open_project` が届かなかったため (Robolectric では再現しない順序)。
+- **T-71 が設定画面を差し込む口**: `ui/settings/SettingsScreen.kt` の `SettingsScreen(app, onBack, onUnpair)` を本番に替える。開くのは左パネルの
+  レールの一番下 (`LeftPanel(onOpenSettings)` → `MainScreen` の `stackedKey = Stacked.Settings.key`)、表示は `ScreenStack` (スワイプ・戻るで閉じる)。
+  今の仮の画面は接続先のホストと「ペアリング解除」(確認つき、T-67 の仮の左パネルから移した) だけ。同期層の設定 (`AppStore.settings`) は使っていない。
+- **テスト** (Robolectric、`MainHarness` で本物の `AppStore` を偽のコアで動かす。`TestCore` にプロジェクトの一覧・git・`create_chat` / `create_branch` の
+  答えを足した): `LeftPanelTest` (ドロップダウンでの切り替え・パスで開く・外のタップで閉じる・バックグラウンドのチップ・木の選択で中央が替わる・
+  折りたたみ・新しいチャット・新しいブランチ (開始点の選択)・断られたブランチの理由・他のブランチ・履歴のビュー (右パネル無し)・設定とペアリング解除・
+  下端)、`RightPanelTest` (PC と同じ情報・help は状態だけ・行の右→左でメンション・遅い短いスワイプは戻る・速いはじきは確定・左→右はパネルを閉じる・
+  画面端からは取らない・■ の確認と中止・過去のグループ・グループの中止・マージの再試行・グループが無いとき)、`TaskDetailTest` (セッションのタブ・
+  Step の結果・出力・help・スワイプで閉じる / 足りなければ戻る / 右→左は何もしない・画面端・戻るの順・ヘッダの戻る・メニューの引用と中止)、`HostStatusTest`。
+  スワイプの閾値の判定を壊すとテストが落ちることを確かめた。
+- **実機 (Pixel 8a、ジェスチャナビゲーション)**: example の `remote_server` + 偽エージェント (グループ・調査タスク・実装中のまま止まるタスク・help を
+  上げるタスク・依存で待つタスク、コンフリクトでマージ保留になるグループ) で: ペアリング → ドロップダウン・チップでのプロジェクト切り替え →
+  新しいチャット → グループ (完了・実装中・対処中・待機・過去のグループ) → 行のスワイプ (保持した途中の `@`・確定でチップ・短いと戻る・左→右で
+  パネルが閉じる) → タスク詳細 (コードブロックの横スワイプはコードがスクロール・保持した 33% のドラッグは戻る・スワイプで閉じる・戻るキーで
+  詳細 → パネル → 中央・画面端の戻るジェスチャで詳細が閉じる・メニューの引用) → ■ の確認と中止 → 新しいブランチ (既存の名前で理由・開始点の選択・
+  作成で中央) → マージ保留の理由と再試行 (コアに届き再び保留) → グループの中止 → 木でのチャットの切り替え → 履歴のビュー → 横向きの 3 列 →
+  設定 (スワイプで閉じる・ペアリング解除) を確かめた。スクリーンショットは `/tmp/yhtye-android-shots/t69/`。終わったらサーバーで端末を失効させ、
+  端末の設定 (画面の常時点灯・回転) を戻した。
+- **モックとの違い**: 使用量はプラン名が無いと出さない (example サーバーは使用量を読まないので「—」)。ドロップダウンの一覧の幅は欄と同じ、開始点の
+  選択は Material のメニュー。見つからない作業ツリーの見出しに文を添えた。■ に確認がある (モックは PC と同じく確認なし)。チャットの行の右の
+  「⋯」は無い (会話のメニューにある)。偽エージェントの返事は MCP の結果をそのまま本文に含むので会話が長い (アプリの違いではない)。
+
+### 実装で決めたこと (T-71: 設定・通知・常駐)
+
+T-69 の仮の設定画面を本番に替え、裏での常駐 (Foreground Service) と完了の通知を入れた。
+
+- **置き場所**: 共通モジュール (`shared/.../sync/`、Android 依存なし) に `AgentSettingsEdit.kt` (PC の `agentSettings.ts` と各節の検査: 役割・行の編集・
+  モデルの検索・秘密の名前の検査)、`SettingsSections.kt` (3 つの節の状態と操作 = PC の `useSettingsChanges` を含む)、`Background.kt` (常駐方式・作業中か・
+  通知を出すか・通知の文)、`BackgroundController.kt` (常駐と通知の判断をまとめる)、`AppStore.showChat` (通知のタップ)。Android 側は `ui/settings/`
+  (`SettingsScreen` + 節ごとのファイル + `DeviceTab` + `SystemAccess`)、`background/` (`ConnectionService`・`BootReceiver`・`Notifications`・
+  `DeviceSettings`・`OpenChat`)、`session/Session.kt` (配線)。
+
+#### 設定画面
+
+- 節は PC と同じ 3 つ (エージェント / ハーネス / 秘密の環境変数) と、PC の「リモート接続」の代わりに**スマホ固有の「この端末」**。モックの丸いタブは 4 つだと
+  1 行に入らず 4 つ目に気づけなかったので折り返す。バナー (他の端末で変更) はスクロールの外に固定し (編集中の欄は下の方にあるため)、画面の中身は IME
+  (キーボード) の分だけ縮める (入力欄が隠れない)。
+- **エージェント**: 全体 / プロジェクトの切り替え (PC と同じく、プロジェクトを開いていればその層が初期)、役割ごとに「全体の設定を使う / 組み込みの既定を使う」、
+  候補の行 (★ = 既定、削除、行をタップするとその場で開いてハーネス・モデル・effort・用途メモを編集)、「行を追加」、「モデル一覧を再取得」。PC の `<select>` は
+  メニュー、モデルが多いハーネス (12 より多い) は検索欄 + 提供元ごとの一致 (最大 40 件) をその場に開く。重複する行・最後の 1 行の削除・effort の無いモデルは
+  PC と同じ理由で断る。文言は PC と同じ (ツールチップだった説明は常に見せる)。
+- **保存と衝突**: 変更はすぐ保存し、表示している版 (`AgentSettingsView.revision`) を `expected_revision` に付ける。`conflict` なら「他の端末で設定が変更
+  されていたため…」を出して最新の設定に替える。`settings_changed` は、保存中なら終わるまで待ち、表示している版より新しくなければ (自分の保存の知らせ) 無視、
+  入力中 (用途メモにフォーカスがある・パスやフォームに未保存の文字がある) なら「再読込」のバナー、そうでなければ読み直す。取りこぼし (`kind == null`) は
+  どの節でも読み直す。入力欄の文字は画面が持ち (IME の変換中の文字を壊さないため)、コントローラは「編集中か」だけを教えてもらう。
+- **ハーネス**: 検出の結果・見つかった場所・必要なコマンド・手動パス (保存 / 自動検出に戻す。断られた理由は行に出す)・再検出。**秘密の環境変数**: 名前の一覧と
+  追加・上書き・削除 (確認つき)。値は送るだけで、状態にも画面にも残さない (失敗しても捨てる)。
+- **この端末**: 接続先 (PC 名・アドレス・この端末の名前・接続の状態)、**常駐方式**、**通知**、**電池の最適化**、**ペアリング解除** (確認つき。T-69 の仮の場所から移した)。
+- **モックとの違い**: 行の編集 (モックは表示だけ) と「この端末」の節。モデル選択を Popup でなくその場に開くのは、Robolectric で Popup の中の入力欄を試せないのと、
+  キーボードと重ならないため。
+
+#### 常駐方式と Foreground Service
+
+- 方式は 2 つ: **常に接続** (既定。ペアリング中は常に PC とつなぐ) / **作業中だけ接続** (作業がある間だけ)。端末に保存する (`yhtye.device`。ペアリングの解除でも
+  消さない: PC の持ち物ではなく端末の好み。再起動後の受信機が Session の読み込みを待たずに読めるよう、`ClientPrefs` とは別のファイル)。
+- 判断は `BackgroundController`: 保つ (`keepAlive` = サービスを動かす) = ペアリング中 かつ 失効 (401)・拒否 (403) でなく かつ (常に か、作業中だけで**作業がある**)。
+  PC につなぐ (`wantConnected`) = アプリが前面 か `keepAlive`。「作業がある」(`hasWork`) は表示中のプロジェクトのビュー: ターンが走っている・running / merging の
+  タスク・終わっていないグループ (`active` / `finishing`。`merge_blocked` は含めない = ユーザーの番)・起きているオーケストレータ宛の未配達の受信箱。表示して
+  いないプロジェクトは一覧の `open && running` だけ (イベントを畳み込んでいないので、`active` のグループだけが残る稀な状態は分からない)。
+- 止めるのは `true → false` から **3 秒の猶予** (ターンの切れ目や、通知を出し終えるのを待つ。猶予の中で `true` に戻れば何も起きない)。猶予は接続状態の変化が来るたびに
+  数え直さない (重複を先に除く。PC につながらない間、状態が 1 秒ごとに変わって永遠に止まらなかったのを実機相当のテストで見つけた)。「作業中だけ」で作業が終わると、
+  通知を出した後にサービスが止まり、(裏なら) 接続も切れる。前面なら接続はそのまま。
+- 拒否 (403) と失効の状態は `client.stop()` で消さない (消すと `Idle` に見えて「常に」では保つ理由に戻り、拒否 → 止まる → つなぐ → 拒否を 3 秒ごとに繰り返した)。
+  前面に戻れば `start()` でやり直す (403 は一時的な whois の失敗でも起きるため)。
+- **サービス** (`ConnectionService`): 接続そのものは Session (アクティビティから独立した同期層) が持つので、サービスは「プロセスを生かし、常設の通知 (『Yhtye: PC に
+  接続中 / 再接続しています…』+ 常駐方式。低い重要度のチャネル `connection`、タップでアプリ) を出す」だけ。始めるのは Application が `keepAlive == true` を見たとき、止まるのは
+  サービス自身が `false` を見たとき (`null` = 保存した認証情報を読み終えるまでは動かしておく)。始めたらすぐ `startForeground` する (5 秒以内が必要)。裏から始められない
+  (Android 12 以降の例外) ときは握りつぶす (常駐できないだけ)。
+- **種類は `specialUse`** (`FOREGROUND_SERVICE_SPECIAL_USE` + manifest の `PROPERTY_SPECIAL_USE_FGS_SUBTYPE` に理由。Play の審査で読まれる自由記述)。調べた規則 (Android 14〜17):
+  種類の宣言と対応する権限が必須。`dataSync` は Android 15 以降 24 時間に合計 6 時間の上限 (`onTimeout` で止めないと ANR) で、`BOOT_COMPLETED` の受信機から始められない
+  (camera / mediaPlayback / mediaProjection / microphone / phoneCall も同じ) ので常時接続に合わない。`remoteMessaging` は「端末間のテキストメッセージの継続」、`connectedDevice` は
+  Bluetooth / USB / NFC などの機器 (対応する権限が要る) で、どちらも使い方が違う。`specialUse` は時間の上限が無く、再起動後の受信機からも始められる。公式文書に Android 16 / 17 (API 36 / 37) での
+  種類の追加・変更の記載は無かった (Android 16 は Foreground Service から始めたジョブにも実行時間の割り当てが掛かる変更だけ)。
+- **再起動後**: `BootReceiver` が `BOOT_COMPLETED` と `MY_PACKAGE_REPLACED` (アプリの更新でプロセスが落ちた後) を受け、**ペアリング済みで「常に接続」なら**サービスを始める
+  (この 2 つの放送からは裏でも始められる。`specialUse` は `BOOT_COMPLETED` からも可)。ペアリングの有無は手がかり (`DeviceSettings.paired`) だけで見て、本当かは Session が決める
+  (していなければサービスは自分で止まる)。「作業中だけ」は再開しない (プロセスが落ちると作業の有無が分からず、読み終えた時点で止まる。次に前面にしたとき取り直す)。
+- **Doze / 電池の最適化**: 公式文書は Doze が通信を止める (Foreground Service は Doze を避ける理由にしてはいけない) と書くが、実機 (Pixel、Android 17) では常駐中のサービスは
+  影響を受けなかった: `dumpsys deviceidle force-idle` (深い Doze) + `battery unplug` で**画面を消して 11 分置いた間も接続が保たれ**、完了の通知は予定どおり届いた
+  (公式文書の記述とは食い違うが、実機ではそう見えた。Foreground Service を持つプロセスは Doze の通信制限の対象外にする実装だと思われるが、OS の版や機種で保証はされない)。そのため電池の最適化の除外は必須にしない。ただし機種や OS の独自の節電で止まるかもしれないので、
+  設定の「この端末」に**任意の案内** (除外されているか・「最適化の対象から外す」= `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`) を置いた (PC 版に無い、常駐に要るスマホ固有の欄。
+  Play は直接の除外の依頼を制限するので、中心の機能が止まるときだけの任意の案内にした。manifest の `BatteryLife` は理由つきで抑止)。サービスが無いとき (「作業中だけ」で作業が無い)
+  の裏は、これまでどおり接続しない。
+- 失効 (401): 同期層を閉じ、認証情報を消し、サービスを止め、チャットの完了の通知を消し、**裏なら**「この端末は PC から外されました」の通知 (チャネル `alert`、タップでアプリ = ペアリングの
+  始めの画面) を出す。前面なら案内の画面がすぐ見えるので通知は出さない。ペアリングの解除でも完了の通知は消す。
+
+#### 通知
+
+- 出すのは**同期層の「ユーザーの番になった」だけ** (ターンが正常に終わり、受信箱が空で、走っているグループが無い。`merge_blocked` を含む)。help / checkpoint / 依存の解消では出さない
+  (その間は受信箱が空でない、または次のターンが走っているので `UsersTurn` が出ない)。**アプリが前面でそのチャットを表示中なら出さない** (別のチャット・別のプロジェクトなら前面でも出す)。
+  チャットを前面で見たら、そのチャットの通知は消す。
+- 文: `<チャットのタイトル> の作業が完了しました` (題が無ければ「新しいチャット」) + オーケストレータのそのターンの最後の発話の 1 行目 (90 文字まで)。チャットごとに 1 つ
+  (タグ = `turn/<プロジェクト>/<チャット>`。同じチャットの次の完了は置き換え)。チャネル `work_done` (ヘッドアップ)、鍵のかかった画面では内容を隠す (`VISIBILITY_PRIVATE` の既定)。
+- タップ (`PendingIntent`、チャットごとに別のもの): `MainActivity` (`singleTop`) に `OPEN_CHAT` の Intent (プロジェクト・チャット) を渡し、積んだ画面とパネルを閉じてそのプロジェクトの
+  チャットを中央に出す。アプリがまだつながっていないとき (通知から起動した) は、つながってプロジェクト一覧が読めるまで待つ。プロジェクトやチャットが消えていれば何もしない。
+- **通知の範囲**: コアの WS はプロジェクトを区別せず全イベントを流すので、**PC で開いている (`open`) 全プロジェクト**のチャットで出せる (表示中のプロジェクトはビュー、それ以外は
+  生のイベントから最後の発話と `/compact` を覚え、正常なターンの終わりで `get_snapshot` して確かめる: T-66)。出せないもの: PC で開いていないプロジェクト (そもそもイベントが無い)、
+  **接続が切れている間に終わったターン** (表示していないプロジェクトの取りこぼしは追わない。表示中のプロジェクトは再接続の追いつきで 1 回出す)、「作業中だけ」で接続していない間。
+- **許可** (Android 13 以降の `POST_NOTIFICATIONS`): ペアリング後の最初のホームで 1 回だけ OS の許可を尋ねる (`notificationsAsked`)。あとは設定の「この端末」: 状態の表示、
+  「通知を許可する」(OS の画面を出せないときは OS の設定へ)、「OS の通知設定を開く」。OS の設定から戻ったら (アクティビティが再開したら) 読み直す。許可が無ければ何も出さない
+  (サービスは動き、常設の通知は OS が隠す)。
+
+#### 確認
+
+- テスト (`./gradlew build`、lint を含む): 共通 274 件 (うち T-71: 設定の行の編集 15・3 つの節の読込 / 保存 / `conflict` / `settings_changed` と banner 24・常駐と通知の判断 27 =
+  作業中か・保つ条件・猶予・方式の切り替え・失効 / 拒否・通知を出す条件 (前面で表示中・別のチャット・help)・文・チャットを見たら消す・通知のタップ `showChat`)、Android 134 件 (うち T-71:
+  設定画面 26 = 各節の読込・保存・`conflict`・`settings_changed` での読み直しと banner・入力中の banner、この端末 8 = 方式の切り替えと保存・通知の許可の案内・電池・解除の確認、
+  通知のタップ 4、通知 10 = 文・チャネル・チャットごとに 1 つ・タップ先・許可が無ければ出さない・失効の通知、再起動後の受信機 5、サービス 3、Session の常駐の配線 12)。
+- 実機 (Pixel 8a、Android 17、Tailscale。example の `remote_server` + 偽エージェント。スクリーンショットは `/tmp/yhtye-android-shots/t71/`): ペアリング → 通知の許可の確認 (OS) →
+  設定 (エージェント: 行の編集・用途メモの保存が PC 側の `get_agent_settings` に反映、PC の変更が画面に反映、入力中は固定のバナー → 再読込、キーボードで隠れない / 秘密: 登録が PC の
+  `list_secret_env` に出る・PC での削除が画面に反映) → 前面で別のチャットを表示中に完了 → 通知が出る → 画面を消したままロック画面の通知をタップ → そのチャットが開く、前面でそのチャットを
+  表示中の完了では出ない・見たら通知が消える → 常設の通知 (種類 `specialUse`) → 「作業中だけ」に切り替えるとサービスと通知が止まり (前面の接続は続く)、裏では切れる → 作業中は裏でも
+  サービスと接続が続き、完了の通知の後にサービスが止まり接続も切れる → 「常に接続」に戻すとサービスが始まる → `adb install -r` (= `MY_PACKAGE_REPLACED`) の後、アプリを開かなくても
+  サービスが始まり再接続 → PC でサーバーを作り直して失効 → 裏で失効の通知・サービスが止まる → 深い Doze を強制 (`force-idle`) して画面を消し 11 分置いても接続が保たれ通知が届く。
+  **していないこと**: 端末の再起動 (個人の端末なので。`BOOT_COMPLETED` はシェルからは送れない = 保護された放送。同じ除外の `MY_PACKAGE_REPLACED` で確かめ、受信機の判断は Robolectric で)、
+  実際に時間をかけた自然な Doze (USB 給電中。`battery unplug` と `force-idle` で模した)。
+
 ## ペアリング
 
 | 項目 | 内容 |
@@ -225,10 +531,9 @@ T-63 で PC 版の設計に合わせて直した) で画面構成と操作の感
 
 ### まだ決めていないこと (上で決まったものを除く)
 
-- merge_blocked (マージがコンフリクトで保留) は「完了」ではないので通知しない案だが、ユーザーが整えるまで止まる状態なので知らせるべきか。
-- 裏で通知を受けるための接続 (T-61 では前面にある間だけつなぐ。Foreground Service か、PC からの push か)。
-- ペアリング解除の置き場所 (PC の設定には無いスマホ固有の操作。T-61 の最小画面ではメニューにある)。
-- PC にあってモックに入れていないもの: git グラフ、チャットの改名・削除、リポジトリを開く欄、コンテキストの量と圧縮。
+- (上の「決定 (2026-10-11…)」で決まった: merge_blocked は通知する、裏での接続は Foreground Service、ペアリング解除は設定の「この端末」、PC にあってモックに無かったものは
+  上の通り。T-71 までで実装済み。)
+- PC の git グラフ (最初の版では入れない)。
 
 ## 複数クライアントの同時操作 (T-64 の調査、2026-10-11)
 
@@ -237,19 +542,41 @@ PC の GUI と Android が 1 つのコアを同時に操作する場合の調査
 `runtime/driver.rs`、`runtime/orchestration.rs`。SQLite は WAL・busy_timeout 5s)。
 同じチャットへの同時送信は受信箱に別々に積まれ、二重実行の後勝ち側は `invalid_state` / `not_found` になる。
 
-本実装 (段階 3) で入れる修正 (優先度順):
+本実装 (段階 3) で入れる修正 (優先度順)。1〜8・10 は T-65 で対応した (詳細は [`core-design.md`](../architecture/core-design.md) §19。
+Android の画面側の対応は後続タスク):
 
 1. コア: 設定用の Mutex で `set_agent_settings` と `set_secret` / `delete_secret` を直列化する (DB とメモリ・キーリングの食い違い防止)。
+   **対応済み (T-65)**: `Core` の `settings_lock` が検証から反映 (DB → メモリ / キーリング) まで囲む (`runtime/core/settings.rs`)。
 2. コア + PC + Android: アプリ全体向けイベント `projects_changed` (他の端末で開いたプロジェクトが一覧に出ない)。
+   **対応済み (T-65)**: `projects_changed { project }` (project 空・seq 0・live、リモートにも流す) をプロジェクトの新規登録・初回の open で出す。
+   PC は受けて `refreshProjects`。チャットの無いプロジェクトに他の端末がチャットを作ったら、それを表示する (`open_chat` も送る)。
 3. コア + PC: `settings_changed` のヒントイベント、`SetAgentSettings` に期待する版を渡して不一致なら `conflict` (古い設定画面からの上書き防止)。
+   **対応済み (T-65)**: `settings_changed { kind: agent_settings|harnesses|secrets, project?, revision? }`。`AgentSettingsView.revision`
+   (全層で 1 つ、増えるだけ) を `set_agent_settings.expected_revision` に渡すと不一致で `conflict`。PC の 3 つの設定画面は通知で読み直し、
+   編集中ならバナー (「他の端末で設定が変更されました … 再読込」)。エージェント設定は保存に版を付け、`conflict` なら知らせて読み直す。
 4. コア + クライアント: WS の送信キューを有界にし、取りこぼし (`Lagged`) で `resync` を送る。クライアントは追いつき処理をする。
+   **対応済み (T-65)**: WS の送信キューは 1024。あふれたらプロジェクトの live は捨て、durable とアプリ全体のイベントは接続を閉じる
+   (close 1013、再接続に任せる)。応答は捨てない。
+   WS セッションと Tauri の `forward_events` の `Lagged` でその接続に `resync` (アプリ全体向け live)。PC は `list_events` で追いつき、
+   プロジェクト一覧・git・表示中のチャット・設定画面を読み直す。
 5. コア + GUI: 二重実行で負けた側にエラーを出さない (冪等化か、直前のイベントで目標状態なら握りつぶす)。
+   **対応済み (T-65)**: すべてコアで冪等化 (目標状態なら `accepted`、何も記録しない): `cancel_task` / `cancel_group` (既に中止)、
+   `retry_group_merge` (既にマージ済み)、`delete_chat` (削除済みの `C-<n>`。一度も無い ID は `not_found`)、`compact_chat` (圧縮のターン中)。
+   GUI で握りつぶすものは無い。
 6. PC: 選択中のチャットが他の端末で削除されたときの切り替え (`openChat` と記憶の更新)、`chat_created` で git の概要を即時に読み直す。
+   **対応済み (T-65)**: 切り替え先を記憶して `open_chat`、消えたチャットの下書きを消す。`chat_created` で git を即時に読み直し、
+   その間はそのチャットの作業ツリーを「見つからない」でなく不明として扱う (`GitView.awaiting`)。
 7. コア: 「起動中」をスナップショットかイベントで共有する (今は要求した端末しか知らない)。
+   **対応済み (T-65)**: 両方。live イベント `session_starting { session }` と `Snapshot.starting` (起動中のセッションのキー)。PC は両方から「起動中」を出す。
 8. Tauri: 単一インスタンスの保証 (同じデータで 2 つ起動するとコアが 2 つになる)。
+   **対応済み (T-65)**: データディレクトリの `yhtye.lock` を排他ロック (`src-tauri/src/data_lock.rs`)。取れなければ理由を出して終了する
+   (`tauri-plugin-single-instance` はアプリの識別子単位でデータディレクトリと一致しないため使わない。既存ウィンドウの前面化はしない)。
+   開発用ブリッジはロックしない。
 9. 要判断: リモート端末に許す `Set*` コマンドの範囲 (特に `SetHarnessPath` は任意の実行ファイルを指定できる)。
+   **決定済み**: 今のまま (PC と同等)。
 10. 文書化: 同じ接続内でも要求の実行順は保証されない。依存する要求は応答を待ってから送る。
     Android は PC と同じ同期方式 (スナップショット + `list_events` + cursor、git の読み直しの契機、復帰時の一覧の読み直し) を踏襲する。
+    **対応済み (T-65)**: core-design §10 と `ws.rs` の doc に書いた。Android の同期層は §19.1 のイベントも扱う。
 11. 将来: git 処理の非同期化 (今はマージ中にそのプロジェクトの全コマンドが待つ)、ストリーミング途中の本文をスナップショットに含める。
 
 保留: チャット単位の「操作権」ロック (片方が操作中ならもう片方は閲覧のみ、取得で奪う)。データの整合はコアの直列化で守られるので、

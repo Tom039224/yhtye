@@ -255,8 +255,17 @@ async fn a_blocked_group_merge_is_retried_after_the_user_cleans_the_tree() {
             .any(|p| p.contains("[yhtye:merge_result] group=G-1 ok=true")),
         "{told:?}"
     );
-    let err = orch.retry_group_merge("G-1").await.expect_err("done now");
-    assert!(err.to_string().contains("merge_blocked"), "{err}");
+    // Another retry (a second client's) finds it merged: accepted, nothing runs.
+    orch.retry_group_merge("G-1")
+        .await
+        .expect("merged already: accepted");
+    let results = |events: &[ApiEvent]| {
+        prompts_to(events, ORCHESTRATOR_SESSION)
+            .iter()
+            .filter(|p| p.contains("[yhtye:merge_result]"))
+            .count()
+    };
+    assert_eq!(results(&events), 1, "only the first retry merged");
     shutdown_and_check(orch, &events).await;
 }
 

@@ -60,27 +60,59 @@
     <string name="fail_server_error">PC でエラーが起きました (%1$d)。</string>
     <string name="fail_detail">PC からの説明: %1$s</string>
 
-    <!-- ホーム -->
+    <!-- ペアリング解除 (設定の「この端末」) -->
     <string name="home_unpair">ペアリング解除</string>
-    <string name="home_menu">メニュー</string>
-    <string name="home_projects">プロジェクト</string>
-    <string name="home_no_projects">開いたことのあるプロジェクトはありません。</string>
-    <string name="home_project_open">開いている</string>
-    <string name="home_project_running">作業中</string>
-    <string name="home_load_failed">一覧を取得できませんでした: %1$s</string>
-    <string name="home_device">この端末: %1$s</string>
     <string name="unpair_title">ペアリングを解除しますか?</string>
     <string name="unpair_message">この端末に保存した接続情報を消します。PC の端末一覧からは消えないので、必要なら PC で失効させてください。</string>
 
+    <!-- 設定: この端末 (PC の「リモート接続」に当たるスマホ固有の欄) -->
+    <string name="device_connection_title">接続先</string>
+    <string name="device_pc">PC</string>
+    <string name="device_address">アドレス</string>
+    <string name="device_name">この端末の名前</string>
+    <string name="device_state">接続の状態</string>
+    <string name="device_state_connected">接続中</string>
+    <string name="device_state_connecting">接続しています…</string>
+    <string name="device_state_waiting">再接続を待っています</string>
+    <string name="device_state_idle">つないでいません (アプリを開くとつなぎます)</string>
+    <string name="device_state_revoked">PC から外されました</string>
+    <string name="device_background_title">常駐方式</string>
+    <string name="device_background_intro">アプリを閉じている間も PC とつないでおくかを選びます。つないでいる間は常設の通知が出ます。</string>
+    <string name="device_background_always">常に接続</string>
+    <string name="device_background_always_desc">ペアリング中は PC とつなぎ続けます。作業が終わったらいつでも通知します (既定)。</string>
+    <string name="device_background_work_only">作業中だけ接続</string>
+    <string name="device_background_work_only_desc">オーケストレータが作業している間だけつなぎます。作業が終わって通知を出したらやめます。</string>
+    <string name="device_notifications_title">通知</string>
+    <string name="device_notifications_intro">オーケストレータの作業が終わり、あなたの番になったときに知らせます。</string>
+    <string name="device_notifications_allowed">通知は許可されています。</string>
+    <string name="device_notifications_blocked">通知が許可されていません。アプリを閉じていると、作業が終わっても知らせられません。</string>
+    <string name="device_notifications_allow">通知を許可する</string>
+    <string name="device_notifications_open_settings">OS の通知設定を開く</string>
+    <string name="device_notifications_denied_hint">許可の画面が出ないときは、OS の通知設定から許可してください。</string>
+    <string name="device_battery_title">電池の最適化</string>
+    <string name="device_battery_intro">常駐中は、画面を消していても通常は接続が保たれます。機種によっては OS (Doze や独自の電池節約) が通信を止めて、通知が遅れたり届かなかったりします。遅れるときだけ、対象から外してください。</string>
+    <string name="device_battery_unrestricted">最適化の対象外です。</string>
+    <string name="device_battery_optimized">最適化の対象です (既定)。</string>
+    <string name="device_battery_request">最適化の対象から外す</string>
+
+    <!-- 通知 -->
+    <string name="notif_channel_connection">PC への接続</string>
+    <string name="notif_channel_connection_desc">アプリを閉じていても PC とつないでいる間、出し続ける通知です。</string>
+    <string name="notif_channel_done">作業の完了</string>
+    <string name="notif_channel_done_desc">オーケストレータの作業が終わり、あなたの番になったときの通知です。</string>
+    <string name="notif_channel_alert">接続の異常</string>
+    <string name="notif_channel_alert_desc">この端末が PC から外されたときなどの通知です。</string>
+    <string name="notif_service_connected">Yhtye: PC に接続中</string>
+    <string name="notif_service_reconnecting">Yhtye: PC に再接続しています…</string>
+    <string name="notif_service_always">常に接続</string>
+    <string name="notif_service_work_only">作業が終わるまで接続</string>
+    <string name="notif_revoked_title">Yhtye: この端末は PC から外されました</string>
+    <string name="notif_revoked_text">使い続けるには、もう一度ペアリングしてください。</string>
+
     <!-- 接続状態 -->
-    <string name="state_idle">切断中</string>
     <string name="state_connecting">接続しています…</string>
-    <string name="state_connected">接続済み</string>
-    <string name="state_waiting">再接続を待っています (%1$d 秒後)</string>
-    <string name="state_waiting_reason">直前のエラー: %1$s</string>
     <string name="state_reconnect_now">今すぐ再接続</string>
     <string name="state_rejected">PC に接続を拒否されました。この端末が PC と同じ Tailscale ユーザーのものか確かめてください。</string>
-    <string name="state_revoked">この端末は PC から外されました。</string>
 
     <!-- ペアリングし直し -->
     <string name="repair_title">ペアリングし直しますか?</string>

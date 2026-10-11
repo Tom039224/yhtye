@@ -10,7 +10,7 @@
       "chats": [
         {
           "id": "C-1",
-          "worktree": "/tmp/.tmpOwXv7U/repo",
+          "worktree": "/tmp/.tmp8Aj7lq/repo",
           "title": null
         }
       ],
@@ -30,17 +30,28 @@
     "chats": [
       {
         "id": "C-1",
-        "worktree": "/tmp/.tmpOwXv7U/repo",
+        "worktree": "/tmp/.tmp8Aj7lq/repo",
         "title": null,
-        "created_ms": 1790766538443,
-        "last_used_ms": 1790766538443
+        "created_ms": 1791726916859,
+        "last_used_ms": 1791726916859
       }
-    ]
+    ],
+    "starting": []
   },
   "events": [
     {
+      "seq": 0,
+      "ts_ms": 1791726916854,
+      "project": "",
+      "live": true,
+      "body": {
+        "type": "projects_changed",
+        "project": "repo"
+      }
+    },
+    {
       "seq": 1,
-      "ts_ms": 1790766538443,
+      "ts_ms": 1791726916859,
       "project": "repo",
       "live": false,
       "body": {
@@ -49,7 +60,7 @@
           "type": "chat_created",
           "chat": {
             "id": "C-1",
-            "worktree": "/tmp/.tmpOwXv7U/repo",
+            "worktree": "/tmp/.tmp8Aj7lq/repo",
             "title": null
           }
         }
@@ -57,7 +68,7 @@
     },
     {
       "seq": 2,
-      "ts_ms": 1790766538447,
+      "ts_ms": 1791726916865,
       "project": "repo",
       "live": false,
       "body": {
@@ -71,7 +82,7 @@
     },
     {
       "seq": 3,
-      "ts_ms": 1790766538447,
+      "ts_ms": 1791726916865,
       "project": "repo",
       "live": false,
       "body": {
@@ -91,8 +102,18 @@
       }
     },
     {
+      "seq": 3,
+      "ts_ms": 1791726916866,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "session_starting",
+        "session": "orchestrator:C-1"
+      }
+    },
+    {
       "seq": 4,
-      "ts_ms": 1790766538456,
+      "ts_ms": 1791726916874,
       "project": "repo",
       "live": false,
       "body": {
@@ -100,20 +121,20 @@
         "session": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "pid": 1771316,
-        "acp_session_id": "fake-1771316",
+        "pid": 2936999,
+        "acp_session_id": "fake-2936999",
         "resumed": false,
         "agent": {
           "harness": "fake",
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOwXv7U/repo"
+        "cwd": "/tmp/.tmp8Aj7lq/repo"
       }
     },
     {
       "seq": 5,
-      "ts_ms": 1790766538456,
+      "ts_ms": 1791726916874,
       "project": "repo",
       "live": false,
       "body": {
@@ -124,7 +145,7 @@
     },
     {
       "seq": 6,
-      "ts_ms": 1790766538457,
+      "ts_ms": 1791726916875,
       "project": "repo",
       "live": false,
       "body": {
@@ -138,7 +159,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790766538458,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": false,
       "body": {
@@ -147,7 +168,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-1771316",
+            "acp_session_id": "fake-2936999",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -201,7 +222,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790766538458,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": true,
       "body": {
@@ -223,7 +244,7 @@
     },
     {
       "seq": 8,
-      "ts_ms": 1790766538459,
+      "ts_ms": 1791726916878,
       "project": "repo",
       "live": false,
       "body": {
@@ -235,7 +256,7 @@
     },
     {
       "seq": 9,
-      "ts_ms": 1790766538459,
+      "ts_ms": 1791726916878,
       "project": "repo",
       "live": false,
       "body": {
@@ -251,7 +272,7 @@
     },
     {
       "seq": 10,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916879,
       "project": "repo",
       "live": false,
       "body": {
@@ -272,7 +293,7 @@
     },
     {
       "seq": 11,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916880,
       "project": "repo",
       "live": false,
       "body": {
@@ -283,7 +304,7 @@
     },
     {
       "seq": 12,
-      "ts_ms": 1790766538461,
+      "ts_ms": 1791726916881,
       "project": "repo",
       "live": false,
       "body": {
@@ -297,7 +318,7 @@
     },
     {
       "seq": 13,
-      "ts_ms": 1790766538466,
+      "ts_ms": 1791726916887,
       "project": "repo",
       "live": false,
       "body": {
@@ -321,7 +342,7 @@
     },
     {
       "seq": 14,
-      "ts_ms": 1790766538475,
+      "ts_ms": 1791726916898,
       "project": "repo",
       "live": false,
       "body": {
@@ -349,7 +370,7 @@
     },
     {
       "seq": 14,
-      "ts_ms": 1790766538476,
+      "ts_ms": 1791726916899,
       "project": "repo",
       "live": true,
       "body": {
@@ -371,7 +392,7 @@
     },
     {
       "seq": 15,
-      "ts_ms": 1790766538478,
+      "ts_ms": 1791726916902,
       "project": "repo",
       "live": false,
       "body": {
@@ -416,7 +437,7 @@
     },
     {
       "seq": 16,
-      "ts_ms": 1790766538478,
+      "ts_ms": 1791726916902,
       "project": "repo",
       "live": false,
       "body": {
@@ -430,7 +451,7 @@
     },
     {
       "seq": 17,
-      "ts_ms": 1790766538486,
+      "ts_ms": 1791726916913,
       "project": "repo",
       "live": false,
       "body": {
@@ -438,13 +459,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
       "seq": 18,
-      "ts_ms": 1790766538486,
+      "ts_ms": 1791726916913,
       "project": "repo",
       "live": false,
       "body": {
@@ -458,8 +479,18 @@
       }
     },
     {
+      "seq": 18,
+      "ts_ms": 1791726916914,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "session_starting",
+        "session": "T-1/implementer"
+      }
+    },
+    {
       "seq": 19,
-      "ts_ms": 1790766538488,
+      "ts_ms": 1791726916918,
       "project": "repo",
       "live": false,
       "body": {
@@ -502,7 +533,7 @@
     },
     {
       "seq": 19,
-      "ts_ms": 1790766538490,
+      "ts_ms": 1791726916920,
       "project": "repo",
       "live": true,
       "body": {
@@ -524,7 +555,39 @@
     },
     {
       "seq": 20,
-      "ts_ms": 1790766538492,
+      "ts_ms": 1791726916923,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_started",
+        "session": "T-1/implementer",
+        "role": "implementer",
+        "task": "T-1",
+        "pid": 2937252,
+        "acp_session_id": "fake-2937252",
+        "resumed": false,
+        "agent": {
+          "harness": "fake",
+          "model": "haiku",
+          "effort": null
+        },
+        "cwd": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-1"
+      }
+    },
+    {
+      "seq": 21,
+      "ts_ms": 1791726916923,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "T-1/implementer",
+        "text": "[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\nTask: a\n\nInstruction:\nwait-a\n\nWhen finished, call report_step_done; if stuck, call help. Then end your turn."
+      }
+    },
+    {
+      "seq": 22,
+      "ts_ms": 1791726916923,
       "project": "repo",
       "live": false,
       "body": {
@@ -568,8 +631,8 @@
       }
     },
     {
-      "seq": 21,
-      "ts_ms": 1790766538492,
+      "seq": 23,
+      "ts_ms": 1791726916923,
       "project": "repo",
       "live": false,
       "body": {
@@ -582,8 +645,8 @@
       }
     },
     {
-      "seq": 22,
-      "ts_ms": 1790766538504,
+      "seq": 24,
+      "ts_ms": 1791726916938,
       "project": "repo",
       "live": false,
       "body": {
@@ -591,13 +654,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-2",
-          "path": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-2"
+          "path": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-2"
         }
       }
     },
     {
-      "seq": 23,
-      "ts_ms": 1790766538504,
+      "seq": 25,
+      "ts_ms": 1791726916938,
       "project": "repo",
       "live": false,
       "body": {
@@ -611,298 +674,18 @@
       }
     },
     {
-      "seq": 24,
-      "ts_ms": 1790766538505,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "session_started",
-        "session": "T-1/implementer",
-        "role": "implementer",
-        "task": "T-1",
-        "pid": 1771538,
-        "acp_session_id": "fake-1771538",
-        "resumed": false,
-        "agent": {
-          "harness": "fake",
-          "model": "haiku",
-          "effort": null
-        },
-        "cwd": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-1"
-      }
-    },
-    {
       "seq": 25,
-      "ts_ms": 1790766538505,
+      "ts_ms": 1791726916938,
       "project": "repo",
-      "live": false,
+      "live": true,
       "body": {
-        "type": "prompted",
-        "session": "T-1/implementer",
-        "text": "[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\nTask: a\n\nInstruction:\nwait-a\n\nWhen finished, call report_step_done; if stuck, call help. Then end your turn."
+        "type": "session_starting",
+        "session": "T-2/implementer"
       }
     },
     {
       "seq": 26,
-      "ts_ms": 1790766538506,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "tool_called",
-        "record": {
-          "binding": {
-            "session": "user",
-            "role": "orchestrator",
-            "project": "repo"
-          },
-          "tool": "cancel_task",
-          "args": {
-            "task_id": "T-9",
-            "reason": "cancelled by the user"
-          },
-          "result": {
-            "Err": {
-              "code": "not_found",
-              "message": "no task T-9"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 27,
-      "ts_ms": 1790766538506,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "task_cancelled",
-          "task": "T-1",
-          "reason": "cancelled by the user"
-        }
-      }
-    },
-    {
-      "seq": 28,
-      "ts_ms": 1790766538517,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "tool_called",
-        "record": {
-          "binding": {
-            "session": "user",
-            "role": "orchestrator",
-            "project": "repo"
-          },
-          "tool": "cancel_task",
-          "args": {
-            "task_id": "T-1",
-            "reason": "cancelled by the user"
-          },
-          "result": {
-            "Ok": {
-              "task_id": "T-1",
-              "status": "cancelled"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 29,
-      "ts_ms": 1790766538517,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_queued",
-          "entry": {
-            "id": 3,
-            "chat": "C-1",
-            "item": {
-              "kind": "user_message",
-              "attrs": [],
-              "body": "(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 30,
-      "ts_ms": 1790766538518,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "prompted",
-        "session": "orchestrator:C-1",
-        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
-      }
-    },
-    {
-      "seq": 31,
-      "ts_ms": 1790766538518,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_delivered",
-          "chat": "C-1",
-          "up_to": 3
-        }
-      }
-    },
-    {
-      "seq": 32,
-      "ts_ms": 1790766538519,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "tool_called",
-        "record": {
-          "binding": {
-            "session": "orchestrator:C-1",
-            "role": "orchestrator",
-            "project": "repo",
-            "chat": "C-1"
-          },
-          "tool": "create_task",
-          "args": {
-            "group_id": "G-1",
-            "title": "b",
-            "kind": "code",
-            "steps": [
-              {
-                "kind": "implement"
-              }
-            ],
-            "instruction": "wait-b"
-          },
-          "result": {
-            "Ok": {
-              "task_id": "T-2",
-              "status": "running",
-              "steps": [
-                {
-                  "kind": "implement"
-                },
-                {
-                  "kind": "done"
-                }
-              ]
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 33,
-      "ts_ms": 1790766538519,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "group_cancelled",
-          "group": "G-1",
-          "reason": "changed my mind"
-        }
-      }
-    },
-    {
-      "seq": 34,
-      "ts_ms": 1790766538519,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "task_cancelled",
-          "task": "T-2",
-          "reason": "group cancelled: changed my mind"
-        }
-      }
-    },
-    {
-      "seq": 35,
-      "ts_ms": 1790766538543,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "tool_called",
-        "record": {
-          "binding": {
-            "session": "user",
-            "role": "orchestrator",
-            "project": "repo"
-          },
-          "tool": "cancel_group",
-          "args": {
-            "group_id": "G-1",
-            "reason": "changed my mind"
-          },
-          "result": {
-            "Ok": {
-              "group_id": "G-1",
-              "status": "cancelled"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 36,
-      "ts_ms": 1790766538543,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_queued",
-          "entry": {
-            "id": 4,
-            "chat": "C-1",
-            "item": {
-              "kind": "user_message",
-              "attrs": [],
-              "body": "(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 37,
-      "ts_ms": 1790766538543,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "prompted",
-        "session": "orchestrator:C-1",
-        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
-      }
-    },
-    {
-      "seq": 38,
-      "ts_ms": 1790766538544,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "domain",
-        "event": {
-          "type": "inbox_delivered",
-          "chat": "C-1",
-          "up_to": 4
-        }
-      }
-    },
-    {
-      "seq": 39,
-      "ts_ms": 1790766538545,
+      "ts_ms": 1791726916939,
       "project": "repo",
       "live": false,
       "body": {
@@ -911,7 +694,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-1771538",
+            "acp_session_id": "fake-2937252",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -964,8 +747,193 @@
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790766538547,
+      "seq": 27,
+      "ts_ms": 1791726916942,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_task",
+          "args": {
+            "task_id": "T-9",
+            "reason": "cancelled by the user"
+          },
+          "result": {
+            "Err": {
+              "code": "not_found",
+              "message": "no task T-9"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 28,
+      "ts_ms": 1791726916943,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_cancelled",
+          "task": "T-1",
+          "reason": "cancelled by the user"
+        }
+      }
+    },
+    {
+      "seq": 29,
+      "ts_ms": 1791726916956,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "user",
+            "role": "orchestrator",
+            "project": "repo"
+          },
+          "tool": "cancel_task",
+          "args": {
+            "task_id": "T-1",
+            "reason": "cancelled by the user"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-1",
+              "status": "cancelled"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 30,
+      "ts_ms": 1791726916956,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 3,
+            "chat": "C-1",
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 31,
+      "ts_ms": 1791726916956,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator:C-1",
+        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled task T-1 from the Yhtye UI. Reason: cancelled by the user)"
+      }
+    },
+    {
+      "seq": 32,
+      "ts_ms": 1791726916957,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "chat": "C-1",
+          "up_to": 3
+        }
+      }
+    },
+    {
+      "seq": 33,
+      "ts_ms": 1791726916958,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "tool_called",
+        "record": {
+          "binding": {
+            "session": "orchestrator:C-1",
+            "role": "orchestrator",
+            "project": "repo",
+            "chat": "C-1"
+          },
+          "tool": "create_task",
+          "args": {
+            "group_id": "G-1",
+            "title": "b",
+            "kind": "code",
+            "steps": [
+              {
+                "kind": "implement"
+              }
+            ],
+            "instruction": "wait-b"
+          },
+          "result": {
+            "Ok": {
+              "task_id": "T-2",
+              "status": "running",
+              "steps": [
+                {
+                  "kind": "implement"
+                },
+                {
+                  "kind": "done"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 34,
+      "ts_ms": 1791726916958,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "group_cancelled",
+          "group": "G-1",
+          "reason": "changed my mind"
+        }
+      }
+    },
+    {
+      "seq": 35,
+      "ts_ms": 1791726916958,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "task_cancelled",
+          "task": "T-2",
+          "reason": "group cancelled: changed my mind"
+        }
+      }
+    },
+    {
+      "seq": 36,
+      "ts_ms": 1791726916985,
       "project": "repo",
       "live": false,
       "body": {
@@ -982,17 +950,63 @@
             "reason": "changed my mind"
           },
           "result": {
-            "Err": {
-              "code": "invalid_state",
-              "message": "group G-1 is cancelled; only active or merge_blocked groups can be cancelled"
+            "Ok": {
+              "group_id": "G-1",
+              "status": "cancelled"
             }
           }
         }
       }
     },
     {
-      "seq": 40,
-      "ts_ms": 1790766538547,
+      "seq": 37,
+      "ts_ms": 1791726916986,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_queued",
+          "entry": {
+            "id": 4,
+            "chat": "C-1",
+            "item": {
+              "kind": "user_message",
+              "attrs": [],
+              "body": "(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 38,
+      "ts_ms": 1791726916986,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "prompted",
+        "session": "orchestrator:C-1",
+        "text": "[yhtye:user_message]\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)"
+      }
+    },
+    {
+      "seq": 39,
+      "ts_ms": 1791726916987,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "domain",
+        "event": {
+          "type": "inbox_delivered",
+          "chat": "C-1",
+          "up_to": 4
+        }
+      }
+    },
+    {
+      "seq": 39,
+      "ts_ms": 1791726916988,
       "project": "repo",
       "live": true,
       "body": {
@@ -1013,8 +1027,8 @@
       }
     },
     {
-      "seq": 41,
-      "ts_ms": 1790766538547,
+      "seq": 40,
+      "ts_ms": 1791726916988,
       "project": "repo",
       "live": false,
       "body": {
@@ -1025,8 +1039,8 @@
       }
     },
     {
-      "seq": 42,
-      "ts_ms": 1790766538547,
+      "seq": 41,
+      "ts_ms": 1791726916988,
       "project": "repo",
       "live": false,
       "body": {
@@ -1039,10 +1053,245 @@
           }
         }
       }
+    },
+    {
+      "seq": 42,
+      "ts_ms": 1791726916991,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "cancelled"
+          }
+        }
+      }
+    },
+    {
+      "seq": 43,
+      "ts_ms": 1791726916991,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-2/implementer",
+        "event": {
+          "type": "ready",
+          "data": {
+            "acp_session_id": "fake-2937392",
+            "resumed": false,
+            "modes": {
+              "currentModeId": "bypassPermissions",
+              "availableModes": [
+                {
+                  "id": "default",
+                  "name": "default"
+                },
+                {
+                  "id": "bypassPermissions",
+                  "name": "bypassPermissions"
+                }
+              ]
+            },
+            "config_options": [
+              {
+                "id": "model",
+                "name": "Model",
+                "type": "select",
+                "currentValue": "haiku",
+                "options": [
+                  {
+                    "value": "default",
+                    "name": "default"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "haiku"
+                  }
+                ]
+              }
+            ],
+            "capabilities": {
+              "loadSession": true,
+              "promptCapabilities": {
+                "image": false,
+                "audio": false,
+                "embeddedContext": false
+              },
+              "mcpCapabilities": {
+                "http": true,
+                "sse": false
+              },
+              "sessionCapabilities": {},
+              "auth": {}
+            },
+            "agent": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 44,
+      "ts_ms": 1791726916991,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-1/implementer",
+        "event": {
+          "type": "exited",
+          "data": {
+            "code": 0,
+            "signal": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 45,
+      "ts_ms": 1791726916991,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-1/implementer",
+        "suspended": false
+      }
+    },
+    {
+      "seq": 45,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "noted"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 46,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator:C-1",
+        "kind": "message",
+        "text": "noted"
+      }
+    },
+    {
+      "seq": 47,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    },
+    {
+      "seq": 47,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "fake: no scenario turn for \"[yhtye:user_message]\\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)\""
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 48,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator:C-1",
+        "kind": "message",
+        "text": "fake: no scenario turn for \"[yhtye:user_message]\\n(Yhtye note: the user cancelled group G-1 from the Yhtye UI. Reason: changed my mind)\""
+      }
+    },
+    {
+      "seq": 49,
+      "ts_ms": 1791726916992,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "turn_ended",
+          "data": {
+            "Ok": "end_turn"
+          }
+        }
+      }
+    },
+    {
+      "seq": 50,
+      "ts_ms": 1791726916993,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "T-2/implementer",
+        "event": {
+          "type": "exited",
+          "data": {
+            "code": 0,
+            "signal": null
+          }
+        }
+      }
+    },
+    {
+      "seq": 51,
+      "ts_ms": 1791726916993,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "session_stopped",
+        "session": "T-2/implementer",
+        "suspended": false
+      }
     }
   ],
   "end": {
-    "seq": 42,
+    "seq": 51,
     "state": {
       "project": "repo",
       "config": {
@@ -1051,7 +1300,7 @@
       "chats": [
         {
           "id": "C-1",
-          "worktree": "/tmp/.tmpOwXv7U/repo",
+          "worktree": "/tmp/.tmp8Aj7lq/repo",
           "title": "hold on"
         }
       ],
@@ -1100,7 +1349,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-1",
           "cancel_reason": "cancelled by the user"
         },
         {
@@ -1133,7 +1382,7 @@
           "current": 0,
           "status": "cancelled",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-2",
+          "workdir": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-2",
           "cancel_reason": "group cancelled: changed my mind"
         }
       ],
@@ -1152,21 +1401,21 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-1771538",
-        "status": "live",
-        "turn_running": true,
+        "acp_session_id": "fake-2937252",
+        "status": "stopped",
+        "turn_running": false,
         "agent": {
           "harness": "fake",
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOwXv7U/data/worktrees/repo/G-1/T-1"
+        "cwd": "/tmp/.tmp8Aj7lq/data/worktrees/repo/G-1/T-1"
       },
       {
         "session_key": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-1771316",
+        "acp_session_id": "fake-2936999",
         "status": "live",
         "turn_running": false,
         "agent": {
@@ -1174,17 +1423,18 @@
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOwXv7U/repo"
+        "cwd": "/tmp/.tmp8Aj7lq/repo"
       }
     ],
     "chats": [
       {
         "id": "C-1",
-        "worktree": "/tmp/.tmpOwXv7U/repo",
+        "worktree": "/tmp/.tmp8Aj7lq/repo",
         "title": "hold on",
-        "created_ms": 1790766538443,
-        "last_used_ms": 1790766538543
+        "created_ms": 1791726916859,
+        "last_used_ms": 1791726916986
       }
-    ]
+    ],
+    "starting": []
   }
 }

@@ -16,7 +16,7 @@ use crate::agents::{
     check_executable_path, default_choice, detect_harnesses, harness_spec, known_dirs,
     presets_from,
 };
-use crate::api::{ApiError, ApiResponse};
+use crate::api::{ApiError, ApiResponse, SettingsKind};
 
 type EnvLookup = Arc<dyn Fn(&str) -> Option<OsString> + Send + Sync>;
 
@@ -148,6 +148,10 @@ impl Core {
         // After the registration: a request that reads a preset from now on
         // gets the new one, and a probe of the old one that is still running
         // does not fill the caches again.
+        if !changed.is_empty() {
+            // Other clients' settings screens offer other harnesses now.
+            self.settings_changed(SettingsKind::Harnesses, None, None);
+        }
         for id in changed {
             self.inner.models.invalidate(id);
         }
@@ -212,6 +216,8 @@ impl Core {
             .set_harness_path(&harness, path.as_deref(), now_ms())
             .await?;
         let harnesses = self.detect_and_register().await?.unwrap_or_default();
+        // The stored path changed even when the same executable is found.
+        self.settings_changed(SettingsKind::Harnesses, None, None);
         Ok(ApiResponse::Harnesses { harnesses })
     }
 }

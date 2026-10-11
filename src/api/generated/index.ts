@@ -52,6 +52,7 @@ export type * from "./RoleSettings";
 export type * from "./SessionBinding";
 export type * from "./SessionRecord";
 export type * from "./SessionStatus";
+export type * from "./SettingsKind";
 export type * from "./Snapshot";
 export type * from "./State";
 export type * from "./Step";
