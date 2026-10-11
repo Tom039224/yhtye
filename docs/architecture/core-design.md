@@ -28,9 +28,11 @@ crates/
       git/        GitService トレイト + NoopGit (3a)、git CLI 実装 (3c)
       prompts.rs  役割別システムプロンプト (本文は crates/yhtye-core/prompts/*.md を include_str!)
       runtime/    上記を束ねる Core (Effect の実行・受信箱・再開処理)
+      ws.rs       API の WebSocket セッション (開発用ブリッジとリモートサーバーで共有、§10・§18)
+      remote/     リモート接続 (Tailscale 経由の Android クライアント用サーバー・ペアリング・端末、§18)
     tests/        偽エージェントを使う結合テスト, 実エージェントテスト (#[ignore])
   yhtye-fake-agent/           偽 ACP エージェント (bin)
-  yhtye-dev-bridge/           WS ブリッジ (bin)
+  yhtye-dev-bridge/           WS ブリッジ (bin。セッション処理は yhtye-core の ws.rs)
 src-tauri/                    Tauri アプリ (Core を manage し、コマンドとイベントを中継するだけ)
 src/                          React フロントエンド
   api/          transport.ts (抽象) / tauri.ts / ws.ts / generated/ (ts-rs 出力)
@@ -611,6 +613,8 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- リモート接続 (§18): 起動後に `Core::start_remote()` をバックグラウンドで呼ぶ (設定が有効なら Tailscale の
+  アドレスで待ち受ける)。終了時は `Core::shutdown` がリモートサーバーを最初に止める。
 - **CSP (Stage 6b)**: `tauri.conf.json` の `app.security.csp` を `null` から
   `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
   img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'`
@@ -649,6 +653,13 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   `YHTYE_BRIDGE_URL=ws://...?token=...` を 1 行出す。データディレクトリは `--data-dir` /
   `YHTYE_DATA_DIR`、無ければ `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリの DB とは分ける)。
   SIGINT / SIGTERM で `Core::shutdown` してから終了。起動後に `resume_unfinished`。
+- **セッション処理の共有 (T-55)**: 要求の解析・並行実行・イベントの転送は `yhtye_core::ws::run_session(socket, core,
+  policy, cancel)` に切り出し、ブリッジとリモートサーバー (§18) が使う。接続を受けるかどうか (ブリッジは Origin と
+  `?token=`、リモートは whois と端末トークン) は各サーバーが upgrade の前に決める。`SessionPolicy { local }` は
+  ローカル専用のコマンドとイベント (§18.5) を許すかで、ブリッジは `LOCAL` (すべて許す。開発中の React の設定画面が
+  使う)。`cancel` が発火すると実行中の要求があっても close (1001 "going away") を送ってすぐ閉じる (端末の失効。
+  ブリッジは発火しないトークンを渡すので挙動は変わらない)。置き場所を yhtye-core にしたのは、リモートサーバーの
+  開始/停止を `ApiCommand` から操作するため (Core → remote → ws → Core が同じ crate の中で閉じ、crate の循環依存にならない)。
 - `pnpm dev:browser [ポートの指定] [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
   起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
   ポートは既定 Vite 1420 / ブリッジ 1422 で、`--vite-port` / `--bridge-port` / `--port-base` (環境変数
@@ -1275,3 +1286,81 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
   回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
 - テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。
+
+## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)
+
+設計の背景は [`docs/planned/android-client.md`](../planned/android-client.md)。段階 1 (PC 側のサーバーと認証) の実装。
+コードは `crates/yhtye-core/src/remote/` (`mod.rs` = `RemoteService`、`server.rs` = ルート、`pairing.rs` = コードとトークン、
+`tailscale.rs` = Tailscale の trait と CLI 実装) と `src/ws.rs` (共有の WS セッション、§10)。
+
+### 18.1 構成
+
+- `Core` が `RemoteService` を 1 つ持つ (`Core::start` で作るがサーバーは起動しない)。`Core::start_remote()` が保存された
+  設定が有効なら起動し (アプリが起動後に呼ぶ)、`Core::shutdown` が最初に止める (リモートから新しい作業を始めさせない)。
+- サーバーは axum。`tailscale status` が返した **Tailscale のアドレスにだけ** bind する (100.64.0.0/10 と fd7a:115c:a1e0::/48 に
+  絞るのは `TailscaleCli` の役目)。0.0.0.0 / 127.0.0.1 / LAN では待ち受けない。IPv4 の bind に失敗したら起動失敗、IPv6 の失敗は警告だけ。
+  アドレスごとに `axum::serve` を 1 つ動かし、停止は `CancellationToken` (graceful shutdown + すべての WS を閉じる。5 秒で abort)。
+- `CoreConfig.tailscale: Arc<dyn Tailscale>` (既定 `TailscaleCli`、テストは偽物)。`Tailscale::status()` → `TailscaleSelf { addresses
+  (IPv4 が先), dns_name (末尾の . を除く。MagicDNS が無効なら None), user_id }`、`Tailscale::whois(ip)` → ユーザー ID。
+  CLI は `tailscale status --json` / `tailscale whois --json <ip>` (5 秒でタイムアウト。macOS はアプリ内のパスも試す)。
+  コマンドが無い・`BackendState` が `Running` 以外・アドレスが無いときは、そう書いたエラー (状態の `error` に出る)。
+
+### 18.2 保存 (マイグレーション `0010_remote.sql`)
+
+- `remote_devices (id, name, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+- `app_settings (key, value JSON, updated_ms)`: `remote.settings` = `{enabled, port}` (既定 `false` / 1423)、
+  `remote.server_id` = 128 bit のランダム (hex 32 文字。初回の `Core::start` で `INSERT OR IGNORE` して以後同じ)。
+- 端末 ID は `dev-` + 64 bit のランダム (hex)。端末トークンは 256 bit のランダム (hex 64 文字)。
+
+### 18.3 ペアリング (`POST /pair`)
+
+- 要求 `{"code", "device_name"}` (JSON、4 KiB まで) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
+  400 (JSON や端末名が不正。端末名は前後の空白と制御文字を除いて 1〜64 文字)、401 (コードが違う / 有効なコードが無い)、403 (whois)。
+- コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
+  無視する。有効 5 分、1 回使ったら無効、誤り 5 回で無効、新しく発行したら古いのは無効 (同時に 1 つ)。比較は定数時間。
+  サーバーを止めるとコードも無効。コードの発行はサーバーの起動中だけ (`invalid_state`)。
+- **whois が先**: 接続元が PC と同じ Tailscale ユーザーでなければ、コードを見る前に 403 (他人の端末がコードの試行回数を使い切れない)。
+
+### 18.4 接続 (`GET /ws`)
+
+- 順に: whois (403) → `Authorization: Bearer <token>` (無い・知らない → 401。保存されたすべてのハッシュと定数時間で比較し、途中で抜けない)
+  → upgrade → §10 のセッション (`SessionPolicy::REMOTE`)。接続のたびに `last_seen_ms` を更新し、`remote_devices_changed` を出す。
+- 失効 (`revoke_remote_device`) は DB の行を消し、その端末の接続のトークンを cancel する → 実行中の要求があってもすぐ close
+  (1001)。以後の接続は 401。認証と失効の競合: 接続の登録 (upgrade 後) と失効は同じ `auth_gate` を取り、登録時に端末がまだ DB に
+  あるかを確かめ直すので、失効をすり抜けて残る接続は無い。
+- 要求は他の WS と同じで、切断しても実行中の要求は中断しない。
+
+### 18.5 API (ローカル専用)
+
+`ApiCommand::is_local_only()` が真のコマンドは、リモート経由 (`SessionPolicy::REMOTE`) では `forbidden`
+("this command can only be run on the PC itself")。Tauri と開発用ブリッジからは使える。他の `ApiCommand` はリモートからもすべて使える。
+
+| コマンド | 応答 |
+|---|---|
+| `get_remote_status` | `remote_status { status: RemoteStatus }` |
+| `set_remote_settings { enabled: bool, port?: number }` (port 省略 = 今のまま、0 は `invalid_argument`) | `remote_status { status }` |
+| `create_pairing_code` | `pairing_code { pairing: PairingCode }` |
+| `list_remote_devices` | `remote_devices { devices: RemoteDevice[] }` |
+| `revoke_remote_device { device: string }` (知らない端末は `not_found`) | `remote_devices { devices }` |
+
+- `RemoteStatus { enabled, port, running, addresses: string[] ("100.x:1423", "[fd7a:…]:1423"), ip: string|null (IPv4),
+  dns_name: string|null, server_id, error: string|null, pairing_expires_at_ms: number|null }`。起動の失敗 (Tailscale が無い・止まっている、
+  ポート使用中) はコマンドのエラーではなく `error` に入り、`enabled: true, running: false` になる。有効のままもう一度
+  `set_remote_settings {enabled: true}` を送ると再試行する。設定が変わらず起動中なら何もしない。
+- `PairingCode { code, expires_at_ms, uri }`。`uri` = `yhtye://pair?v=1&host=<MagicDNS 名>&ip=<100.x>&port=<N>&code=<コード>&sid=<サーバー ID>`
+  (MagicDNS が無ければ `host` を省く。値はパーセントエンコード)。
+- `RemoteDevice { id, name, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
+- **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
+  `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
+  `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
+  リモートの WS には流さない。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
+
+### 18.6 試し方とテスト
+
+- `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
+  (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
+- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
+  リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
+  誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
+  再起動で server_id・設定・端末が残る、Tailscale 停止とポート使用中のエラー。コードの期限切れは `pairing.rs` の単体テスト。
+  `real_tailscale_round_trip` (`#[ignore]`) は本物の Tailscale で同じ流れ + 127.0.0.1 で待ち受けていないことを確かめる。
