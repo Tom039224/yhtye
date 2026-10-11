@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.window.core.layout.WindowSizeClass
 import androidx.window.core.layout.computeWindowSizeClass
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.ui.common.SwipeThresholds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -63,9 +64,6 @@ import kotlin.math.abs
 
 /** パネルが開いたとき中央が見えている幅 (モックの `--peek`)。 */
 val PEEK: Dp = 64.dp
-
-/** 離したときにこの速さを超えていればその向きへ (モックの FLING 0.35px/ms)。 */
-private const val FLING_DP_PER_SECOND = 350f
 
 /** 開閉のアニメーション (モックの `cubic-bezier(.2,.8,.2,1)`、120〜300ms)。 */
 private val PANEL_EASING = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -177,7 +175,7 @@ val LocalPanelShell = staticCompositionLocalOf<PanelShellState?> { null }
  * - 子が先に横の動きを取ったら (横にはみ出したコードブロック・表の `horizontalScroll`、右パネルのタスクカードのスワイプ)
  *   その指はパネルを動かさない。縦のスクロールが先に動いたときも同じ。
  * - 最初のタッチスロップを越えた向きで決める。縦ならその指では横に切り替えない。
- * - 1 回のスワイプで動くのは今の位置から隣まで。離した位置と速さで開く/閉じるを決める。
+ * - 1 回のスワイプで動くのは今の位置から隣まで。離した位置と速さで開く/閉じるを決める ([SwipeThresholds])。
  * - 戻る (予測型を含む) は開いているパネル → 中央 の順に 1 段ずつ閉じる。
  */
 @Composable
@@ -243,7 +241,7 @@ private fun NarrowLayout(
     val haptic = LocalHapticFeedback.current
     val edgeStart = gestureInsets.getLeft(density, direction).toFloat()
     val edgeEnd = gestureInsets.getRight(density, direction).toFloat()
-    val fling = with(density) { FLING_DP_PER_SECOND.dp.toPx() }
+    val fling = with(density) { SwipeThresholds.FLING_DP_PER_SECOND.dp.toPx() }
     val panelWidth = with(density) { panelWidthPx.toDp() }
 
     PredictiveBack(state)
@@ -369,12 +367,16 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.panelDra
         state.offset = (base + change.position.x - start.x).coerceIn(lo, hi)
     }
     val velocity = if (cancelled) 0f else tracker.calculateVelocity().x
-    settleAfterDrag(state, lo, hi, velocity, fling, haptic)
+    settleAfterDrag(state, base, lo, hi, velocity, fling, haptic)
 }
 
-/** 離したとき: 速ければその向きの隣へ、そうでなければ近い方へ。開閉が変わったら軽く震わせる。 */
+/**
+ * 離したとき: 速ければその向きの隣へ、そうでなければ指を動かした距離が [SwipeThresholds.PANEL_COMMIT_SHARE] を超えていれば
+ * ドラッグを始めた位置 ([base]) の隣へ、足りなければ [base] に戻る。開閉が変わったら軽く震わせる。
+ */
 private fun settleAfterDrag(
     state: PanelShellState,
+    base: Float,
     lo: Float,
     hi: Float,
     velocity: Float,
@@ -383,10 +385,15 @@ private fun settleAfterDrag(
 ) {
     val pos = state.offset
     val snaps = listOf(-state.panelWidth, 0f, state.panelWidth).filter { it in lo..hi }
+    // 右パネルを開いたまま右パネルが無くなったときなどは、範囲内の最寄りから始めたことにする
+    val anchor = base.coerceIn(lo, hi)
+    val commit = state.panelWidth * SwipeThresholds.PANEL_COMMIT_SHARE
     val target = when {
         velocity > fling -> snaps.firstOrNull { it > pos + 0.5f } ?: snaps.last()
         velocity < -fling -> snaps.lastOrNull { it < pos - 0.5f } ?: snaps.first()
-        else -> snaps.minBy { abs(it - pos) }
+        pos - anchor > commit -> snaps.firstOrNull { it > anchor + 0.5f } ?: anchor
+        pos - anchor < -commit -> snaps.lastOrNull { it < anchor - 0.5f } ?: anchor
+        else -> anchor
     }
     val panel = when {
         target > 0f -> Panel.Left

@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.GroupStatus
@@ -77,6 +78,9 @@ fun activeGroup(h: MainHarness, groupStatus: GroupStatus = GroupStatus.Active, d
     )
 }
 
+/** メンションのスワイプで指を置く、カードの右端からの距離 (行の中のボタンの外)。 */
+private val CARD_GRIP = 16.dp
+
 /**
  * 右パネル: PC の TaskColumn と同じ情報、help は状態の表示だけ、タスクの行の右→左スワイプでメンション
  * (閾値未満は戻る・左→右はパネルを閉じる)、■ の確認と中止、グループの中止・マージの再試行、過去のグループ。
@@ -96,6 +100,14 @@ class RightPanelTest {
     private fun swipeCard(task: String, fromX: Float, toX: Float, durationMillis: Long = 300) {
         rule.onNodeWithTag("task-$task").performTouchInput {
             swipe(Offset(width * fromX, centerY), Offset(width * toX, centerY), durationMillis)
+        }
+        rule.waitForIdle()
+    }
+
+    /** カードの右端から、タッチスロップを越えて [pulled] だけ左へ動かして離す (速さは [dpPerSecond])。 */
+    private fun dragCard(task: String, pulled: Dp, dpPerSecond: Float = SLOW_DP_PER_SECOND) {
+        rule.onNodeWithTag("task-$task").performTouchInput {
+            dragFrom(Offset(right - CARD_GRIP.toPx(), centerY), pulled.toPx(), leftward = true, dpPerSecond = dpPerSecond)
         }
         rule.waitForIdle()
     }
@@ -134,17 +146,49 @@ class RightPanelTest {
         h.open(activeGroup(h))
         h.openRight()
         swipeCard("T-1", 0.85f, 0.72f, durationMillis = 1_000)
-        h.settle { true }
+        h.settleFor()
         assertFalse(h.exists("mention-T-1"))
         assertTrue(h.exists("right-panel"))
     }
 
+    // 確定の距離は 62dp、はじきは 28dp 以上で 315dp/s (T-72。それまでは 88dp と 40dp・450dp/s)
+
     @Test
-    fun `a quick short flick quotes too`() {
+    fun `a slow swipe quotes just past 62 dp and springs back just short of it`() {
         h.open(activeGroup(h))
         h.openRight()
-        swipeCard("T-1", 0.85f, 0.6f, durationMillis = 60)
+        dragCard("T-1", pulled = 52.dp)
+        h.settleFor()
+        assertFalse(h.exists("mention-T-1"))
+        assertTrue(h.exists("right-panel"))
+
+        dragCard("T-1", pulled = 72.dp)
         h.settle { h.exists("mention-T-1") }
+        assertFalse(h.exists("right-panel"))
+    }
+
+    @Test
+    fun `a short flick quotes above 315 dp per second and springs back below it`() {
+        h.open(activeGroup(h))
+        h.openRight()
+        // 62dp に届かないが 28dp は越える長さ。速さだけで決まる
+        dragCard("T-1", pulled = 44.dp, dpPerSecond = 220f)
+        h.settleFor()
+        assertFalse(h.exists("mention-T-1"))
+        assertTrue(h.exists("right-panel"))
+
+        dragCard("T-1", pulled = 44.dp, dpPerSecond = 450f)
+        h.settle { h.exists("mention-T-1") }
+    }
+
+    @Test
+    fun `a flick shorter than the minimum distance does not quote however fast`() {
+        h.open(activeGroup(h))
+        h.openRight()
+        dragCard("T-1", pulled = 20.dp, dpPerSecond = 900f)
+        h.settleFor()
+        assertFalse(h.exists("mention-T-1"))
+        assertTrue(h.exists("right-panel"))
     }
 
     @Test

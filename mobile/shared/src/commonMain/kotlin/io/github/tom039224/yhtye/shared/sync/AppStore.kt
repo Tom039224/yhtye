@@ -47,6 +47,8 @@ import kotlin.time.ExperimentalTime
  *   も再接続 ([io.github.tom039224.yhtye.shared.client.YhtyeClient] がする) なので同じ。
  * - 他のクライアント (T-65): アプリ全体のイベント (`project` が空) はプロジェクト一覧・設定が変わった、
  *   またはこのクライアント向けのイベントが捨てられた (`resync`: 再接続と同じく追いつく) という知らせ。
+ * - クライアント一覧 (T-74、PC は T-73): 左パネルの下端の端末。つながるたび (再接続を含む) と `resync` で `list_clients` を読み、
+ *   `clients_changed` で置き換える。
  *
  * 操作は PC と同じく楽観的に状態を変えず、イベントで変わるのを待つ (コアが返したチャットの一覧への追加と、
  * 削除・改名の応答の反映だけは PC と同じくすぐ行う)。依存する要求は応答を待ってから次を送る
@@ -121,6 +123,7 @@ class AppStore(
     private var usageTimer: Job? = null
     private var pingTimer: Job? = null
     private var pinging = false
+    private var clientsToken = 0L
     private var foreground = true
     private var started = false
     private val background = BackgroundTurns()
@@ -534,6 +537,7 @@ class AppStore(
         if (previous == next.session) return
         session = next.session
         if (foreground) startPolling()
+        scope.launch { refreshClients() }
         if (previous == null) {
             scope.launch { reopenLast() }
             return
@@ -557,16 +561,21 @@ class AppStore(
             is ApiEventBody.ProjectsChanged -> scope.launch { refreshProjects() }
             is ApiEventBody.SettingsChanged -> settings.notify(SettingsChange(body.kind, body.project, body.revision))
             ApiEventBody.Resync -> catchUpAll()
+            is ApiEventBody.ClientsChanged -> {
+                clientsToken++ // 読んでいる途中の答えより新しい
+                set { it.copy(clients = body.clients.devices) }
+            }
             else -> Unit // リモート接続のイベントは PC 専用 (届かない)
         }
     }
 
     /**
      * このクライアント向けのイベントが捨てられた (追いつけなかった): それで変わったはずのものを読み直す —
-     * プロジェクト一覧、表示中のプロジェクトのログと git、表示中のチャット (起動中か)、表示中の設定。
+     * プロジェクト一覧、クライアント一覧、表示中のプロジェクトのログと git、表示中のチャット (起動中か)、表示中の設定。
      */
     private fun catchUpAll() {
         scope.launch { refreshProjects() }
+        scope.launch { refreshClients() }
         settings.notify(SettingsChange.EVERYTHING)
         if (_state.value.project?.phase != LoadPhase.Ready) return
         requestCatchUp()
@@ -649,6 +658,20 @@ class AppStore(
         usageTimer = null
         pingTimer?.cancel()
         pingTimer = null
+    }
+
+    /**
+     * ペアリング済みの端末を読む (最後に始めた読みか、その後の `clients_changed` が勝つ)。失敗は出さない: 下端は前の一覧のまま、
+     * 次の再接続か `resync` でまた読む (T-73 より前のコアは `list_clients` を知らない)。
+     */
+    private suspend fun refreshClients() {
+        val token = ++clientsToken
+        val r = try {
+            core.expect<ApiResponse.Clients>(ApiCommand.ListClients)
+        } catch (e: RpcException) {
+            return
+        }
+        if (token == clientsToken) set { it.copy(clients = r.clients.devices) }
     }
 
     /** 1 回の疎通確認。応答が無くてもエラーにはしない (ホストの表示が最後の応答からの時間を数える)。 */

@@ -16,7 +16,7 @@ use crate::agents::{
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
-use crate::remote::{PairingCode, RemoteDevice, RemoteStatus};
+use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
@@ -279,6 +279,10 @@ pub enum ApiCommand {
     RevokeRemoteDevice {
         device: String,
     },
+    /// This PC (its host name) and the paired devices with whether each is
+    /// connected (`core-design.md` §18.8): a read-only view for every client,
+    /// remote devices too (not local only). `clients_changed` says when it changed.
+    ListClients,
 }
 
 impl ApiCommand {
@@ -430,6 +434,10 @@ pub enum ApiResponse {
     /// Answer of `list_remote_devices` and `revoke_remote_device`.
     RemoteDevices {
         devices: Vec<RemoteDevice>,
+    },
+    /// Answer of `list_clients`.
+    Clients {
+        clients: Clients,
     },
 }
 

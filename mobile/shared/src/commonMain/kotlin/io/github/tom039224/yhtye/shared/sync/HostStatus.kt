@@ -1,13 +1,15 @@
 package io.github.tom039224.yhtye.shared.sync
 
+import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.ClientKind
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindow
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindowKind
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import kotlin.math.roundToLong
 
-// 左パネルの下端が出すもの: コアのホストと最後の ping からの経過 (PC の `src/ui/hostStatus.ts`)、プランと使用量
-// (PC の `src/ui/StatusBar.tsx` の計算部分)。
+// 左パネルの下端が出すもの: コアのホストと最後の ping からの経過、ペアリング済みの端末 (PC の `src/ui/hostStatus.ts`)、
+// プランと使用量 (PC の `src/ui/StatusBar.tsx` の計算部分)。
 
 /** この秒数以内の ping の応答は「now」。 */
 const val PING_NOW_SECONDS: Long = 5
@@ -61,6 +63,34 @@ fun hostToneLabel(tone: HostTone, connection: ConnectionState): String {
         link == Link.Open && tone == HostTone.Bad -> "応答なし"
         else -> "接続を確認中"
     }
+}
+
+/** ホストの下に出す端末の数。残りは「他 N 台」に畳む。 */
+const val CLIENTS_SHOWN: Int = 3
+
+/** 端末の 1 行: この端末か、つながっているか (この端末は一覧の値ではなく、このアプリの接続で決める)。 */
+data class ClientRow(val device: ClientDevice, val isSelf: Boolean, val connected: Boolean)
+
+/**
+ * 端末の行。接続中が先、次に最終接続の新しい順、ほかはコアの並び (PC の `orderClients`)。[self] (ペアリングで保存した
+ * この端末の ID) の行は [selfConnected] (このアプリが PC につながっているか) で決める: 切れている間は一覧が古く、
+ * 最後に読んだときの「接続中」が残っているため。
+ */
+fun clientRows(devices: List<ClientDevice>, self: String?, selfConnected: Boolean): List<ClientRow> = devices
+    .map { ClientRow(it, it.id == self, if (it.id == self) selfConnected else it.connected) }
+    .sortedWith(compareByDescending<ClientRow> { it.connected }.thenByDescending { it.device.lastSeenMs ?: -1L })
+
+/** 端末の種類の言葉。 */
+fun clientKindLabel(kind: ClientKind): String = when (kind) {
+    ClientKind.Android -> "Android"
+    ClientKind.Unrecognized -> "不明な端末"
+}
+
+/** 端末の状態の言葉 (読み上げ)。[formatDateTime] は最終接続の日時の書き方 (端末のロケールの短い形)。 */
+fun clientState(row: ClientRow, formatDateTime: (Long) -> String): String {
+    if (row.connected) return "接続中"
+    val seen = row.device.lastSeenMs
+    return if (seen == null) "オフライン · 未接続" else "オフライン · 最終接続 ${formatDateTime(seen)}"
 }
 
 /** ハーネスのプラン名 (`max`) をサブスクリプションの名前にする: `Claude Max`。 */

@@ -1378,7 +1378,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 ### 18.4 接続 (`GET /ws`)
 
 - 順に: whois (403) → `Authorization: Bearer <token>` (無い・知らない → 401。保存されたすべてのハッシュと定数時間で比較し、途中で抜けない)
-  → upgrade → §10 のセッション (`SessionPolicy::REMOTE`)。接続のたびに `last_seen_ms` を更新し、`remote_devices_changed` を出す。
+  → upgrade → §10 のセッション (`SessionPolicy::REMOTE`)。接続のたびに `last_seen_ms` を更新し、`remote_devices_changed` と
+  `clients_changed` (§18.8) を出す (切断でも同じ)。
 - 失効 (`revoke_remote_device`) は DB の行を消し、その端末の接続のトークンを cancel する → 実行中の要求があってもすぐ close
   (1001)。以後の接続は 401。認証と失効の競合: 接続の登録 (upgrade 後) と失効は同じ `auth_gate` を取り、登録時に端末がまだ DB に
   あるかを確かめ直すので、失効をすり抜けて残る接続は無い。
@@ -1396,7 +1397,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 ### 18.5 API (ローカル専用)
 
 `ApiCommand::is_local_only()` が真のコマンドは、リモート経由 (`SessionPolicy::REMOTE`) では `forbidden`
-("this command can only be run on the PC itself")。Tauri と開発用ブリッジからは使える。他の `ApiCommand` はリモートからもすべて使える。
+("this command can only be run on the PC itself")。Tauri と開発用ブリッジからは使える。他の `ApiCommand` はリモートからもすべて使える
+(表示用のクライアント一覧 `list_clients` もリモートから使える。§18.8)。
 
 | コマンド | 応答 |
 |---|---|
@@ -1416,7 +1418,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
   `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
   `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
-  リモートの WS には流さない (T-65 で足したアプリ全体向けの `projects_changed` / `settings_changed` / `resync` はリモートにも流す。§19)。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
+  リモートの WS には流さない (T-65 で足したアプリ全体向けの `projects_changed` / `settings_changed` / `resync` と、T-73 の `clients_changed` はリモートにも流す。§19)。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
   ペアリングの失敗 (コード誤り) では、状態 (`pairing_expires_at_ms`) が変わったとき (誤り 5 回目でコードが無効になった、期限切れのコードが
   捨てられた) だけ `remote_status_changed` を出す (最後に出した状態と比べる)。
 
@@ -1450,6 +1452,33 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - 端末一覧は名前・接続中か・最終接続・追加日時と「失効」(確認してから送る)。
 - テストは `src/ui/RemoteSettings.test.tsx` (`FakeCore.remote` = `FakeRemote`)。`pnpm check:layout` に QR 表示中の状態がある。
 
+### 18.8 クライアント一覧 (表示用、誰でも読める。T-73)
+
+§18.5 の端末一覧は失効などの**管理用** (ローカル専用) なので、それとは別に、PC の左下と Android に「誰がいるか」を出すための
+**読み取り専用のビュー**を足した。コードは `remote/clients.rs`。トークン・ハッシュ・追加日時は含めない。管理操作 (失効・設定) は
+これまでどおりローカル専用。
+
+| コマンド | 応答 |
+|---|---|
+| `list_clients` (**ローカル専用ではない**: リモート端末からも使える) | `clients { clients: Clients }` |
+
+- `Clients { server: ClientServer, devices: ClientDevice[] }`
+  - `ClientServer { host: string }`: コアが動くマシンのホスト名 (`pong.host` と同じ `host_name()`)。
+  - `ClientDevice { id: string, name: string, kind: ClientKind, connected: bool, last_seen_ms: number|null }`。並びは
+    `list_remote_devices` と同じ (ペアリングの古い順)。`last_seen_ms` は最後に接続した時刻 (`null` = ペアリング後まだ接続していない)。
+  - `ClientKind` = `"android"` だけ (今のペアリング済み端末はすべて Android クライアント。DB に種類の列は無い)。Kotlin では知らない値は
+    `Unrecognized` になる。
+- **イベント** `clients_changed { clients: Clients }`: アプリ全体 (project `""`・seq 0・live)。`remote_devices_changed` と同じ契機
+  (ペアリング・失効・接続・切断) で、その直後に出す (`Shared::emit_device_changes`)。`is_app_wide()` は真、`is_local_only()` は**偽**で、
+  **リモートの WS にも流す**。リモート接続が止まっていても `list_clients` は読める (端末はすべて未接続)。
+- Android の表示は左パネルの下端 (`planned/android-client.md` の T-74。同期層は接続・再接続・`resync` で読み、`clients_changed` で置き換える)。
+- PC の GUI の表示は `docs/design/orchestrator-desktop.md` §3.3 のフッタ。ストア (`store/app.ts`) は接続 (再接続を含む) と `resync` で
+  `list_clients` を読み、`clients_changed` で置き換える (読んでいる途中に来たイベントの方が新しいので、その読みの答えは捨てる)。
+- テスト: `remote/clients.rs` (JSON の形)、`ws.rs` (`list_clients` はローカル専用でない、`clients_changed` はリモートに流れる)、
+  `tests/remote_access.rs` の `every_client_sees_the_clients_and_their_changes` (ローカルとリモート端末の両方から読める、
+  トークン・ハッシュを含まない、ペアリング・接続・切断・失効でローカルと接続中の別端末に `clients_changed` が届く)、
+  vitest の `ui/Sidebar.test.tsx` (アイコン・オフラインのグレー・イベントでの更新・resync と再接続での読み直し・古い読みを捨てる・折りたたみ)。
+
 ## 19. 複数クライアントの同時操作 (T-65)
 
 PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザが 1 つのコアを同時に操作する。調査 (T-64) と修正一覧は
@@ -1462,6 +1491,7 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 |---|---|---|
 | `projects_changed { project: string }` | アプリ全体 (project `""`・seq 0・live)。リモートにも流す | `open_project` がプロジェクトを新しく登録した、またはこのプロセスで初めて開いた (オーケストレーションを起動した)。`list_projects` を読み直す。開いているプロジェクトを開き直しても出ない |
 | `settings_changed { kind: agent_settings \| harnesses \| secrets, project?: string, revision?: number }` | アプリ全体。リモートにも流す | ヒント。表示中の設定画面は読み直す (`get_agent_settings` / `get_harnesses` / `list_secret_env`)。`agent_settings` では `project` (プロジェクトの層を変えた。全体なら省略) と新しい `revision` が付く |
+| `clients_changed { clients: Clients }` | アプリ全体。リモートにも流す | 端末のペアリング・失効・接続・切断 (§18.8)。クライアント一覧の表示を置き換える |
 | `resync` | アプリ全体。**その接続にだけ**送る | そのクライアント向けのイベントを取りこぼした (broadcast の `Lagged`)。durable はログにあるので `list_events` で cursor から追いつき、`list_projects`・git・表示中のチャット (`open_chat` で起動中か)・設定を読み直す。live (ストリーミング・アプリ全体) は失われている |
 | `session_starting { session: string }` | プロジェクトの live (seq は直前の durable) | セッションの起動を始めた (復元の再試行のたびにも出る)。`session_started` / `session_stopped` / `retrying: false` の `session_failed` で終わる。起動を要求したクライアント以外も「起動中」を出せる |
 
@@ -1469,7 +1499,7 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 - `AgentSettingsView.revision: number`: 全層で 1 つの版。コア起動時は時計 (マイクロ秒)、以後は変更ごとに `max(前 + 1, 時計)`
   (大きいほど新しい。再起動をまたいでも増える。2^53 未満)。`set_agent_settings.expected_revision` に渡すと、一致しなければ `conflict`
   ("the agent settings were changed elsewhere since they were read; read them again")。省略すれば検査しない (従来どおり)。
-- `ApiEventBody::is_app_wide()` (Rust) がアプリ全体のイベント (上の 3 つ + `remote_*`)、`is_local_only()` はそのうち `remote_*` だけ。
+- `ApiEventBody::is_app_wide()` (Rust) がアプリ全体のイベント (上の 4 つ + `remote_*`)、`is_local_only()` はそのうち `remote_*` だけ。
   `ApiEvent::app_wide(body)` が作る。
 
 ### 19.2 コア
@@ -1493,7 +1523,8 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 
 - `store/app.ts`: `project` が空のイベントは `eventRules.ts` の `isAppWide` で分けて `onAppWide` へ。`projects_changed` →
   `refreshProjects`、`settings_changed` → `onSettingsChanged` の購読者 (設定画面) へ、`resync` → `catchUpAll`
-  (`list_projects`・cursor からの追いつき・git・`open_chat`・設定画面へ「何でも変わったかもしれない」(`kind: null`))。
+  (`list_projects`・`list_clients`・cursor からの追いつき・git・`open_chat`・設定画面へ「何でも変わったかもしれない」(`kind: null`))。
+  `clients_changed` → `clients` を置き換える (§18.8)。
   再接続でも設定画面に `kind: null` を知らせる。設定画面向けのコマンドは `store/settingsCommands.ts` (`AppStore` の基底クラス) に分けた。
 - 起動中: `applySnapshot` が `Snapshot.starting` のオーケストレータを `resuming` に、`applyLive` が `session_starting` で
   `resuming` を立てる (終わりは従来の `settleResuming`)。

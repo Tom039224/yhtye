@@ -11,6 +11,8 @@ import type {
   ApiEvent,
   ApiResponse,
   ChatInfo,
+  ClientDevice,
+  Clients,
   GitOverview,
   HarnessDetection,
   HarnessInfo,
@@ -247,6 +249,8 @@ export class FakeCore {
         return { type: "remote_devices", devices: [...this.remote.devices] };
       case "revoke_remote_device":
         return { type: "remote_devices", devices: this.remote.revoke(cmd.device) };
+      case "list_clients":
+        return { type: "clients", clients: this.remote.clients(this.host) };
       default:
         return { type: "accepted" };
     }
@@ -306,11 +310,21 @@ export class FakeRemote {
     };
   }
 
+  /** `list_clients`: this PC and the paired devices (every one is the Android client). */
+  clients(host: string): Clients {
+    return { server: { host }, devices: this.devices.map(clientOf) };
+  }
+
   revoke(device: string): RemoteDevice[] {
     if (!this.devices.some((d) => d.id === device)) throw new CommandError("not_found", `unknown device ${device}`);
     this.devices = this.devices.filter((d) => d.id !== device);
     return [...this.devices];
   }
+}
+
+/** A paired device as `list_clients` shows it. */
+export function clientOf(d: RemoteDevice): ClientDevice {
+  return { id: d.id, name: d.name, kind: "android", connected: d.connected, last_seen_ms: d.last_seen_ms };
 }
 
 const ROLES: AgentRole[] = ["orchestrator", "implementer", "investigator", "reviewer"];

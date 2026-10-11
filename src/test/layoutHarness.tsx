@@ -19,8 +19,12 @@ import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
 
-/** What a scenario opens: nothing, the recorded run, or a project with far more content than fits. */
-const SCENARIOS = ["empty", "run", "long"] as const;
+/**
+ * What a scenario opens: nothing, the recorded run, the recorded run with a few paired devices
+ * under the host (one connected, one offline with a long name), or a project with far more
+ * content than fits (12 devices among it: folded into "他 N 台").
+ */
+const SCENARIOS = ["empty", "run", "devices", "long"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 declare global {
@@ -192,7 +196,13 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);
   core.log = durable(FULL_RUN);
-  return { core, open: scenario === "run" };
+  if (scenario === "devices") {
+    core.remote.devices = [
+      { id: "dev-1", name: "Pixel 9", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
+      { id: "dev-2", name: `Tablet ${NO_SPACES}`, created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
+    ];
+  }
+  return { core, open: scenario !== "empty" };
 }
 
 async function main(): Promise<void> {

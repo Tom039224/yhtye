@@ -1,5 +1,6 @@
 package io.github.tom039224.yhtye.shared.sync
 
+import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
@@ -21,6 +22,8 @@ data class AppState(
     val git: GitView? = null,
     val usage: UsageView = UsageView(),
     val host: HostView = HostView(),
+    /** ペアリング済みの端末 (コアの `list_clients`。並びはコアのまま)。左パネルの下端でホストの下に出す。 */
+    val clients: List<ClientDevice> = emptyList(),
 )
 
 /** 応答を待っている操作。 */

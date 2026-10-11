@@ -17,7 +17,7 @@ use crate::acp::{AgentEvent, AgentOutput};
 use crate::agents::AgentChoice;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
-use crate::remote::{RemoteDevice, RemoteStatus};
+use crate::remote::{Clients, RemoteDevice, RemoteStatus};
 use crate::store::{ChatInfo, SessionRecord};
 
 pub use command::{
@@ -213,6 +213,12 @@ pub enum ApiEventBody {
     RemoteDevicesChanged {
         devices: Vec<RemoteDevice>,
     },
+    /// App-wide, with every `remote_devices_changed` (a device was paired,
+    /// revoked, connected or disconnected): the read-only view of `list_clients`.
+    /// Sent to remote devices too.
+    ClientsChanged {
+        clients: Clients,
+    },
 }
 
 impl ApiEventBody {
@@ -242,7 +248,10 @@ impl ApiEventBody {
         self.is_local_only()
             || matches!(
                 self,
-                Self::ProjectsChanged { .. } | Self::SettingsChanged { .. } | Self::Resync
+                Self::ProjectsChanged { .. }
+                    | Self::SettingsChanged { .. }
+                    | Self::Resync
+                    | Self::ClientsChanged { .. }
             )
     }
 
@@ -265,7 +274,8 @@ impl ApiEventBody {
             | Self::SettingsChanged { .. }
             | Self::Resync
             | Self::RemoteStatusChanged { .. }
-            | Self::RemoteDevicesChanged { .. } => None,
+            | Self::RemoteDevicesChanged { .. }
+            | Self::ClientsChanged { .. } => None,
             Self::SessionStarted { session, .. }
             | Self::SessionFailed { session, .. }
             | Self::SessionStopped { session, .. }

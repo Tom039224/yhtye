@@ -11,6 +11,9 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.ClientServer
+import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.EffortOption
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
@@ -61,6 +64,9 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     )
     var usage: UsageReport? = null
     var host = "test-host"
+
+    /** ペアリング済みの端末 (`list_clients`)。 */
+    var devices: List<ClientDevice> = emptyList()
 
     /** `open_chat` が起動中と答えるチャット。 */
     val starting = HashSet<String>()
@@ -126,6 +132,7 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
 
     private fun handle(command: ApiCommand): ApiResponse = when (command) {
         ApiCommand.Ping -> ApiResponse.Pong(host)
+        ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer(host), devices))
         ApiCommand.ListProjects -> ApiResponse.Projects(listOf(info) + others)
         is ApiCommand.OpenProject -> ApiResponse.Project((others.find { it.path == command.path } ?: info).copy(open = true))
         is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)

@@ -2,18 +2,32 @@ package io.github.tom039224.yhtye.ui
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
+import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.ClientKind
+import io.github.tom039224.yhtye.shared.api.generated.ClientServer
+import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
+import io.github.tom039224.yhtye.shared.client.ConnectionState
+import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
+import io.github.tom039224.yhtye.ui.panels.Dimmed
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -208,4 +222,96 @@ class LeftPanelTest {
         val dot = rule.onNodeWithTag("host-dot").fetchSemanticsNode().config[SemanticsProperties.ContentDescription]
         assertEquals(listOf("接続を確認中"), dot) // ping は前面にある間だけ: まだ応答が無い
     }
+
+    // ---- サーバーとクライアントの一覧 (T-74) ----
+
+    private val pixel = ClientDevice("dev-1", "Pixel 9", ClientKind.Android, connected = true, lastSeenMs = 2_000)
+    private val tablet = ClientDevice("dev-2", "Tablet", ClientKind.Android, connected = false, lastSeenMs = 1_000)
+
+    /** ハーネスの端末 ID ([MainHarness] が `MainScreen` に渡す)。 */
+    private val self = ClientDevice("device", "My Pixel 8a", ClientKind.Android, connected = true, lastSeenMs = 3_000)
+
+    private fun iconIn(row: String, icon: String) =
+        rule.onAllNodes(hasTestTag(icon) and hasAnyAncestor(hasTestTag(row)), useUnmergedTree = true)
+
+    private fun rowTags(): List<String?> = rule.onAllNodes(hasAnyAncestor(hasTestTag("client-list")) and hasTestTagPrefix("client-dev"))
+        .fetchSemanticsNodes().map { it.config.getOrNull(SemanticsProperties.TestTag) }
+
+    private fun dimmed(tag: String, value: Boolean) = rule.onNodeWithTag(tag).assert(SemanticsMatcher.expectValue(Dimmed, value))
+
+    @Test
+    fun `the server row has the server icon and there are no device rows without devices`() {
+        h.open()
+        h.openLeft()
+        iconIn("host", "server-icon").assertCountEquals(1)
+        dimmed("host", false)
+        assertFalse(h.exists("client-list"))
+        assertTrue(h.core.callsOf<ApiCommand.ListClients>().isNotEmpty())
+    }
+
+    @Test
+    fun `the paired devices have the phone icon, this device is marked and offline ones are greyed out`() {
+        h.open { devices = listOf(tablet, self, pixel) }
+        h.openLeft()
+        // 接続中が先 (最終接続の新しい順)
+        assertEquals(listOf("client-device", "client-dev-1", "client-dev-2"), rowTags())
+        listOf("client-device", "client-dev-1", "client-dev-2").forEach { iconIn(it, "phone-icon").assertCountEquals(1) }
+        iconIn("client-dev-1", "server-icon").assertCountEquals(0)
+        dimmed("client-device", false)
+        dimmed("client-dev-1", false)
+        dimmed("client-dev-2", true)
+        rule.onAllNodes(hasTestTag("client-self"), useUnmergedTree = true).assertCountEquals(1)
+        iconIn("client-device", "client-self").assertCountEquals(1)
+        rule.onNodeWithTag("client-device").assert(hasContentDescription("My Pixel 8a (この端末) · Android · 接続中"))
+        rule.onNodeWithTag("client-dev-2").assert(hasContentDescription("Tablet · Android · オフライン · 最終接続", substring = true))
+    }
+
+    @Test
+    fun `without the connection to the PC the server row and this device are greyed out`() {
+        h.open { devices = listOf(self, pixel) }
+        h.openLeft()
+        h.core.state.value = ConnectionState.WaitingToReconnect(1, 60_000, "gone")
+        h.settle { h.sync.state.value.connection !is ConnectionState.Connected }
+        dimmed("host", true)
+        dimmed("client-device", true)
+        // 他の端末は最後に読んだまま
+        dimmed("client-dev-1", false)
+    }
+
+    @Test
+    fun `the rows follow clients_changed`() {
+        h.open { devices = listOf(pixel, tablet) }
+        h.openLeft()
+        h.core.emit(appWide(ApiEventBody.ClientsChanged(Clients(ClientServer("test-host"), listOf(pixel, tablet.copy(connected = true))))))
+        h.settle { h.sync.state.value.clients.all { it.connected } }
+        dimmed("client-dev-2", false)
+        h.core.emit(appWide(ApiEventBody.ClientsChanged(Clients(ClientServer("test-host"), emptyList()))))
+        h.settle { h.sync.state.value.clients.isEmpty() }
+        assertFalse(h.exists("client-list"))
+    }
+
+    @Test
+    fun `devices past the first three fold into 他 N 台 and unfold`() {
+        val many = (0 until 7).map { tablet.copy(id = "dev-x$it", name = "Phone $it", lastSeenMs = 1_000L - it) }
+        h.open { devices = many }
+        h.openLeft()
+        assertEquals(CLIENTS_SHOWN, rowTags().size)
+        rule.onNodeWithTag("client-more").assert(hasText("他 4 台", substring = true)).performClick()
+        rule.waitForIdle()
+        assertEquals(7, rowTags().size)
+        rule.onNodeWithTag("client-more").assert(hasText("折りたたむ", substring = true)).performClick()
+        rule.waitForIdle()
+        assertEquals(CLIENTS_SHOWN, rowTags().size)
+    }
+
+    @Test
+    fun `exactly three devices are not folded`() {
+        h.open { devices = listOf(self, pixel, tablet) }
+        h.openLeft()
+        assertEquals(3, rowTags().size)
+        assertFalse(h.exists("client-more"))
+    }
 }
+
+private fun hasTestTagPrefix(prefix: String) =
+    SemanticsMatcher("TestTag starts with $prefix") { it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith(prefix) == true }
