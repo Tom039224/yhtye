@@ -163,6 +163,12 @@ const GLYPHS = {
   list: <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />,
   layers: <path d="M12 4.5l8 4.2-8 4.2-8-4.2zM4 12.8l8 4.2 8-4.2M4 16.8l8 4.2 8-4.2" />,
   minimize: <path d="M9 4.5V9H4.5M15 4.5V9h4.5M9 19.5V15H4.5M15 19.5V15h4.5" />,
+  phone: (
+    <>
+      <rect x="7" y="3.5" width="10" height="17" rx="2" />
+      <path d="M11 17.5h2" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;

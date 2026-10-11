@@ -178,6 +178,15 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       fetched_at_ms: NOW,
     };
     core.agents.models["claude-code"] = longModels();
+    core.remote.dnsName = `${NO_SPACES}.tailnet.ts.net`;
+    core.remote.set(true, undefined);
+    core.remote.devices = Array.from({ length: 12 }, (_, i) => ({
+      id: `dev-${i}`,
+      name: i % 3 === 0 ? `${NO_SPACES}${i}` : `端末 ${i}`,
+      created_ms: NOW - i * 86_400_000,
+      last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
+      connected: i % 4 === 0,
+    }));
     core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false }));
     return { core, open: true };
   }
