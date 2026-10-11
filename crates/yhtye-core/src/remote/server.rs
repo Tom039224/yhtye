@@ -1,8 +1,9 @@
 //! The remote server's routes: `POST /pair` and `GET /ws` (`core-design.md` §18.4).
 //!
-//! Every request is first checked with `tailscale whois`: the peer must belong
-//! to the same Tailscale user as this PC (else 403), so other users' devices
-//! cannot even use up a pairing code's tries. `/ws` then needs
+//! Every request is first checked with `tailscale whois` (answers kept for a
+//! minute per address, a few lookups at once: [`super::whois`]): the peer must
+//! belong to the same Tailscale user as this PC (else 403), so other users'
+//! devices cannot even use up a pairing code's tries. `/ws` then needs
 //! `Authorization: Bearer <device token>` (else 401).
 
 use std::net::SocketAddr;
@@ -78,7 +79,7 @@ fn refuse(status: StatusCode, why: &str) -> Response {
 /// `Err`: why a peer that is not this PC's Tailscale user is refused.
 async fn check_peer(ctx: &ServerCtx, peer: SocketAddr) -> Result<(), &'static str> {
     let ip = peer.ip().to_canonical();
-    match ctx.shared.tailscale.whois(ip).await {
+    match ctx.shared.whois.user_of(&*ctx.shared.tailscale, ip).await {
         Ok(user) if user == ctx.self_user => Ok(()),
         Ok(user) => {
             tracing::warn!("remote access: refused {ip} (Tailscale user {user})");

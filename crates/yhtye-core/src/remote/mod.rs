@@ -11,9 +11,11 @@
 mod pairing;
 mod server;
 mod tailscale;
+mod whois;
 
 pub use pairing::{CODE_LEN, CODE_TTL_MS, MAX_FAILURES, token_hash};
 pub use tailscale::{Tailscale, TailscaleCli, TailscaleError, TailscaleSelf, is_tailscale_address};
+pub use whois::{WHOIS_CACHE_CAPACITY, WHOIS_CONCURRENCY, WHOIS_TTL};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -30,6 +32,7 @@ use crate::api::{ApiError, ApiEvent, ApiEventBody};
 use crate::runtime::Core;
 use crate::store::{DeviceRecord, Store};
 use pairing::Pairing;
+use whois::WhoisCache;
 
 /// Default port of the remote server.
 pub const DEFAULT_PORT: u16 = 1423;
@@ -110,6 +113,8 @@ pub struct PairingCode {
 struct Shared {
     store: Store,
     tailscale: Arc<dyn Tailscale>,
+    /// `whois` answers by peer address, and the limit on lookups at once.
+    whois: WhoisCache,
     events: broadcast::Sender<ApiEvent>,
     server_id: String,
     pairing: Mutex<Pairing>,
@@ -180,6 +185,7 @@ impl RemoteService {
             shared: Arc::new(Shared {
                 store,
                 tailscale,
+                whois: WhoisCache::default(),
                 events,
                 server_id,
                 pairing: Mutex::new(Pairing::default()),
@@ -370,6 +376,7 @@ impl RemoteService {
         }
         self.shared.lock_pairing().clear();
         self.shared.lock_connections().clear();
+        self.shared.whois.clear();
         tracing::info!("remote access stopped");
     }
 }
