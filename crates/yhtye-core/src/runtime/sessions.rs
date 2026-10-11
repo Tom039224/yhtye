@@ -107,7 +107,7 @@ pub(super) struct Spawned {
 pub(super) struct Sessions {
     pub(super) cfg: Arc<OrchestrationConfig>,
     host: Option<McpHost>,
-    emit: Emitter,
+    pub(super) emit: Emitter,
     pub(super) agent_tx: mpsc::UnboundedSender<AgentMsg>,
     /// Number of the last launch (see [`AgentMsg`]).
     pub(super) launches: u64,

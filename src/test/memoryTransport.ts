@@ -204,6 +204,9 @@ export class FakeCore {
       case "get_agent_settings":
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "set_agent_settings":
+        if (cmd.expected_revision != null && cmd.expected_revision !== this.agents.revision) {
+          throw new CommandError("conflict", "the agent settings were changed elsewhere since they were read; read them again");
+        }
         this.agents.set(cmd.project ?? null, cmd.role, cmd.settings);
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "list_harness_models": {
@@ -322,6 +325,8 @@ export class FakeAgentSettings {
   builtin: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
   global: AgentSettingsLayer = emptyLayer();
   projects = new Map<string, AgentSettingsLayer>();
+  /** `AgentSettingsView.revision`: grows with every `set`. */
+  revision = 1_000;
   /** Served by `list_model_efforts` for models whose list entry has `efforts: null`, by `harness/model`. */
   efforts: Record<string, EffortOption[]> = {};
   /** Served by `list_harness_models`; a missing harness fails (unavailable). */
@@ -347,6 +352,7 @@ export class FakeAgentSettings {
     const layer = project === null ? this.global : (this.projects.get(project) ?? emptyLayer());
     layer[role] = settings;
     if (project !== null) this.projects.set(project, layer);
+    this.revision += 1;
   }
 
   view(project: string | null): AgentSettingsView {
@@ -362,6 +368,7 @@ export class FakeAgentSettings {
       project,
       project_layer: projectLayer ? { ...projectLayer } : null,
       effective,
+      revision: this.revision,
     };
   }
 }

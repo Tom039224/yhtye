@@ -237,12 +237,17 @@ sealed interface ApiCommand {
      * Replaces one role of the global layer (no `project`) or a project's
      * layer; `settings: null` removes it (inherit). Applies to sessions
      * started afterwards. Returns the settings like `get_agent_settings`.
+     * With `expected_revision` (the `revision` of the settings the screen
+     * shows), `conflict` if they were changed since (by another client), so an
+     * old screen does not overwrite them.
      */
     @Serializable
     data class SetAgentSettings(
         val project: String? = null,
         val role: AgentRole,
         val settings: RoleSettings? = null,
+        @SerialName("expected_revision")
+        val expectedRevision: Long? = null,
     ) : ApiCommand
 
     /**

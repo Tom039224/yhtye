@@ -59,8 +59,11 @@ async fn compact_sends_the_bare_command_and_the_inbox_follows_after_its_turn() {
     ended_turns(&mut rx, &mut events, 1).await;
 
     orch.compact_chat(&chat).await.expect("compact accepted");
-    // A second press while the compaction runs is refused; a message waits.
-    assert_eq!(compact_error(&orch, &chat).await, ErrorCode::InvalidState);
+    // A second press (another client's) while the compaction runs is accepted
+    // and sends nothing more; a message waits.
+    orch.compact_chat(&chat)
+        .await
+        .expect("compacting already: accepted");
     say(&orch, &chat, "later").await;
     wait(&mut rx, &mut events, said(SESSION, "got-later")).await;
     settle(&mut rx, &mut events).await;

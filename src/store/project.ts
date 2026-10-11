@@ -56,9 +56,10 @@ export interface ProjectView {
   /** Chats that got a notification while another chat was selected. */
   unread: Record<string, true>;
   /**
-   * Chats whose orchestrator the core is starting after the user opened them (a
-   * restart starts none; `open_chat` brings a chat back). Cleared once its
-   * session is up or stopped.
+   * Chats whose orchestrator the core is starting: after this or another client
+   * opened them or sent to them (`open_chat`'s answer, `session_starting`, and the
+   * snapshot's `starting`). Cleared once its session is up or stopped, or its
+   * start failed for good.
    */
   resuming: Record<string, true>;
   sessions: SessionRecord[];
@@ -115,12 +116,18 @@ export function applySnapshot(
     chats: snap.chats,
     selectedChat: initialChat(snap.chats, remembered),
     unread: {},
-    resuming: {},
+    resuming: startingChats(snap.starting ?? []),
     sessions: snap.sessions,
     stateSeq: snap.seq,
     cursor: historyStart - 1,
     historyStart,
   };
+}
+
+/** The chats whose orchestrator is among the sessions being started. */
+function startingChats(sessions: string[]): ProjectView["resuming"] {
+  const chats = sessions.filter(isOrchestratorKey).map(chatOfOrchestratorKey);
+  return Object.fromEntries(chats.map((c) => [c, true as const]));
 }
 
 /** Prepends stored events `[from, historyStart)` (oldest first) to the transcripts. */
@@ -146,7 +153,9 @@ export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
   if (body.type === "domain" && next.state) {
     const unread = markUnread(next, body.event);
     const applied = { ...next, chats, unread, state: applyDomainEvent(next.state, body.event) };
-    return body.event.type === "chat_deleted" ? forgetChat(applied, next.state, body.event.chat) : applied;
+    if (body.event.type === "chat_deleted") return forgetChat(applied, next.state, body.event.chat);
+    // A project shown without chats shows the first one made (also by another client).
+    return applied.selectedChat === null && chats.length > 0 ? { ...applied, selectedChat: initialChat(chats, null) } : applied;
   }
   return {
     ...next,
@@ -265,6 +274,10 @@ export function applyLive(view: ProjectView, ev: ApiEvent): ProjectView {
   const streaming = applyChunk(view.streaming, ev);
   if (streaming) return streaming === view.streaming ? view : { ...view, streaming };
   const body = ev.body;
+  if (body.type === "session_starting") {
+    // Whoever asked (another client too): the chat shows as starting.
+    return isOrchestratorKey(body.session) ? markResuming(view, chatOfOrchestratorKey(body.session), true) : view;
+  }
   if (body.type === "agent" && body.event.type === "output" && body.event.data.kind === "usage") {
     const usage = usageInfo(body.event.data.update);
     return usage ? { ...view, contextUsage: { ...view.contextUsage, [body.session]: usage } } : view;

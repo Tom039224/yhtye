@@ -5,6 +5,7 @@ import type { DomainEvent } from "./DomainEvent";
 import type { RemoteDevice } from "./RemoteDevice";
 import type { RemoteStatus } from "./RemoteStatus";
 import type { Role } from "./Role";
+import type { SettingsKind } from "./SettingsKind";
 import type { TextKind } from "./TextKind";
 import type { ToolCallRecord } from "./ToolCallRecord";
 
@@ -41,4 +42,13 @@ retrying: boolean, } | { "type": "session_stopped", session: string,
 /**
  * Stopped because Yhtye shut down; it is restored on the next start.
  */
-suspended: boolean, } | { "type": "session_interrupted", session: string, } | { "type": "agent", session: string, event: AgentEvent, } | { "type": "agent_text", session: string, kind: TextKind, text: string, } | { "type": "tool_called", record: ToolCallRecord, } | { "type": "prompted", session: string, text: string, } | { "type": "remote_status_changed", status: RemoteStatus, } | { "type": "remote_devices_changed", devices: Array<RemoteDevice>, };
+suspended: boolean, } | { "type": "session_interrupted", session: string, } | { "type": "agent", session: string, event: AgentEvent, } | { "type": "agent_text", session: string, kind: TextKind, text: string, } | { "type": "tool_called", record: ToolCallRecord, } | { "type": "prompted", session: string, text: string, } | { "type": "session_starting", session: string, } | { "type": "projects_changed", project: string, } | { "type": "settings_changed", kind: SettingsKind, 
+/**
+ * The project whose agent settings layer changed (`None`: the global
+ * layer, or a kind without projects).
+ */
+project?: string, 
+/**
+ * For `agent_settings`: the new [`AgentSettingsView::revision`].
+ */
+revision?: number, } | { "type": "resync" } | { "type": "remote_status_changed", status: RemoteStatus, } | { "type": "remote_devices_changed", devices: Array<RemoteDevice>, };

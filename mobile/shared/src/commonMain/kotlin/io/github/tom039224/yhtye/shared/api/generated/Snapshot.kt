@@ -18,4 +18,9 @@ data class Snapshot(
      * The project's chats with their times, most recently used first (Stage 8).
      */
     val chats: List<ChatInfo>,
+    /**
+     * Sessions being started (T-65): what `session_starting` said and no
+     * `session_started` / `session_stopped` / final `session_failed` ended yet.
+     */
+    val starting: List<String>,
 )

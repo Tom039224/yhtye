@@ -152,6 +152,8 @@ pub struct CoreConfig {
   - `agent_text { session, kind: message|thought, text }` (3b) — ストリーミングされたチャンクを
     まとめた 1 ブロック (下記)。
   - `tool_called { record: ToolCallRecord }` / `prompted { session, text }`
+  - T-65 (§19): `session_starting { session }` (live。起動を始めた) と、アプリ全体向けの `projects_changed { project }` /
+    `settings_changed { kind, project?, revision? }` / `resync` (project 空・seq 0・live)。
   - **durable と live** (3b): `live == false` のイベントはイベントログ (§6) に保存され、
     `seq` はログの行番号と一致し 1 から欠番なし。`live == true` のイベント
     (`agent` のうち `MessageChunk` / `ThoughtChunk` / `UserMessageChunk` / `Usage`) は保存せず、
@@ -159,7 +161,8 @@ pub struct CoreConfig {
     (同じセッションの別種の出力・ツール呼び出し・ターン終了・終了・シャットダウン) で
     `agent_text` として 1 回だけ保存・配信される。UI はストリーミング表示をこの
     `agent_text` で置き換える。トークン単位の行を DB に積まないための選択。
-  - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord> }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4)。
+  - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord>, chats, starting }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4、
+    `starting` (起動中のセッションのキー) は T-65)。
   - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen/mod.rs` のテスト)。`src/api/generated/` に型ごとの
     ファイル + `index.ts` を出す。テスト `generated_typescript_is_up_to_date` が生成物とコミット済み
     ファイルの一致を検査し (`cargo test` に含まれる)、`pnpm gen:types` で更新する。`u64` は `number`
@@ -644,7 +647,11 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
   `#[tauri::command] async fn yhtye_command(cmd: ApiCommand) -> Result<ApiResponse, ApiError>`
   の 1 本だけ。`subscribe` した `ApiEvent` を `app.emit("yhtye://event", ev)` で流す
-  (broadcast の `Lagged` は捨てる。UI が seq 飛びで補う)。
+  (broadcast の `Lagged` では `resync` を送り、UI が追いつく。T-65、§19)。
+- **データディレクトリのロック (T-65)**: `start_core` が `Core::start` の前に `<データディレクトリ>/yhtye.lock` を排他ロックし
+  (`src-tauri/src/data_lock.rs`、std の `File::try_lock`)、終了までアプリが持つ。取れなければ (同じデータで動いているアプリがある)
+  ログと stderr に理由を出して終了コード 1 で終わる (コアを 2 つにしない)。`YHTYE_DATA_DIR` が違えば別に動く。開発用ブリッジは
+  ロックしない (既定で別のデータ)。プロセスが落ちても OS がロックを外す。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
 - Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
   app data dir (Linux: `~/.local/share/io.github.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
@@ -685,7 +692,8 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 - Stage 5 の実装 (`crates/yhtye-dev-bridge`、lib = `router` / `serve` + bin): axum 0.8 の `ws`。
   `Origin` ヘッダが**ある**接続 (= ブラウザ) だけ Origin を検査し、無い接続 (スクリプト・テスト) は
   トークンだけで通す。拒否は 403 (Origin) / 401 (トークン)。要求は接続ごとに並行実行 (OpenProject の
-  間もキャンセルが通る。応答は順不同で id で対応付け)。接続が切れても実行中の要求は中断しない
+  間もキャンセルが通る。応答は順不同で id で対応付け)。**同じ接続の要求でも実行順は保証されない** (要求ごとに spawn する。
+  T-65 で明記): 前の要求の結果に依存する要求は、前の応答を待ってから送る。接続が切れても実行中の要求は中断しない
   (半端な OpenProject を残さない)。id の無い不正メッセージは無視、id があれば `invalid_argument`。
   トークンは `--token` / `YHTYE_BRIDGE_TOKEN`、無ければランダムで、起動時に stdout に
   `YHTYE_BRIDGE_URL=ws://...?token=...` を 1 行出す。データディレクトリは `--data-dir` /
@@ -696,7 +704,10 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   `?token=`、リモートは whois と端末トークン) は各サーバーが upgrade の前に決める。`SessionPolicy { local }` は
   ローカル専用のコマンドとイベント (§18.5) を許すかで、ブリッジは `LOCAL` (すべて許す。開発中の React の設定画面が
   使う)。`cancel` が発火すると実行中の要求があっても close (1001 "going away") を送ってすぐ閉じる (端末の失効。
-  ブリッジは発火しないトークンを渡すので挙動は変わらない)。置き場所を yhtye-core にしたのは、リモートサーバーの
+  ブリッジは発火しないトークンを渡すので挙動は変わらない)。送信キューは有界 (`OUT_QUEUE` = 1024、T-65): あふれたら
+  プロジェクトの live イベント (ストリーミング・使用量・`session_starting`) は捨て、durable イベントかアプリ全体のイベント
+  (`resync` などのヒント) が入らなければ close (1013 "fell behind; reconnect") で閉じて再接続に任せる。
+  応答は捨てない (空きを待つ)。broadcast の `Lagged` ではその接続に `resync` を送る (§19)。置き場所を yhtye-core にしたのは、リモートサーバーの
   開始/停止を `ApiCommand` から操作するため (Core → remote → ws → Core が同じ crate の中で閉じ、crate の循環依存にならない)。
 - `pnpm dev:browser [ポートの指定] [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
   起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
@@ -1016,8 +1027,10 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
 
 - `get_agent_settings{project?}` → `agent_settings{settings: AgentSettingsView{harnesses: [{id, label}], builtin, global, project, project_layer, effective}}`
   (`project` があればその実効値。プロジェクトは登録済みであること、開いていなくてよい)。
-- `set_agent_settings{project?, role, settings: RoleSettings | null}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
+- `set_agent_settings{project?, role, settings: RoleSettings | null, expected_revision?}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
   (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
+  T-65: `AgentSettingsView.revision` (全層で 1 つの版。変更のたびに増える) を `expected_revision` に渡すと、他のクライアントが
+  その後に変えていれば `conflict` (古い画面からの上書き防止)。成功すると `settings_changed{kind: agent_settings, project?, revision}` (§19)。
 - `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。
 - `list_model_efforts{harness, model}` (7d) → `model_efforts{efforts: {harness, model, efforts: [{value, name, description?}]}}`。エラーは同上。
 - `get_harnesses` / `detect_harnesses` → `harnesses{harnesses: [HarnessDetection]}` (T-6, §15.2): 検出をやり直して登録簿を更新し、全ハーネスの状態を返す
@@ -1025,6 +1038,8 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
 - `set_harness_path{harness, path?}` (T-6) → 同じ `harnesses`。`path: null` は手動パスの削除 (自動検出に戻る)。未知のハーネスは `not_found`、
   絶対パスの実行可能な通常ファイルでなければ `invalid_argument`。保存後に再検出し、そのハーネスのモデルのキャッシュを捨てる。
 - `list_secret_env` / `set_secret_env{name, value}` / `delete_secret_env{name}` (7e) → `secret_env{names}` (§16)。
+- T-65 (§19): `set_agent_settings` と `set_secret_env` / `delete_secret_env` はコアの設定用ロックの中で検証から反映まで行い、
+  変更を `settings_changed` で知らせる (秘密は `kind: secrets`、`set_harness_path` と検出で登録簿が変わったときは `kind: harnesses`)。
 - **設定 UI (7d)**: アプリ全体の設定モーダル ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。API は上のとおりで、
   行の編集はすべてクライアント側で「役割の設定全体を `set_agent_settings` で置き換える」形 (同じ組の重複は UI が先に断る)。
 
@@ -1251,7 +1266,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **`rename_chat{project, chat, title}`** → `chat{chat}`: 空白を 1 つに畳んで trim、空は `invalid_argument`、80 文字 (`MAX_RENAMED_TITLE_CHARS`) 超も `invalid_argument`、未知のチャットは `not_found`。
   `DomainCommand::RenameChat` は既存の `DomainEvent::ChatTitled` を出す (同じタイトルなら何も出さない)。`user_message` は `title.is_none()` のときだけ最初のメッセージで題を付けるので、ユーザーの名前は上書きされない。
 - **`delete_chat{project, chat}`** → `accepted`: `DomainCommand::DeleteChat` は `DomainEvent::ChatDeleted { chat }` を出す。
-  - 拒否: 未知のチャットは `not_found`。**未完了のグループ** (`active` / `finishing` / `merge_blocked`) があれば `invalid_state` (グループを片付けられるのはそのチャットのオーケストレータだけ)。
+  - 拒否: 未知のチャットは `not_found` (T-65: 削除済みのチャット (`C-<n>` で n がチャットのカウンタ以下) はもう一度削除しても `accepted`。§19)。**未完了のグループ** (`active` / `finishing` / `merge_blocked`) があれば `invalid_state` (グループを片付けられるのはそのチャットのオーケストレータだけ)。
     **オーケストレータがターン中 (または起動中)** なら runtime が `invalid_state` で断る (ターンを切るのはユーザーの `cancel_orchestrator_turn` の仕事で、削除は勝手に中断しない)。
   - 成功時: 待機中 (live で idle) のオーケストレータのプロセスは `Sessions::stop` で止める。`State::apply(ChatDeleted)` はチャットと、そのグループ・タスク・help・受信箱を落とす (カウンタは戻さない = ID は再利用しない)。
   - store (`projection::write` が before / after の差分で行う): `chats` / `task_groups` / `tasks` / `steps` / `task_deps` / `helps` / `inbox` の行と、`agent_sessions` のオーケストレータ (`orchestrator:<chat>`) とタスクのセッションの行を消し、
@@ -1401,7 +1416,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
   `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
   `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
-  リモートの WS には流さない。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
+  リモートの WS には流さない (T-65 で足したアプリ全体向けの `projects_changed` / `settings_changed` / `resync` はリモートにも流す。§19)。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
   ペアリングの失敗 (コード誤り) では、状態 (`pairing_expires_at_ms`) が変わったとき (誤り 5 回目でコードが無効になった、期限切れのコードが
   捨てられた) だけ `remote_status_changed` を出す (最後に出した状態と比べる)。
 
@@ -1432,3 +1447,76 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   サーバーが止まればコードの表示ごと消す。どちらの終わりも QR とコードを消して「新しいコード」を出す。
 - 端末一覧は名前・接続中か・最終接続・追加日時と「失効」(確認してから送る)。
 - テストは `src/ui/RemoteSettings.test.tsx` (`FakeCore.remote` = `FakeRemote`)。`pnpm check:layout` に QR 表示中の状態がある。
+
+## 19. 複数クライアントの同時操作 (T-65)
+
+PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザが 1 つのコアを同時に操作する。調査 (T-64) と修正一覧は
+[`planned/android-client.md`](../planned/android-client.md) の「複数クライアントの同時操作」。DB と状態の整合はプロジェクトの
+ドライバータスクの直列化 (§8) で守られており、ここで足したのは「他のクライアントの操作に追従する」ための仕組み。
+
+### 19.1 イベント (Android の同期層もこれを使う)
+
+| イベント (`ApiEventBody`) | 種類 | 意味 / クライアントの対応 |
+|---|---|---|
+| `projects_changed { project: string }` | アプリ全体 (project `""`・seq 0・live)。リモートにも流す | `open_project` がプロジェクトを新しく登録した、またはこのプロセスで初めて開いた (オーケストレーションを起動した)。`list_projects` を読み直す。開いているプロジェクトを開き直しても出ない |
+| `settings_changed { kind: agent_settings \| harnesses \| secrets, project?: string, revision?: number }` | アプリ全体。リモートにも流す | ヒント。表示中の設定画面は読み直す (`get_agent_settings` / `get_harnesses` / `list_secret_env`)。`agent_settings` では `project` (プロジェクトの層を変えた。全体なら省略) と新しい `revision` が付く |
+| `resync` | アプリ全体。**その接続にだけ**送る | そのクライアント向けのイベントを取りこぼした (broadcast の `Lagged`)。durable はログにあるので `list_events` で cursor から追いつき、`list_projects`・git・表示中のチャット (`open_chat` で起動中か)・設定を読み直す。live (ストリーミング・アプリ全体) は失われている |
+| `session_starting { session: string }` | プロジェクトの live (seq は直前の durable) | セッションの起動を始めた (復元の再試行のたびにも出る)。`session_started` / `session_stopped` / `retrying: false` の `session_failed` で終わる。起動を要求したクライアント以外も「起動中」を出せる |
+
+- `Snapshot.starting: string[]`: スナップショットの時点で起動中のセッションのキー (途中で接続したクライアント用)。
+- `AgentSettingsView.revision: number`: 全層で 1 つの版。コア起動時は時計 (マイクロ秒)、以後は変更ごとに `max(前 + 1, 時計)`
+  (大きいほど新しい。再起動をまたいでも増える。2^53 未満)。`set_agent_settings.expected_revision` に渡すと、一致しなければ `conflict`
+  ("the agent settings were changed elsewhere since they were read; read them again")。省略すれば検査しない (従来どおり)。
+- `ApiEventBody::is_app_wide()` (Rust) がアプリ全体のイベント (上の 3 つ + `remote_*`)、`is_local_only()` はそのうち `remote_*` だけ。
+  `ApiEvent::app_wide(body)` が作る。
+
+### 19.2 コア
+
+- **設定の直列化**: `Core` の `settings_lock` (tokio の Mutex) が `set_agent_settings` (検証 → DB → メモリ → 版を進める → イベント) と
+  `set_secret` / `delete_secret` (DB の名前 → キーリング → 失敗なら名前を戻す → イベント) を囲む (`runtime/core/settings.rs`)。
+  同時に変えても DB と実効値が食い違わない (`tests/multi_client.rs` が 16 並行の変更の後に再起動して DB の値と比べる)。
+- **二重実行の敗者** (`runtime/repeats.rs`): 目標状態に既に達している操作はコアで `accepted` を返し、何もしない
+  (ツール呼び出しを記録しない・オーケストレータに 2 度知らせない)。**すべてコアで冪等化した** (GUI で握りつぶすものは無い):
+  - `cancel_task` / `cancel_group`: 対象が既に `cancelled`。完了 (`done`) したものの中止は意味が違うので従来どおり `invalid_state`。
+  - `retry_group_merge`: グループが既に `done` (別のクライアントの再試行でマージ済み)。`merge_blocked` のままなら再試行する。
+  - `delete_chat`: 状態に無く、ID が `C-<n>` で n がチャットのカウンタ以下 (= 作られて消された)。一度も無い ID は `not_found`。
+  - `compact_chat`: そのチャットの `/compact` のターンが既に動いている。
+  - `cancel_orchestrator_turn` は元から常に `accepted`、`rename_chat` は同じ題なら何も出さない、`open_chat` は冪等。
+- **送信キューと取りこぼし**: §10 (WS) と §9 (Tauri) のとおり。`forward_events` (`ws.rs`) が `Lagged` で `resync` を送る。
+- **起動中の共有**: `Sessions::launch_attempt` が `starting` に入れるときに `session_starting` を出し、`Driver::snapshot` が
+  `starting` のキーを `Snapshot.starting` に入れる。
+- **単一インスタンス**: §9 のデータディレクトリのロック。
+
+### 19.3 PC の GUI (`src/`)
+
+- `store/app.ts`: `project` が空のイベントは `eventRules.ts` の `isAppWide` で分けて `onAppWide` へ。`projects_changed` →
+  `refreshProjects`、`settings_changed` → `onSettingsChanged` の購読者 (設定画面) へ、`resync` → `catchUpAll`
+  (`list_projects`・cursor からの追いつき・git・`open_chat`・設定画面へ「何でも変わったかもしれない」(`kind: null`))。
+  再接続でも設定画面に `kind: null` を知らせる。設定画面向けのコマンドは `store/settingsCommands.ts` (`AppStore` の基底クラス) に分けた。
+- 起動中: `applySnapshot` が `Snapshot.starting` のオーケストレータを `resuming` に、`applyLive` が `session_starting` で
+  `resuming` を立てる (終わりは従来の `settleResuming`)。
+- チャットの増減 (`updateChats`): 削除されたチャットの下書きを消し、表示中のチャットが変わった (他のクライアントが消した、
+  チャットの無いプロジェクトに作られた) ときは、新しく表示するチャットを記憶 (`prefs`) して `open_chat` する (ユーザーが選んだのと同じ)。
+  チャットの無いプロジェクトに作られたチャットは `applyDurable` が選ぶ。
+- `chat_created` を受けたら git の概要を debounce せず読み直し、そのチャットを `GitView.awaiting` に入れる。読み直しが終わるまで
+  (`awaiting` の間) は作業ツリーが一覧に無くても「見つからない」ではなく不明 (`placeOf` が `unknown`、ブランチ木では
+  ディレクトリ名のノード) と扱う。
+- 設定画面 (`AgentSettingsSection` / `HarnessSettingsSection` / `SecretEnvSection`): `useSettingsChanges` (`ui/useSettingsChanges.ts`) が
+  該当する `settings_changed` で読み直す。編集中 (テキスト欄にフォーカス、未保存のパス、秘密の入力欄に内容がある) なら読み直さず
+  `StaleBanner` (「他の端末で設定が変更されました … 再読込」) を出す。保存中に来た変更は保存の後に判断する (自分の保存の通知かもしれない)。
+  エージェント設定は表示中の `revision` 以下の通知を無視し (自分の保存も含む)、保存に `expected_revision` を付け、`conflict` なら
+  「他の端末で設定が変更されていたため、この変更は保存していません。最新の設定を読み込み直しました。」を出して読み直す。
+
+### 19.4 テストと実機確認
+
+- コア: `ws.rs` の単体 (キューがあふれたら live は捨てて durable で閉じる、`Lagged` で `resync`、リモートに `remote_*` 以外の
+  アプリ全体イベントが届く)、`runtime/core/settings.rs` (版)、`tests/multi_client.rs` (conflict と通知、並行の設定変更と DB の一致、
+  秘密とプロジェクトの通知、起動中の共有)、`tests/core_facade.rs` / `core_chats.rs` / `orchestration_fake_git.rs` /
+  `orchestration_fake_compact.rs` (二重の中止・削除・再試行・圧縮が `accepted`)、`yhtye-dev-bridge/tests/multi_client.rs`
+  (2 つの WS クライアント: 片方の操作がもう片方に届く・conflict・同時の中止と削除が両方 `accepted` で 1 回だけ起きる)。
+  `src-tauri/src/data_lock.rs` (同じディレクトリは 1 つだけ)。
+- PC: `store/multiClient.test.ts`、`ui/SettingsSync.test.tsx`。
+- 実機: `pnpm dev:browser --port-base 15420 --data-dir /tmp/…` を Playwright の 2 タブで開き、偽エージェントを Devin のパスに指定して、
+  片方でプロジェクトを開く・設定 (エージェントとハーネスのパス) を変える・チャットを作る/削除する・タスクを中止する・両方で同時に中止する、
+  をしてもう片方が追従し、エラーが出ないことを確かめた (T-65)。
+

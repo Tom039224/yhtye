@@ -21,8 +21,8 @@ import kotlinx.serialization.Serializable
  * with [`ApiCommand::ListEvents`] (or take a new snapshot). Live events are for
  * display only and never folded into state.
  *
- * App-wide events ([`ApiEventBody::is_local_only`]: remote access) have an
- * empty `project`, `seq` 0 and are live.
+ * App-wide events ([`ApiEventBody::is_app_wide`]: the project list, settings,
+ * a resync hint, remote access) have an empty `project`, `seq` 0 and are live.
  */
 @Serializable
 data class ApiEvent(

@@ -190,12 +190,18 @@ pub enum ApiCommand {
     /// Replaces one role of the global layer (no `project`) or a project's
     /// layer; `settings: null` removes it (inherit). Applies to sessions
     /// started afterwards. Returns the settings like `get_agent_settings`.
+    /// With `expected_revision` (the `revision` of the settings the screen
+    /// shows), `conflict` if they were changed since (by another client), so an
+    /// old screen does not overwrite them.
     SetAgentSettings {
         #[serde(default)]
         #[ts(optional)]
         project: Option<String>,
         role: AgentRole,
         settings: Option<RoleSettings>,
+        #[serde(default)]
+        #[ts(optional)]
+        expected_revision: Option<u64>,
     },
     /// The models a harness offers, read from it over ACP (a short session
     /// without a prompt). Cached for 10 minutes; `refresh` asks again unless
@@ -304,6 +310,10 @@ pub struct AgentSettingsView {
     pub project_layer: Option<AgentSettingsLayer>,
     /// In effect for `project` (or globally).
     pub effective: AgentSettings,
+    /// Version of all agent settings layers: it grows with every change (also
+    /// across restarts of the core), so a larger one is newer. Passed back as
+    /// `set_agent_settings`' `expected_revision`.
+    pub revision: u64,
 }
 
 /// Default number of commits of [`ApiCommand::GetGitOverview`].
@@ -461,6 +471,11 @@ impl ApiError {
     #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(ApiErrorCode::NotFound, message)
+    }
+
+    #[must_use]
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(ApiErrorCode::Conflict, message)
     }
 
     #[must_use]
