@@ -208,8 +208,15 @@ cd mobile
 ./gradlew :androidApp:assembleDebug      # デバッグ APK → androidApp/build/outputs/apk/debug/androidApp-debug.apk
 ./gradlew :androidApp:installDebug       # adb でつないだ実機・エミュレータに入れる
 ./gradlew :shared:allTests               # 共通モジュールのユニットテスト (JVM 上で実行)
+./gradlew :androidApp:testDebugUnitTest  # 画面のテスト (Compose UI テストを Robolectric で JVM 上で実行)
 ./gradlew :androidApp:lint               # Android lint
 ```
+
+画面のテスト (`androidApp/src/test/`) は Robolectric で動かす (実機・エミュレータ不要)。Robolectric の Android の版は
+`src/test/resources/robolectric.properties` の `sdk=34` (35 以上は JDK 21 が要る)。同期層は本物の `AppStore` を偽のコア
+(`TestCore`。PC の vitest と同じ記録 `src/test/fixtures/fake-run.json` を読む) の上で動かし、`Dispatchers.Main` の
+コルーチンは `settle` で main looper を回して進める (Compose の `waitUntil` だけでは流れないことがある)。
+ダイアログ (別ウィンドウ) の中の入力欄に `performTextInput` すると main looper が止まらなくなるので、入力欄はダイアログに入れていない。
 
 ### API 型 (Rust から生成)
 
@@ -279,4 +286,8 @@ YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealSer
    端末に表示) を、アプリの「QR コードを読む」で映す。初回はカメラの許可を求められる。
 6. スクリーンショットは `adb exec-out screencap -p > shot.png` (画面が消えていると真っ黒になる。`adb shell input keyevent KEYCODE_WAKEUP`
    と `adb shell wm dismiss-keyguard` で起こし、`adb shell svc power stayon usb` で消えないようにする。終わったら `stayon false`)。
-   `adb shell input text` は端末の IME を通るので、日本語 IME だと全角や仮名になることがある (アプリは全角の英数字を半角として読む)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。
+   `adb shell input text` は端末の IME を通るので、日本語 IME だと全角や仮名になることがある (アプリは全角の英数字を半角として読む)。
+   会話の入力では Gboard を英字にしてから送る (キーボードの「あa1」をタップ。空白は `%s`)。
+   会話の確認には偽エージェントを使う (`cargo build -p yhtye-fake-agent` して `--fake-agent target/debug/yhtye-fake-agent
+   --fake-orchestrator '<シナリオの JSON>'`。形式は `crates/yhtye-fake-agent/src/scenario.rs`。`match` で発言ごとに返事を変えられ、
+   `message` を `sleep` で区切るとストリーミングになり、`wait_cancel` で中止ボタンを試せる)。終わったら `quit` でサーバーを止める (一時 DB ごと消える)。

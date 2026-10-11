@@ -1,28 +1,218 @@
 package io.github.tom039224.yhtye
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 
-/** 端末のダーク/ライト設定に従う。Android 12 以降は壁紙由来の配色 (Dynamic Color) を使う。 */
+/**
+ * Yhtye の色 (PC の `src/styles/tokens.css`、[docs/design/tokens.md] とモックの `:root`)。名前はモックの変数に合わせた。
+ * ステータス色は oklch の値を sRGB にしたもの。
+ */
+@Immutable
+data class YhtyeColors(
+    val isDark: Boolean,
+    val bgApp: Color,
+    val bgCenter: Color,
+    val bgPanel: Color,
+    val bgRail: Color,
+    val bgCard: Color,
+    val bgInset: Color,
+    val bgSelected: Color,
+    val bgChip: Color,
+    val bgChipDim: Color,
+    val bgPressed: Color,
+    val line: Color,
+    val lineCard: Color,
+    val lineDashed: Color,
+    val tx: Color,
+    val txBody: Color,
+    val tx2: Color,
+    val tx3: Color,
+    val tx4: Color,
+    val tx5: Color,
+    val accent: Color,
+    val accentStrong: Color,
+    val onAccent: Color,
+    val implFg: Color,
+    val implBg: Color,
+    val implBar: Color,
+    val revFg: Color,
+    val revBg: Color,
+    val revBar: Color,
+    val handFg: Color,
+    val handBg: Color,
+    val handBar: Color,
+    val doneFg: Color,
+    val doneBg: Color,
+    val doneBar: Color,
+    val ringHead: Color,
+    val ringTrack: Color,
+    val ringStop: Color,
+    val codeBg: Color,
+    val scrim: Color,
+) {
+    /** `accent` の 14% (メンションのチップ・エージェントの印の地)。 */
+    val accentSoft: Color get() = accent.copy(alpha = 0.14f)
+
+    /** ユーザーの吹き出しの地と枠 (`accent` を会話の地に 11% / 26% 混ぜる)。 */
+    val bubbleBg: Color get() = mix(accent, bgCenter, 0.11f)
+    val bubbleLine: Color get() = mix(accent, bgCenter, 0.26f)
+}
+
+private fun mix(a: Color, b: Color, share: Float): Color = Color(
+    red = a.red * share + b.red * (1 - share),
+    green = a.green * share + b.green * (1 - share),
+    blue = a.blue * share + b.blue * (1 - share),
+)
+
+/** PC と同じダーク (tokens.md の値をそのまま)。 */
+val DarkYhtyeColors = YhtyeColors(
+    isDark = true,
+    bgApp = Color(0xFF141312),
+    bgCenter = Color(0xFF1E1D1B),
+    bgPanel = Color(0xFF1B1A18),
+    bgRail = Color(0xFF141312),
+    bgCard = Color(0xFF23211F),
+    bgInset = Color(0xFF1A1917),
+    bgSelected = Color(0xFF2C2824),
+    bgChip = Color(0xFF2B2825),
+    bgChipDim = Color(0xFF232120),
+    bgPressed = Color(0xFF33302B),
+    line = Color(0xFF2A2724),
+    lineCard = Color(0xFF34302B),
+    lineDashed = Color(0xFF3A352F),
+    tx = Color(0xFFE8E5DF),
+    txBody = Color(0xFFDDD9D2),
+    tx2 = Color(0xFFB5AFA5),
+    tx3 = Color(0xFF9A948A),
+    tx4 = Color(0xFF7D776E),
+    tx5 = Color(0xFF57524B),
+    accent = Color(0xFFD9A066),
+    accentStrong = Color(0xFFE0A45C),
+    onAccent = Color(0xFF1E1A15),
+    implFg = Color(0xFFAFD5FE),
+    implBg = Color(0xFF213C59),
+    implBar = Color(0xFF5B97D3),
+    revFg = Color(0xFFDACCF7),
+    revBg = Color(0xFF413754),
+    revBar = Color(0xFF9D82CC),
+    handFg = Color(0xFFFFDDCF),
+    handBg = Color(0xFF86281D),
+    handBar = Color(0xFFBF5546),
+    doneFg = Color(0xFFA4DFAF),
+    doneBg = Color(0xFF223D27),
+    doneBar = Color(0xFF62BB78),
+    ringHead = Color(0xFF5DC879),
+    ringTrack = Color(0x4762BB78),
+    ringStop = Color(0xFF4A453F),
+    codeBg = Color(0xFF161514),
+    scrim = Color(0x59000000),
+)
+
+/**
+ * ライト。PC にもモックにも無いので、ダークと同じ流儀 (わずかに暖色に寄せたグレー、琥珀のアクセント、
+ * ステータスは色相を固定して明度と彩度だけ振る) で起こした。
+ */
+val LightYhtyeColors = YhtyeColors(
+    isDark = false,
+    bgApp = Color(0xFFEDEAE5),
+    bgCenter = Color(0xFFFAF8F5),
+    bgPanel = Color(0xFFF3F1ED),
+    bgRail = Color(0xFFE8E5DF),
+    bgCard = Color(0xFFFFFFFF),
+    bgInset = Color(0xFFF1EEE9),
+    bgSelected = Color(0xFFE6E0D7),
+    bgChip = Color(0xFFE9E5DE),
+    bgChipDim = Color(0xFFEFECE7),
+    bgPressed = Color(0xFFDFD9D0),
+    line = Color(0xFFE2DED7),
+    lineCard = Color(0xFFD9D3CA),
+    lineDashed = Color(0xFFCFC8BD),
+    tx = Color(0xFF1F1C18),
+    txBody = Color(0xFF2B2722),
+    tx2 = Color(0xFF4F4943),
+    tx3 = Color(0xFF6B655D),
+    tx4 = Color(0xFF857E74),
+    tx5 = Color(0xFFADA69B),
+    accent = Color(0xFFA9692A),
+    accentStrong = Color(0xFF9A5D1F),
+    onAccent = Color(0xFFFFFAF3),
+    implFg = Color(0xFF0E4F86),
+    implBg = Color(0xFFD1E7FF),
+    implBar = Color(0xFF347EC4),
+    revFg = Color(0xFF563E7B),
+    revBg = Color(0xFFE8E0F9),
+    revBar = Color(0xFF8668B6),
+    handFg = Color(0xFF8F3126),
+    handBg = Color(0xFFFDD8CB),
+    handBar = Color(0xFFC35141),
+    doneFg = Color(0xFF195C2E),
+    doneBg = Color(0xFFCEEFD3),
+    doneBar = Color(0xFF399D57),
+    ringHead = Color(0xFF25984D),
+    ringTrack = Color(0x47399D57),
+    ringStop = Color(0xFFB9B2A7),
+    codeBg = Color(0xFFF2EFEA),
+    scrim = Color(0x33000000),
+)
+
+val LocalYhtyeColors = staticCompositionLocalOf { DarkYhtyeColors }
+
+/** 機械が出す文字 (ID・ブランチ・ログ・数値・コード) の書体。人が読む日本語は既定の書体。 */
+val MonoFont: FontFamily = FontFamily.Monospace
+
+/** 今の Yhtye の色 (`MaterialTheme` と並べて使う)。 */
+object Yhtye {
+    val colors: YhtyeColors
+        @Composable get() = LocalYhtyeColors.current
+}
+
+/**
+ * 端末のダーク/ライト設定に従う。Dynamic Color は使わず Yhtye の色で統一する (PC と同じ見た目)。
+ * Material 3 の部品 (ダイアログ・メニュー・入力欄) の配色もここから起こす。
+ */
 @Composable
 fun YhtyeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> darkColorScheme()
-        else -> lightColorScheme()
+    val c = if (darkTheme) DarkYhtyeColors else LightYhtyeColors
+    val base = if (darkTheme) darkColorScheme() else lightColorScheme()
+    val scheme = base.copy(
+        primary = c.accent,
+        onPrimary = c.onAccent,
+        primaryContainer = c.bgChip,
+        onPrimaryContainer = c.tx,
+        secondary = c.tx2,
+        onSecondary = c.bgCenter,
+        tertiary = c.implBar,
+        background = c.bgApp,
+        onBackground = c.txBody,
+        surface = c.bgCenter,
+        onSurface = c.tx,
+        surfaceVariant = c.bgInset,
+        onSurfaceVariant = c.tx3,
+        surfaceContainerLowest = c.bgInset,
+        surfaceContainerLow = c.bgPanel,
+        surfaceContainer = c.bgCard,
+        surfaceContainerHigh = c.bgCard,
+        surfaceContainerHighest = c.bgChip,
+        outline = c.lineCard,
+        outlineVariant = c.line,
+        error = c.handBar,
+        onError = c.onAccent,
+        errorContainer = c.handBg,
+        onErrorContainer = c.handFg,
+        scrim = Color.Black,
+    )
+    CompositionLocalProvider(LocalYhtyeColors provides c) {
+        MaterialTheme(colorScheme = scheme, content = content)
     }
-    MaterialTheme(colorScheme = colorScheme, content = content)
 }
