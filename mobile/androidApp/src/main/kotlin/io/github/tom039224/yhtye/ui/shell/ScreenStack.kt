@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.ui.common.SwipeThresholds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -42,12 +43,6 @@ import kotlin.math.abs
 
 // 中央の上に積む全画面 (タスク詳細・設定。モックの `.screen`)。右から入り、左→右のスワイプ (指に付いてずれる) か
 // 戻る (予測型を含む) で閉じる。積むのは 1 枚だけ。
-
-/** 幅のこの割合を超えて離すと閉じる (モックの DETAIL_CLOSE)。 */
-private const val CLOSE_SHARE = 0.35f
-
-/** 離したときにこの速さを超えていれば閉じる (パネルと同じ 0.35px/ms)。 */
-private const val FLING_DP_PER_SECOND = 350f
 
 /** 開閉のアニメーション (モックの `.screen` の transition .26s)。 */
 private val SCREEN_EASING = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -90,7 +85,8 @@ private class ScreenMotion(private val scope: CoroutineScope) {
  * [screen] を中央の上に積む (null: 何も積まない)。閉じる操作は [onClose] を呼ぶだけで、呼ぶ側が [screen] を null に
  * すると右へ抜けて消える (それまでは前の画面を出し続ける)。
  *
- * - 左→右のスワイプ: 画面が指に付いてずれ、幅の 35% を超えるか速く離すと閉じ、足りなければ戻る。右→左は何もしない。
+ * - 左→右のスワイプ: 画面が指に付いてずれ、幅の [SwipeThresholds.DETAIL_CLOSE_SHARE] を超えるか速く離すと閉じ、
+ *   足りなければ戻る。右→左は何もしない。
  * - 画面の左右端 ([gestureInsets]) から始まったタッチは扱わない (Android の「戻る」)。
  * - 子が先に横の動きを取ったら (はみ出したセッションのタブ・コードブロック) その指は扱わない。
  * - 戻る (予測型を含む) は指に合わせて画面がずれ、確定で閉じる。後から合成されるので、パネルの「戻る」より先に効く。
@@ -142,7 +138,7 @@ fun <T : Any> ScreenStack(
         val direction = LocalLayoutDirection.current
         val edgeStart = gestureInsets.getLeft(density, direction).toFloat()
         val edgeEnd = gestureInsets.getRight(density, direction).toFloat()
-        val fling = with(density) { FLING_DP_PER_SECOND.dp.toPx() }
+        val fling = with(density) { SwipeThresholds.FLING_DP_PER_SECOND.dp.toPx() }
         Box(
             Modifier
                 .fillMaxSize()
@@ -203,7 +199,7 @@ private suspend fun PointerInputScope.swipeToClose(
         motion.offset = (change.position.x - start.x).coerceAtLeast(0f)
     }
     val velocity = if (cancelled) 0f else tracker.calculateVelocity().x
-    if (motion.offset > motion.width * CLOSE_SHARE || velocity > fling) {
+    if (motion.offset > motion.width * SwipeThresholds.DETAIL_CLOSE_SHARE || velocity > fling) {
         motion.releaseVelocity = maxOf(velocity, 0f)
         onClose()
     } else {

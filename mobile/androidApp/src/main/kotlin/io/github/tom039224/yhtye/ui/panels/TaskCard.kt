@@ -90,6 +90,7 @@ import io.github.tom039224.yhtye.shared.sync.taskLog
 import io.github.tom039224.yhtye.shared.sync.taskMeta
 import io.github.tom039224.yhtye.shared.sync.taskProgress
 import io.github.tom039224.yhtye.shared.sync.taskTone
+import io.github.tom039224.yhtye.ui.common.SwipeThresholds
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.YIcons
 import io.github.tom039224.yhtye.ui.conversation.ToolStatusIcon
@@ -107,20 +108,13 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 // 右パネルのタスクカード (PC の TaskCard、モックの `.task`)。右→左にスワイプするとカードが指に付いてずれ、下から `@` が
-// 現れる。88dp を超えて離す (か 40dp 以上で速くはじく) とメンション (PC の `@` と同じ)、足りなければ戻る。
+// 現れる。[SwipeThresholds.ROW_ARM] を超えて離す (か [SwipeThresholds.ROW_FLING_MIN] 以上で速くはじく) とメンション
+// (PC の `@` と同じ)、足りなければ戻る。
 
 private val CARD_SHAPE = RoundedCornerShape(12.dp)
 
-/** これを超えて離すとメンション (モックの ROW_ARM 88px)。 */
-private val ARM = 88.dp
-
-/** この先は指に付いて行かず重くなる (モックの ROW_MAX 132px とゴムの 0.25)。 */
-private val MAX_PULL = 132.dp
+/** [SwipeThresholds.ROW_MAX_PULL] より先のゴムの重さ (モックの 0.25)。 */
 private const val RUBBER = 0.25f
-
-/** 短くてもこの速さではじけばメンション (0.45px/ms、40px 以上)。 */
-private const val FLING_DP_PER_SECOND = 450f
-private val FLING_MIN = 40.dp
 
 /** 下の地が見えきるまでの距離 (モックの 36px)。 */
 private val UNDER_FADE = 36.dp
@@ -199,7 +193,14 @@ fun TaskCard(
     val edgeEnd = gestureInsets.getRight(density, direction).toFloat()
     var leftInRoot by remember { mutableFloatStateOf(0f) }
     val mention by rememberUpdatedState(onMention)
-    val px = with(density) { SwipePx(ARM.toPx(), MAX_PULL.toPx(), FLING_DP_PER_SECOND.dp.toPx(), FLING_MIN.toPx()) }
+    val px = with(density) {
+        SwipePx(
+            SwipeThresholds.ROW_ARM.toPx(),
+            SwipeThresholds.ROW_MAX_PULL.toPx(),
+            SwipeThresholds.ROW_FLING_DP_PER_SECOND.dp.toPx(),
+            SwipeThresholds.ROW_FLING_MIN.toPx(),
+        )
+    }
     val handling = tone == Tone.Handling
     val border = if (handling) c.handCardLine else c.lineCard
     Box(
