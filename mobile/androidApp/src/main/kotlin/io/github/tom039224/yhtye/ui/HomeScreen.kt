@@ -1,6 +1,7 @@
 package io.github.tom039224.yhtye.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,12 +51,15 @@ import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.YhtyeClient
 import io.github.tom039224.yhtye.shared.credentials.Credentials
+import io.github.tom039224.yhtye.shared.sync.AppStore
+import io.github.tom039224.yhtye.shared.sync.RING_LABEL
+import io.github.tom039224.yhtye.shared.sync.Ring
 
 /** ペアリング後: 接続状態とプロジェクト一覧。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(credentials: Credentials, client: YhtyeClient, onUnpair: () -> Unit) {
-    val model: HomeViewModel = viewModel(key = credentials.deviceId) { HomeViewModel(client) }
+fun HomeScreen(credentials: Credentials, client: YhtyeClient, sync: AppStore, onUnpair: () -> Unit) {
+    val model: HomeViewModel = viewModel(key = credentials.deviceId) { HomeViewModel(sync) }
     val state by client.state.collectAsStateWithLifecycle()
     val projects by model.projects.collectAsStateWithLifecycle()
     var confirmUnpair by rememberSaveable { mutableStateOf(false) }
@@ -95,7 +100,7 @@ fun HomeScreen(credentials: Credentials, client: YhtyeClient, onUnpair: () -> Un
                         )
                     }
                 }
-                val list = projects.projects
+                val list = projects.rows
                 if (list != null && list.isEmpty()) {
                     item {
                         Text(
@@ -105,8 +110,8 @@ fun HomeScreen(credentials: Credentials, client: YhtyeClient, onUnpair: () -> Un
                         )
                     }
                 }
-                items(list.orEmpty(), key = { it.id }) { project ->
-                    ProjectRow(project)
+                items(list.orEmpty(), key = { it.project.id }) { row ->
+                    ProjectRow(row.project, row.ring)
                     HorizontalDivider()
                 }
             }
@@ -202,15 +207,32 @@ private fun stateColor(state: ConnectionState): Color = when (state) {
 private val CONNECTED_GREEN = Color(0xFF2E7D32)
 
 @Composable
-private fun ProjectRow(project: ProjectInfo) {
+private fun ProjectRow(project: ProjectInfo, ring: Ring) {
     val status = when {
-        project.running -> stringResource(R.string.home_project_running)
+        ring == Ring.Running -> stringResource(R.string.home_project_running)
         project.open -> stringResource(R.string.home_project_open)
         else -> null
     }
     ListItem(
+        leadingContent = { ProjectRing(ring) },
         headlineContent = { Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text(project.path, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = status?.let { { Text(it, style = MaterialTheme.typography.labelMedium) } },
+        modifier = Modifier.testTag("project-${project.id}"),
     )
 }
+
+/** PC のプロジェクトのリング (T-49): 作業が動いていれば回る緑、なければ中を抜いた緑。 */
+@Composable
+private fun ProjectRing(ring: Ring) {
+    val label = RING_LABEL.getValue(ring)
+    val modifier = Modifier.size(RING_SIZE).semantics { contentDescription = label }.testTag("ring-${ring.name}")
+    if (ring == Ring.Running) {
+        CircularProgressIndicator(modifier = modifier, color = CONNECTED_GREEN, strokeWidth = RING_STROKE)
+    } else {
+        Box(modifier.border(RING_STROKE, CONNECTED_GREEN, CircleShape))
+    }
+}
+
+private val RING_SIZE = 16.dp
+private val RING_STROKE = 2.dp

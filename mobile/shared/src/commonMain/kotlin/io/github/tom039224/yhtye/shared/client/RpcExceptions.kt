@@ -2,6 +2,7 @@ package io.github.tom039224.yhtye.shared.client
 
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ApiError
+import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
 
 /** [YhtyeClient.call] の失敗。 */
 sealed class RpcException(message: String) : Exception(message)
@@ -18,3 +19,7 @@ class ConnectionLostException : RpcException("the connection was lost before the
 
 /** 接続していないし、待ってもつながらない状態 ([state])。 */
 class NotConnectedException(val state: ConnectionState) : RpcException("not connected: $state")
+
+/** 要求に合わない種類の応答が返った (PC が新しい・古い)。 */
+class UnexpectedReplyException(command: ApiCommand, reply: ApiResponse) :
+    RpcException("unexpected reply to ${command::class.simpleName}: ${reply::class.simpleName}")

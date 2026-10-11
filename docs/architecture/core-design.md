@@ -1425,6 +1425,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
   (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
   `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。
+  `--fake-agent <yhtye-fake-agent>` で全役割を偽エージェントにし、`--fake-orchestrator` / `--fake-implementer` / `--fake-reviewer`
+  にそのシナリオ (`YHTYE_FAKE_SCRIPT` の JSON。省略は何もしない) を渡す (Android の同期層の結合テスト `SyncRealServerTest`。T-66)。
 - `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
   リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
   誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
