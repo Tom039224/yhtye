@@ -1,0 +1,1262 @@
+<!doctype html>
+<!--
+  Yhtye Android クライアントの GUI モック (段階 3 の前に画面構成とジェスチャの感触を確かめるためのもの)。
+  1 ファイル完結: 外部の CSS / JS / フォント / 画像を読まない。データはすべてダミー。
+  仕様の出どころ: docs/planned/android-client.md、docs/design/orchestrator-desktop.md §3.3-3.5 / §9、
+  docs/architecture/orchestration-model.md。色は docs/design/tokens.md (ダーク) とそれに合わせたライト。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="light dark">
+<title>Yhtye モバイル モック</title>
+<style>
+/* ---------- トークン ---------- */
+:root {
+  --font-ui: system-ui, "Noto Sans JP", "Hiragino Sans", "Roboto", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "Roboto Mono", "Menlo", monospace;
+  --peek: 64px;          /* パネルが開いたとき中央が見えている幅 */
+  --mockbar: 20px;
+}
+/* ダーク: tokens.md の値 (暖色寄りのグレー) */
+[data-theme="dark"] {
+  --bg-app: #141312;
+  --bg-center: #1e1d1b;
+  --bg-panel: #1b1a18;
+  --bg-rail: #141312;
+  --bg-card: #23211f;
+  --bg-inset: #1a1917;
+  --bg-selected: #2c2824;
+  --bg-chip: #2b2825;
+  --bg-chip-dim: #232120;
+  --bg-pressed: #33302b;
+  --line: #2a2724;
+  --line-card: #34302b;
+  --line-dashed: #3a352f;
+  --tx: #e8e5df;
+  --tx-body: #ddd9d2;
+  --tx-2: #b5afa5;
+  --tx-3: #9a948a;
+  --tx-4: #7d776e;
+  --tx-5: #57524b;
+  --accent: #d9a066;
+  --accent-strong: #e0a45c;
+  --on-accent: #1e1a15;
+  --accent-soft: color-mix(in srgb, #d9a066 14%, transparent);
+  --bubble-bg: color-mix(in srgb, #d9a066 13%, #1e1d1b);
+  --bubble-line: color-mix(in srgb, #d9a066 28%, #1e1d1b);
+  --impl-fg: oklch(0.86 0.07 250); --impl-bg: oklch(0.35 0.06 250); --impl-bar: oklch(0.66 0.11 250);
+  --rev-fg: oklch(0.87 0.06 300);  --rev-bg: oklch(0.36 0.05 300);  --rev-bar: oklch(0.66 0.11 300);
+  --hand-fg: oklch(0.93 0.05 40);  --hand-bg: oklch(0.42 0.13 30);  --hand-bar: oklch(0.58 0.14 30);
+  --done-fg: oklch(0.85 0.09 150); --done-bg: oklch(0.33 0.05 150); --done-bar: oklch(0.72 0.13 150);
+  --wait-fg: #9a948a; --wait-bg: #2b2825; --wait-bar: #57524b;
+  --cancel-fg: #7d776e; --cancel-bg: #232120; --cancel-bar: #3a3733;
+  --hand-card-bg: oklch(0.23 0.03 30); --hand-card-line: oklch(0.4 0.09 30);
+  --hand-card-tx: #d8c4b4; --hand-card-title: #f0e7df; --hand-card-meta: #bfa48f;
+  --usage-5h: oklch(0.7 0.14 55); --usage-week: oklch(0.72 0.11 150);
+  --ring-run: oklch(0.75 0.15 150); --ring-track: oklch(0.72 0.13 150 / .28); --ring-stop: #4a453f;
+  --code-bg: #161514;
+  --shadow: 0 0 0 1px #2a2724, -8px 0 24px rgba(0,0,0,.45), 8px 0 24px rgba(0,0,0,.45);
+  --scrim: rgba(0,0,0,.35);
+  --sheet-scrim: rgba(0,0,0,.5);
+}
+/* ライト: デザインはダーク一本なので、同じ色相で明度を反転して作った (発明した値) */
+[data-theme="light"] {
+  --bg-app: #ebe7e1;
+  --bg-center: #fbfaf8;
+  --bg-panel: #f4f1ec;
+  --bg-rail: #e7e2db;
+  --bg-card: #ffffff;
+  --bg-inset: #f1eee9;
+  --bg-selected: #e6dfd4;
+  --bg-chip: #e8e2d9;
+  --bg-chip-dim: #efebe5;
+  --bg-pressed: #ddd6cb;
+  --line: #e2ddd5;
+  --line-card: #d8d1c6;
+  --line-dashed: #cfc6b9;
+  --tx: #23201c;
+  --tx-body: #2c2823;
+  --tx-2: #57514a;
+  --tx-3: #6f685e;
+  --tx-4: #8a8277;
+  --tx-5: #aaa298;
+  --accent: #a8641f;
+  --accent-strong: #9a5a17;
+  --on-accent: #fffaf3;
+  --accent-soft: color-mix(in srgb, #c27a30 14%, transparent);
+  --bubble-bg: color-mix(in srgb, #c98a45 14%, #fbfaf8);
+  --bubble-line: color-mix(in srgb, #c98a45 32%, #fbfaf8);
+  --impl-fg: oklch(0.42 0.11 250); --impl-bg: oklch(0.93 0.035 250); --impl-bar: oklch(0.6 0.13 250);
+  --rev-fg: oklch(0.43 0.11 300);  --rev-bg: oklch(0.93 0.035 300);  --rev-bar: oklch(0.6 0.13 300);
+  --hand-fg: oklch(0.45 0.14 32);  --hand-bg: oklch(0.92 0.045 40);  --hand-bar: oklch(0.6 0.16 30);
+  --done-fg: oklch(0.43 0.1 150);  --done-bg: oklch(0.93 0.04 150);  --done-bar: oklch(0.62 0.13 150);
+  --wait-fg: #6f685e; --wait-bg: #e8e2d9; --wait-bar: #b3aba0;
+  --cancel-fg: #8a8277; --cancel-bg: #efebe5; --cancel-bar: #cfc8bd;
+  --hand-card-bg: oklch(0.965 0.02 40); --hand-card-line: oklch(0.83 0.07 32);
+  --hand-card-tx: #5b4334; --hand-card-title: #3d2a1e; --hand-card-meta: #8a6a56;
+  --usage-5h: oklch(0.64 0.15 55); --usage-week: oklch(0.6 0.12 150);
+  --ring-run: oklch(0.6 0.15 150); --ring-track: oklch(0.6 0.13 150 / .25); --ring-stop: #b9b1a6;
+  --code-bg: #f1eee9;
+  --shadow: 0 0 0 1px #ddd6cb, -8px 0 22px rgba(60,40,20,.16), 8px 0 22px rgba(60,40,20,.16);
+  --scrim: rgba(40,30,20,.12);
+  --sheet-scrim: rgba(30,20,10,.35);
+}
+
+/* ---------- 土台 ---------- */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 横スワイプはアプリが扱う: 既定ではブラウザに縦のパンだけ任せる。横にスクロールできる要素は下で上書きする */
+* { touch-action: pan-y; }
+.hscroll, .hscroll * { touch-action: pan-x pan-y; }
+html, body { margin: 0; height: 100%; background: var(--bg-app); color: var(--tx-body);
+  font-family: var(--font-ui); -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+body { overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+input, textarea, select { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); }
+svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round; display: block; }
+svg.i.s16 { width: 16px; height: 16px; } svg.i.s14 { width: 14px; height: 14px; } svg.i.s24 { width: 24px; height: 24px; }
+.spin { animation: yspin .9s linear infinite; }
+@keyframes yspin { to { transform: rotate(360deg); } }
+@keyframes ypulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+@keyframes ysheen { 0% { transform: translateX(-120%) } 100% { transform: translateX(320%) } }
+@keyframes caret { 50% { opacity: 0 } }
+
+/* ---------- モック表示 ---------- */
+#mockbar { position: fixed; top: 0; left: 0; right: 0; height: var(--mockbar); z-index: 100;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  font: 500 10.5px/1 var(--font-mono); letter-spacing: .08em; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-app)); border-bottom: 1px solid var(--line); }
+
+/* ---------- 3 層 (左パネル / 右パネル / 中央) ---------- */
+#app { position: fixed; left: 0; right: 0; top: var(--mockbar); bottom: 0; overflow: hidden; background: var(--bg-app); }
+.panel { position: absolute; top: 0; bottom: 0; width: calc(100% - var(--peek)); visibility: hidden;
+  background: var(--bg-panel); display: flex; flex-direction: column; }
+#left { left: 0; }
+#right { right: 0; }
+#app[data-reveal="left"] #left, #app[data-reveal="right"] #right { visibility: visible; }
+#center { position: absolute; inset: 0; background: var(--bg-center); display: flex; flex-direction: column;
+  will-change: transform; z-index: 2; }
+#center.shifted { box-shadow: var(--shadow); border-radius: 14px; overflow: hidden; }
+#shield { position: absolute; inset: 0; z-index: 20; display: none; background: var(--scrim); opacity: 0; touch-action: none; }
+#center.shifted #shield { display: block; }
+#app.dragging, #app.dragging * { user-select: none; -webkit-user-select: none; }
+
+/* 端のスワイプの表示 (Android では戻るジェスチャの領域) */
+.edge-hint { position: absolute; top: 0; bottom: 0; width: 24px; z-index: 60; pointer-events: none; opacity: 0;
+  transition: opacity .25s; display: flex; align-items: center; }
+.edge-hint.left { left: 0; background: linear-gradient(90deg, var(--accent-soft), transparent); }
+.edge-hint.right { right: 0; justify-content: flex-end; background: linear-gradient(270deg, var(--accent-soft), transparent); }
+.edge-hint.show { opacity: 1; }
+.edge-hint span { font: 500 10px/1.3 var(--font-mono); color: var(--accent); writing-mode: vertical-rl; padding: 4px 2px; }
+
+/* ---------- 共通の部品 ---------- */
+.iconbtn { width: 48px; height: 48px; border-radius: 24px; display: grid; place-items: center; color: var(--tx-2); position: relative; flex: none; }
+.iconbtn:active { background: var(--bg-pressed); }
+.badge-dot { position: absolute; top: 11px; right: 11px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg-center); }
+.badge-num { position: absolute; top: 6px; right: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--hand-bar); color: #fff; font: 600 11px/18px var(--font-mono); text-align: center; box-shadow: 0 0 0 2px var(--bg-center); }
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 6px; border-radius: 6px;
+  font: 500 11.5px/1 var(--font-ui); white-space: nowrap; }
+.chip svg.i { width: 13px; height: 13px; stroke-width: 2; }
+.tone-impl { color: var(--impl-fg); background: var(--impl-bg); }
+.tone-rev { color: var(--rev-fg); background: var(--rev-bg); }
+.tone-hand { color: var(--hand-fg); background: var(--hand-bg); }
+.tone-done { color: var(--done-fg); background: var(--done-bg); }
+.tone-wait { color: var(--wait-fg); background: var(--wait-bg); }
+.tone-cancel { color: var(--cancel-fg); background: var(--cancel-bg); }
+.pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 20px; padding: 0 7px; border-radius: 10px;
+  border: 1px solid var(--line-card); color: var(--tx-3); font: 400 11px/1 var(--font-mono); white-space: nowrap; overflow: hidden; }
+.pill span { overflow: hidden; text-overflow: ellipsis; }
+.ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--ring-stop); flex: none; }
+.ring.alive { border-color: var(--ring-run); }
+.ring.turn { border-color: var(--ring-track); border-top-color: var(--ring-run); animation: yspin .9s linear infinite; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--tx-5); }
+.notify-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.section-h { display: flex; align-items: center; gap: 6px; padding: 14px 16px 6px; color: var(--tx-3);
+  font: 500 11px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; }
+.section-h .grow { flex: 1; }
+.toast { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(12px); z-index: 90;
+  background: var(--tx); color: var(--bg-center); padding: 10px 14px; border-radius: 10px; font-size: 13.5px;
+  opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; max-width: calc(100% - 48px); }
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- 中央: トップバー ---------- */
+.topbar { height: 56px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+.topbar .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-left: 2px; }
+.topbar .title { font-size: 16px; font-weight: 600; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+/* ---------- 会話 ---------- */
+.msgs { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px 0 8px; overscroll-behavior: contain; }
+.row { padding: 6px 16px; }
+.row.user { display: flex; justify-content: flex-end; padding-top: 14px; }
+.bubble { max-width: 86%; background: var(--bubble-bg); border: 1px solid var(--bubble-line); color: var(--tx);
+  border-radius: 18px 18px 6px 18px; padding: 9px 13px; font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.bubble .mention { display: block; font: 500 12px/1.5 var(--font-mono); color: var(--accent); }
+.md { font-size: 15px; line-height: 1.7; color: var(--tx-body); word-break: break-word; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md h3 { font-size: 17px; margin: 18px 0 8px; color: var(--tx); font-weight: 650; }
+.md h4 { font-size: 15.5px; margin: 16px 0 6px; color: var(--tx); font-weight: 650; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md strong { color: var(--accent-strong); font-weight: 600; }
+.md code.inl { font: 13px/1 var(--font-mono); background: var(--bg-chip); border-radius: 4px; padding: 2px 5px; color: var(--tx); }
+.code { margin: 4px 0 12px; border: 1px solid var(--line-card); border-radius: 10px; background: var(--code-bg); overflow: hidden; }
+.code .lang { font: 500 10.5px/1 var(--font-mono); color: var(--tx-4); padding: 8px 12px 0; letter-spacing: .06em; }
+.code pre { margin: 0; padding: 8px 12px 12px; overflow-x: auto; font: 12.5px/1.6 var(--font-mono); color: var(--tx); }
+.tablewrap { margin: 4px 0 12px; overflow-x: auto; border: 1px solid var(--line-card); border-radius: 10px; }
+.tablewrap table { border-collapse: collapse; font-size: 13.5px; line-height: 1.5; min-width: 100%; }
+.tablewrap th, .tablewrap td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tablewrap th { color: var(--tx-3); font-weight: 600; font-size: 12.5px; background: var(--bg-inset); }
+.tablewrap tr:last-child td { border-bottom: 0; }
+.caret { display: inline-block; width: 8px; height: 16px; vertical-align: -3px; background: var(--accent); margin-left: 2px; animation: caret 1s steps(1) infinite; }
+
+/* ツール・Yhtye の出来事: 控えめな 1 行。タップで開く */
+.line { display: flex; align-items: center; gap: 8px; min-height: 32px; width: 100%; text-align: left; color: var(--tx-3);
+  font: 400 12.5px/1.4 var(--font-mono); padding: 4px 0; }
+.line .lbl { color: var(--tx-2); flex: none; }
+.line .arg { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.line .st { flex: none; }
+.line .st.ok { color: var(--done-bar); } .line .st.err { color: var(--hand-bar); } .line .st.run { color: var(--tx-3); }
+.line .chev { flex: none; color: var(--tx-4); transition: transform .15s; }
+.line[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.line.yhtye .lbl { color: var(--accent); }
+.line.notice { color: var(--hand-card-meta); }
+.line.notice .lbl { color: var(--hand-bar); }
+.sub-lines { padding-left: 26px; border-left: 1px solid var(--line); margin-left: 9px; }
+.out { margin: 2px 0 6px 26px; padding: 8px 10px; border-radius: 8px; background: var(--bg-inset); border: 1px solid var(--line);
+  font: 12px/1.55 var(--font-mono); color: var(--tx-2); white-space: pre; overflow-x: auto; }
+.grouplist { margin: 2px 0 8px 26px; border: 1px solid var(--line-card); border-radius: 10px; overflow: hidden; }
+.grouplist button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; text-align: left; border-top: 1px solid var(--line); }
+.grouplist button:first-child { border-top: 0; }
+.grouplist .n { font: 11px/1 var(--font-mono); color: var(--tx-5); width: 12px; }
+.grouplist .tid { font: 500 12px/1 var(--font-mono); color: var(--tx-3); }
+.grouplist .tt { flex: 1; min-width: 0; font-size: 13.5px; color: var(--tx-body); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty { margin: auto; padding: 32px; text-align: center; color: var(--tx-3); font-size: 14px; line-height: 1.7; }
+.empty b { display: block; color: var(--tx); font-size: 16px; margin-bottom: 4px; }
+
+/* グループ待機の帯 (コンポーザの上) */
+.waitbar { flex: none; margin: 0 12px 6px; display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 12px;
+  border: 1px dashed var(--line-dashed); border-radius: 10px; color: var(--tx-3); font-size: 12.5px; text-align: left; }
+.waitbar .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.waitbar .hand { color: var(--hand-fg); background: var(--hand-bg); border-radius: 6px; padding: 2px 7px; font-weight: 600; font-size: 11.5px; }
+
+/* コンポーザ */
+.composer { flex: none; padding: 4px 10px calc(10px + env(safe-area-inset-bottom)); }
+.composer .state { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; font: 12px/1 var(--font-mono); color: var(--tx-3); }
+.composer .box { display: flex; align-items: flex-end; gap: 6px; background: var(--bg-inset); border: 1px solid var(--line-card);
+  border-radius: 24px; padding: 4px 4px 4px 16px; }
+.composer .box:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-card)); }
+.composer textarea { flex: 1; min-height: 40px; max-height: 128px; resize: none; border: 0; outline: 0; background: transparent;
+  padding: 9px 0; font-size: 15.5px; line-height: 22px; color: var(--tx); }
+.composer textarea::placeholder { color: var(--tx-4); }
+.sendbtn { width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); flex: none; }
+.sendbtn:disabled { background: var(--bg-chip); color: var(--tx-4); }
+.sendbtn.stop { background: var(--bg-chip); color: var(--tx); border: 1px solid var(--line-card); }
+.sendbtn.stop svg { fill: currentColor; stroke: none; width: 14px; height: 14px; }
+.mentions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
+.mchip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; height: 30px; padding: 0 6px 0 10px; border-radius: 15px;
+  background: var(--accent-soft); color: var(--accent); font: 500 12px/1 var(--font-mono); }
+.mchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 左パネル ---------- */
+#left .cols { flex: 1; min-height: 0; display: flex; }
+.rail { width: 68px; flex: none; background: var(--bg-rail); overflow-y: auto; padding: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.proj { position: relative; width: 48px; height: 48px; border-radius: 24px; background: var(--bg-chip); color: var(--tx-2);
+  display: grid; place-items: center; font: 600 15px/1 var(--font-mono); transition: border-radius .15s; }
+.proj.sel { border-radius: 15px; background: var(--accent); color: var(--on-accent); }
+.proj::before { content: ""; position: absolute; left: -10px; width: 4px; height: 0; border-radius: 0 4px 4px 0; background: var(--tx); transition: height .15s; }
+.proj.sel::before { height: 36px; }
+.proj .ring { position: absolute; right: -2px; bottom: -2px; width: 16px; height: 16px; border-width: 2.5px; background: var(--bg-rail); }
+.proj .notify-dot { position: absolute; right: -1px; top: -1px; box-shadow: 0 0 0 3px var(--bg-rail); }
+.rail .sep { width: 28px; height: 2px; border-radius: 1px; background: var(--line); }
+.tree { flex: 1; min-width: 0; overflow-y: auto; padding-bottom: 12px; }
+.tree-head { padding: 14px 16px 4px; }
+.tree-head .pname { font-size: 17px; font-weight: 650; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-head .ppath { font: 11px/1.4 var(--font-mono); color: var(--tx-4); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 0 12px 0 10px; text-align: left; color: var(--tx-2); }
+.wt .chev { color: var(--tx-4); transition: transform .15s; }
+.wt[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.wt .bname { flex: 1; min-width: 0; font: 12.5px/1.3 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt .dot.main { background: var(--done-bar); }
+.wt .add { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 18px; color: var(--tx-3); margin-right: -6px; }
+.chat { display: flex; align-items: center; gap: 10px; width: calc(100% - 16px); margin: 1px 8px; min-height: 42px; padding: 0 10px 0 28px;
+  border-radius: 10px; text-align: left; color: var(--tx-2); }
+.chat.sel { background: var(--bg-selected); color: var(--tx); }
+.chat:active { background: var(--bg-pressed); }
+.chat .ct { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat .ago { font: 11px/1 var(--font-mono); color: var(--tx-4); }
+.newchat { display: flex; align-items: center; gap: 8px; margin: 0 8px 4px; width: calc(100% - 16px); min-height: 38px; padding: 0 10px 0 26px;
+  color: var(--tx-4); font-size: 13px; border-radius: 10px; }
+.branchform { margin: 4px 12px 10px; padding: 10px; border: 1px solid var(--line-card); border-radius: 12px; background: var(--bg-inset); display: grid; gap: 8px; }
+.branchform input, .branchform select { height: 40px; border-radius: 8px; border: 1px solid var(--line-card); background: var(--bg-center); padding: 0 10px; font: 13px var(--font-mono); outline: 0; }
+.branchform .err { color: var(--hand-bar); font-size: 12px; }
+.branchform .acts { display: flex; justify-content: flex-end; gap: 8px; }
+.btn { height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13.5px; font-weight: 600; }
+.btn.fill { background: var(--accent); color: var(--on-accent); }
+.btn.text { color: var(--accent); }
+.btn.tonal { background: var(--bg-chip); color: var(--tx); }
+.btn.danger { color: var(--hand-bar); }
+.userbar { flex: none; border-top: 1px solid var(--line); background: var(--bg-rail); padding: 8px 6px calc(8px + env(safe-area-inset-bottom)) 14px; display: flex; align-items: center; gap: 8px; }
+.userbar .who { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.userbar .pc { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--tx); }
+.userbar .pc .dot { background: var(--done-bar); }
+.userbar .pc small { color: var(--tx-4); font: 11px var(--font-mono); }
+.meters { display: flex; gap: 12px; font: 11px/1 var(--font-mono); color: var(--tx-3); }
+.meter { display: flex; align-items: center; gap: 5px; }
+.meter .bar { width: 46px; height: 4px; border-radius: 2px; background: var(--line-card); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; border-radius: 2px; }
+
+/* ---------- 右パネル ---------- */
+.rhead { padding: 14px 16px 8px 18px; border-bottom: 1px solid var(--line); }
+.rhead .t { font-size: 17px; font-weight: 650; color: var(--tx); }
+.rhead .s { font-size: 12.5px; color: var(--tx-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rbody { flex: 1; overflow-y: auto; padding: 10px 10px 24px 12px; }
+.gcard { border: 1px solid var(--line-card); border-radius: 14px; background: var(--bg-card); margin-bottom: 12px; overflow: hidden; }
+.gcard.past { background: transparent; }
+.ghead { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px 12px 8px; text-align: left; }
+.ghead .gt { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ghead .gid { font: 11px/1 var(--font-mono); color: var(--tx-4); }
+.gsum { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px; font: 11.5px/1 var(--font-mono); color: var(--tx-3); }
+.segbar { display: flex; gap: 3px; flex: 1; }
+.segbar i { flex: 1; height: 4px; border-radius: 2px; }
+.gwarn { margin: 0 12px 10px; padding: 9px 10px; border-radius: 10px; background: var(--hand-card-bg); border: 1px solid var(--hand-card-line); color: var(--hand-card-tx); font-size: 13px; line-height: 1.5; }
+.gwarn .acts { display: flex; justify-content: flex-end; margin-top: 6px; }
+.task { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: start; width: 100%; padding: 11px 12px; text-align: left; border-top: 1px solid var(--line); }
+.task:active { background: var(--bg-pressed); }
+.task .ico { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; grid-row: span 3; }
+.task .ico svg { width: 16px; height: 16px; }
+.task .tl { min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+.task .tid { font: 500 11.5px/1 var(--font-mono); color: var(--tx-4); flex: none; }
+.task .tt { font-size: 14px; line-height: 1.4; color: var(--tx); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.task .go { color: var(--tx-5); grid-row: span 3; align-self: center; }
+.task .meta { font: 11.5px/1.3 var(--font-mono); color: var(--tx-4); display: flex; gap: 6px; align-items: center; }
+.task .meta .lab { font-family: var(--font-ui); font-weight: 500; }
+.prog { position: relative; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; margin: 3px 0 1px; }
+.prog i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; overflow: hidden; }
+.prog i::after { content: ""; position: absolute; top: 0; bottom: 0; width: 34%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); animation: ysheen 1.9s ease-in-out infinite; }
+.task.hand { background: var(--hand-card-bg); box-shadow: inset 3px 0 0 var(--hand-bar); }
+.task.hand .tt { color: var(--hand-card-title); }
+.task.hand .meta { color: var(--hand-card-meta); }
+.task .note { font-size: 13px; line-height: 1.45; color: var(--hand-card-tx); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.task.muted .tt { color: var(--tx-3); }
+.attn { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px; padding: 10px 12px; border-radius: 12px; background: var(--hand-card-bg);
+  border: 1px solid var(--hand-card-line); color: var(--hand-card-tx); font-size: 13px; line-height: 1.45; }
+.attn svg { color: var(--hand-bar); }
+.pastlist { display: none; }
+.gcard[aria-expanded="true"] .pastlist { display: block; }
+.ghead .chev { color: var(--tx-4); transition: transform .15s; }
+.gcard[aria-expanded="true"] .ghead .chev { transform: rotate(90deg); }
+
+/* ---------- 積み重ねの画面 (タスク詳細・設定) ---------- */
+.screen { position: absolute; inset: 0; z-index: 40; background: var(--bg-center); display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .26s cubic-bezier(.2,.8,.2,1); visibility: hidden; }
+.screen.open { transform: none; visibility: visible; }
+.screen.closing { visibility: visible; }
+.screen-dim { position: absolute; inset: 0; z-index: 39; background: var(--sheet-scrim); opacity: 0; pointer-events: none; transition: opacity .26s; }
+.screen-dim.on { opacity: 1; }
+.dhead { flex: none; display: flex; align-items: center; gap: 2px; min-height: 56px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+.dhead .titles { flex: 1; min-width: 0; padding: 8px 2px; }
+.dhead .tid { font: 500 11.5px/1 var(--font-mono); color: var(--tx-4); }
+.dhead .tt { font-size: 15.5px; font-weight: 600; color: var(--tx); line-height: 1.35; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dbody { flex: 1; overflow-y: auto; }
+.dmeta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px 4px; font: 12px/1.3 var(--font-mono); color: var(--tx-3); }
+.steps { display: flex; align-items: center; gap: 4px; padding: 10px 16px 12px; overflow-x: auto; }
+.step { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px 0 8px; border-radius: 14px; font: 500 12px/1 var(--font-mono);
+  color: var(--tx-4); border: 1px solid var(--line-card); white-space: nowrap; flex: none; }
+.step svg { width: 14px; height: 14px; }
+.step.ok { color: var(--done-fg); background: var(--done-bg); border-color: transparent; }
+.step.cur { border-color: transparent; }
+.step.cur.impl { color: var(--impl-fg); background: var(--impl-bg); }
+.step.cur.rev { color: var(--rev-fg); background: var(--rev-bg); }
+.step.cur.hand { color: var(--hand-fg); background: var(--hand-bg); }
+.step.cur .pulse { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: ypulse 1.4s ease-in-out infinite; }
+.steps .arrow { color: var(--tx-5); flex: none; }
+.callout { margin: 0 16px 12px; padding: 12px 14px; border-radius: 12px; background: var(--hand-card-bg); border: 1px solid var(--hand-card-line); color: var(--hand-card-tx); }
+.callout .h { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--hand-card-title); font-size: 14px; }
+.callout .h svg { color: var(--hand-bar); }
+.callout p { margin: 6px 0 0; font-size: 14px; line-height: 1.6; }
+.callout .f { margin-top: 8px; font: 11.5px/1.4 var(--font-mono); color: var(--hand-card-meta); }
+.tabs { position: sticky; top: 0; z-index: 2; display: flex; gap: 4px; padding: 6px 12px; background: var(--bg-center); border-bottom: 1px solid var(--line); }
+.tab { height: 34px; padding: 0 14px; border-radius: 17px; font: 500 12.5px/1 var(--font-mono); color: var(--tx-3); display: inline-flex; align-items: center; gap: 6px; }
+.tab.sel { background: var(--bg-selected); color: var(--tx); }
+.tab .ring { width: 10px; height: 10px; }
+.dout { padding: 8px 0 32px; }
+.menu { position: absolute; right: 8px; top: 52px; z-index: 50; min-width: 200px; background: var(--bg-card); border: 1px solid var(--line-card);
+  border-radius: 12px; padding: 6px 0; box-shadow: 0 8px 28px rgba(0,0,0,.3); display: none; }
+.menu.open { display: block; }
+.menu button { display: flex; align-items: center; gap: 12px; width: 100%; height: 48px; padding: 0 16px; font-size: 14.5px; color: var(--tx); text-align: left; }
+.menu button.danger { color: var(--hand-bar); }
+.dialog-scrim { position: fixed; inset: 0; z-index: 95; background: var(--sheet-scrim); display: none; align-items: center; justify-content: center; padding: 24px; }
+.dialog-scrim.open { display: flex; }
+.dialog { width: 100%; max-width: 340px; background: var(--bg-card); border-radius: 24px; padding: 22px 22px 14px; color: var(--tx-body); }
+.dialog h2 { margin: 0 0 10px; font-size: 19px; font-weight: 600; color: var(--tx); }
+.dialog p { margin: 0 0 14px; font-size: 14px; line-height: 1.6; color: var(--tx-2); }
+.dialog .acts { display: flex; justify-content: flex-end; gap: 4px; }
+.setrow { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 8px 18px; border-bottom: 1px solid var(--line); width: 100%; text-align: left; }
+.setrow .k { flex: 1; min-width: 0; }
+.setrow .k b { display: block; font-weight: 500; font-size: 15px; color: var(--tx); }
+.setrow .k small { display: block; font-size: 12.5px; color: var(--tx-3); margin-top: 2px; word-break: break-all; }
+.seg { display: inline-flex; border: 1px solid var(--line-card); border-radius: 18px; overflow: hidden; }
+.seg button { height: 34px; padding: 0 12px; font-size: 12.5px; color: var(--tx-2); }
+.seg button.sel { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="mockbar">モック · ダミーデータ · PC にはつながっていません</div>
+<div id="app">
+  <aside id="left" class="panel" aria-label="プロジェクトとチャット"></aside>
+  <aside id="right" class="panel" aria-label="グループ"></aside>
+  <main id="center">
+    <div id="shield"></div>
+    <header class="topbar" id="topbar"></header>
+    <div class="msgs" id="msgs"></div>
+    <div id="waitbar-slot"></div>
+    <div class="composer" id="composer">
+      <div class="state" id="cstate"></div>
+      <div class="mentions" id="mentions"></div>
+      <div class="box">
+        <textarea id="input" rows="1" placeholder="オーケストレータに指示する…"></textarea>
+        <button class="sendbtn" id="send" aria-label="送信"></button>
+      </div>
+    </div>
+  </main>
+  <div class="screen-dim" id="screendim"></div>
+  <section class="screen" id="detail" aria-label="タスク詳細"></section>
+  <section class="screen" id="settings" aria-label="設定"></section>
+  <div class="edge-hint left" id="edgeL"><span>端 = 戻る</span></div>
+  <div class="edge-hint right" id="edgeR"><span>端 = 戻る</span></div>
+</div>
+<div class="dialog-scrim" id="dialog"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ======================= アイコン (tokens.md の流儀: 線だけ、線幅 1.75) ======================= */
+const ICONS = {
+  menu: ['M4 6h16', 'M4 12h16', 'M4 18h16'],
+  layers: ['M12 3 21 8 12 13 3 8Z', 'M3 12.5 12 17.5 21 12.5', 'M3 17 12 22 21 17'],
+  send: ['M12 19V5', 'M5 12l7-7 7 7'],
+  back: ['M19 12H5', 'M12 19l-7-7 7-7'],
+  chevR: ['M9 18l6-6-6-6'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  msgPlus: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', 'M12 7v6', 'M9 10h6'],
+  branch: ['M6 3v12', 'M18 9a9 9 0 0 1-9 9', {c: [18, 6, 3]}, {c: [6, 18, 3]}],
+  check: ['M20 6 9 17l-5-5'],
+  x: ['M18 6 6 18', 'M6 6l12 12'],
+  loader: ['M21 12a9 9 0 1 1-6.2-8.56'],
+  wrench: ['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'],
+  bolt: ['M13 2 3 14h9l-1 8 10-12h-9l1-8z'],
+  alert: ['M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', 'M12 9v4', 'M12 17h.01'],
+  eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', {c: [12, 12, 3]}],
+  code: ['M16 18l6-6-6-6', 'M8 6l-6 6 6 6'],
+  search: [{c: [11, 11, 7]}, 'M21 21l-4.3-4.3'],
+  hourglass: ['M5 22h14', 'M5 2h14', 'M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22', 'M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2'],
+  ban: [{c: [12, 12, 9]}, 'M5.6 5.6l12.8 12.8'],
+  flag: ['M4 22V4', 'M4 4h13l-2 4 2 4H4'],
+  gear: ['M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z', {c: [12, 12, 3]}],
+  more: [{c: [12, 5, 1]}, {c: [12, 12, 1]}, {c: [12, 19, 1]}],
+  at: [{c: [12, 12, 4]}, 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'],
+  bulb: ['M9 18h6', 'M10 22h4', 'M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z'],
+  merge: [{c: [18, 18, 3]}, {c: [6, 6, 3]}, 'M6 21V9a9 9 0 0 0 9 9'],
+  refresh: ['M21 12a9 9 0 1 1-3-6.7L21 8', 'M21 3v5h-5'],
+  monitor: ['M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M8 21h8', 'M12 17v4'],
+  stop: [],
+};
+function icon(name, cls = '') {
+  if (name === 'stop') return `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>`;
+  const parts = ICONS[name].map(p => typeof p === 'string' ? `<path d="${p}"/>` : `<circle cx="${p.c[0]}" cy="${p.c[1]}" r="${p.c[2]}"/>`).join('');
+  return `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${parts}</svg>`;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const $ = id => document.getElementById(id);
+
+/* ======================= 小さな Markdown (見出し・リスト・表・コード・強調・インラインコード) ======================= */
+function inline(s) {
+  return esc(s).replace(/`([^`]+)`/g, '<code class="inl">$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+function renderMd(src) {
+  const L = src.split('\n'); let i = 0, h = '';
+  const isBlockStart = l => /^(~~~|```)|^#{1,3} |^\||^\s*([-*]|\d+\.) /.test(l);
+  while (i < L.length) {
+    const l = L[i];
+    if (/^(~~~|```)/.test(l)) {
+      const lang = l.slice(3).trim(), buf = []; i++;
+      while (i < L.length && !/^(~~~|```)/.test(L[i])) buf.push(L[i++]);
+      i++;
+      h += `<div class="code">${lang ? `<div class="lang">${esc(lang)}</div>` : ''}<pre class="hscroll"><code>${esc(buf.join('\n'))}</code></pre></div>`;
+    } else if (/^#{1,3} /.test(l)) {
+      const n = l.match(/^#+/)[0].length; h += `<h${n + 2}>${inline(l.slice(n + 1))}</h${n + 2}>`; i++;
+    } else if (/^\|/.test(l)) {
+      const rows = []; while (i < L.length && /^\|/.test(L[i])) rows.push(L[i++]);
+      const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const head = cells(rows[0]), body = rows.slice(2).map(cells);
+      h += `<div class="tablewrap hscroll"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>` +
+        body.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('') + '</tbody></table></div>';
+    } else if (/^\s*([-*]|\d+\.) /.test(l)) {
+      const ordered = /^\s*\d+\./.test(l), items = [];
+      while (i < L.length && /^\s*([-*]|\d+\.) /.test(L[i])) items.push(L[i++].replace(/^\s*([-*]|\d+\.) /, ''));
+      const t = ordered ? 'ol' : 'ul'; h += `<${t}>${items.map(x => `<li>${inline(x)}</li>`).join('')}</${t}>`;
+    } else if (!l.trim()) { i++; }
+    else {
+      const buf = []; while (i < L.length && L[i].trim() && !isBlockStart(L[i])) buf.push(L[i++]);
+      h += `<p>${buf.map(inline).join('<br>')}</p>`;
+    }
+  }
+  return h;
+}
+const md = (...lines) => lines.join('\n');
+
+/* ======================= ダミーデータ ======================= */
+// タスクの状態 → 見え方 (desktop の labels.ts と同じ語)
+const TS = {
+  implementing: {label: '実装中', icon: 'code', tone: 'impl'},
+  investigating: {label: '調査中', icon: 'search', tone: 'impl'},
+  reviewing: {label: 'レビュー中', icon: 'eye', tone: 'rev'},
+  help: {label: 'help', icon: 'alert', tone: 'hand'},
+  checkpoint: {label: 'checkpoint', icon: 'flag', tone: 'hand'},
+  waiting: {label: '待機', icon: 'hourglass', tone: 'wait'},
+  done: {label: '完了', icon: 'check', tone: 'done'},
+  cancelled: {label: '中止', icon: 'ban', tone: 'cancel'},
+};
+const GS = {
+  active: {label: '進行中', tone: 'impl', icon: 'loader'},
+  settled: {label: '完了待ち', tone: 'rev', icon: 'hourglass'},
+  finishing: {label: 'マージ中', tone: 'rev', icon: 'merge'},
+  done: {label: '完了', tone: 'done', icon: 'check'},
+  cancelled: {label: '中止', tone: 'cancel', icon: 'ban'},
+  merge_blocked: {label: 'マージ保留', tone: 'hand', icon: 'alert'},
+};
+const STEP_ICON = {implement: 'code', review: 'eye', checkpoint: 'flag', done: 'check'};
+
+const T = (o) => Object.assign({agent: null, elapsed: '', steps: [], cur: 0, out: {}}, o);
+const tools = (...items) => ({type: 'tools', items});
+const tl = (tool, arg, st = 'ok', out = '') => ({tool, arg, st, out});
+
+const TASKS = {
+  'T-107': T({id: 'T-107', title: '重複バリデーションの棚卸し', kind: 'investigate', status: 'done', agent: 'agent-d', elapsed: '12m',
+    steps: ['implement', 'done'], cur: 2,
+    out: {implementer: [
+      {type: 'md', text: '`validate` を含む関数を洗い出しました。'},
+      tools(tl('Grep', '"validate|isValid" src web', 'ok', 'src/checkout/validate.ts:12\nsrc/checkout/validate.ts:48\nsrc/api/schema/order.ts:3\nweb/src/forms/address.ts:21\nsrc/legacy/checkoutHelpers.js:88\n… 12 件'),
+        tl('Read', 'src/checkout/validate.ts'), tl('Read', 'web/src/forms/address.ts')),
+      {type: 'md', text: md('## 結果', '重複は 4 か所。住所と郵便番号の規則が 3 通りある。', '', '| 規則 | validate.ts | order.ts | address.ts |', '|---|---|---|---|', '| 郵便番号 | `\\d{7}` | `\\d{3}-?\\d{4}` | `\\d{3}-\\d{4}` |', '| 電話 | なし | E.164 | 数字のみ |')},
+      {type: 'yhtye', label: 'report_step_done', arg: '調査の結果を報告'},
+    ]}}),
+  'T-108': T({id: 'T-108', title: '共通の検証モジュール src/validation を作る', kind: 'code', status: 'reviewing', agent: 'agent-a', elapsed: '14m',
+    steps: ['implement', 'review', 'done'], cur: 1,
+    out: {
+      implementer: [
+        {type: 'md', text: '`src/validation/` に住所・郵便番号・カード番号の検証をまとめます。'},
+        tools(tl('Write', 'src/validation/index.ts'), tl('Write', 'src/validation/address.ts'), tl('Write', 'src/validation/postal.ts'),
+          tl('Bash', 'pnpm vitest run src/validation', 'ok', ' ✓ src/validation/postal.test.ts (9)\n ✓ src/validation/address.test.ts (15)\n\n Test Files  2 passed (2)\n      Tests  24 passed (24)')),
+        {type: 'md', text: md('郵便番号は v3 と同じく **数字 7 桁に正規化してから検査** する形にしました。', '', '~~~ts', "export const postalCode = z.string().transform(s => s.replace(/[-\\s]/g, '')).pipe(z.string().regex(/^\\d{7}$/, '郵便番号は 7 桁の数字'))", '~~~')},
+        {type: 'yhtye', label: 'report_step_done', arg: 'implement を完了'},
+      ],
+      'review-1': [
+        {type: 'md', text: 'T-108 の差分 (group ブランチから) を審査します。'},
+        tools(tl('Bash', 'git diff yhtye/G-14...HEAD --stat', 'ok', ' src/validation/address.ts      | 61 ++++++\n src/validation/index.ts        |  9 +\n src/validation/postal.ts       | 22 ++\n src/validation/postal.test.ts  | 48 +++++\n 4 files changed, 140 insertions(+)'),
+          tl('Read', 'src/validation/postal.ts'), tl('Read', 'src/validation/address.ts', 'run')),
+        {type: 'live', text: '住所の都道府県の検査が `address.ts` と既存の `checkout/validate.ts` で'},
+      ],
+    }}),
+  'T-109': T({id: 'T-109', title: '注文 API スキーマを v3 に移行', kind: 'code', status: 'checkpoint', agent: 'agent-b', elapsed: '21m',
+    steps: ['implement', 'checkpoint', 'review', 'done'], cur: 1,
+    callout: {kind: 'checkpoint', title: 'checkpoint · オーケストレータの確認待ち',
+      body: '移行の影響範囲 (呼び出し元 9 か所) を確認してから続ける。v2 の `OrderV2` を消すかどうかはオーケストレータが決める。', foot: '6 分前に到達 · オーケストレータの受信箱に積まれています'},
+    out: {implementer: [
+      {type: 'md', text: '注文スキーマを v3 に寄せます。まず呼び出し元を調べます。'},
+      tools(tl('Grep', '"OrderV2" src', 'ok', 'src/api/routes/order.ts:14\nsrc/api/routes/order.ts:52\nsrc/checkout/submit.ts:8\nsrc/legacy/checkoutHelpers.js:3\n… 9 件'), tl('Edit', 'src/api/schema/order.ts'), tl('Bash', 'pnpm tsc --noEmit', 'err', "src/legacy/checkoutHelpers.js(3,10): error TS2305: Module '\"../api/schema/order\"' has no exported member 'OrderV2'.")),
+      {type: 'md', text: md('v3 の定義は入れましたが、`OrderV2` を消すとレガシー側 (T-110 の範囲) が壊れます。', '', '- 呼び出し元: **9 か所** (うち 3 か所はレガシー)', '- `OrderV2` は当面 deprecated で残すのが安全')},
+      {type: 'yhtye', label: 'report_step_done', arg: 'implement を完了 → checkpoint'},
+    ]}}),
+  'T-110': T({id: 'T-110', title: 'レガシーの合計金額チェックを置き換え', kind: 'code', status: 'help', agent: 'agent-c', elapsed: '18m',
+    steps: ['implement', 'review', 'done'], cur: 0,
+    note: '注文スキーマが v2 (税込の整数) と v3 (decimal 文字列) で混在。どちらに合わせるか決められない', helpKind: '詰まり',
+    callout: {kind: 'help', title: 'help · 詰まり',
+      body: '注文スキーマが v2 (税込の整数) と v3 (decimal の文字列) で混在しています。合計金額の検査をどちらに合わせるか決められません。', foot: '3 分前 · オーケストレータが対処中'},
+    out: {implementer: [
+      {type: 'md', text: '`src/legacy/checkoutHelpers.js` の合計金額チェックを `src/validation/` に寄せます。'},
+      tools(tl('Read', 'src/legacy/checkoutHelpers.js'), tl('Grep', '"calcTotal" src', 'ok', 'src/legacy/checkoutHelpers.js:88\nsrc/checkout/summary.ts:31\n… 7 件'), tl('Read', 'src/api/schema/order.ts')),
+      {type: 'md', text: md('`order.ts` に v2 と v3 の定義が混在しています:', '', '~~~ts', "export const OrderV2 = z.object({ total: z.number().int(), currency: z.literal('JPY') })            // v2: 税込の整数", 'export const OrderV3 = z.object({ total: z.object({ amount: z.string(), currency: z.string() }) })  // v3: decimal の文字列', '~~~', '', 'どちらに合わせるかで合計の検査の書き方が変わるため、判断を仰ぎます。')},
+      {type: 'yhtye', label: 'help', arg: 'kind=blocked を送信'},
+      {type: 'notice', label: '待機', arg: 'オーケストレータの返答を待っています'},
+    ]}}),
+  'T-111': T({id: 'T-111', title: '住所フォームを共通モジュールへ差し替え', kind: 'code', status: 'waiting', elapsed: '',
+    steps: ['implement', 'review', 'done'], cur: 0, waitNote: 'T-108 の完了待ち (依存)', out: {}}),
+  'T-112': T({id: 'T-112', title: 'カード番号の検証を Luhn 込みで共通化', kind: 'code', status: 'implementing', agent: 'agent-e', elapsed: '9m',
+    steps: ['implement', 'review', 'done'], cur: 0,
+    out: {implementer: [
+      {type: 'md', text: 'カード番号の検証を `src/validation/card.ts` にまとめます。Luhn のチェックも入れます。'},
+      tools(tl('Read', 'src/checkout/validate.ts'), tl('Write', 'src/validation/card.ts'), tl('Write', 'src/validation/card.test.ts'), tl('Bash', 'pnpm vitest run src/validation/card', 'run')),
+    ]}}),
+  // 過去のグループ
+  'T-101': T({id: 'T-101', title: '決済画面の型エラーを解消', status: 'done', agent: 'agent-a', elapsed: '7m', steps: ['implement', 'review', 'done'], cur: 3}),
+  'T-102': T({id: 'T-102', title: 'Stripe の型定義を更新', status: 'done', agent: 'agent-b', elapsed: '5m', steps: ['implement', 'done'], cur: 2}),
+  'T-103': T({id: 'T-103', title: 'any を減らす (checkout/*)', status: 'done', agent: 'agent-a', elapsed: '11m', steps: ['implement', 'review', 'done'], cur: 3}),
+  // C-5
+  'T-104': T({id: 'T-104', title: 'webhook の再送ロジックを調べる', kind: 'investigate', status: 'done', agent: 'agent-d', elapsed: '8m', steps: ['implement', 'done'], cur: 2}),
+  'T-105': T({id: 'T-105', title: '再送間隔を指数バックオフに', status: 'done', agent: 'agent-a', elapsed: '13m', steps: ['implement', 'review', 'done'], cur: 3}),
+  'T-106': T({id: 'T-106', title: '重複イベントの除外', status: 'cancelled', agent: 'agent-b', elapsed: '4m', steps: ['implement', 'review', 'done'], cur: 0, cancelNote: '中止: T-105 に含めた'}),
+  // C-6
+  'T-98': T({id: 'T-98', title: '返金額の丸めを銀行丸めに統一', status: 'done', agent: 'agent-a', elapsed: '16m', steps: ['implement', 'review', 'done'], cur: 3}),
+  'T-99': T({id: 'T-99', title: '丸めのテストを追加', status: 'done', agent: 'agent-c', elapsed: '6m', steps: ['implement', 'done'], cur: 2}),
+};
+
+const GROUPS = {
+  'G-14': {id: 'G-14', title: 'checkout バリデーション統合', status: 'active', tasks: ['T-107', 'T-108', 'T-109', 'T-110', 'T-111', 'T-112']},
+  'G-12': {id: 'G-12', title: '決済画面の型エラー解消', status: 'done', tasks: ['T-101', 'T-102', 'T-103'], ago: '昨日'},
+  'G-11': {id: 'G-11', title: 'webhook 再送の整理', status: 'settled', tasks: ['T-104', 'T-105', 'T-106']},
+  'G-10': {id: 'G-10', title: '返金額の丸め', status: 'merge_blocked', tasks: ['T-98', 'T-99'],
+    detail: 'base ブランチ fix/refund-rounding へのマージがコンフリクト (src/refund/calc.ts)。作業ツリーを整えてから再試行してください。'},
+};
+
+/* 会話 (中央) */
+const CHAT_C7 = [
+  {type: 'user', text: 'チェックアウトのバリデーションを整理したい。まず現状を調べて、必要ならタスクに割って進めて。'},
+  {type: 'think', text: 'まず validate 系の関数がどこにあるかを Grep で洗い出し、スキーマとフォームを読む。重複が多ければグループに分ける。'},
+  tools(tl('Grep', '"validate|isValid" src web', 'ok', 'src/checkout/validate.ts:12\nsrc/api/schema/order.ts:3\nweb/src/forms/address.ts:21\nsrc/legacy/checkoutHelpers.js:88\n… 12 件'),
+    tl('Read', 'src/checkout/validate.ts'), tl('Read', 'src/api/schema/order.ts'), tl('Read', 'web/src/forms/address.ts')),
+  {type: 'md', text: md(
+    '## 現状',
+    'バリデーションが **4 か所に重複** しています。',
+    '',
+    '| 場所 | 対象 | 方式 |',
+    '|---|---|---|',
+    '| `src/checkout/validate.ts` | 住所・カード | 手書き |',
+    '| `src/api/schema/order.ts` | 注文 API | zod (v2 と v3 が混在) |',
+    '| `web/src/forms/address.ts` | 住所フォーム | yup |',
+    '| `src/legacy/checkoutHelpers.js` | 合計金額 | 手書き |',
+    '',
+    '郵便番号の規則も食い違っています:',
+    '',
+    '~~~ts',
+    "postalCode: z.string().regex(/^\\d{3}-?\\d{4}$/),  // order.ts (v2): ハイフン任意。v3 は数字 7 桁に正規化してから検査する",
+    '~~~',
+    '',
+    '## 進め方',
+    '1. 共通の検証モジュール `src/validation/` を作る',
+    '2. 注文 API のスキーマを v3 に寄せる (影響範囲を見てから続ける)',
+    '3. フォームとレガシーを差し替える',
+    '4. カード番号の検証も同じ場所へ')},
+  {type: 'group', group: 'G-14'},
+  {type: 'md', text: 'G-14 として 6 タスクに分けて配りました。T-111 (フォーム) は T-108 の共通モジュールができてから始まります。'},
+  {type: 'user', text: 'フォームの方は yup をやめて zod に揃えてほしい'},
+  {type: 'yhtye', label: '指示を変更', arg: 'T-111 · yup を外して zod に統一'},
+  {type: 'md', text: '了解です。T-111 の指示に「yup を外して zod に統一」を加えました。'},
+  {type: 'notice', label: 'help', arg: 'T-110 · 詰まり — スキーマが v2/v3 混在', task: 'T-110'},
+  {type: 'notice', label: 'checkpoint', arg: 'T-109 · 移行の影響範囲を確認', task: 'T-109'},
+  {type: 'md', text: 'T-110 が詰まりました。方針は **v3 へ寄せる** にします。T-109 の checkpoint とも関係するので、先に `order.ts` の v2 の定義を私の方で整理します。'},
+  tools(tl('Read', 'src/api/schema/order.ts'), tl('Edit', 'src/api/schema/order.ts', 'run')),
+  {type: 'live', text: ''},
+];
+const CHAT_C5 = [
+  {type: 'user', text: '決済 webhook の再送処理を調べて、必要なら直して'},
+  tools(tl('Grep', '"retryWebhook" src'), tl('Read', 'src/webhook/retry.ts')),
+  {type: 'md', text: md('再送は **固定 5 秒間隔で無制限** になっていました。', '', '- 指数バックオフ (最大 1 時間) に変える', '- 同じイベント ID の重複を除く')},
+  {type: 'group', group: 'G-11'},
+  {type: 'md', text: '全タスクが落ち着きました。T-106 は T-105 に含めたので中止しています。マージしてよければ「完了して」と送ってください。'},
+];
+const CHAT_C6 = [
+  {type: 'user', text: '返金額の丸め誤差を直して。銀行丸めに統一したい'},
+  {type: 'group', group: 'G-10'},
+  {type: 'yhtye', label: 'finish_group', arg: 'G-10 → fix/refund-rounding', st: 'err', out: 'CONFLICT (content): Merge conflict in src/refund/calc.ts\nマージを中止しました (merge_blocked)'},
+  {type: 'md', text: md('`fix/refund-rounding` へのマージでコンフリクトが出ました。PC 側で `src/refund/calc.ts` を整えてから、グループのパネルの「マージを再試行」を押してください。')},
+];
+const CHAT_LEDGER = [
+  {type: 'user', text: '月次締めの CSV 出力に摘要の列を足したい'},
+  tools(tl('Read', 'src/export/monthly.ts')),
+  {type: 'md', text: md('`monthly.ts` の列定義に足すだけで済みそうです。小さいので私が直接直しました。', '', '~~~diff', "   { key: 'amount', header: '金額' },", "+  { key: 'memo', header: '摘要' },", '~~~')},
+];
+
+const PROJECTS = [
+  {id: 'payments', name: 'payments-api', abbr: 'PA', path: '~/src/payments-api', worktrees: [
+    {branch: 'feat/checkout-refactor', main: true, open: true, chats: [
+      {id: 'C-7', title: 'チェックアウトのバリデーション整理', state: 'turn', ago: '1m', groups: ['G-14', 'G-12'], msgs: CHAT_C7},
+      {id: 'C-5', title: '決済 webhook の再送処理を調べる', state: 'alive', ago: '2h', groups: ['G-11'], msgs: CHAT_C5},
+    ]},
+    {branch: 'fix/refund-rounding', open: true, chats: [
+      {id: 'C-6', title: '返金額の丸め誤差', state: 'idle', ago: '1d', notify: true, groups: ['G-10'], msgs: CHAT_C6},
+    ]},
+    {branch: 'chore/deps-2026-10', open: false, chats: [
+      {id: 'C-3', title: '依存の更新', state: 'idle', ago: '6d', groups: [], msgs: [{type: 'user', text: '依存を最新にして'}, {type: 'md', text: '`pnpm up --latest` を実行し、テストが通ることを確認しました。'}]},
+    ]},
+  ], otherBranches: ['release/2026.9', 'spike/stripe-v3']},
+  {id: 'ledger', name: 'ledger', abbr: 'LE', path: '~/src/ledger', worktrees: [
+    {branch: 'main', main: true, open: true, chats: [
+      {id: 'C-2', title: '月次締めの CSV に摘要の列', state: 'alive', ago: '3h', groups: [], msgs: CHAT_LEDGER},
+    ]},
+  ], otherBranches: []},
+  {id: 'infra', name: 'infra-terraform', abbr: 'IN', path: '~/src/infra-terraform', worktrees: [
+    {branch: 'main', main: true, open: true, chats: [
+      {id: 'C-1', title: '', state: 'idle', ago: '', groups: [], msgs: []},
+    ]},
+  ], otherBranches: ['feat/vpc-split']},
+];
+
+/* ======================= UI 状態 ======================= */
+const ui = {
+  projectId: 'payments', chatId: 'C-7',
+  open: new Set(),            // 開いているツール行・グループ行のキー
+  mentions: [], branchForm: false, branchErr: '',
+  detailTab: null, theme: 'system',
+  turn: {},                   // chatId → 'starting' | 'running'
+};
+ui.turn['C-7'] = 'running';
+const project = () => PROJECTS.find(p => p.id === ui.projectId);
+function findChat(id) {
+  for (const p of PROJECTS) for (const w of p.worktrees) for (const c of w.chats) if (c.id === id) return {p, w, c};
+  return null;
+}
+const chat = () => findChat(ui.chatId)?.c;
+const projectRunning = p => p.worktrees.some(w => w.chats.some(c => ui.turn[c.id]));
+const projectNotify = p => p.worktrees.some(w => w.chats.some(c => c.notify));
+const attnTasks = c => (c?.groups || []).flatMap(g => GROUPS[g].tasks).map(id => TASKS[id]).filter(t => t.status === 'help' || t.status === 'checkpoint');
+const chatState = c => ui.turn[c.id] ? 'turn' : (c.state === 'turn' ? 'alive' : c.state);
+
+/* ======================= 描画: 左パネル ======================= */
+function renderLeft() {
+  const p = project();
+  const rail = PROJECTS.map(q => `
+    <button class="proj ${q.id === p.id ? 'sel' : ''}" data-act="project" data-id="${q.id}" aria-label="${esc(q.name)}">
+      ${esc(q.abbr)}
+      ${projectRunning(q) ? '<span class="ring turn"></span>' : ''}
+      ${projectNotify(q) ? '<span class="notify-dot"></span>' : ''}
+    </button>`).join('');
+  const wts = p.worktrees.map((w, wi) => {
+    const chats = w.open ? w.chats.map(c => `
+      <button class="chat ${c.id === ui.chatId ? 'sel' : ''}" data-act="chat" data-id="${c.id}">
+        <span class="ring ${chatState(c)}"></span>
+        <span class="ct">${esc(c.title || '新しいチャット')}</span>
+        ${c.notify ? '<span class="notify-dot" aria-label="通知あり"></span>' : ''}
+        <span class="ago">${esc(c.ago)}</span>
+      </button>`).join('') + `<button class="newchat" data-act="newchat" data-wt="${wi}">${icon('plus', 's16')}新しいチャット</button>` : '';
+    return `
+      <div class="wt" role="button" tabindex="0" data-act="toggle-wt" data-wt="${wi}" aria-expanded="${w.open}">
+        ${icon('chevR', 's14 chev')}
+        <span class="dot ${w.main ? 'main' : ''}"></span>
+        <span class="bname">${esc(w.branch)}</span>
+      </div>${chats}`;
+  }).join('');
+  const others = p.otherBranches.length ? `
+    <div class="wt" role="button" data-act="toggle-others" aria-expanded="${ui.open.has('others:' + p.id)}">
+      ${icon('chevR', 's14 chev')}<span class="bname" style="font-family:var(--font-ui);color:var(--tx-4)">他のブランチ (${p.otherBranches.length})</span>
+    </div>
+    ${ui.open.has('others:' + p.id) ? p.otherBranches.map(b => `
+      <div class="wt" style="padding-left:34px"><span class="dot"></span><span class="bname">${esc(b)}</span>
+        <button class="add" data-act="newchat-branch" data-branch="${esc(b)}" aria-label="${esc(b)} の新しいチャット">${icon('msgPlus', 's16')}</button></div>`).join('') : ''}` : '';
+  const form = ui.branchForm ? `
+    <form class="branchform" id="bform">
+      <input id="bname" placeholder="ブランチ名 (例: feat/new-thing)" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="bfrom">${['HEAD (' + p.worktrees[0].branch + ')', ...p.worktrees.slice(1).map(w => w.branch), ...p.otherBranches].map(b => `<option>${esc(b)}</option>`).join('')}</select>
+      ${ui.branchErr ? `<div class="err">${esc(ui.branchErr)}</div>` : ''}
+      <div class="acts"><button type="button" class="btn text" data-act="branch-cancel">キャンセル</button><button class="btn fill">作成</button></div>
+    </form>` : '';
+  $('left').innerHTML = `
+    <div class="cols">
+      <nav class="rail" aria-label="プロジェクト">${rail}</nav>
+      <div class="tree">
+        <div class="tree-head"><div class="pname">${esc(p.name)}</div><div class="ppath">${esc(p.path)}</div></div>
+        <div class="section-h">${icon('branch', 's14')}<span class="grow">ブランチ</span>
+          <button class="iconbtn" style="width:40px;height:40px;margin:-12px -10px -12px 0" data-act="branch-new" aria-label="新しいブランチ">${icon('plus', 's16')}</button></div>
+        ${form}${wts}${others}
+      </div>
+    </div>
+    <div class="userbar">
+      <div class="who">
+        <div class="pc"><span class="dot"></span>desk-arch <small>接続中</small></div>
+        <div class="meters">
+          <span class="meter">5h <span class="bar"><i style="width:94%;background:var(--usage-5h)"></i></span>94%</span>
+          <span class="meter">week <span class="bar"><i style="width:40%;background:var(--usage-week)"></i></span>40%</span>
+        </div>
+      </div>
+      <button class="iconbtn" data-act="settings" aria-label="設定">${icon('gear')}</button>
+    </div>`;
+}
+
+/* ======================= 描画: 中央 ======================= */
+function renderTopbar() {
+  const f = findChat(ui.chatId), c = f.c;
+  const attn = attnTasks(c).length + (c.groups || []).filter(id => GROUPS[id].status === 'merge_blocked').length;
+  const otherNotify = PROJECTS.some(p => p.worktrees.some(w => w.chats.some(x => x.notify && x.id !== c.id)));
+  $('topbar').innerHTML = `
+    <button class="iconbtn" data-act="open-left" aria-label="プロジェクトとチャット">${icon('menu')}${otherNotify ? '<span class="badge-dot"></span>' : ''}</button>
+    <div class="titles">
+      <div class="title">${esc(c.title || '新しいチャット')}</div>
+      <div class="sub"><span class="pill">${icon('branch', 's14')}<span>${esc(f.w.branch)}</span></span></div>
+    </div>
+    <button class="iconbtn" data-act="open-right" aria-label="グループ">${icon('layers')}${attn ? `<span class="badge-num">${attn}</span>` : ''}</button>`;
+}
+function lineHtml(key, it, kind = 'tool') {
+  const isOpen = ui.open.has(key);
+  const st = it.st === 'run' ? icon('loader', 's14 spin') : it.st === 'err' ? icon('x', 's14') : icon('check', 's14');
+  const ico = kind === 'yhtye' ? icon('bolt', 's16') : icon('wrench', 's16');
+  const hasOut = !!it.out;
+  return `<button class="line ${kind === 'yhtye' ? 'yhtye' : ''}" ${hasOut ? `data-act="toggle" data-key="${key}" aria-expanded="${isOpen}"` : ''}>
+      ${ico}<span class="lbl">${esc(it.tool || it.label)}</span><span class="arg">${esc(it.arg)}</span>
+      <span class="st ${it.st || 'ok'}">${st}</span>${hasOut ? icon('chevR', 's14 chev') : ''}</button>
+    ${hasOut && isOpen ? `<div class="out hscroll">${esc(it.out)}</div>` : ''}`;
+}
+function renderItems(items, prefix) {
+  return items.map((m, i) => {
+    const key = prefix + ':' + i;
+    switch (m.type) {
+      case 'user': return `<div class="row user"><div class="bubble">${m.mention ? `<span class="mention">${esc(m.mention)}</span>` : ''}${esc(m.text)}</div></div>`;
+      case 'md': return `<div class="row"><div class="md">${renderMd(m.text)}</div></div>`;
+      case 'live': return `<div class="row"><div class="md">${m.text ? renderMd(m.text) : ''}<span class="caret"></span></div></div>`;
+      case 'think': {
+        const isOpen = ui.open.has(key);
+        return `<div class="row"><button class="line" data-act="toggle" data-key="${key}" aria-expanded="${isOpen}">${icon('bulb', 's16')}<span class="arg">考えたこと</span>${icon('chevR', 's14 chev')}</button>
+          ${isOpen ? `<div class="out" style="white-space:normal;font-family:var(--font-ui);font-size:13.5px">${esc(m.text)}</div>` : ''}</div>`;
+      }
+      case 'tools': {
+        if (m.items.length === 1) return `<div class="row">${lineHtml(key + ':0', m.items[0])}</div>`;
+        const isOpen = ui.open.has(key);
+        const running = m.items.some(t => t.st === 'run'), err = m.items.some(t => t.st === 'err');
+        const names = [...new Set(m.items.map(t => t.tool))].join(', ');
+        const st = running ? icon('loader', 's14 spin') : err ? icon('x', 's14') : icon('check', 's14');
+        return `<div class="row"><button class="line" data-act="toggle" data-key="${key}" aria-expanded="${isOpen}">${icon('wrench', 's16')}
+            <span class="lbl">ツール ${m.items.length} 件</span><span class="arg">${esc(names)}</span><span class="st ${running ? 'run' : err ? 'err' : 'ok'}">${st}</span>${icon('chevR', 's14 chev')}</button>
+          ${isOpen ? `<div class="sub-lines">${m.items.map((t, j) => lineHtml(key + ':' + j, t)).join('')}</div>` : ''}</div>`;
+      }
+      case 'yhtye': return `<div class="row">${lineHtml(key, {label: m.label, arg: m.arg, st: m.st, out: m.out}, 'yhtye')}</div>`;
+      case 'notice': return `<div class="row"><button class="line ${m.label === '待機' ? '' : 'notice'}" ${m.task ? `data-act="task" data-id="${m.task}"` : ''}>${icon(m.label === '待機' ? 'hourglass' : m.label === 'checkpoint' ? 'flag' : 'alert', 's16')}
+          <span class="lbl">${esc(m.label)}</span><span class="arg">${esc(m.arg)}</span>${m.task ? icon('chevR', 's14 chev') : ''}</button></div>`;
+      case 'group': {
+        const g = GROUPS[m.group], isOpen = ui.open.has(key);
+        return `<div class="row"><button class="line yhtye" data-act="toggle" data-key="${key}" aria-expanded="${isOpen}">${icon('bolt', 's16')}
+            <span class="lbl">グループを作成</span><span class="arg">${g.id} ${esc(g.title)} · ${g.tasks.length} タスク</span>${icon('chevR', 's14 chev')}</button>
+          ${isOpen ? `<div class="grouplist">${g.tasks.map((id, n) => { const t = TASKS[id], s = TS[t.status]; return `
+            <button data-act="task" data-id="${id}"><span class="n">${n + 1}</span><span class="tid">${id}</span><span class="tt">${esc(t.title)}</span>
+              <span class="chip tone-${s.tone}" style="height:20px">${icon(s.icon)}</span></button>`; }).join('')}</div>` : ''}</div>`;
+      }
+    }
+    return '';
+  }).join('');
+}
+function renderMsgs(stick = true) {
+  const c = chat(), box = $('msgs');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = c.msgs.length ? renderItems(c.msgs, 'c:' + c.id)
+    : `<div class="empty"><b>新しいチャット</b>この作業ツリーで、オーケストレータに<br>やりたいことを送って始めます。</div>`;
+  if (!c.msgs.length) box.style.display = 'flex'; else box.style.display = '';
+  if (stick && atBottom) box.scrollTop = box.scrollHeight;
+}
+function renderWaitbar() {
+  const c = chat();
+  const g = (c.groups || []).map(id => GROUPS[id]).find(g => ['active', 'settled', 'finishing', 'merge_blocked'].includes(g.status));
+  if (!g) { $('waitbar-slot').innerHTML = ''; return; }
+  const ts = g.tasks.map(id => TASKS[id]);
+  const done = ts.filter(t => t.status === 'done').length, hand = ts.filter(t => t.status === 'help' || t.status === 'checkpoint').length;
+  const blocked = g.status === 'merge_blocked';
+  const text = blocked ? `${g.id} ${g.title} — base へのマージが保留` : g.status === 'settled' ? `${g.id} 全タスク完了 — オーケストレータのマージ待ち` : `${done}/${ts.length} 完了 · ${g.id} ${g.title}`;
+  $('waitbar-slot').innerHTML = `<button class="waitbar" data-act="open-right">${icon(g.status === 'settled' ? 'hourglass' : 'layers', 's16')}<span class="grow">${esc(text)}</span>
+    ${blocked ? '<span class="hand">マージ保留</span>' : hand ? `<span class="hand">判断待ち ${hand}</span>` : ''}${icon('chevR', 's14')}</button>`;
+}
+function renderComposer() {
+  const t = ui.turn[ui.chatId], btn = $('send'), st = $('cstate');
+  if (t === 'starting') st.innerHTML = `${icon('loader', 's14 spin')}起動中…`;
+  else if (t === 'running') st.innerHTML = `${icon('loader', 's14 spin')}オーケストレータが作業中`;
+  else st.innerHTML = '';
+  st.style.display = t ? '' : 'none';
+  if (t) { btn.className = 'sendbtn stop'; btn.innerHTML = icon('stop'); btn.setAttribute('aria-label', 'ターンを中止'); btn.disabled = false; }
+  else { btn.className = 'sendbtn'; btn.innerHTML = icon('send'); btn.setAttribute('aria-label', '送信'); btn.disabled = !$('input').value.trim() && !ui.mentions.length; }
+  $('mentions').innerHTML = ui.mentions.map((m, i) => `<button class="mchip" data-act="unmention" data-i="${i}"><span>@${esc(m.id)} ${esc(m.title)}</span>${icon('x', 's14')}</button>`).join('');
+  $('mentions').style.display = ui.mentions.length ? '' : 'none';
+}
+function renderCenter(stick = true) { renderTopbar(); renderMsgs(stick); renderWaitbar(); renderComposer(); }
+
+/* ======================= 描画: 右パネル ======================= */
+function stepProgress(t) {
+  const n = t.steps.length; if (!n) return 0;
+  return Math.min(1, (t.cur + 0.5) / n);
+}
+function taskRow(t) {
+  const s = TS[t.status], hand = s.tone === 'hand';
+  const running = t.status === 'implementing' || t.status === 'reviewing';
+  const meta = t.status === 'waiting' ? `<span>${esc(t.waitNote || '待機')}</span>`
+    : t.status === 'cancelled' ? `<span>${esc(t.cancelNote || '中止')}</span>`
+    : `<span class="lab">${esc(s.label)}${t.helpKind ? ' · ' + esc(t.helpKind) : ''}</span><span>·</span><span>${esc(t.agent || '')}</span><span>·</span><span>${esc(t.elapsed)}</span>`;
+  return `<button class="task ${hand ? 'hand' : ''} ${t.status === 'done' || t.status === 'cancelled' ? 'muted' : ''}" data-act="task" data-id="${t.id}">
+    <span class="ico tone-${s.tone}">${icon(t.kind === 'investigate' && running ? 'search' : s.icon)}</span>
+    <span class="tl"><span class="tid">${t.id}</span><span class="tt">${esc(t.title)}</span></span>
+    <span class="go">${icon('chevR', 's16')}</span>
+    ${running ? `<span class="prog"><i style="width:${Math.round(stepProgress(t) * 100)}%;background:var(--${s.tone}-bar)"></i></span>` : ''}
+    ${hand ? `<span class="note">${inline(t.status === 'checkpoint' ? t.callout.body : t.note)}</span>` : ''}
+    <span class="meta">${meta}</span>
+  </button>`;
+}
+function groupCard(g, past) {
+  const s = GS[g.status], ts = g.tasks.map(id => TASKS[id]);
+  const done = ts.filter(t => t.status === 'done').length;
+  const seg = ts.map(t => `<i style="background:var(--${TS[t.status].tone}-bar)"></i>`).join('');
+  const expanded = !past || ui.open.has('g:' + g.id);
+  return `<section class="gcard ${past ? 'past' : ''}" aria-expanded="${expanded}">
+    <button class="ghead" ${past ? `data-act="toggle-group" data-id="${g.id}"` : ''}>
+      <span class="chip tone-${s.tone}">${icon(s.icon, g.status === 'active' ? 'spin' : '')}${s.label}</span>
+      <span class="gt">${esc(g.title)}</span><span class="gid">${g.id}</span>${past ? icon('chevR', 's14 chev') : ''}
+    </button>
+    <div class="gsum"><span class="segbar">${seg}</span><span>${done}/${ts.length} 完了</span></div>
+    ${g.status === 'merge_blocked' ? `<div class="gwarn">${esc(g.detail)}<div class="acts"><button class="btn tonal" data-act="retry-merge" data-id="${g.id}">${''}マージを再試行</button></div></div>` : ''}
+    ${g.status === 'settled' ? `<div class="gwarn" style="background:var(--bg-inset);border-color:var(--line);color:var(--tx-2)">全タスクが落ち着きました。オーケストレータがグループを完了 (マージ) するのを待っています。</div>` : ''}
+    <div class="${past ? 'pastlist' : ''}">${ts.map(taskRow).join('')}</div>
+  </section>`;
+}
+function renderRight() {
+  const c = chat(), groups = (c.groups || []).map(id => GROUPS[id]);
+  const live = groups.filter(g => g.status !== 'done' && g.status !== 'cancelled');
+  const past = groups.filter(g => g.status === 'done' || g.status === 'cancelled');
+  const attn = attnTasks(c);
+  $('right').innerHTML = `
+    <div class="rhead"><div class="t">グループ</div><div class="s">${esc(c.title || '新しいチャット')}</div></div>
+    <div class="rbody">
+      ${attn.length ? `<div class="attn">${icon('alert', 's16')}<span>判断待ちが ${attn.length} 件あります (${attn.map(t => t.id).join(', ')})。オーケストレータが対処します。</span></div>` : ''}
+      ${live.map(g => groupCard(g, false)).join('')}
+      ${past.length ? `<div class="section-h" style="padding-left:6px">過去のグループ</div>${past.map(g => groupCard(g, true)).join('')}` : ''}
+      ${!groups.length ? `<div class="empty" style="margin-top:40px">このチャットにはまだグループがありません。<br>オーケストレータが作業を分けると、ここに出ます。</div>` : ''}
+    </div>`;
+}
+
+/* ======================= 描画: タスク詳細 ======================= */
+function renderDetail(id) {
+  const t = TASKS[id], s = TS[t.status];
+  const g = Object.values(GROUPS).find(g => g.tasks.includes(id));
+  const sessions = Object.keys(t.out);
+  if (!ui.detailTab || !t.out[ui.detailTab]) ui.detailTab = sessions[sessions.length - 1] || null;
+  const curTone = t.status === 'reviewing' ? 'rev' : (s.tone === 'hand' ? 'hand' : 'impl');
+  const steps = t.steps.map((k, i) => {
+    const cls = i < t.cur ? 'ok' : i === t.cur && t.status !== 'waiting' && t.status !== 'cancelled' ? 'cur ' + curTone : '';
+    return `${i ? `<span class="arrow">${icon('chevR', 's14')}</span>` : ''}<span class="step ${cls}">${icon(i < t.cur ? 'check' : STEP_ICON[k])}${k}${cls.startsWith('cur') && s.tone !== 'hand' ? '<span class="pulse"></span>' : ''}</span>`;
+  }).join('');
+  const tabs = sessions.length ? `<div class="tabs">${sessions.map(k => `<button class="tab ${k === ui.detailTab ? 'sel' : ''}" data-act="dtab" data-k="${k}">
+      <span class="ring ${(k === sessions[sessions.length - 1] && (t.status === 'implementing' || t.status === 'reviewing')) ? 'turn' : (t.status === 'done' || t.status === 'cancelled') ? '' : 'alive'}"></span>${esc(k)}</button>`).join('')}</div>` : '';
+  const body = ui.detailTab ? renderItems(t.out[ui.detailTab], 'd:' + id + ':' + ui.detailTab)
+    : `<div class="empty" style="margin-top:24px">${t.status === 'waiting' ? esc(t.waitNote || '開始待ち') + '。<br>エージェントはまだ起動していません。' : 'このタスクの出力はモックに入っていません。'}</div>`;
+  $('detail').innerHTML = `
+    <header class="dhead">
+      <button class="iconbtn" data-act="back" aria-label="戻る">${icon('back')}</button>
+      <div class="titles"><div class="tid">${t.id}${g ? ' · ' + g.id + ' ' + esc(g.title) : ''}</div><div class="tt">${esc(t.title)}</div></div>
+      <button class="iconbtn" data-act="dmenu" aria-label="その他">${icon('more')}</button>
+    </header>
+    <div class="menu" id="dmenu">
+      <button data-act="mention" data-id="${t.id}">${icon('at')}チャットで触れる</button>
+      ${t.status !== 'done' && t.status !== 'cancelled' ? `<button class="danger" data-act="cancel-task" data-id="${t.id}">${icon('ban')}タスクを中止</button>` : ''}
+    </div>
+    <div class="dbody">
+      <div class="dmeta"><span class="chip tone-${s.tone}">${icon(s.icon)}${s.label}</span>${t.agent ? `<span>${esc(t.agent)}</span><span>·</span><span>${esc(t.elapsed)}</span>` : ''}<span>·</span><span>${t.kind === 'investigate' ? '調査' : 'コード'}</span></div>
+      <div class="steps hscroll">${steps}</div>
+      ${t.callout ? `<div class="callout"><div class="h">${icon(t.callout.kind === 'help' ? 'alert' : 'flag', 's16')}${esc(t.callout.title)}</div><p>${inline(t.callout.body)}</p><div class="f">${esc(t.callout.foot)}</div></div>` : ''}
+      ${tabs}
+      <div class="dout">${body}</div>
+    </div>`;
+}
+
+/* ======================= 描画: 設定 ======================= */
+function renderSettings() {
+  const seg = ['system', 'light', 'dark'].map(k => `<button class="${ui.theme === k ? 'sel' : ''}" data-act="theme" data-k="${k}">${{system: '端末', light: 'ライト', dark: 'ダーク'}[k]}</button>`).join('');
+  $('settings').innerHTML = `
+    <header class="dhead"><button class="iconbtn" data-act="back" aria-label="戻る">${icon('back')}</button><div class="titles"><div class="tt">設定</div></div></header>
+    <div class="dbody">
+      <div class="setrow">${icon('monitor')}<div class="k"><b>desk-arch</b><small>desk-arch.tail4f2a.ts.net:1423 · 接続中</small></div></div>
+      <div class="setrow"><div class="k"><b>テーマ</b><small>モック用: 端末の設定に合わせるか固定</small></div><div class="seg">${seg}</div></div>
+      <div class="setrow"><div class="k"><b>使用量</b><small>Claude Max · 5h 94% (残り 3h35m) · week 40% (2d4h)</small></div></div>
+      <button class="setrow" data-act="toast" data-msg="モックでは何もしません"><div class="k"><b style="color:var(--hand-bar)">ペアリングを解除</b><small>この端末のトークンを消します</small></div></button>
+    </div>`;
+}
+
+/* ======================= 画面の積み重ねと「戻る」 =======================
+   状態 = { panel: null|'left'|'right', screen: null|'detail'|'settings', task }。開くたびに history に積む。
+   戻る (Android の戻る = ブラウザの戻る、モックでは Esc も) は 1 段ずつ閉じる: 詳細 → パネル → 中央。 */
+let nav = {panel: null, screen: null, task: null, depth: 0};
+const historyOk = (() => { try { history.replaceState({panel: null, screen: null, task: null, depth: 0}, ''); return true; } catch { return false; } })();
+function pushNav(next) {
+  next = Object.assign({}, nav, next, {depth: nav.depth + 1});
+  if (historyOk) history.pushState(next, '');
+  applyNav(next);
+}
+function back(steps = 1) {
+  if (nav.depth <= 0) return;
+  steps = Math.min(steps, nav.depth);
+  if (historyOk) history.go(-steps);
+  else applyNav(steps >= nav.depth ? {panel: null, screen: null, task: null, depth: 0} : Object.assign({}, nav, nav.screen ? {screen: null, depth: nav.depth - 1} : {panel: null, depth: nav.depth - 1}));
+}
+window.addEventListener('popstate', e => applyNav(e.state || {panel: null, screen: null, task: null, depth: 0}));
+function applyNav(next) {
+  const prev = nav; nav = next;
+  // パネル
+  const W = panelW(), target = next.panel === 'left' ? W : next.panel === 'right' ? -W : 0;
+  if (target !== pos) setPos(target, 240);
+  if (next.panel === 'right') renderRight();
+  // 積み重ねの画面
+  for (const id of ['detail', 'settings']) {
+    const el = $(id), want = next.screen === id;
+    if (want && (!el.classList.contains('open') || prev.task !== next.task)) {
+      if (id === 'detail') { if (prev.task !== next.task) ui.detailTab = null; renderDetail(next.task); $('detail').querySelector('.dbody').scrollTop = 0; }
+      else renderSettings();
+      el.classList.add('open');
+    } else if (!want && el.classList.contains('open')) {
+      el.classList.remove('open'); el.classList.add('closing');
+      setTimeout(() => el.classList.remove('closing'), 280);
+    }
+  }
+  $('screendim').classList.toggle('on', !!next.screen);
+}
+const panelOpen = () => nav.panel !== null;
+const screenOpen = () => nav.screen !== null;
+
+/* ======================= パネルの位置 ======================= */
+const app = $('app'), center = $('center'), shield = $('shield');
+const PEEK = 64;
+let pos = 0;
+const panelW = () => app.clientWidth - PEEK;
+function setPos(x, ms) {
+  center.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
+  center.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+  pos = x;
+  const W = panelW();
+  if (x > 0) app.dataset.reveal = 'left'; else if (x < 0) app.dataset.reveal = 'right';
+  center.classList.toggle('shifted', x !== 0 || !!ms && app.dataset.reveal);
+  shield.style.opacity = Math.min(1, Math.abs(x) / W);
+  if (x === 0) {
+    const done = () => { if (pos === 0) { app.dataset.reveal = ''; center.classList.remove('shifted'); } };
+    if (ms) setTimeout(done, ms + 20); else done();
+  }
+}
+window.addEventListener('resize', () => { const W = panelW(); setPos(nav.panel === 'left' ? W : nav.panel === 'right' ? -W : 0, 0); });
+
+/* ======================= ジェスチャ =======================
+   ルール:
+   1. 画面の左右 24px から始まったタッチは Android の「戻る」ジェスチャ用として無視する (端を光らせて知らせる)。
+   2. 横にスクロールできる要素 (.hscroll: コードブロック・表・ツールの出力) の上で始まったら、その要素のスクロールを優先する。
+   3. 最初の 10px の向きで決める。横 (|dx| > |dy|) ならパネルのドラッグ、縦なら縦スクロールに固定し、その指では横に切り替えない。
+   4. 離したとき: 速度が 0.35px/ms を超えていればその向きの次の位置へ、そうでなければ近い方 (開/閉) へ。
+   5. 1 回のジェスチャで動ける範囲は「今の位置から隣まで」(左が開いた状態から一気に右へは行かない)。 */
+const EDGE = 24, SLOP = 10, FLING = 0.35;
+let g = null, suppressClick = false;
+function flashEdge(side) {
+  const el = side === 'left' ? $('edgeL') : $('edgeR');
+  el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 650);
+}
+app.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (g || screenOpen()) return;
+  const r = app.getBoundingClientRect(), x = e.clientX - r.left;
+  if (x < EDGE || x > r.width - EDGE) { g = {id: e.pointerId, mode: 'edge'}; flashEdge(x < EDGE ? 'left' : 'right'); return; }
+  const hs = e.target.closest('.hscroll');
+  if (hs && hs.scrollWidth > hs.clientWidth + 1) {
+    g = {id: e.pointerId, mode: 'native', el: hs, sx: e.clientX, sl: hs.scrollLeft, mouse: e.pointerType === 'mouse'};
+    return;
+  }
+  if (e.target.closest('textarea, input, select')) return;
+  g = {id: e.pointerId, mode: 'pending', sx: e.clientX, sy: e.clientY, base: pos, samples: [[e.timeStamp, e.clientX]], mouse: e.pointerType === 'mouse'};
+});
+app.addEventListener('pointermove', e => {
+  if (!g || e.pointerId !== g.id) return;
+  if (g.mode === 'native') { if (g.mouse) { g.el.scrollLeft = g.sl - (e.clientX - g.sx); if (Math.abs(e.clientX - g.sx) > 4) suppressClick = true; } return; }
+  if (g.mode === 'pending') {
+    const dx = e.clientX - g.sx, dy = e.clientY - g.sy;
+    if (Math.hypot(dx, dy) < SLOP) return;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      g.mode = 'drag'; g.sx = e.clientX;          // スロップ分を飛ばさない (指の下から動き始める)
+      try { app.setPointerCapture(e.pointerId); } catch {}
+      app.classList.add('dragging');
+    } else { g.mode = 'vertical'; return; }
+  }
+  if (g.mode === 'drag') {
+    const W = panelW();
+    const lo = g.base > 0 ? 0 : -W, hi = g.base < 0 ? 0 : W;
+    const x = Math.max(lo, Math.min(hi, g.base + (e.clientX - g.sx)));
+    setPos(x, 0);
+    g.samples.push([e.timeStamp, e.clientX]);
+    while (g.samples.length > 2 && e.timeStamp - g.samples[0][0] > 100) g.samples.shift();
+  }
+});
+function endGesture(e) {
+  if (!g || e.pointerId !== g.id) return;
+  const was = g; g = null;
+  app.classList.remove('dragging');
+  if (was.mode === 'native' && was.mouse && suppressClick) setTimeout(() => suppressClick = false, 0);
+  if (was.mode !== 'drag') return;
+  suppressClick = true; setTimeout(() => suppressClick = false, 0);
+  const s = was.samples, a = s[0], b = s[s.length - 1];
+  const v = b[0] > a[0] ? (b[1] - a[1]) / (b[0] - a[0]) : 0;
+  const W = panelW();
+  const snaps = [-W, 0, W].filter(p => p >= (was.base > 0 ? 0 : -W) && p <= (was.base < 0 ? 0 : W));
+  let target;
+  if (Math.abs(v) > FLING) target = v > 0 ? (snaps.find(p => p > pos + 0.5) ?? snaps[snaps.length - 1]) : ([...snaps].reverse().find(p => p < pos - 0.5) ?? snaps[0]);
+  else target = snaps.reduce((best, p) => Math.abs(p - pos) < Math.abs(best - pos) ? p : best, snaps[0]);
+  const dist = Math.abs(target - pos), ms = Math.max(120, Math.min(300, dist / Math.max(Math.abs(v), 1.1)));
+  setPos(target, ms);
+  const panel = target > 0 ? 'left' : target < 0 ? 'right' : null;
+  if (panel !== nav.panel) {
+    if (panel && !nav.panel) pushNav({panel});
+    else if (!panel) back();
+  }
+}
+app.addEventListener('pointerup', endGesture);
+app.addEventListener('pointercancel', endGesture);   // 縦スクロールが始まるとブラウザが cancel を送る
+document.addEventListener('click', e => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); suppressClick = false; } }, true);
+shield.addEventListener('click', () => { if (panelOpen()) back(); });
+
+/* ======================= 操作 ======================= */
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 1800); }
+function selectChat(id) {
+  ui.chatId = id; const f = findChat(id); ui.projectId = f.p.id; f.c.notify = false;
+  renderLeft(); renderCenter(); $('msgs').scrollTop = $('msgs').scrollHeight; renderRight();
+}
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const act = el.dataset.act;
+  if (act !== 'dmenu' && $('dmenu')) $('dmenu').classList.remove('open');
+  switch (act) {
+    case 'open-left': pushNav({panel: 'left'}); break;
+    case 'open-right': renderRight(); pushNav({panel: 'right'}); break;
+    case 'project': {
+      const p = PROJECTS.find(q => q.id === el.dataset.id); ui.projectId = p.id; ui.branchForm = false; renderLeft(); break;
+    }
+    case 'chat': selectChat(el.dataset.id); back(); break;
+    case 'toggle-wt': { const w = project().worktrees[+el.dataset.wt]; w.open = !w.open; renderLeft(); break; }
+    case 'toggle-others': { const k = 'others:' + ui.projectId; ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); renderLeft(); break; }
+    case 'newchat': {
+      const w = project().worktrees[+el.dataset.wt], id = 'C-' + (20 + Math.floor(Math.random() * 900));
+      w.chats.unshift({id, title: '', state: 'idle', ago: 'now', groups: [], msgs: []}); w.open = true;
+      selectChat(id); back(); setTimeout(() => $('input').focus(), 300); break;
+    }
+    case 'newchat-branch': {
+      const p = project(), b = el.dataset.branch; p.otherBranches = p.otherBranches.filter(x => x !== b);
+      const id = 'C-' + (20 + Math.floor(Math.random() * 900));
+      p.worktrees.push({branch: b, open: true, chats: [{id, title: '', state: 'idle', ago: 'now', groups: [], msgs: []}]});
+      selectChat(id); toast(`${b} の作業ツリーを作りました (モック)`); back(); break;
+    }
+    case 'branch-new': ui.branchForm = !ui.branchForm; ui.branchErr = ''; renderLeft(); if (ui.branchForm) setTimeout(() => $('bname')?.focus(), 50); break;
+    case 'branch-cancel': ui.branchForm = false; renderLeft(); break;
+    case 'settings': pushNav({screen: 'settings'}); break;
+    case 'theme': ui.theme = el.dataset.k; applyTheme(); renderSettings(); break;
+    case 'toast': toast(el.dataset.msg); break;
+    case 'toggle': { const k = el.dataset.key; ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k);
+      if (k.startsWith('d:')) renderDetail(nav.task); else renderMsgs(false); break; }
+    case 'toggle-group': { const k = 'g:' + el.dataset.id; ui.open.has(k) ? ui.open.delete(k) : ui.open.add(k); renderRight(); break; }
+    case 'task': pushNav({screen: 'detail', task: el.dataset.id}); break;
+    case 'dtab': ui.detailTab = el.dataset.k; renderDetail(nav.task); break;
+    case 'dmenu': $('dmenu').classList.toggle('open'); break;
+    case 'back': back(); break;
+    case 'mention': {
+      const t = TASKS[el.dataset.id];
+      if (!ui.mentions.some(m => m.id === t.id)) ui.mentions.push({id: t.id, title: t.title});
+      back(nav.depth); renderComposer(); setTimeout(() => $('input').focus(), 320); break;
+    }
+    case 'unmention': ui.mentions.splice(+el.dataset.i, 1); renderComposer(); break;
+    case 'cancel-task': confirmDialog('タスクを中止しますか', `${el.dataset.id} の担当エージェントを止め、タスクを中止します。オーケストレータに通知されます。`, '中止する', () => {
+      const t = TASKS[el.dataset.id]; t.status = 'cancelled'; t.cancelNote = '中止: ユーザーが中止'; delete t.callout;
+      renderDetail(t.id); renderRight(); renderCenter(false); toast(`${t.id} を中止しました (モック)`);
+    }); break;
+    case 'retry-merge': toast('マージを再試行しました (モック)'); break;
+  }
+});
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'bform') return; e.preventDefault();
+  const name = $('bname').value.trim();
+  if (!/^[\w.\-/]+$/.test(name) || name.endsWith('/')) { ui.branchErr = 'ブランチ名が正しくありません'; renderLeft(); return; }
+  const p = project();
+  if (p.worktrees.some(w => w.branch === name) || p.otherBranches.includes(name)) { ui.branchErr = 'そのブランチはもうあります'; renderLeft(); $('bname').value = name; return; }
+  const id = 'C-' + (20 + Math.floor(Math.random() * 900));
+  p.worktrees.push({branch: name, open: true, chats: [{id, title: '', state: 'idle', ago: 'now', groups: [], msgs: []}]});
+  ui.branchForm = false; selectChat(id); back();
+});
+function confirmDialog(title, body, ok, fn) {
+  const d = $('dialog');
+  d.innerHTML = `<div class="dialog" role="alertdialog"><h2>${esc(title)}</h2><p>${esc(body)}</p><div class="acts"><button class="btn text" id="dno">キャンセル</button><button class="btn text" id="dok" style="color:var(--hand-bar)">${esc(ok)}</button></div></div>`;
+  d.classList.add('open');
+  const close = () => d.classList.remove('open');
+  $('dno').onclick = close; $('dok').onclick = () => { close(); fn(); };
+  d.onclick = ev => { if (ev.target === d) close(); };
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if ($('dialog').classList.contains('open')) $('dialog').classList.remove('open'); else back(); }
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.id === 'input') send();
+});
+
+/* ======================= コンポーザ (送信 / 中止 / 応答の真似) ======================= */
+const input = $('input');
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(128, input.scrollHeight) + 'px'; renderComposer(); });
+$('send').addEventListener('click', () => { ui.turn[ui.chatId] ? stopTurn(ui.chatId) : send(); });
+const timers = {};
+function send() {
+  const text = input.value.trim(); if (!text && !ui.mentions.length) return;
+  const c = chat();
+  const mention = ui.mentions.map(m => `@${m.id} ${m.title}`).join('\n');
+  c.msgs.push({type: 'user', text: text || '(本文なし)', mention: mention || null});
+  if (!c.title) c.title = text.slice(0, 24) || 'メンションのみ';
+  c.ago = 'now'; input.value = ''; input.style.height = ''; ui.mentions = [];
+  const coldStart = c.state === 'idle';
+  ui.turn[c.id] = coldStart ? 'starting' : 'running';
+  renderCenter(); $('msgs').scrollTop = $('msgs').scrollHeight; renderLeft();
+  simulateReply(c, text, coldStart ? 1600 : 400);
+}
+function simulateReply(c, text, delay) {
+  const id = c.id;
+  const reply = md('受け取りました。**これはモックの返答** です。PC にはつながっていません。', '', '- 実際にはここにオーケストレータの返事が Markdown で流れてきます', '- ツール呼び出しは上のような控えめな 1 行に畳まれます');
+  timers[id] = [];
+  const at = (ms, fn) => timers[id].push(setTimeout(fn, ms));
+  at(delay, () => { c.state = 'alive'; ui.turn[id] = 'running'; c.msgs.push(tools(tl('Read', 'README.md', 'run'))); refresh(id); });
+  at(delay + 900, () => { c.msgs[c.msgs.length - 1].items[0].st = 'ok'; c.msgs.push({type: 'live', text: ''}); refresh(id); });
+  const chars = [...reply]; let n = 0;
+  const tick = () => {
+    if (!ui.turn[id]) return;
+    n = Math.min(chars.length, n + 3);
+    c.msgs[c.msgs.length - 1].text = chars.slice(0, n).join('');
+    refresh(id);
+    if (n < chars.length) timers[id].push(setTimeout(tick, 28));
+    else { c.msgs[c.msgs.length - 1].type = 'md'; delete ui.turn[id]; refresh(id); renderLeft(); }
+  };
+  at(delay + 1100, tick);
+}
+function stopTurn(id) {
+  (timers[id] || []).forEach(clearTimeout); timers[id] = [];
+  const c = findChat(id).c;
+  const last = c.msgs[c.msgs.length - 1];
+  if (last && last.type === 'live') { if (last.text) last.type = 'md'; else c.msgs.pop(); }
+  c.msgs.forEach(m => m.type === 'tools' && m.items.forEach(t => { if (t.st === 'run') t.st = 'err'; }));
+  c.msgs.push({type: 'yhtye', label: 'ターンを中止', arg: 'ユーザーが中止しました', st: 'err'});
+  delete ui.turn[id]; c.state = 'alive';
+  refresh(id); renderLeft();
+}
+function refresh(id) { if (id === ui.chatId) { renderMsgs(); renderComposer(); renderTopbar(); } }
+
+// 最初から走っている C-7 のターン: 少し進めてから、しばらく作業中のまま (中止ボタンを試せるように)
+(function initialTurn() {
+  const c = findChat('C-7').c; timers['C-7'] = [];
+  const text = md('`order.ts` の `OrderV2` を deprecated にして、v3 の型から v2 の形を作る変換を足しています。', '', '~~~ts', 'export const toOrderV2 = (o: OrderV3): OrderV2 => ({ total: Number(o.total.amount), currency: "JPY" })  // T-110 のレガシー側はこれを使う', '~~~', '', '終わったら T-110 に「v3 に合わせる、レガシーは `toOrderV2` を通す」と返答して再開させます。');
+  const chars = [...text]; let n = 0;
+  const tick = () => {
+    if (!ui.turn['C-7']) return;
+    n = Math.min(chars.length, n + 2);
+    c.msgs[c.msgs.length - 1].text = chars.slice(0, n).join('');
+    refresh('C-7');
+    if (n < chars.length) timers['C-7'].push(setTimeout(tick, 45));
+  };
+  timers['C-7'].push(setTimeout(tick, 1200));
+})();
+
+/* ======================= テーマ ======================= */
+const mq = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() { document.documentElement.dataset.theme = ui.theme === 'system' ? (mq.matches ? 'dark' : 'light') : ui.theme; }
+mq.addEventListener('change', applyTheme);
+const qp = new URLSearchParams(location.search);
+if (['light', 'dark'].includes(qp.get('theme'))) ui.theme = qp.get('theme');
+applyTheme();
+
+renderLeft(); renderCenter(); renderRight();
+$('msgs').scrollTop = $('msgs').scrollHeight;
+</script>
+</body>
+</html>
