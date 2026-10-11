@@ -57,6 +57,14 @@
   リモート接続の状態・端末の変化のイベント (`remote_status_changed` / `remote_devices_changed`) もリモートには流さない。
 - Tailscale のアドレスやログイン状態が起動後に変わっても追従しない (再起動か設定のオン/オフで取り直す)。
 
+### 実装で決めたこと (T-58: Android の雛形)
+
+- Gradle プロジェクトは `mobile/` (`shared` = KMP、`androidApp` = Compose)。手順は [`DEVELOPMENT.md`](../DEVELOPMENT.md)。
+- applicationId / namespace はデスクトップと同じ `io.github.tom039224.yhtye` (OS が違うので衝突しない)。
+  共通モジュールの namespace とパッケージは `io.github.tom039224.yhtye.shared`。
+- AGP 9 では KMP の `androidTarget()` (`com.android.library`) が非推奨のため、`com.android.kotlin.multiplatform.library` を使う。
+- バックアップ・端末間転送は無効 (端末トークンは Keystore の鍵で暗号化するので、別端末に戻しても使えない)。
+
 ## ペアリング
 
 | 項目 | 内容 |

@@ -1,0 +1,45 @@
+plugins {
+    // AGP 9 は Kotlin を内蔵しているので org.jetbrains.kotlin.android は適用しない
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+
+android {
+    namespace = "io.github.tom039224.yhtye"
+    compileSdk = libs.versions.compileSdk.get().toInt()
+
+    defaultConfig {
+        // デスクトップアプリ (Tauri) の識別子と同じ。OS が違うので衝突しない
+        applicationId = "io.github.tom039224.yhtye"
+        minSdk = libs.versions.minSdk.get().toInt()
+        targetSdk = libs.versions.targetSdk.get().toInt()
+        versionCode = 1
+        versionName = "0.1.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+        }
+    }
+
+    buildFeatures {
+        compose = true
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    implementation(project(":shared"))
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.ui.tooling.preview)
+    debugImplementation(libs.compose.ui.tooling)
+}

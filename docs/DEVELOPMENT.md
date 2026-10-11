@@ -25,6 +25,7 @@ docs/planned/        未着手の機能案
 src/                 React フロントエンド
 src-tauri/           Tauri シェル (Rust)
 crates/              yhtye-core (ドメインコア・ACP・MCP)、yhtye-dev-bridge (開発用 WS ブリッジ)
+mobile/              Android クライアント (Gradle。Kotlin Multiplatform の共通モジュール + Compose アプリ)
 ```
 
 ## 前提
@@ -177,3 +178,35 @@ CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロント�
 ヘッドレスでディスプレイは無く、Vite のポートは空きから自動で選ぶ。失敗したときは全状態のスクリーンショットを
 アーティファクト `layout-shots` に残す (7 日)。手元で CI と同じ条件にするには
 `env -u DISPLAY -u WAYLAND_DISPLAY CI=1 YHTYE_LAYOUT_SHOTS=/tmp/yhtye-shots pnpm check:layout`。
+
+## Android クライアント (`mobile/`)
+
+Tailscale 経由で PC の Yhtye を操作する Android アプリ。設計は
+[`planned/android-client.md`](planned/android-client.md)。リポジトリ直下の cargo / pnpm とは独立した Gradle プロジェクト。
+
+| モジュール | 中身 |
+|---|---|
+| `mobile/shared` | Kotlin Multiplatform (今は Android ターゲットのみ)。通信・認証・データモデルを置く。`commonMain` に Android 依存を入れない (将来 iOS を足せるように) |
+| `mobile/androidApp` | Jetpack Compose (Material 3) の画面と、Android 固有の部分 (Keystore・カメラ・通知) |
+
+前提は JDK 17 と Android SDK (compileSdk 37 の `platforms;android-37.0`)。SDK の場所は `mobile/local.properties`
+(コミットしない) に書く。`ANDROID_HOME` が設定されていれば不要。
+
+```sh
+echo "sdk.dir=$HOME/Android/Sdk" > mobile/local.properties
+~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0"   # 足りなければ
+```
+
+```sh
+cd mobile
+./gradlew build                          # 全部 (ユニットテスト・lint・debug/release の APK)
+./gradlew :androidApp:assembleDebug      # デバッグ APK → androidApp/build/outputs/apk/debug/androidApp-debug.apk
+./gradlew :androidApp:installDebug       # adb でつないだ実機・エミュレータに入れる
+./gradlew :shared:allTests               # 共通モジュールのユニットテスト (JVM 上で実行)
+./gradlew :androidApp:lint               # Android lint
+```
+
+依存のバージョンは `mobile/gradle/libs.versions.toml` にまとめてある。AGP 9 から Kotlin が AGP に内蔵されたので、
+`androidApp` には `org.jetbrains.kotlin.android` を適用しない。共通モジュールの Android ターゲットは
+旧来の `androidTarget()` (`com.android.library`) ではなく `com.android.kotlin.multiplatform.library` の
+`kotlin { android { ... } }` で宣言する (ユニットテストは `androidHostTest`、`commonTest` もそこで走る)。
