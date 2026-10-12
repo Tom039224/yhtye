@@ -11,12 +11,22 @@
 //! aborted when the client leaves (a half-run `OpenProject` must finish; its
 //! reply is just dropped). Requests of one connection are not run in the order
 //! they were sent either: a client that needs one to follow another waits for
-//! the first reply (`core-design.md` §10).
+//! the first reply (`core-design.md` §10). At most [`MAX_IN_FLIGHT`] requests of
+//! one connection are taken on at a time.
+//!
+//! The server pings every [`PING_INTERVAL`] and closes a connection it has
+//! heard nothing from for [`IDLE_TIMEOUT`] (a phone that dropped off the
+//! network without closing the socket).
 
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+
+use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
-use futures::{SinkExt, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc};
+use tokio::time::{Instant, MissedTickBehavior, interval_at, timeout};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::{
@@ -45,79 +55,218 @@ impl SessionPolicy {
 /// (see [`forward_events`]); the client reconnects and catches up.
 pub const OUT_QUEUE: usize = 1024;
 
+/// Requests of one connection that are taken on at once: running, or done and
+/// waiting for room in the reply queue. A request over the limit is not read
+/// off the socket until one finishes, so a client that sends faster than it
+/// reads is held back by TCP instead of piling up tasks and replies in memory;
+/// one that stays stuck is closed ([`IDLE_TIMEOUT`]).
+pub const MAX_IN_FLIGHT: usize = 64;
+
+/// How often the server pings a client. A client answers with a pong on its
+/// own (browsers, OkHttp and tungstenite all do); the Android client also pings
+/// every 15 s itself.
+pub const PING_INTERVAL: Duration = Duration::from_secs(20);
+
+/// A connection is closed when nothing (not even a ping or a pong) was received
+/// for this long, or when the client does not let a request finish for this
+/// long while [`MAX_IN_FLIGHT`] are running. A few ping intervals, so one lost
+/// pong does not cost the connection.
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long closing waits for the writer to hand the close frame to a client
+/// that is not taking data (a connection that is half-open).
+const CLOSE_GRACE: Duration = Duration::from_secs(5);
+
 /// Close code of a client dropped for falling behind (1013 "try again later").
 const BEHIND: u16 = 1013;
+
+/// Why the server closes a connection (the close frame it tries to send).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Closing {
+    /// `cancel` fired: a revoked device, or the server stopping.
+    Server,
+    /// The client fell behind (events or replies it does not take).
+    Behind,
+    /// It was silent for [`IDLE_TIMEOUT`].
+    Idle,
+}
+
+impl Closing {
+    fn frame(self) -> CloseFrame {
+        // A reconnect tells the client why (a revoked device gets 401).
+        let (code, reason) = match self {
+            Self::Server => (close_code::AWAY, "closed by the server"),
+            Self::Behind => (BEHIND, "fell behind; reconnect"),
+            Self::Idle => (close_code::AWAY, "no sign of life; reconnect"),
+        };
+        CloseFrame {
+            code,
+            reason: reason.into(),
+        }
+    }
+}
 
 /// Serves one client until it leaves or `cancel` fires (then the socket is
 /// closed at once, even while requests are still running).
 ///
 /// A writer task owns the socket's sink; events and replies are queued to it
-/// ([`OUT_QUEUE`]).
+/// ([`OUT_QUEUE`]) and it pings the client ([`PING_INTERVAL`]). The reader
+/// ([`read_requests`]) takes at most [`MAX_IN_FLIGHT`] requests on at once and
+/// gives up on a client that is silent or stuck ([`IDLE_TIMEOUT`]).
 pub async fn run_session(
     socket: WebSocket,
     core: Core,
     policy: SessionPolicy,
     cancel: CancellationToken,
 ) {
-    let (mut sink, mut stream) = socket.split();
-    let (out_tx, mut out_rx) = mpsc::channel::<String>(OUT_QUEUE);
+    let (sink, stream) = socket.split();
+    let (out_tx, out_rx) = mpsc::channel::<String>(OUT_QUEUE);
     // Subscribe before reading requests so no event after a reply is missed.
     let events = core.subscribe();
-    // Fired by `cancel`, or when this client fell too far behind.
+    // Fired by `cancel`, or when this client fell too far behind or went silent.
     let session = cancel.child_token();
-    let behind = CancellationToken::new();
-    let writer_session = session.clone();
-    let writer_behind = behind.clone();
-    let writer = tokio::spawn(async move {
-        loop {
-            let text = tokio::select! {
-                text = out_rx.recv() => text,
-                () = writer_session.cancelled() => {
-                    // A reconnect tells the client why (a revoked device gets 401).
-                    let frame = if writer_behind.is_cancelled() {
-                        CloseFrame { code: BEHIND, reason: "fell behind; reconnect".into() }
-                    } else {
-                        CloseFrame { code: close_code::AWAY, reason: "closed by the server".into() }
-                    };
-                    let _ = sink.send(Message::Close(Some(frame))).await;
-                    None
-                }
-            };
-            let Some(text) = text else { break };
-            if sink.send(Message::Text(text.into())).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    let closing = Arc::new(OnceLock::new());
+    let mut writer = tokio::spawn(write_loop(
+        sink,
+        out_rx,
+        session.clone(),
+        Arc::clone(&closing),
+    ));
     let forwarder = tokio::spawn({
         let out = out_tx.clone();
         let session = session.clone();
+        let closing = Arc::clone(&closing);
         async move {
             if forward_events(events, out, policy).await == Forwarded::Behind {
                 tracing::warn!("a WebSocket client fell behind; closing its connection");
-                behind.cancel();
+                let _ = closing.set(Closing::Behind);
                 session.cancel();
             }
         }
     });
-    loop {
-        let msg = tokio::select! {
-            msg = stream.next() => msg,
-            () = session.cancelled() => break,
-        };
-        match msg {
-            Some(Ok(Message::Text(text))) => handle_request(&core, text.as_str(), &out_tx, policy),
-            Some(Ok(Message::Close(_)) | Err(_)) | None => break,
-            Some(Ok(_)) => {} // ping / pong are answered by axum; binary is not used
+    let in_flight = Arc::new(Semaphore::new(MAX_IN_FLIGHT));
+    let ended = read_requests(stream, &in_flight, &session, |text, slot| {
+        handle_request(&core, text, &out_tx, policy, slot);
+    })
+    .await;
+    match ended {
+        ReadEnd::Silent => {
+            tracing::warn!(
+                "a WebSocket client sent nothing for {}s; closing its connection",
+                IDLE_TIMEOUT.as_secs()
+            );
+            let _ = closing.set(Closing::Idle);
         }
+        ReadEnd::Stalled => {
+            tracing::warn!(
+                "a WebSocket client let {MAX_IN_FLIGHT} requests wait for {}s; closing its connection",
+                IDLE_TIMEOUT.as_secs()
+            );
+            let _ = closing.set(Closing::Behind);
+        }
+        ReadEnd::Left | ReadEnd::Cancelled => {}
     }
     forwarder.abort();
     drop(out_tx);
     // The client is gone: the writer stops now rather than when the last
     // request still running drops its sender (their replies are dropped).
     session.cancel();
-    let _ = writer.await;
+    // A connection that is half-open does not take the close frame either: do
+    // not wait for it, or the device would stay "connected".
+    if timeout(CLOSE_GRACE, &mut writer).await.is_err() {
+        tracing::warn!("a WebSocket client did not take the close frame; dropping it");
+        writer.abort();
+    }
+}
+
+/// Writes the queued messages to the client and pings it every
+/// [`PING_INTERVAL`]; on `session` being cancelled, sends the close frame (see
+/// [`Closing`]) and ends.
+async fn write_loop<Si>(
+    mut sink: Si,
+    mut out_rx: mpsc::Receiver<String>,
+    session: CancellationToken,
+    closing: Arc<OnceLock<Closing>>,
+) where
+    Si: Sink<Message> + Unpin,
+{
+    let mut pings = interval_at(Instant::now() + PING_INTERVAL, PING_INTERVAL);
+    pings.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        let message = tokio::select! {
+            text = out_rx.recv() => match text {
+                Some(text) => Message::Text(text.into()),
+                None => break,
+            },
+            _ = pings.tick() => Message::Ping(Bytes::new()),
+            () = session.cancelled() => {
+                let why = closing.get().copied().unwrap_or(Closing::Server);
+                let _ = sink.send(Message::Close(Some(why.frame()))).await;
+                break;
+            }
+        };
+        if sink.send(message).await.is_err() {
+            break;
+        }
+    }
+    let _ = sink.close().await;
+}
+
+/// How [`read_requests`] ended.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadEnd {
+    /// The client left: a close frame, an error, or the end of the stream.
+    Left,
+    /// The session was cancelled (device revoked, server stopping, or the
+    /// client fell behind).
+    Cancelled,
+    /// Nothing was received for [`IDLE_TIMEOUT`].
+    Silent,
+    /// No request slot became free for [`IDLE_TIMEOUT`]: the client sends but
+    /// does not take its replies.
+    Stalled,
+}
+
+/// Reads the client's messages and hands each request (a text message) to
+/// `on_request` with a slot of `in_flight`, which the request holds until it is
+/// done. When all slots are taken, the next request waits (and so does
+/// everything behind it in the socket) for one to free up.
+async fn read_requests<S, E>(
+    mut stream: S,
+    in_flight: &Arc<Semaphore>,
+    session: &CancellationToken,
+    mut on_request: impl FnMut(&str, OwnedSemaphorePermit),
+) -> ReadEnd
+where
+    S: Stream<Item = Result<Message, E>> + Unpin,
+{
+    loop {
+        let msg = tokio::select! {
+            msg = timeout(IDLE_TIMEOUT, stream.next()) => match msg {
+                Ok(msg) => msg,
+                Err(_) => return ReadEnd::Silent,
+            },
+            () = session.cancelled() => return ReadEnd::Cancelled,
+        };
+        match msg {
+            Some(Ok(Message::Text(text))) => {
+                let slot = tokio::select! {
+                    slot = timeout(IDLE_TIMEOUT, Arc::clone(in_flight).acquire_owned()) => slot,
+                    () = session.cancelled() => return ReadEnd::Cancelled,
+                };
+                match slot {
+                    Ok(Ok(slot)) => on_request(text.as_str(), slot),
+                    // The semaphore is never closed.
+                    Ok(Err(_)) => return ReadEnd::Cancelled,
+                    Err(_) => return ReadEnd::Stalled,
+                }
+            }
+            Some(Ok(Message::Close(_)) | Err(_)) | None => return ReadEnd::Left,
+            // Pings are answered by axum; a ping or a pong is a sign of life
+            // (the timer above restarts); binary is not used.
+            Some(Ok(_)) => {}
+        }
+    }
 }
 
 /// Why [`forward_events`] stopped.
@@ -164,11 +313,20 @@ async fn forward_events(
     }
 }
 
-fn handle_request(core: &Core, text: &str, out: &mpsc::Sender<String>, policy: SessionPolicy) {
+/// Runs one request in the background. `slot` is held until its reply is in
+/// the queue (or dropped because the client left), which is what bounds the
+/// tasks and the replies waiting for room.
+fn handle_request(
+    core: &Core,
+    text: &str,
+    out: &mpsc::Sender<String>,
+    policy: SessionPolicy,
+    slot: OwnedSemaphorePermit,
+) {
     let request = match parse_request(text) {
         Ok(r) => r,
         Err(Some((id, err))) => {
-            send_reply(out, WsReply::Err { id, err });
+            send_reply(out, WsReply::Err { id, err }, slot);
             return;
         }
         Err(None) => {
@@ -186,7 +344,7 @@ fn handle_request(core: &Core, text: &str, out: &mpsc::Sender<String>, policy: S
             ApiErrorCode::Forbidden,
             "this command can only be run on the PC itself",
         );
-        send_reply(out, WsReply::Err { id, err });
+        send_reply(out, WsReply::Err { id, err }, slot);
         return;
     }
     let core = core.clone();
@@ -199,15 +357,17 @@ fn handle_request(core: &Core, text: &str, out: &mpsc::Sender<String>, policy: S
         // Waits for room: a reply is never dropped (the client may be reading
         // slowly; if it left, the queue is closed and the send fails).
         let _ = out.send(to_json(&WsServerMessage::Reply(reply))).await;
+        drop(slot);
     });
 }
 
 /// Queues an error reply in the background (the reader must not wait on a
 /// client that does not read, and replies are never dropped).
-fn send_reply(out: &mpsc::Sender<String>, reply: WsReply) {
+fn send_reply(out: &mpsc::Sender<String>, reply: WsReply, slot: OwnedSemaphorePermit) {
     let out = out.clone();
     tokio::spawn(async move {
         let _ = out.send(to_json(&WsServerMessage::Reply(reply))).await;
+        drop(slot);
     });
 }
 
@@ -228,6 +388,9 @@ fn to_json(msg: &WsServerMessage) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::api::ApiCommand;
 
@@ -343,6 +506,249 @@ mod tests {
         }
         // The skipped events are not sent; a resync comes first, then what is left.
         assert_eq!(types, ["resync", "prompted", "prompted"]);
+    }
+
+    type Incoming = futures::channel::mpsc::UnboundedSender<Result<Message, ()>>;
+
+    /// A client's side of the socket: what it sends, and the server's reader.
+    fn socket() -> (
+        Incoming,
+        futures::channel::mpsc::UnboundedReceiver<Result<Message, ()>>,
+    ) {
+        futures::channel::mpsc::unbounded()
+    }
+
+    fn ping_request(id: u64) -> Result<Message, ()> {
+        Ok(Message::Text(
+            format!(r#"{{"id": {id}, "cmd": {{"type": "ping"}}}}"#).into(),
+        ))
+    }
+
+    /// Lets the tasks that can run, run (time does not move).
+    async fn settle() {
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn test_core(dir: &std::path::Path) -> Core {
+        let mut cfg = crate::runtime::CoreConfig::claude_code(dir, "haiku");
+        cfg.usage = None;
+        cfg.secret_backend = Arc::new(crate::secrets::MemoryBackend::default());
+        Core::start(cfg).await.expect("core")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_client_is_given_up_on_but_any_sign_of_life_restarts_the_timer() {
+        let (tx, rx) = socket();
+        let in_flight = Arc::new(Semaphore::new(1));
+        let session = CancellationToken::new();
+        let reader =
+            tokio::spawn(async move { read_requests(rx, &in_flight, &session, |_, _| {}).await });
+        tokio::time::advance(IDLE_TIMEOUT - Duration::from_secs(1)).await;
+        settle().await;
+        assert!(!reader.is_finished(), "still within the timeout");
+        // A pong, a ping or any message counts.
+        tx.unbounded_send(Ok(Message::Pong(Bytes::new())))
+            .expect("send");
+        tokio::time::advance(IDLE_TIMEOUT - Duration::from_secs(1)).await;
+        settle().await;
+        assert!(!reader.is_finished(), "the pong restarted the timer");
+        tx.unbounded_send(Ok(Message::Ping(Bytes::new())))
+            .expect("send");
+        tokio::time::advance(IDLE_TIMEOUT - Duration::from_secs(1)).await;
+        settle().await;
+        assert!(!reader.is_finished(), "so did the ping");
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(reader.await.expect("joined"), ReadEnd::Silent);
+    }
+
+    #[tokio::test]
+    async fn a_client_that_leaves_or_a_cancelled_session_ends_the_reader() {
+        let in_flight = Arc::new(Semaphore::new(1));
+        let session = CancellationToken::new();
+        let (tx, rx) = socket();
+        tx.unbounded_send(Ok(Message::Close(None))).expect("send");
+        assert_eq!(
+            read_requests(rx, &in_flight, &session, |_, _| {}).await,
+            ReadEnd::Left
+        );
+        let (tx, rx) = socket();
+        tx.unbounded_send(Err(())).expect("send");
+        assert_eq!(
+            read_requests(rx, &in_flight, &session, |_, _| {}).await,
+            ReadEnd::Left
+        );
+        let (_tx, rx) = socket();
+        session.cancel();
+        assert_eq!(
+            read_requests(rx, &in_flight, &session, |_, _| {}).await,
+            ReadEnd::Cancelled
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn requests_over_the_limit_wait_for_a_free_slot_and_then_stall() {
+        let (tx, rx) = socket();
+        let in_flight = Arc::new(Semaphore::new(2));
+        let session = CancellationToken::new();
+        for id in 0..3 {
+            tx.unbounded_send(ping_request(id)).expect("send");
+        }
+        let taken = Arc::new(Mutex::new(Vec::new()));
+        let reader = tokio::spawn({
+            let (in_flight, taken) = (Arc::clone(&in_flight), Arc::clone(&taken));
+            async move {
+                read_requests(rx, &in_flight, &session, |text, slot| {
+                    taken.lock().unwrap().push((text.to_string(), slot));
+                })
+                .await
+            }
+        });
+        settle().await;
+        assert_eq!(taken.lock().unwrap().len(), 2, "the third waits for a slot");
+        assert!(!reader.is_finished());
+        // One finishes: the waiting one is taken on.
+        drop(taken.lock().unwrap().remove(0));
+        settle().await;
+        assert_eq!(taken.lock().unwrap().len(), 2);
+        assert!(taken.lock().unwrap()[1].0.contains(r#""id": 2"#));
+        // Nothing frees up for the timeout: the client is stuck.
+        tx.unbounded_send(ping_request(3)).expect("send");
+        tokio::time::advance(IDLE_TIMEOUT).await;
+        assert_eq!(reader.await.expect("joined"), ReadEnd::Stalled);
+        assert_eq!(in_flight.available_permits(), 0);
+    }
+
+    /// The reply queue of a client that never reads holds at most its capacity,
+    /// and no more than the slots' worth of requests wait to put a reply in it,
+    /// however many requests the client sends (A of the PR #8 review).
+    #[tokio::test]
+    async fn a_client_that_does_not_read_cannot_pile_up_requests_or_replies() {
+        const QUEUE: usize = 2;
+        const SLOTS: usize = 3;
+        let dir = tempfile::tempdir().expect("dir");
+        let core = test_core(dir.path()).await;
+        let (out_tx, out_rx) = mpsc::channel::<String>(QUEUE);
+        let (tx, rx) = socket();
+        for id in 0..1000 {
+            tx.unbounded_send(ping_request(id)).expect("send");
+        }
+        let in_flight = Arc::new(Semaphore::new(SLOTS));
+        let session = CancellationToken::new();
+        let handled = AtomicUsize::new(0);
+        tokio::time::pause();
+        let ended = read_requests(rx, &in_flight, &session, |text, slot| {
+            handled.fetch_add(1, Ordering::SeqCst);
+            handle_request(&core, text, &out_tx, SessionPolicy::LOCAL, slot);
+        })
+        .await;
+        tokio::time::resume();
+        assert_eq!(ended, ReadEnd::Stalled);
+        // The queue is full and the slots all wait to put a reply in it; the
+        // rest of the 1000 requests were never taken off the socket.
+        assert_eq!(handled.load(Ordering::SeqCst), QUEUE + SLOTS);
+        assert_eq!(in_flight.available_permits(), 0);
+        assert_eq!(out_rx.len(), QUEUE);
+        // The client goes away: the waiting ones give up and free their slots.
+        drop(out_rx);
+        for _ in 0..100 {
+            if in_flight.available_permits() == SLOTS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(in_flight.available_permits(), SLOTS);
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn error_replies_hold_a_slot_too() {
+        let dir = tempfile::tempdir().expect("dir");
+        let core = test_core(dir.path()).await;
+        let (out_tx, mut out_rx) = mpsc::channel::<String>(1);
+        let in_flight = Arc::new(Semaphore::new(2));
+        let handle = |text: &str, remote: bool| {
+            let slot = Arc::clone(&in_flight).try_acquire_owned().expect("a slot");
+            let policy = if remote {
+                SessionPolicy::REMOTE
+            } else {
+                SessionPolicy::LOCAL
+            };
+            handle_request(&core, text, &out_tx, policy, slot);
+        };
+        // A bad request and a forbidden one are answered, in the background.
+        handle(r#"{"id": 1, "cmd": {"type": "nope"}}"#, false);
+        handle(r#"{"id": 2, "cmd": {"type": "create_pairing_code"}}"#, true);
+        settle().await;
+        assert_eq!(
+            in_flight.available_permits(),
+            1,
+            "the second one waits for room"
+        );
+        let first: Value = serde_json::from_str(&out_rx.recv().await.expect("one")).expect("json");
+        assert_eq!(first["err"]["code"], "invalid_argument");
+        settle().await;
+        let second: Value = serde_json::from_str(&out_rx.recv().await.expect("two")).expect("json");
+        assert_eq!(second["err"]["code"], "forbidden");
+        settle().await;
+        assert_eq!(in_flight.available_permits(), 2);
+        // Without an id there is nothing to answer, and no slot is kept.
+        handle("[]", false);
+        assert_eq!(in_flight.available_permits(), 2);
+        core.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_writer_pings_every_interval_and_sends_the_close_frame() {
+        let (sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+        let (out_tx, out_rx) = mpsc::channel(4);
+        let session = CancellationToken::new();
+        let closing = Arc::new(OnceLock::new());
+        let writer = tokio::spawn(write_loop(
+            sink,
+            out_rx,
+            session.clone(),
+            Arc::clone(&closing),
+        ));
+        out_tx.send("hello".into()).await.expect("queued");
+        assert!(matches!(sent.next().await, Some(Message::Text(t)) if t.as_str() == "hello"));
+        for _ in 0..3 {
+            tokio::time::advance(PING_INTERVAL).await;
+            assert!(matches!(sent.next().await, Some(Message::Ping(_))));
+        }
+        let _ = closing.set(Closing::Idle);
+        session.cancel();
+        let Some(Message::Close(Some(frame))) = sent.next().await else {
+            panic!("a close frame");
+        };
+        assert_eq!(frame.code, close_code::AWAY);
+        assert!(frame.reason.as_str().contains("no sign of life"));
+        writer.await.expect("joined");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_writer_closes_with_the_reason_of_the_session() {
+        for (why, code) in [
+            (None, close_code::AWAY),
+            (Some(Closing::Server), close_code::AWAY),
+            (Some(Closing::Behind), BEHIND),
+        ] {
+            let (sink, mut sent) = futures::channel::mpsc::unbounded::<Message>();
+            let (_out_tx, out_rx) = mpsc::channel(4);
+            let session = CancellationToken::new();
+            let closing = Arc::new(OnceLock::new());
+            if let Some(why) = why {
+                let _ = closing.set(why);
+            }
+            let writer = tokio::spawn(write_loop(sink, out_rx, session.clone(), closing));
+            session.cancel();
+            let Some(Message::Close(Some(frame))) = sent.next().await else {
+                panic!("a close frame");
+            };
+            assert_eq!(frame.code, code, "{why:?}");
+            writer.await.expect("joined");
+        }
     }
 
     #[tokio::test]

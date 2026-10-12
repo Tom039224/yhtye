@@ -2,13 +2,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use super::{UsageReport, parse_usage_markdown};
 use crate::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions};
+use crate::clock::now_ms;
 use crate::secrets::{Secrets, spawn_agent_with_secrets};
 
 /// The prompt: Claude Code's local usage command (no model call).
@@ -204,10 +205,4 @@ impl UsageService {
         }
         outcome
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

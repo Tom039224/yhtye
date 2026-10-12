@@ -21,6 +21,20 @@ pub struct TailscaleSelf {
     pub dns_name: Option<String>,
     /// The Tailscale user who owns this PC.
     pub user_id: u64,
+    /// This PC is a tagged node (`--advertise-tags`): it belongs to its tags,
+    /// not to a user, and every tagged node of the tailnet reports the same
+    /// "tagged-devices" user, so the same-user check would admit them all.
+    pub tagged: bool,
+}
+
+/// A connecting node as `tailscale whois` describes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TailscalePeer {
+    /// The Tailscale user who owns the node (for a tagged node, the shared
+    /// "tagged-devices" user).
+    pub user_id: u64,
+    /// The node is tagged: it is never admitted, whoever the user is.
+    pub tagged: bool,
 }
 
 /// Why Tailscale could not answer. The message is shown to the user.
@@ -31,8 +45,8 @@ pub struct TailscaleError(pub String);
 #[async_trait]
 pub trait Tailscale: Send + Sync + std::fmt::Debug {
     async fn status(&self) -> Result<TailscaleSelf, TailscaleError>;
-    /// The Tailscale user of the node with address `ip`.
-    async fn whois(&self, ip: IpAddr) -> Result<u64, TailscaleError>;
+    /// The node with address `ip`: its Tailscale user and whether it is tagged.
+    async fn whois(&self, ip: IpAddr) -> Result<TailscalePeer, TailscaleError>;
 }
 
 /// The `tailscale` command line.
@@ -99,7 +113,7 @@ impl Tailscale for TailscaleCli {
         parse_status(&out)
     }
 
-    async fn whois(&self, ip: IpAddr) -> Result<u64, TailscaleError> {
+    async fn whois(&self, ip: IpAddr) -> Result<TailscalePeer, TailscaleError> {
         let out = Self::run(&["whois", "--json", &ip.to_string()]).await?;
         parse_whois(&out)
     }
@@ -123,6 +137,9 @@ struct SelfJson {
     user_id: u64,
     #[serde(rename = "TailscaleIPs", default)]
     tailscale_ips: Vec<IpAddr>,
+    /// Absent or null unless the node is tagged.
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -159,13 +176,23 @@ fn parse_status(out: &[u8]) -> Result<TailscaleSelf, TailscaleError> {
         addresses,
         dns_name: (magic_dns && !name.is_empty()).then(|| name.to_string()),
         user_id: me.user_id,
+        tagged: me.tags.is_some_and(|tags| !tags.is_empty()),
     })
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct WhoisJson {
+    node: Option<NodeJson>,
     user_profile: Option<UserJson>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct NodeJson {
+    /// Absent or null unless the node is tagged.
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -175,13 +202,22 @@ struct UserJson {
     id: u64,
 }
 
-fn parse_whois(out: &[u8]) -> Result<u64, TailscaleError> {
+fn parse_whois(out: &[u8]) -> Result<TailscalePeer, TailscaleError> {
     let whois: WhoisJson = serde_json::from_slice(out)
         .map_err(|e| TailscaleError(format!("could not read `tailscale whois --json`: {e}")))?;
-    whois
-        .user_profile
-        .map(|u| u.id)
-        .ok_or_else(|| TailscaleError("the peer has no Tailscale user".into()))
+    let tagged = whois
+        .node
+        .and_then(|n| n.tags)
+        .is_some_and(|tags| !tags.is_empty());
+    match whois.user_profile {
+        Some(user) => Ok(TailscalePeer {
+            user_id: user.id,
+            tagged,
+        }),
+        // Refused anyway; no user to name is not a lookup failure to retry.
+        None if tagged => Ok(TailscalePeer { user_id: 0, tagged }),
+        None => Err(TailscaleError("the peer has no Tailscale user".into())),
+    }
 }
 
 /// Tailscale's address ranges: 100.64.0.0/10 (CGNAT) and fd7a:115c:a1e0::/48.
@@ -226,6 +262,23 @@ mod tests {
         );
         assert_eq!(me.dns_name.as_deref(), Some("pc.tail1234.ts.net"));
         assert_eq!(me.user_id, 7_951_023_142_460_886);
+        assert!(!me.tagged);
+    }
+
+    #[test]
+    fn a_tagged_pc_is_reported_as_tagged() {
+        let tagged = STATUS.replace(
+            r#""UserID": 7951023142460886,"#,
+            r#""UserID": 7951023142460886, "Tags": ["tag:server"],"#,
+        );
+        assert!(parse_status(tagged.as_bytes()).unwrap().tagged);
+        for none in [r#""Tags": null,"#, r#""Tags": [],"#] {
+            let text = STATUS.replace(
+                r#""UserID": 7951023142460886,"#,
+                &format!(r#""UserID": 7951023142460886, {none}"#),
+            );
+            assert!(!parse_status(text.as_bytes()).unwrap().tagged, "{none}");
+        }
     }
 
     #[test]
@@ -243,9 +296,18 @@ mod tests {
     }
 
     #[test]
-    fn whois_gives_the_user_id() {
+    fn whois_gives_the_user_id_and_whether_the_node_is_tagged() {
+        let peer = |user_id, tagged| TailscalePeer { user_id, tagged };
         let out = br#"{"Node": {"ID": 1}, "UserProfile": {"ID": 42, "LoginName": "a@b"}}"#;
-        assert_eq!(parse_whois(out).unwrap(), 42);
+        assert_eq!(parse_whois(out).unwrap(), peer(42, false));
+        let out = br#"{"Node": {"ID": 1, "Tags": null}, "UserProfile": {"ID": 42}}"#;
+        assert_eq!(parse_whois(out).unwrap(), peer(42, false));
+        let out = br#"{"Node": {"ID": 1, "Tags": ["tag:ci"]},
+            "UserProfile": {"ID": 9, "LoginName": "tagged-devices"}}"#;
+        assert_eq!(parse_whois(out).unwrap(), peer(9, true));
+        // A tagged node without a user is still known to be tagged.
+        let out = br#"{"Node": {"ID": 1, "Tags": ["tag:ci"]}}"#;
+        assert!(parse_whois(out).unwrap().tagged);
         assert!(parse_whois(br#"{"Node": {}}"#).is_err());
     }
 

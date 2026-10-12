@@ -12,6 +12,7 @@ use ts_rs::TS;
 use super::StoreError;
 use super::codec::{int, uint};
 use crate::api::{ApiEvent, ApiEventBody};
+use crate::clock::now_ms;
 use crate::domain::{Chat, DomainEvent, chat_of_session};
 
 /// A chat as the UI lists it (`Snapshot.chats`, `list_chats`). Its branch is
@@ -97,7 +98,7 @@ pub(super) async fn write(
             .execute(&mut **tx)
             .await?;
     }
-    let now = now_ms();
+    let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
     for (ord, c) in after.iter().enumerate() {
         if before.iter().any(|b| b == c) {
             continue;
@@ -163,10 +164,4 @@ pub(super) async fn apply(
         _ => {}
     }
     Ok(())
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }

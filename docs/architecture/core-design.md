@@ -707,8 +707,27 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   ブリッジは発火しないトークンを渡すので挙動は変わらない)。送信キューは有界 (`OUT_QUEUE` = 1024、T-65): あふれたら
   プロジェクトの live イベント (ストリーミング・使用量・`session_starting`) は捨て、durable イベントかアプリ全体のイベント
   (`resync` などのヒント) が入らなければ close (1013 "fell behind; reconnect") で閉じて再接続に任せる。
-  応答は捨てない (空きを待つ)。broadcast の `Lagged` ではその接続に `resync` を送る (§19)。置き場所を yhtye-core にしたのは、リモートサーバーの
+  応答は捨てない (空きを待つ。待つ要求の数は下の上限で抑える)。broadcast の `Lagged` ではその接続に `resync` を送る (§19)。置き場所を yhtye-core にしたのは、リモートサーバーの
   開始/停止を `ApiCommand` から操作するため (Core → remote → ws → Core が同じ crate の中で閉じ、crate の循環依存にならない)。
+- **受け付ける要求の上限 (T-75、PR #8 のレビュー)**: 以前は要求ごとに `tokio::spawn` して `out.send(...).await` で空きを待っていたので、
+  応答を読まない端末が要求を送り続けると、送信待ちのタスクと応答の文字列が際限なく溜まった (キューを有界にした意味が無い)。
+  今は 1 接続あたり **`MAX_IN_FLIGHT` = 64** 件までしか受け付けない (tokio の `Semaphore`)。要求 (テキストメッセージ) 1 件ごとに枠を 1 つ取り、
+  **応答がキューに入るまで** (端末が去ったときはキューが閉じて捨てるまで) 持つ。不正な要求や `forbidden` の応答も同じ。枠が無ければ
+  reader は次の要求を読まない (読まれなかった分は TCP の窓で送信側が止まる)。これで 1 接続が抱えるのは、枠の数のタスクと
+  `OUT_QUEUE` (1024) 本までの応答だけになる。
+  **「あふれたら閉じる」にせず「待たせる」にした理由**: 正当な端末も再接続の直後などに一度に十数件を送るので、上限を超えるたびに切ると
+  再接続の繰り返しになる。待たせれば遅れるだけで済み、悪意のある端末は TCP で止まる。ただし**枠が `IDLE_TIMEOUT` (60 秒) の間 1 つも空かない**
+  (= 応答を受け取らない) 端末は close (1013 "fell behind; reconnect") で閉じる。居座って枠とキューを塞ぎ続けることはできない。
+  取りこぼせないイベントがキューにあふれたとき閉じる扱い (上) と同じ「追いつけない端末は閉じる」の考え方。
+  開発用ブリッジ (ローカル) も同じ `run_session` を通るので同じ上限が効く (ブラウザは枠を使い切るほど送らない)。
+- **サーバー側の生存確認 (T-75、PR #8 のレビュー)**: 端末が FIN なしに消えても (機内モード・ローミング・プロセスの強制終了) TCP の
+  再送が尽きるまで何時間も接続中のままになっていたので、サーバーから確かめる。writer が **`PING_INTERVAL` = 20 秒**ごとに WS の Ping を送り、
+  reader は何かを受け取るたび (テキスト・Ping・Pong など何でも生存の印。Android の OkHttp が 15 秒ごとに送る ping (T-61) も数える) に
+  **`IDLE_TIMEOUT` = 60 秒**のタイマーを張り直す。切れたら close (1001 "no sign of life; reconnect") して reader を抜け、
+  通常の終わり方と同じ後始末が走る (リモートなら `detach` → `remote_devices_changed` / `clients_changed` で「未接続」)。
+  ブラウザ・OkHttp・tungstenite は Ping に自動で Pong を返すので、クライアントの実装は要らない (3 回分の余裕を持たせた 60 秒)。
+  消えた端末は TCP の送信バッファが詰まって close フレームを渡せないことがあるので、writer の終了は `CLOSE_GRACE` = 5 秒だけ待って abort する
+  (待ち続けると `detach` まで進まず、もとの問題に戻る)。値はどれも `ws.rs` の名前付きの定数。
 - `pnpm dev:browser [ポートの指定] [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
   起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
   ポートは既定 Vite 1420 / ブリッジ 1422 で、`--vite-port` / `--bridge-port` / `--port-base` (環境変数
@@ -1357,6 +1376,11 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   (IPv4 が先), dns_name (末尾の . を除く。MagicDNS が無効なら None), user_id }`、`Tailscale::whois(ip)` → ユーザー ID。
   CLI は `tailscale status --json` / `tailscale whois --json <ip>` (5 秒でタイムアウト。macOS はアプリ内のパスも試す)。
   コマンドが無い・`BackendState` が `Running` 以外・アドレスが無いときは、そう書いたエラー (状態の `error` に出る)。
+- **タグ付きの PC は使えない (T-75、PR #8 のレビュー)**: `--advertise-tags` で動かしたノードは、ユーザーではなくタグに属し、tailnet の
+  タグ付きのノードはすべて同じ「タグ付きデバイス」ユーザーとして報告される。PC がタグ付きだと「同じ Tailscale ユーザー」の照合
+  (§18.3) が他人のタグ付きマシン (共用の CI、他の管理者のサーバー) まで通してしまう。`tailscale status --json` の `Self.Tags` が空でなければ
+  (`TailscaleSelf.tagged`)、サーバーを起動せず `RemoteStatus.error` に「タグ付きの Tailscale ノードでは使えない (自分のユーザーに属する
+  ノードで使う)」と出す。タグを外して有効のまま `set_remote_settings {enabled: true}` をもう一度送ると再試行する。
 
 ### 18.2 保存 (マイグレーション `0010_remote.sql`)
 
@@ -1373,7 +1397,16 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
   無視する。有効 5 分、1 回使ったら無効、誤り 5 回で無効、新しく発行したら古いのは無効 (同時に 1 つ)。比較は定数時間。
   サーバーを止めるとコードも無効。コードの発行はサーバーの起動中だけ (`invalid_state`)。
+- **コードを使い切る順序 (T-75、PR #8 のレビュー)**: 正しいコードは**端末を保存する前**に使用済みにする (`Pairing::redeem` が使用済みの
+  コードを `Redeemed` として返す)。これで同じコードの同時の `/pair` は 1 台しか通らない (2 台目は 401。保存の後に消費する方式だと、
+  保存の最中に 2 台目が同じコードで通れてしまう)。**DB への保存が失敗したら** (ロック・ディスクがいっぱいなど。500
+  "could not store the device") `Pairing::restore` でコードを戻すので、同じコードでやり直せる (失敗の回数と期限は元のまま。戻すまでの間に
+  PC で新しいコードを発行していたり、期限が切れていたりしたら戻さない)。コードを戻したとき、状態 (`pairing_expires_at_ms`) は
+  変わっていないので `remote_status_changed` は出ない。保存の最中に端末が切断して要求が捨てられたときは、保存が済んだかどうか分からないので
+  コードは戻さない (使い切られたまま。1 回限りを守る側に倒す)。
 - **whois が先**: 接続元が PC と同じ Tailscale ユーザーでなければ、コードを見る前に 403 (他人の端末がコードの試行回数を使い切れない)。
+  **接続元がタグ付きのノード** (`tailscale whois --json` の `Node.Tags` が空でない。`TailscalePeer.tagged`) なら、ユーザーが同じでも 403
+  ("tagged Tailscale devices cannot connect")。PC がタグ付きなら起動しない (§18.1) ので、タグ付きの接続元はそもそも正当な端末ではない。
 
 ### 18.4 接続 (`GET /ws`)
 
@@ -1383,13 +1416,16 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - 失効 (`revoke_remote_device`) は DB の行を消し、その端末の接続のトークンを cancel する → 実行中の要求があってもすぐ close
   (1001)。以後の接続は 401。認証と失効の競合: 接続の登録 (upgrade 後) と失効は同じ `auth_gate` を取り、登録時に端末がまだ DB に
   あるかを確かめ直すので、失効をすり抜けて残る接続は無い。
-- 要求は他の WS と同じで、切断しても実行中の要求は中断しない。
+- 要求は他の WS と同じで、切断しても実行中の要求は中断しない。1 接続が受け付ける要求の数と、サーバーからの ping・無応答の接続の切断は §10
+  (`MAX_IN_FLIGHT` = 64、`PING_INTERVAL` = 20 秒、`IDLE_TIMEOUT` = 60 秒)。無応答で切った接続も、失効や通常の切断と同じ後始末
+  (`detach`、`last_seen_ms` はその接続の開始時、`remote_devices_changed` / `clients_changed`) を通る。
 - **whois の抑制** (`remote/whois.rs` の `WhoisCache`。`/pair` と `/ws` 共通): 同じ tailnet の他ユーザーの端末が要求を連打しても
   `tailscale` の子プロセスを大量に起こせないようにする。照合の内容 (PC と同じ Tailscale ユーザーか) と順序 (whois が先) は変えない。
   - 接続元 IP (`to_canonical`) ごとに whois の答え (ユーザー ID) を **60 秒** (`WHOIS_TTL`) 覚える。許可 (同じユーザー) も拒否
     (他のユーザー) も覚える (ノードのユーザーは 1 分では変わらない。拒否を覚えることが連打対策の本体)。**失敗** (Tailscale の一時エラー、
     タイムアウト、ユーザー無し) は覚えず次の要求で再照合する。最大 **256** IP (`WHOIS_CACHE_CAPACITY`)。満杯なら期限切れを捨て、
     それでも満杯なら最も古いものを捨てる。サーバーを止めると全部忘れる (再起動で再照合)。
+  - 答えは `TailscalePeer { user_id, tagged }` (ユーザー ID とタグの有無) で、タグ付きかどうかも同じ 60 秒覚える。
   - whois の同時実行は **4** (`WHOIS_CONCURRENCY`、tokio の `Semaphore`)。上限を超えた要求は **503 にせず空きを待つ**: 1 回の whois は
     CLI のタイムアウト (5 秒) で必ず終わり、待つ間は子プロセスを使わない。空きを取ったらキャッシュを見直すので、同じ IP の連打は
     同時に走る分 (最大 4) を除いて 1 回の whois で済む。503 にすると他人の連打で自分の端末が断られるが、待たせるなら遅れるだけで済む。
@@ -1434,7 +1470,15 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
   再起動で server_id・設定・端末が残る、Tailscale 停止とポート使用中のエラー、一連の要求で whois が 1 回、他ユーザーは何度でも 403 で
   whois は 1 回 (サーバーの再起動で再照合)、コード誤りで状態イベントはコードが無効になった時だけ。コードの期限切れは `pairing.rs` の単体テスト。
-  whois のキャッシュ (期限後の再照合、一時エラーを覚えない、同時数が上限を超えない、大きさの上限) は `whois.rs` の単体テスト (tokio の時間を止めて進める)。
+  whois のキャッシュ (期限後の再照合、一時エラーを覚えない、同時数が上限を超えない、大きさの上限、タグ付きを覚える) は `whois.rs` の単体テスト (tokio の時間を止めて進める)。
+  T-75 で足した分: タグ付きの PC は起動せず `error` に理由が出てタグを外すと再試行で起動する、タグ付きの接続元は同じユーザーでも `/pair` `/ws` とも 403 でコードの試行を
+  使わない (`a_tagged_pc_does_not_start_remote_access_and_says_why` / `a_tagged_peer_is_refused_whoever_its_user_is`、`tailscale.rs` の `Tags` の解釈)。
+  DB の書き込みを失敗させて (別の接続で `remote_devices` への INSERT を拒むトリガーを作る) 500 の後も同じコードで 1 回だけ通る、同じコードで 8 台が同時に `/pair` しても 1 台だけ
+  (`a_failed_write_gives_the_pairing_code_back_and_it_still_works_once` / `the_same_pairing_code_pairs_only_one_of_many_simultaneous_devices`、`pairing.rs` の `restore`)。
+  応答しない端末が 3 分間 (tokio の時間を止めて進める) で切られて `clients_changed` で未接続になり、ping に答える端末は残って ping を受け取り続ける
+  (`a_device_that_stops_answering_is_dropped_and_one_that_answers_stays`)。`ws.rs` の単体: 無言の接続が `IDLE_TIMEOUT` で終わり ping・pong・任意のメッセージで
+  タイマーが戻る、枠が無ければ次の要求を読まず `IDLE_TIMEOUT` で `Stalled`、読まない端末の 1000 件の要求のうち受け付けるのは「応答キューの大きさ + 枠の数」だけ、
+  writer が `PING_INTERVAL` ごとに ping して理由に応じた close フレームを送る。 開発用ブリッジにも同じ ping と切断が効くことは `yhtye-dev-bridge/tests/liveness.rs` (同じ `run_session`。無言の接続は切られ、読んで pong を返す接続は残る)。
   `real_tailscale_round_trip` (`#[ignore]`) は本物の Tailscale で同じ流れ + 127.0.0.1 で待ち受けていないことを確かめる。
 
 ### 18.7 設定画面「リモート接続」(T-56)
@@ -1512,6 +1556,8 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
   - `cancel_task` / `cancel_group`: 対象が既に `cancelled`。完了 (`done`) したものの中止は意味が違うので従来どおり `invalid_state`。
   - `retry_group_merge`: グループが既に `done` (別のクライアントの再試行でマージ済み)。`merge_blocked` のままなら再試行する。
   - `delete_chat`: 状態に無く、ID が `C-<n>` で n がチャットのカウンタ以下 (= 作られて消された)。一度も無い ID は `not_found`。
+    `C-<n>` はコアが払い出した**正規の書式だけ**を指す (`domain::chat_number` は番号を作り直して一致するものだけ受ける。`C-01`・`C-+1` は
+    `C-1` が作られていても `not_found`。T-75、PR #8 のレビュー)。
   - `compact_chat`: そのチャットの `/compact` のターンが既に動いている。
   - `cancel_orchestrator_turn` は元から常に `accepted`、`rename_chat` は同じ題なら何も出さない、`open_chat` は冪等。
 - **送信キューと取りこぼし**: §10 (WS) と §9 (Tauri) のとおり。`forward_events` (`ws.rs`) が `Lagged` で `resync` を送る。

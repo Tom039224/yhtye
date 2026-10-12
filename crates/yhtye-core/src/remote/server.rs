@@ -2,8 +2,8 @@
 //!
 //! Every request is first checked with `tailscale whois` (answers kept for a
 //! minute per address, a few lookups at once: [`super::whois`]): the peer must
-//! belong to the same Tailscale user as this PC (else 403), so other users'
-//! devices cannot even use up a pairing code's tries. A lookup that fails
+//! belong to the same Tailscale user as this PC and not be a tagged node (else
+//! 403), so other users' devices cannot even use up a pairing code's tries. A lookup that fails
 //! (Tailscale briefly unreachable, a timeout) is 503, so clients retry instead
 //! of taking it for a refusal. `/ws` then needs
 //! `Authorization: Bearer <device token>` (else 401).
@@ -100,10 +100,21 @@ fn refuse(status: StatusCode, why: &str) -> Response {
 /// or 503 when it could not be looked up (a passing failure: retried).
 async fn check_peer(ctx: &ServerCtx, peer: SocketAddr) -> Result<(), (StatusCode, &'static str)> {
     let ip = peer.ip().to_canonical();
-    match ctx.shared.whois.user_of(&*ctx.shared.tailscale, ip).await {
-        Ok(user) if user == ctx.self_user => Ok(()),
-        Ok(user) => {
-            tracing::warn!("remote access: refused {ip} (Tailscale user {user})");
+    match ctx.shared.whois.peer_of(&*ctx.shared.tailscale, ip).await {
+        // Tagged nodes share one user; whoever they are, they are not this PC's user's.
+        Ok(peer) if peer.tagged => {
+            tracing::warn!("remote access: refused {ip} (a tagged Tailscale node)");
+            Err((
+                StatusCode::FORBIDDEN,
+                "tagged Tailscale devices cannot connect",
+            ))
+        }
+        Ok(peer) if peer.user_id == ctx.self_user => Ok(()),
+        Ok(peer) => {
+            tracing::warn!(
+                "remote access: refused {ip} (Tailscale user {})",
+                peer.user_id
+            );
             Err((
                 StatusCode::FORBIDDEN,
                 "this device belongs to another Tailscale user",
@@ -135,20 +146,27 @@ async fn pair(
         Ok(n) => n,
         Err(e) => return refuse(StatusCode::BAD_REQUEST, &e),
     };
+    // The code is used up here, before the device is stored: a second request
+    // with it, now, is refused. A failed write gives it back below.
     let redeemed = ctx.shared.lock_pairing().redeem(&req.code, now_ms());
-    if let Err(why) = redeemed {
-        tracing::warn!("remote access: pairing refused for {peer} ({why:?})");
-        let msg = match why {
-            PairRefused::NoCode => "no pairing code is valid; issue a new one on the PC",
-            PairRefused::Wrong => "wrong pairing code",
-        };
-        ctx.shared.emit_pairing_change();
-        return refuse(StatusCode::UNAUTHORIZED, msg);
-    }
+    let redeemed = match redeemed {
+        Ok(redeemed) => redeemed,
+        Err(why) => {
+            tracing::warn!("remote access: pairing refused for {peer} ({why:?})");
+            let msg = match why {
+                PairRefused::NoCode => "no pairing code is valid; issue a new one on the PC",
+                PairRefused::Wrong => "wrong pairing code",
+            };
+            ctx.shared.emit_pairing_change();
+            return refuse(StatusCode::UNAUTHORIZED, msg);
+        }
+    };
     let (device_id, token) = match ctx.shared.add_device(name.clone()).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!("remote access: could not store a paired device: {e}");
+            ctx.shared.lock_pairing().restore(redeemed, now_ms());
+            ctx.shared.emit_pairing_change();
             return refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "could not store the device",
