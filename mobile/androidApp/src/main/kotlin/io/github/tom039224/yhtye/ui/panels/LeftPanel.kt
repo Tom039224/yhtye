@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
@@ -30,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -37,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
+import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindow
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindowKind
@@ -72,6 +75,7 @@ const val RUNS_EMPTY = "現状は何もありません"
  * @param selfId ペアリングで保存したこの端末の ID (下端の一覧で「この端末」の印を付ける)。
  * @param onChatChosen チャットを選んだ・作った (中央に戻る)。
  * @param onOpenSettings レールの一番下の設定。
+ * @param updateAvailable アプリの新しい版がある (設定のボタンに小さな印を付ける)。
  */
 @Composable
 fun LeftPanel(
@@ -84,11 +88,12 @@ fun LeftPanel(
     selfId: String?,
     onChatChosen: () -> Unit,
     onOpenSettings: () -> Unit,
+    updateAvailable: Boolean = false,
 ) {
     val c = Yhtye.colors
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).testTag("left-panel")) {
         Row(Modifier.weight(1f).fillMaxWidth()) {
-            Rail(view, onView, onOpenSettings)
+            Rail(view, onView, onOpenSettings, updateAvailable)
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 when (view) {
                     MainView.Runs -> EmptyState(YIcons.History, RUNS_EMPTY, Modifier.align(Alignment.Center), testTag = "runs-empty")
@@ -103,7 +108,7 @@ fun LeftPanel(
 
 /** 左端のレール: コーディング / 履歴、一番下に設定。 */
 @Composable
-private fun Rail(view: MainView, onView: (MainView) -> Unit, onOpenSettings: () -> Unit) {
+private fun Rail(view: MainView, onView: (MainView) -> Unit, onOpenSettings: () -> Unit, updateAvailable: Boolean) {
     val c = Yhtye.colors
     Column(
         Modifier.width(RAIL_WIDTH).fillMaxHeight().background(c.bgRail).padding(vertical = 10.dp).semantics { contentDescription = "views" },
@@ -113,12 +118,19 @@ private fun Rail(view: MainView, onView: (MainView) -> Unit, onOpenSettings: () 
         RailButton(YIcons.Code, "コーディング", view == MainView.Work, "rail-work") { onView(MainView.Work) }
         RailButton(YIcons.History, "履歴", view == MainView.Runs, "rail-runs") { onView(MainView.Runs) }
         Spacer(Modifier.weight(1f))
-        RailButton(YIcons.Sliders, "設定", active = false, tag = "rail-settings", onClick = onOpenSettings)
+        RailButton(
+            YIcons.Sliders,
+            stringResource(if (updateAvailable) R.string.rail_settings_update else R.string.rail_settings),
+            active = false,
+            tag = "rail-settings",
+            marked = updateAvailable,
+            onClick = onOpenSettings,
+        )
     }
 }
 
 @Composable
-private fun RailButton(icon: ImageVector, label: String, active: Boolean, tag: String, onClick: () -> Unit) {
+private fun RailButton(icon: ImageVector, label: String, active: Boolean, tag: String, marked: Boolean = false, onClick: () -> Unit) {
     val c = Yhtye.colors
     Box(contentAlignment = Alignment.CenterStart) {
         if (active) {
@@ -136,7 +148,13 @@ private fun RailButton(icon: ImageVector, label: String, active: Boolean, tag: S
                 }
                 .testTag(tag),
             contentAlignment = Alignment.Center,
-        ) { YIcon(icon, if (active) c.accent else c.tx4, 20.dp) }
+        ) {
+            YIcon(icon, if (active) c.accent else c.tx4, 20.dp)
+            // 小さな印 (右上の点)。意味は読み上げの名前が言う
+            if (marked) {
+                Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(8.dp).background(c.accent, CircleShape).testTag("$tag-mark"))
+            }
+        }
     }
 }
 

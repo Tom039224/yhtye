@@ -16,13 +16,19 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.session.Session
+import io.github.tom039224.yhtye.shared.update.UpdateChecker
 import io.github.tom039224.yhtye.ui.settings.DevicePane
 import io.github.tom039224.yhtye.ui.settings.SystemAccess
+import io.github.tom039224.yhtye.ui.settings.UpdatePane
 import io.github.tom039224.yhtye.ui.settings.rememberSystemAccess
 
-/** 画面の切り替え: 読み込み中 → ペアリング前 / ペアリング後 (3 パネルのホーム)。 */
+/**
+ * 画面の切り替え: 読み込み中 → ペアリング前 / ペアリング後 (3 パネルのホーム)。
+ *
+ * @param updates アプリの更新の確認 (設定の「この端末」と、左パネルの印)。null なら更新の節を出さない。
+ */
 @Composable
-fun YhtyeRoot(session: Session) {
+fun YhtyeRoot(session: Session, updates: UpdateChecker? = null) {
     val phase by session.phase.collectAsStateWithLifecycle()
     val incoming by session.incoming.collectAsStateWithLifecycle()
     val openChat by session.openChat.collectAsStateWithLifecycle()
@@ -38,8 +44,14 @@ fun YhtyeRoot(session: Session) {
         }
         is Session.Phase.Paired -> {
             AskNotificationsOnce(session, system)
-            val device = remember(current.credentials, system) {
-                DevicePane(current.credentials, session.device.mode, session.device::setMode, system)
+            val device = remember(current.credentials, system, updates) {
+                DevicePane(
+                    current.credentials,
+                    session.device.mode,
+                    session.device::setMode,
+                    system,
+                    updates = updates?.let { UpdatePane(it.state, it::checkNow, it::setEnabled) },
+                )
             }
             MainScreen(
                 deviceId = current.credentials.deviceId,

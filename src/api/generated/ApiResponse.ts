@@ -14,7 +14,12 @@ import type { RemoteStatus } from "./RemoteStatus";
 import type { Snapshot } from "./Snapshot";
 import type { UsageReport } from "./UsageReport";
 
-export type ApiResponse = { "type": "pong", host: string, } | { "type": "projects", projects: Array<ProjectInfo>, } | { "type": "project", project: ProjectInfo, } | { "type": "snapshot", snapshot: Snapshot, } | { "type": "events", events: Array<LoggedEvent>, 
+export type ApiResponse = { "type": "pong", host: string, 
+/**
+ * A core that predates the field leaves it out, which a reader takes
+ * as "unknown" (the Android client checks it against its own version).
+ */
+version: string, } | { "type": "projects", projects: Array<ProjectInfo>, } | { "type": "project", project: ProjectInfo, } | { "type": "snapshot", snapshot: Snapshot, } | { "type": "events", events: Array<LoggedEvent>, 
 /**
  * More events follow (the page was full).
  */

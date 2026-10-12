@@ -105,3 +105,49 @@ describe("a group merged into another branch", () => {
     expect(t).toEqual({});
   });
 });
+
+describe("the orchestrator's message to a task's agent", () => {
+  const HEADER = "[yhtye:orchestrator_message]";
+  const INTERRUPTED = "(Your previous turn was interrupted by Yhtye to deliver this message; your work so far is kept.)";
+  const NOTE =
+    "(This message is from the orchestrator while you are working on the current step. Take it into account and continue the step; when finished, call report_step_done (or help) as usual.)";
+  const STEP = "[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement\nInstruction:\nAppend hello";
+
+  it("is its own item, and any other prompt stays a prompt", () => {
+    const t = fold([
+      ev(1, { type: "prompted", session: S, text: STEP }),
+      ev(2, { type: "prompted", session: S, text: `${HEADER}\n**タブ**を使う\n\n${NOTE}` }),
+      ev(3, { type: "prompted", session: S, text: `${HEADER}\n${INTERRUPTED}\n\n${NOTE}` }),
+    ]);
+    expect(t[S].map((i) => i.kind)).toEqual(["prompt", "orchestrator_message", "prompt"]);
+    expect(t[S][1]).toMatchObject({ text: "**タブ**を使う", interrupted: false });
+  });
+
+  it("is shown labelled, as Markdown, without the note for the agent", () => {
+    const t = fold([ev(1, { type: "prompted", session: S, text: `${HEADER}\n**タブ**を使う\n\n- 一つ目\n\n${NOTE}` })]);
+    const { container } = render(<TranscriptView items={t[S]} agentLabel="implementer" />);
+    const card = screen.getByLabelText("orchestrator message");
+    expect(card).toHaveTextContent("オーケストレータから");
+    expect(card.querySelector("strong")?.textContent).toBe("タブ");
+    expect(card.querySelectorAll("li")).toHaveLength(1);
+    expect(container).not.toHaveTextContent("This message is from the orchestrator");
+    expect(container).not.toHaveTextContent(HEADER);
+    expect(container.querySelector(".prompt")).toBeNull();
+    expect(screen.queryByText("割り込みで再送")).toBeNull();
+  });
+
+  it("says when it was sent again after an interrupt", () => {
+    const t = fold([ev(1, { type: "prompted", session: S, text: `${HEADER}\n${INTERRUPTED}\nタブを使う\n\n${NOTE}` })]);
+    const { container } = render(<TranscriptView items={t[S]} agentLabel="implementer" />);
+    expect(screen.getByText("割り込みで再送")).toBeInTheDocument();
+    expect(screen.getByLabelText("orchestrator message")).toHaveTextContent("タブを使う");
+    expect(container).not.toHaveTextContent("Your previous turn was interrupted");
+  });
+
+  it("leaves a step prompt in its folded form", () => {
+    const t = fold([ev(1, { type: "prompted", session: S, text: STEP })]);
+    const { container } = render(<TranscriptView items={t[S]} agentLabel="implementer" />);
+    expect(screen.queryByLabelText("orchestrator message")).toBeNull();
+    expect(container.querySelector("details.prompt .prompt-body")?.textContent).toBe(STEP);
+  });
+});

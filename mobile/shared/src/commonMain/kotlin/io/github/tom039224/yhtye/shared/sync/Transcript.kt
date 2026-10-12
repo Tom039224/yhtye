@@ -46,6 +46,15 @@ sealed interface TranscriptItem {
     /** サブエージェントへのプロンプト。 */
     data class Prompt(override val seq: Long, override val ts: Long, val text: String) : TranscriptItem
 
+    /** オーケストレータの `message_task` のメッセージ (サブエージェントへのプロンプトを本文として読んだもの)。 */
+    data class OrchestratorMessage(
+        override val seq: Long,
+        override val ts: Long,
+        val text: String,
+        /** 届けるために Yhtye がエージェントのターンを止めて送り直した。 */
+        val interrupted: Boolean,
+    ) : TranscriptItem
+
     /** ユーザーがオーケストレータの文脈を圧縮させた (`/compact`)。 */
     data class Compact(override val seq: Long, override val ts: Long) : TranscriptItem
 
@@ -155,7 +164,17 @@ fun applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state: State? = null): Tr
         }
         // オーケストレータのプロンプトは受信箱のまとめ (ユーザー・通知の行として出す) か、ユーザーの `/compact`
         is ApiEventBody.Prompted -> when {
-            !isOrchestratorKey(body.session) -> t.push(body.session, TranscriptItem.Prompt(seq, ts, body.text))
+            !isOrchestratorKey(body.session) -> {
+                val message = parseOrchestratorMessage(body.text)
+                t.push(
+                    body.session,
+                    if (message != null) {
+                        TranscriptItem.OrchestratorMessage(seq, ts, message.text, message.interrupted)
+                    } else {
+                        TranscriptItem.Prompt(seq, ts, body.text)
+                    },
+                )
+            }
             body.text == COMPACT_PROMPT -> t.push(body.session, TranscriptItem.Compact(seq, ts))
             else -> t
         }
