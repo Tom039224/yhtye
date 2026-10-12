@@ -896,18 +896,19 @@ async fn nothing_opens_after_shutdown() {
 }
 
 #[tokio::test]
-async fn ping_answers_with_the_name_of_this_machine() {
+async fn ping_answers_with_the_name_of_this_machine_and_the_app_version() {
     let r = TempRepo::new();
     let core = Core::start(core_config(&r, json!({}), json!({}), json!({})))
         .await
         .expect("core");
     // No project is needed, and every call gets the same answer.
     for _ in 0..2 {
-        let ApiResponse::Pong { host } = run(&core, ApiCommand::Ping).await else {
+        let ApiResponse::Pong { host, version } = run(&core, ApiCommand::Ping).await else {
             panic!("a pong");
         };
         assert!(!host.trim().is_empty());
         assert_eq!(host, yhtye_core::runtime::host_name());
+        assert_eq!(version, yhtye_core::runtime::APP_VERSION);
     }
     core.shutdown().await;
 }

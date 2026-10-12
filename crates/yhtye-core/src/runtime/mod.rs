@@ -18,6 +18,6 @@ mod transcript;
 pub use chats::ChatTarget;
 pub use core::{Core, CoreConfig, DetectionConfig};
 pub use driver::USER_SESSION;
-pub use host::host_name;
+pub use host::{APP_VERSION, host_name};
 pub use orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 pub use sessions::{agent_ref, session_key};

@@ -1,5 +1,10 @@
-//! The name of the machine the core runs on (`ApiCommand::Ping`, the host
-//! footer of the sidebar).
+//! The name of the machine the core runs on and the version of the app it is
+//! part of (`ApiCommand::Ping`, the host footer of the sidebar).
+
+/// The version of the Yhtye desktop app: the workspace version, which the
+/// Tauri shell (`src-tauri`), `tauri.conf.json` and `package.json` share (a
+/// test keeps them in step). The Android client compares it with its own.
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Shown when the OS gives no usable name.
 const UNKNOWN_HOST: &str = "localhost";

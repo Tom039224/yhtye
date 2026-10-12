@@ -10,6 +10,7 @@ import io.github.tom039224.yhtye.ui.YhtyeRoot
 
 class MainActivity : ComponentActivity() {
     private val session get() = (application as YhtyeApplication).session
+    private val updates get() = (application as YhtyeApplication).updates
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
@@ -18,7 +19,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) receive(intent)
         setContent {
             YhtyeTheme {
-                YhtyeRoot(session)
+                YhtyeRoot(session, updates)
             }
         }
     }

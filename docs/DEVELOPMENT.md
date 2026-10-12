@@ -301,3 +301,100 @@ YHTYE_REAL_SERVER_TEST=1 ./gradlew :shared:testAndroidHostTest --tests '*RealSer
    - Doze: `adb shell dumpsys battery unplug` と `adb shell dumpsys deviceidle force-idle` (深い Doze を強制)、終わったら `dumpsys deviceidle unforce` と `dumpsys battery reset`。
    - 設定が PC に反映されたかは、もう 1 つのクライアント (別の端末としてペアリングした WebSocket クライアント。Python の `websockets` で `get_agent_settings` / `list_secret_env` を送る) で見られる。
    - `BOOT_COMPLETED` はシェルから送れない (保護された放送)。同じ除外を受ける `adb install -r` (= `MY_PACKAGE_REPLACED`) で、アプリを開かずにサービスが始まることを確かめられる。
+
+### リリース (GitHub Releases に署名済み APK を出す)
+
+Android アプリは GitHub Releases に署名済みの APK を添付して配る (Play / F-Droid は使わない)。利用者向けの説明 (インストール・版番号と互換性の規則・アプリ内の更新)
+は [`README.md`](../README.md) の「Android 版」。決めた内容の記録は [`planned/android-client.md`](planned/android-client.md) の「リリースと更新 (T-84)」。
+
+#### 版番号
+
+- **タグ**: `android-v<major>.<minor>.<patch>` (例 `android-v0.1.0`)。デスクトップ版のリリースとは別。数字だけで、先頭の 0 は付けない。マイナーとパッチは 0〜99。
+- **`versionName`** はタグから (`android-v0.1.0` → `0.1.0`)。Gradle のプロパティ `yhtye.versionName` で渡す (`-Pyhtye.versionName=0.1.0`)。
+  渡さなければ `mobile/gradle.properties` の開発用の既定値 (`yhtye.versionName`)。形が違えばビルドが失敗する。
+- **`versionCode`** = `major*10000 + minor*100 + patch` (`0.1.0` → `100`、`1.2.3` → `10203`)。マイナーかパッチが 0〜99 の外ならビルドが失敗する。
+  上書きの更新は `versionCode` が増える必要があるので、版は必ず上げる。
+- アプリは `BuildConfig.VERSION_NAME` で自分の版を読む (`ThisApp.version`)。
+- **PC の版**はワークスペースの版 (`Cargo.toml` の `[workspace.package] version`)。`src-tauri` は `version.workspace = true`、`tauri.conf.json` と `package.json` は同じ値を手で合わせ、
+  `crates/yhtye-core/tests/app_version.rs` が一致を見る。PC の版を上げるときは 3 か所を一緒に変える。`ping` の応答 (`pong{host, version}`) が PC の版をアプリに伝える。
+- **互換性の規則**は `mobile/shared/.../shared/version/Compatibility.kt` (0.x は `0.<minor>` が同じ、1.0 以降はメジャーが同じで PC のマイナー ≥ スマホのマイナー、パッチは見ない)。
+  規則を変えたら README の表とテスト (`CompatibilityTest`) も直す。
+
+#### 出し方
+
+1. 版を決める。互換性が変わる変更を含むとき (0.x ならマイナー、1.0 以降は規則に従って) は、PC の版との組み合わせも考える。
+2. 出したいコミット (通常は `main` の先頭) にタグを打って push する。
+
+   ```sh
+   git tag android-v0.1.0
+   git push origin android-v0.1.0
+   ```
+
+3. `.github/workflows/android-release.yml` が動く。流れ: タグの形式を検査 → JDK 17 と Android SDK → Secrets から keystore を一時ファイルに復元 →
+   `./gradlew :androidApp:assembleRelease -Pyhtye.versionName=<版>` → `apksigner verify` で署名を、`aapt2 dump badging` で `versionName` / `versionCode` を確認 →
+   `yhtye-android-<版>.apk` を GitHub Release に添付 (リリース名・本文に「PC の Yhtye 0.1.x と互換」のように互換する PC の版を書く。版が `0.` で始まる間は**プレリリース**。
+   Latest にはしない) → keystore の一時ファイルを消す。Actions の画面で成功を確かめ、リリースのページから APK を落として確かめる。
+4. 間違えたとき: リリースとタグを消して (`gh release delete android-v0.1.0 --cleanup-tag`)、直してから打ち直す。**配ったあとの版を作り直さない**
+   (同じ版の別の APK を出すと、入れた端末は更新と見なさない)。直すなら次のパッチを出す。
+
+ワークフローはタグの push だけで動く (`ci.yml` とは別)。パスワードは Gradle を実行する step の `env` にだけ渡し (Secrets の値はログでマスクされる)、Gradle は設定キャッシュとビルドキャッシュを使わず実行する。keystore の一時ファイルは job の最後に必ず消す。
+
+#### 署名の鍵
+
+- 鍵 (PKCS12 の keystore) は**リポジトリに入れない**。リポジトリの Secrets に次の 4 つを登録してある。
+
+  | Secret | 中身 |
+  |---|---|
+  | `ANDROID_KEYSTORE_BASE64` | keystore ファイルの base64 (`base64 -w0 yhtye-release.p12`) |
+  | `ANDROID_KEYSTORE_PASSWORD` | keystore のパスワード |
+  | `ANDROID_KEY_ALIAS` | 鍵の別名 (`yhtye`) |
+  | `ANDROID_KEY_PASSWORD` | 鍵のパスワード |
+
+- Gradle は署名の設定を環境変数から読む。**4 つとも**あれば release を署名し、**どれも無ければ**未署名のまま (ローカルの `./gradlew build` はこの状態)。
+  一部だけ、またはファイルが無いときは間違いとして失敗する。debug ビルドは今までどおり debug 鍵。
+
+  | 環境変数 | 中身 |
+  |---|---|
+  | `YHTYE_KEYSTORE_FILE` | keystore ファイルのパス |
+  | `YHTYE_KEYSTORE_PASSWORD` | keystore のパスワード |
+  | `YHTYE_KEY_ALIAS` | 鍵の別名 |
+  | `YHTYE_KEY_PASSWORD` | 鍵のパスワード |
+
+- **鍵を失くすと、入れてある端末に上書きの更新ができなくなる** (別の鍵で署名した APK は、同じアプリとして上書きできない。アンインストール、つまりペアリングなどのデータの消去が要る)。
+  keystore とパスワードは Secrets とは別の安全な場所 (パスワードマネージャなど) にもバックアップしておく。署名の証明書の SHA-256 も控えておくと、
+  配った APK の鍵が変わっていないことを確かめられる (`apksigner verify --print-certs yhtye-android-0.1.0.apk`)。鍵が漏れたときは新しい鍵に替える必要があり、その場合も利用者は入れ直しになる。
+- 鍵の作り方 (最初の 1 回だけ。有効期間は長く取る):
+
+  ```sh
+  keytool -genkeypair -keystore yhtye-release.p12 -storetype PKCS12 -alias yhtye -keyalg RSA -keysize 4096 -validity 36500
+  base64 -w0 yhtye-release.p12 | gh secret set ANDROID_KEYSTORE_BASE64
+  gh secret set ANDROID_KEYSTORE_PASSWORD
+  gh secret set ANDROID_KEY_ALIAS --body yhtye
+  gh secret set ANDROID_KEY_PASSWORD
+  ```
+
+  PKCS12 の keystore では、`keytool` はキーのパスワードを keystore のパスワードに揃える (通常 2 つの Secrets は同じ値になる)。
+
+#### ローカルで署名付きビルドを試す
+
+ワークフローと同じ手順を、使い捨ての keystore で確かめられる (本物の鍵は使わない。作った keystore はコミットせず、終わったら消す)。
+
+```sh
+cd mobile
+keytool -genkeypair -keystore /tmp/test.p12 -storetype PKCS12 -alias yhtye -keyalg RSA -keysize 2048 -validity 30 \
+  -storepass testpass123 -keypass testpass123 -dname "CN=Test"
+YHTYE_KEYSTORE_FILE=/tmp/test.p12 YHTYE_KEYSTORE_PASSWORD=testpass123 YHTYE_KEY_ALIAS=yhtye YHTYE_KEY_PASSWORD=testpass123 \
+  ./gradlew --no-configuration-cache --no-build-cache :androidApp:assembleRelease -Pyhtye.versionName=0.1.0
+$ANDROID_HOME/build-tools/37.0.0/apksigner verify --print-certs androidApp/build/outputs/apk/release/androidApp-release.apk
+$ANDROID_HOME/build-tools/37.0.0/aapt2 dump badging androidApp/build/outputs/apk/release/androidApp-release.apk | grep '^package:'   # versionCode='100' versionName='0.1.0'
+rm /tmp/test.p12
+```
+
+環境変数が無いと APK は `androidApp-release-unsigned.apk` になる (署名されていない)。ワークフローは署名済みの `*-release.apk` がちょうど 1 つ無ければ失敗する。
+
+#### アプリ内の更新の確認
+
+アプリは `GET https://api.github.com/repos/Tom039224/yhtye/releases` (`shared/.../update/Releases.kt` の定数) を読み、`android-v*` のタグのリリースのうち自分より新しい版
+(Semantic Versioning。GitHub がプレリリースとした物も含む) があれば知らせる。リポジトリの名前や所有者を変えるときは、この定数 (`RELEASES_URL` / `RELEASE_PAGE_URL`) と
+README のリンクを直す。URL は `https://` だけを受け付ける (アプリは PC との通信のために平文を許すので、更新の確認は別の歯止めを持つ)。
+ネットワークの制限 (`TailscaleHosts`: PC との平文の接続先を Tailscale のアドレスに限る) は更新の確認とは無関係で、そのまま。

@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.background.OpenChatRequest
 import io.github.tom039224.yhtye.shared.sync.AppStore
+import io.github.tom039224.yhtye.shared.update.UpdateState
 import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.LocalActionScope
 import io.github.tom039224.yhtye.ui.common.YIcon
@@ -65,6 +66,7 @@ import io.github.tom039224.yhtye.ui.tasks.CancelConfirmDialog
 import io.github.tom039224.yhtye.ui.tasks.CancelTarget
 import io.github.tom039224.yhtye.ui.tasks.TaskDetail
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /** 画面の作り直し (回転など) で消したくない画面の状態。 */
@@ -102,6 +104,9 @@ sealed interface Stacked {
     }
 }
 
+/** 更新の確認が無いとき ([DevicePane.updates] が null) の状態。 */
+private val NO_UPDATES = MutableStateFlow(UpdateState(enabled = false))
+
 /** 左パネルのチャットの経過 (`3m`) とタスクの経過を数え直す間隔 (PC の useNow(30 秒))。 */
 private const val NOW_TICK_MS = 30_000L
 
@@ -115,6 +120,7 @@ private const val NOW_TICK_MS = 30_000L
  * - タスクの `@` (右パネルのボタン・行の右→左スワイプ・詳細のメニュー) はコンポーザにメンションを積んで中央に戻る。
  * - ■ (タスク・グループの中止) は確認してから同期層へ。
  * - 設定 ([SettingsScreen]) はレールの一番下の「設定」から [Stacked.Settings] で開く。
+ * - アプリの新しい版があれば ([DevicePane.updates])、左パネルの設定のボタンに小さな印を付ける。
  * - 完了の通知のタップ ([openChat]) は、積んだ画面とパネルを閉じて、そのプロジェクトのチャットを中央に出す。
  */
 @Composable
@@ -131,6 +137,8 @@ fun MainScreen(
 ) {
     val model: MainViewModel = viewModel(key = deviceId) { MainViewModel() }
     val app by sync.state.collectAsStateWithLifecycle()
+    // アプリの新しい版があれば、左パネルの設定のボタンに小さな印を付ける (通知は出さない)
+    val update by (device.updates?.state ?: NO_UPDATES).collectAsStateWithLifecycle()
     val shell = rememberPanelShellState()
     val scope = rememberCoroutineScope()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -181,6 +189,7 @@ fun MainScreen(
                         selfId = deviceId,
                         onChatChosen = shell::hide,
                         onOpenSettings = { stackedKey = Stacked.Settings.key },
+                        updateAvailable = update.available != null,
                     )
                 },
                 right = {
@@ -200,6 +209,7 @@ fun MainScreen(
                             onOpenLeft = { shell.show(Panel.Left) },
                             onOpenRight = { shell.show(Panel.Right) },
                             onReconnect = onReconnect,
+                            appVersion = device.appVersion,
                         )
                     }
                 },

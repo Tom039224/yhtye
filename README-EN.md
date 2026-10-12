@@ -16,7 +16,9 @@ The UI text and most of the documentation are in Japanese.
 
 ## Status
 
-An early, personal project (v0.1). There are no prebuilt binaries or releases yet; you build from source.
+An early, personal project (v0.1). There are no prebuilt binaries or releases of the desktop app yet; you build it from
+source. Only the Android client is distributed, as an APK on [GitHub Releases](https://github.com/Tom039224/yhtye/releases)
+(see [Android app](#android-app)).
 
 What works:
 
@@ -125,6 +127,67 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    to the orchestrator. Tasks work in worktrees outside your repository under the data directory
    (`~/.local/share/io.github.tom039224.yhtye`, or `YHTYE_DATA_DIR`).
 
+## Android app
+
+A client for operating the Yhtye running on your PC from an Android device over Tailscale (Kotlin + Jetpack Compose,
+[`mobile/`](mobile/)). It has the same screens as the desktop app (projects, branches and chats, the conversation, groups
+and tasks, settings): send requests to the orchestrator, watch and stop tasks, change settings. When the app is closed it
+notifies you when the work is done and it is your turn. Design: [`docs/planned/android-client.md`](docs/planned/android-client.md) (Japanese).
+
+### Requirements
+
+- The PC and the device are connected with the **same Tailscale account**. Yhtye on the PC listens only on Tailscale
+  addresses and accepts only devices of the same user.
+- Yhtye (the desktop app) is running on the PC; the app connects only while it runs.
+- Android 8.0 (API 26) or later.
+
+### Installing
+
+1. In the browser of the device, open [GitHub Releases](https://github.com/Tom039224/yhtye/releases) and download
+   `yhtye-android-<version>.apk` from an `android-v…` release.
+2. Open the APK. Android asks you to allow installing unknown apps for the browser (or file manager) you used; allow it and install.
+3. On first start, turn on "Settings → Remote access" in Yhtye on the PC to show a QR code, and scan it with the app's
+   "Scan QR code" (or use "Enter manually") to pair.
+
+The APK is signed with the author's key. An update is a new APK signed with the same key installed over the old one;
+your pairing and other data are kept.
+
+### Versions and compatibility
+
+The Android app is released with its own tag, `android-v<major>.<minor>.<patch>` (for example `android-v0.1.0`), and its own
+version number, separate from the desktop app. Whether the app and the Yhtye on the PC are compatible is decided by:
+
+- **While the version is 0.x**: compatible if `0.<minor>` is the same on the PC and on the phone (in 0.x a minor version may
+  break compatibility).
+- **From 1.0**: strict Semantic Versioning. Compatible if the major version is the same and the PC's minor version is greater
+  than or equal to the phone's.
+- **Patch**: the PC and Android may raise it independently (it does not affect compatibility).
+
+| PC | Phone | Compatible |
+|---|---|---|
+| 0.1.4 | 0.1.0 | yes (same 0.1) |
+| 0.2.0 | 0.1.0 | no (0.2 and 0.1 differ) |
+| 1.3.0 | 1.2.5 | yes (the PC's minor is the same or newer) |
+| 1.1.0 | 1.2.0 | no (the PC's minor is older) |
+| 2.0.0 | 1.9.0 | no (different major) |
+
+When it connects, the app reads the PC's version. If it is not compatible, the conversation screen shows a banner at
+the top ("PC and this app have different versions (PC 0.2.0 / this device 0.1.0). Update one of them." — in Japanese in
+the app), and "Settings → This device" shows both versions. An old PC that does not report its version gets no warning; its
+version is shown as "unknown".
+
+### Updates
+
+The app checks GitHub Releases for a newer version when it comes to the foreground, if the last check was 24 hours ago or
+more. If there is one, "Settings → This device" shows "A new version 0.1.1 is available" with a "Download" button and the
+settings button in the left panel gets a small mark (no notification). "Download" opens the release page in the browser;
+download the APK and open it to install over the current version. The app does not download or install anything itself.
+
+- Turning off "Check for updates" in settings stops the automatic check (and "Check now"). It is on by default.
+- A failed check (offline, GitHub API rate limit, …) is ignored quietly; the reason is shown only in "Settings → This device".
+- This check is the app's only communication with GitHub: one plain HTTPS GET to the public API, with nothing that identifies the PC or the
+  device. Communication with the PC is still limited to Tailscale addresses.
+
 ## Development
 
 Prerequisites, run commands, the browser dev bridge, the Wayland + NVIDIA workaround and the build/verify
@@ -143,6 +206,7 @@ first start.
 | Path | Contents |
 |---|---|
 | [`SETUP.md`](SETUP.md) | Setup for users (Japanese) |
+| [`mobile/`](mobile/) | Android client ([Android app](#android-app)) |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Development guide (Japanese) |
 | [`docs/PLAN.md`](docs/PLAN.md) | Staged plan, progress, open questions |
 | [`docs/architecture/`](docs/architecture/) | Orchestration model, MCP tools, core design, ACP harnesses |
