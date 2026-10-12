@@ -61,6 +61,19 @@ class ContractTest {
     }
 
     @Test
+    fun aPongFromAPcBeforeTheVersionWasAddedStillReads() {
+        // 古い PC は version を返さない: 読めて、版は空 (= 不明) になる
+        assertEquals(
+            ApiResponse.Pong(host = "old-pc", version = ""),
+            ApiJson.decodeFromString(ApiResponse.Serializer, """{"type":"pong","host":"old-pc"}"""),
+        )
+        assertEquals(
+            ApiResponse.Pong(host = "pc", version = "0.2.1"),
+            ApiJson.decodeFromString(ApiResponse.Serializer, """{"type":"pong","host":"pc","version":"0.2.1"}"""),
+        )
+    }
+
+    @Test
     fun commandsBuiltInKotlinAreWrittenLikeRust() {
         val request = WsRequest(id = 7, cmd = ApiCommand.ListEvents(project = "repo", afterSeq = 3))
         assertJsonEquals(

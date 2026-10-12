@@ -51,6 +51,9 @@ interface SystemAccess {
     /** 電池の最適化の対象から外す確認を出す (出せなければ OS の電池の最適化の一覧を開く)。 */
     fun requestIgnoreBatteryOptimizations()
 
+    /** [url] (`https://`) をブラウザで開く (新しい版のリリースのページ)。それ以外の URL・開けるアプリが無いときは何もしない。 */
+    fun openUrl(url: String)
+
     /** 何もしない (テストの既定)。 */
     object None : SystemAccess {
         override fun notificationState() = NotificationState.Allowed
@@ -64,6 +67,8 @@ interface SystemAccess {
         override fun isIgnoringBatteryOptimizations() = true
 
         override fun requestIgnoreBatteryOptimizations() = Unit
+
+        override fun openUrl(url: String) = Unit
     }
 }
 
@@ -133,6 +138,11 @@ private class AndroidSystemAccess(
         val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, "package:${ctx.packageName}".toUri())
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (!start(direct)) start(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    override fun openUrl(url: String) {
+        if (!url.startsWith("https://")) return
+        start(Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     private fun start(intent: Intent): Boolean = try {

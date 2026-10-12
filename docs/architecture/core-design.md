@@ -1281,7 +1281,8 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.9 チャットの改名・削除とホストの ping (左パネルの改善)
 
-- **`ping`** → `pong{host}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) を返す軽い疎通確認。プロジェクトは要らない。
+- **`ping`** → `pong{host, version}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) と、デスクトップアプリの版 (`APP_VERSION` = ワークスペースの版。`src-tauri`・`tauri.conf.json`・`package.json` と一致することは `tests/app_version.rs` が見る) を返す軽い疎通確認。プロジェクトは要らない。
+  `version` は Android クライアントが自分の版と突き合わせて互換性を判定するのに使う (T-84)。この項目が増える前のコアは返さないので、読む側は欠けていたら「不明」として扱う (Kotlin では空文字の既定値)。
   UI (`AppStore`) は接続が開いている間 3 秒おきに送り (`PING_INTERVAL_MS`)、5 秒で応答が無ければ失敗として数える。左パネルのフッタは「ホスト名 + 最後の ping 応答からの経過時間
   (5 秒以下は `now`)」と接続状態のドット (緑 = 応答あり / 琥珀 = 接続中・初回応答待ち / 赤 = 切断か 12 秒以上応答なし) を出す。Tauri でも WS ブリッジでも同じ `ApiCommand` なので transport は変えない。
 - **`rename_chat{project, chat, title}`** → `chat{chat}`: 空白を 1 つに畳んで trim、空は `invalid_argument`、80 文字 (`MAX_RENAMED_TITLE_CHARS`) 超も `invalid_argument`、未知のチャットは `not_found`。
