@@ -269,6 +269,9 @@ impl Driver {
                 let reply = self.user_tool(call).await;
                 let _ = tx.send(reply);
             }
+            Some(Cmd::RetryGroupMerge(group, tx)) if self.already_merged(&group) => {
+                let _ = tx.send(Ok(Value::Null)); // another client's retry merged it
+            }
             Some(Cmd::RetryGroupMerge(group, tx)) => {
                 let reply = self
                     .execute(DomainCommand::RetryGroupMerge { group })
@@ -302,11 +305,14 @@ impl Driver {
         let store = self.publisher.store();
         let sessions = store.sessions(&self.cfg.project).await?;
         let chats = store.chats(&self.cfg.project).await?;
+        let mut starting: Vec<String> = self.sessions.starting.keys().cloned().collect();
+        starting.sort();
         Ok(Snapshot {
             seq: self.publisher.seq(),
             state: self.state.clone(),
             sessions,
             chats,
+            starting,
         })
     }
 
@@ -325,6 +331,9 @@ impl Driver {
     /// Runs an orchestrator tool for the user, records it like an agent's tool
     /// call, and tells the orchestrator what the user did.
     async fn user_tool(&mut self, call: ToolCall) -> Reply {
+        if self.already_cancelled(&call) {
+            return Ok(Value::Null); // another client cancelled it first
+        }
         let binding = SessionBinding {
             session: USER_SESSION.into(),
             role: crate::domain::Role::Orchestrator,

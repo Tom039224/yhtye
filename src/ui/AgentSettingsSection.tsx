@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentRole, AgentSettingsView, Candidate, RoleSettings } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { CandidateTable } from "./CandidateTable";
 import { Icon, IconButton, type IconName } from "./Icon";
+import { StaleBanner } from "./StaleBanner";
+import { typingIn, useSettingsChanges } from "./useSettingsChanges";
 import {
   type Edit,
   type EffortsState,
@@ -35,7 +37,9 @@ interface Props {
  * pick from and the default row, globally or for this project (a project role
  * can inherit the global one). Models and their efforts are read from the
  * harnesses by the core. Every change is saved at once and applies to agent
- * sessions started afterwards.
+ * sessions started afterwards. A save names the revision shown, so settings
+ * another client changed meanwhile are not overwritten (`conflict`: read again);
+ * changes made elsewhere are read again as they are announced (T-65).
  */
 export function AgentSettingsSection({ project, scope }: Props) {
   const store = useStore();
@@ -45,19 +49,36 @@ export function AgentSettingsSection({ project, scope }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const scopeProject = scope === "project" ? (project?.id ?? null) : null;
+  const root = useRef<HTMLDivElement>(null);
+  const shown = useRef<AgentSettingsView | null>(null);
+  shown.current = view;
+  /** Bumped by every read, so an older answer never replaces a newer one. */
+  const reads = useRef(0);
+
+  const reload = useCallback(() => {
+    const read = ++reads.current;
+    store.getAgentSettings(scopeProject).then(
+      (v) => read === reads.current && setView(v),
+      (e) => read === reads.current && setError(toCommandError(e).message),
+    );
+  }, [store, scopeProject]);
 
   useEffect(() => {
-    let live = true;
     setView(null);
     setError(null);
-    store.getAgentSettings(scopeProject).then(
-      (v) => live && setView(v),
-      (e) => live && setError(toCommandError(e).message),
-    );
+    reload();
     return () => {
-      live = false;
+      reads.current += 1; // the scope changed or the section closed
     };
-  }, [store, scopeProject]);
+  }, [reload]);
+
+  const { stale, reloadNow } = useSettingsChanges(["agent_settings", "harnesses"], {
+    reload,
+    busy: saving,
+    isEditing: () => typingIn(root.current),
+    // Revisions only grow: one not newer than the shown is already on screen (also our own save).
+    isShown: (c) => c.kind === "agent_settings" && c.revision !== null && (shown.current?.revision ?? -1) >= c.revision,
+  });
 
   const loadModels = useCallback(
     (harness: string, refresh: boolean) => {
@@ -106,9 +127,16 @@ export function AgentSettingsSection({ project, scope }: Props) {
     setSaving(true);
     setError(null);
     try {
-      setView(await store.setAgentSettings(scopeProject, role, settings));
+      reads.current += 1; // a read in flight is older than the answer
+      setView(await store.setAgentSettings(scopeProject, role, settings, view?.revision));
     } catch (e) {
-      setError(toCommandError(e).message);
+      const err = toCommandError(e);
+      if (err.code === "conflict") {
+        setError("他の端末で設定が変更されていたため、この変更は保存していません。最新の設定を読み込み直しました。");
+        reloadNow();
+      } else {
+        setError(err.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -121,7 +149,8 @@ export function AgentSettingsSection({ project, scope }: Props) {
   const loadingModels = Object.values(models).some((m) => m?.loading);
 
   return (
-    <div className="agent-section">
+    <div className="agent-section" ref={root}>
+      {stale ? <StaleBanner onReload={reloadNow} /> : null}
       <div className="settings-toolbar">
         <p
           className="agent-panel-note"

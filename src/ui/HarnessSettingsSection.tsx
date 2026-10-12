@@ -1,9 +1,11 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import type { HarnessDetection, HarnessPathSource } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
+import { StaleBanner } from "./StaleBanner";
+import { typingIn, useSettingsChanges } from "./useSettingsChanges";
 
 /** Where the main executable was found, as shown. */
 export const PATH_SOURCE_LABELS: Record<HarnessPathSource, string> = {
@@ -26,7 +28,8 @@ function draftsOf(list: HarnessDetection[]): Record<string, string> {
  * ~/.bun/bin, /usr/local/bin, and the harness's own places: MiniMax Code's
  * ~/.minimax-code/bin, Antigravity's ~/.local/share/agy-acp-server, Grok Build's
  * ~/.grok/bin). Opening it makes the core look again; the agent settings offer
- * the installed harnesses.
+ * the installed harnesses. A change made elsewhere (another device) is read
+ * again, unless a path is being typed (then a banner offers it).
  */
 export function HarnessSettingsSection() {
   const store = useStore();
@@ -36,21 +39,37 @@ export function HarnessSettingsSection() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  /** Bumped by every read, so an older answer never replaces a newer one. */
+  const reads = useRef(0);
 
-  useEffect(() => {
-    let live = true;
+  const reload = useCallback(() => {
+    const read = ++reads.current;
     store.getHarnesses().then(
       (list) => {
-        if (!live) return;
+        if (read !== reads.current) return;
         setHarnesses(list);
         setDrafts(draftsOf(list));
+        setError(null);
       },
-      (e) => live && setError(toCommandError(e).message),
+      (e) => read === reads.current && setError(toCommandError(e).message),
     );
-    return () => {
-      live = false;
-    };
   }, [store]);
+
+  useEffect(() => {
+    reload();
+    return () => {
+      reads.current += 1;
+    };
+  }, [reload]);
+
+  // A typed path that is not saved is an edit in progress.
+  const unsaved = harnesses?.some((h) => (drafts[h.id] ?? "") !== (h.override_path ?? "")) ?? false;
+  const { stale, reloadNow } = useSettingsChanges(["harnesses"], {
+    reload,
+    busy,
+    isEditing: () => unsaved || typingIn(root.current),
+  });
 
   const detect = async () => {
     setBusy(true);
@@ -58,6 +77,7 @@ export function HarnessSettingsSection() {
     setError(null);
     setRowErrors({});
     try {
+      reads.current += 1;
       const list = await store.detectHarnesses();
       // The first look failed: nothing filled the boxes yet. Otherwise keep what was typed.
       if (harnesses === null) setDrafts(draftsOf(list));
@@ -75,6 +95,7 @@ export function HarnessSettingsSection() {
     setBusy(true);
     setRowErrors((r) => ({ ...r, [harness]: undefined }));
     try {
+      reads.current += 1;
       const list = await store.setHarnessPath(harness, path);
       setHarnesses(list);
       setDrafts((d) => ({ ...d, [harness]: list.find((h) => h.id === harness)?.override_path ?? "" }));
@@ -86,7 +107,8 @@ export function HarnessSettingsSection() {
   };
 
   return (
-    <div className="agent-section harness-section">
+    <div className="agent-section harness-section" ref={root}>
+      {stale ? <StaleBanner onReload={reloadNow} /> : null}
       <div className="settings-toolbar">
         <p
           className="agent-panel-note"

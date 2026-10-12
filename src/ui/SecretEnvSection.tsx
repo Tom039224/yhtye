@@ -1,8 +1,10 @@
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
+import { StaleBanner } from "./StaleBanner";
+import { useSettingsChanges } from "./useSettingsChanges";
 
 /** Longest accepted name (the core checks the same). */
 export const MAX_SECRET_NAME = 128;
@@ -20,7 +22,9 @@ export function secretNameError(name: string): string | null {
  * The settings' "秘密の環境変数" section (Stage 7e): names of variables whose
  * values live in the OS keyring and are passed to every agent's environment.
  * Values are only sent (once) by the form and are never shown or kept: the
- * core returns names only. Failures (e.g. no keyring) are shown inline.
+ * core returns names only. Failures (e.g. no keyring) are shown inline. Names
+ * another device adds or removes are read again, unless the form is being
+ * filled in (then a banner offers it).
  */
 export function SecretEnvSection() {
   const store = useStore();
@@ -31,17 +35,29 @@ export function SecretEnvSection() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const valueInput = useRef<HTMLInputElement>(null);
+  /** Bumped by every read, so an older answer never replaces a newer one. */
+  const reads = useRef(0);
+
+  const reload = useCallback(() => {
+    const read = ++reads.current;
+    store.listSecretEnv().then(
+      (n) => read === reads.current && setNames(n),
+      (e) => read === reads.current && setError(toCommandError(e).message),
+    );
+  }, [store]);
 
   useEffect(() => {
-    let live = true;
-    store.listSecretEnv().then(
-      (n) => live && setNames(n),
-      (e) => live && setError(toCommandError(e).message),
-    );
+    reload();
     return () => {
-      live = false;
+      reads.current += 1;
     };
-  }, [store]);
+  }, [reload]);
+
+  const { stale, reloadNow } = useSettingsChanges(["secrets"], {
+    reload,
+    busy,
+    isEditing: () => name !== "" || value !== "" || confirming !== null,
+  });
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -54,6 +70,7 @@ export function SecretEnvSection() {
     setBusy(true);
     setError(null);
     try {
+      reads.current += 1;
       setNames(await store.setSecretEnv(trimmed, value));
       setName("");
       setValue("");
@@ -71,6 +88,7 @@ export function SecretEnvSection() {
     setError(null);
     setConfirming(null);
     try {
+      reads.current += 1;
       setNames(await store.deleteSecretEnv(target));
     } catch (err) {
       setError(toCommandError(err).message);
@@ -88,6 +106,7 @@ export function SecretEnvSection() {
 
   return (
     <div className="agent-section secret-env-section">
+      {stale ? <StaleBanner onReload={reloadNow} /> : null}
       <p
         className="agent-panel-note"
         title="エージェントに渡す秘密の環境変数 (API キーなど) を登録します。値は OS のキーリング (Secret Service など) に保存され、Yhtye は名前だけを覚えます。値は保存後に表示も取得もできません (上書きか削除だけ)。登録した変数は、これから起動するすべてのエージェントの環境に入ります。"

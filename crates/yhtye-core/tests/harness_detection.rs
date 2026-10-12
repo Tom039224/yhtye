@@ -250,6 +250,7 @@ async fn rows_of_an_uninstalled_harness_do_not_block_editing_the_others() {
             project: None,
             role: AgentRole::Implementer,
             settings: Some(rows.clone()),
+            expected_revision: None,
         })
     };
     let gone = AgentChoice::new("opencode", Some("x"));
@@ -900,6 +901,7 @@ async fn rows_of_a_harness_that_is_not_installed_are_hidden_from_the_orchestrato
             project: None,
             role,
             settings: Some(rows.clone()),
+            expected_revision: None,
         };
         run(&core, cmd).await;
     }

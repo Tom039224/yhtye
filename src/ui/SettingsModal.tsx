@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AgentSettingsSection, type Scope } from "./AgentSettingsSection";
 import { HarnessSettingsSection } from "./HarnessSettingsSection";
 import { Icon, IconButton, type IconName } from "./Icon";
+import { RemoteSettingsSection } from "./RemoteSettingsSection";
 import { SecretEnvSection } from "./SecretEnvSection";
 
 /** The sections of the settings. More are added here (each is a left-hand entry). */
@@ -10,6 +11,7 @@ const SECTIONS = [
   { id: "agents", label: "エージェント", icon: "bot" },
   { id: "harnesses", label: "ハーネス", icon: "terminal" },
   { id: "secrets", label: "秘密の環境変数", icon: "key" },
+  { id: "remote", label: "リモート接続", icon: "phone" },
 ] as const satisfies readonly { id: string; label: string; icon: IconName }[];
 type SectionId = (typeof SECTIONS)[number]["id"];
 
@@ -93,8 +95,10 @@ export function SettingsModal({ project, onClose }: Props) {
               <AgentSettingsSection project={project} scope={scope} />
             ) : section === "harnesses" ? (
               <HarnessSettingsSection />
-            ) : (
+            ) : section === "secrets" ? (
               <SecretEnvSection />
+            ) : (
+              <RemoteSettingsSection />
             )}
           </div>
         </div>

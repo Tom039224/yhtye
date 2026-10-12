@@ -19,8 +19,12 @@ import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
 
-/** What a scenario opens: nothing, the recorded run, or a project with far more content than fits. */
-const SCENARIOS = ["empty", "run", "long"] as const;
+/**
+ * What a scenario opens: nothing, the recorded run, the recorded run with a few paired devices
+ * under the host (one connected, one offline with a long name), or a project with far more
+ * content than fits (12 devices among it: folded into "他 N 台").
+ */
+const SCENARIOS = ["empty", "run", "devices", "long"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 declare global {
@@ -165,7 +169,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const { git, chats, chatStates } = longGit();
     const group = { ...FULL_RUN.end.state.groups[0], id: "G-1", chat: CHAT_ID, title: `グループ ${NO_SPACES}`, status: "active" as const };
     const state: State = { ...emptyState("repo", { max_review_rounds: 2 }), chats: chatStates, groups: [group], tasks, helps };
-    const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats };
+    const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats, starting: [] };
     const core = new FakeCore(PROJECT, snapshot);
     core.log = longLog();
     core.git = git;
@@ -178,12 +182,27 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       fetched_at_ms: NOW,
     };
     core.agents.models["claude-code"] = longModels();
+    core.remote.dnsName = `${NO_SPACES}.tailnet.ts.net`;
+    core.remote.set(true, undefined);
+    core.remote.devices = Array.from({ length: 12 }, (_, i) => ({
+      id: `dev-${i}`,
+      name: i % 3 === 0 ? `${NO_SPACES}${i}` : `端末 ${i}`,
+      created_ms: NOW - i * 86_400_000,
+      last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
+      connected: i % 4 === 0,
+    }));
     core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false }));
     return { core, open: true };
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);
   core.log = durable(FULL_RUN);
-  return { core, open: scenario === "run" };
+  if (scenario === "devices") {
+    core.remote.devices = [
+      { id: "dev-1", name: "Pixel 9", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
+      { id: "dev-2", name: `Tablet ${NO_SPACES}`, created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
+    ];
+  }
+  return { core, open: scenario !== "empty" };
 }
 
 async function main(): Promise<void> {

@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Yhtye</string>
+
+    <!-- 共通 -->
+    <string name="back">戻る</string>
+    <string name="cancel">キャンセル</string>
+    <string name="retry">再試行</string>
+
+    <!-- ペアリング: 始め -->
+    <string name="pairing_title">PC とペアリング</string>
+    <string name="pairing_intro">PC の Yhtye で「設定 → リモート接続」を開き、表示された QR コードを読み取ってください。この端末と PC が同じ Tailscale のアカウントでつながっている必要があります。</string>
+    <string name="pairing_scan">QR コードを読む</string>
+    <string name="pairing_manual">手入力する</string>
+    <string name="pairing_revoked">この端末は PC から外されました (失効)。使い続けるには、もう一度ペアリングしてください。</string>
+    <string name="pairing_link_invalid">受け取ったペアリングのリンクを読めませんでした: %1$s</string>
+
+    <!-- 入力の誤り -->
+    <string name="input_not_pairing_uri">Yhtye のペアリング用ではありません</string>
+    <string name="input_unsupported_version">新しい形式です。アプリを更新してください (版 %1$s)</string>
+    <string name="input_missing_host">ホスト名か IP アドレスを入れてください</string>
+    <string name="input_not_tailscale">Tailscale のアドレス (100.x.y.z か ….ts.net) ではありません: %1$s</string>
+    <string name="input_invalid_port">ポートは 1〜65535 の数です</string>
+    <string name="input_missing_code">コードを入れてください</string>
+    <string name="input_invalid_code">コードは 8 文字です (0・O・1・I・L は使いません)</string>
+
+    <!-- QR の読み取り -->
+    <string name="scan_title">QR コードを読む</string>
+    <string name="scan_hint">PC に表示された QR コードを画面に映してください</string>
+    <string name="scan_not_yhtye">Yhtye のペアリング用の QR コードではありません</string>
+    <string name="camera_permission_needed">QR コードを読むにはカメラの許可が必要です。</string>
+    <string name="camera_permission_denied">カメラが許可されていません。設定で許可するか、手入力でペアリングしてください。</string>
+    <string name="camera_permission_request">カメラを許可する</string>
+    <string name="open_app_settings">設定を開く</string>
+    <string name="camera_unavailable">カメラを使えませんでした: %1$s</string>
+
+    <!-- 手入力 -->
+    <string name="manual_title">手入力でペアリング</string>
+    <string name="manual_intro">PC の「設定 → リモート接続」に出ているホスト・ポート・コードを入れてください。</string>
+    <string name="manual_host">ホスト名 または IP アドレス</string>
+    <string name="manual_host_placeholder">pc.tailnet.ts.net / 100.x.y.z</string>
+    <string name="manual_port">ポート</string>
+    <string name="manual_code">コード (8 文字)</string>
+    <string name="manual_code_placeholder">ABCD-2345</string>
+    <string name="next">次へ</string>
+
+    <!-- 確認 -->
+    <string name="confirm_title">端末名の確認</string>
+    <string name="confirm_target">接続先: %1$s (ポート %2$d)</string>
+    <string name="confirm_device_name">この端末の名前 (PC の端末一覧に出ます)</string>
+    <string name="confirm_device_name_invalid">1〜64 文字で入れてください</string>
+    <string name="confirm_pair">ペアリングする</string>
+
+    <!-- ペアリングの失敗 -->
+    <string name="fail_code_rejected">コードが違うか、期限が切れています (有効 5 分・1 回限り・5 回間違えると無効)。PC で新しいコードを出してください。</string>
+    <string name="fail_other_user">PC に拒否されました。この端末が PC と同じ Tailscale ユーザーのものか確かめてください。</string>
+    <string name="fail_bad_request">PC が受け付けませんでした。</string>
+    <string name="fail_unreachable">PC に届きませんでした (%1$s)。Tailscale がつながっているか、PC の「リモート接続」がオンかを確かめてください。</string>
+    <string name="fail_wrong_server">QR コードと違う PC が応答しました。接続先を確かめてください (応答した PC の端末一覧に、この端末が登録されています)。</string>
+    <string name="fail_server_error">PC でエラーが起きました (%1$d)。</string>
+    <string name="fail_detail">PC からの説明: %1$s</string>
+
+    <!-- ペアリング解除 (設定の「この端末」) -->
+    <string name="home_unpair">ペアリング解除</string>
+    <string name="unpair_title">ペアリングを解除しますか?</string>
+    <string name="unpair_message">この端末に保存した接続情報を消します。PC の端末一覧からは消えないので、必要なら PC で失効させてください。</string>
+
+    <!-- 設定: この端末 (PC の「リモート接続」に当たるスマホ固有の欄) -->
+    <string name="device_connection_title">接続先</string>
+    <string name="device_pc">PC</string>
+    <string name="device_address">アドレス</string>
+    <string name="device_name">この端末の名前</string>
+    <string name="device_state">接続の状態</string>
+    <string name="device_state_connected">接続中</string>
+    <string name="device_state_connecting">接続しています…</string>
+    <string name="device_state_waiting">再接続を待っています</string>
+    <string name="device_state_idle">つないでいません (アプリを開くとつなぎます)</string>
+    <string name="device_state_revoked">PC から外されました</string>
+    <string name="device_background_title">常駐方式</string>
+    <string name="device_background_intro">アプリを閉じている間も PC とつないでおくかを選びます。つないでいる間は常設の通知が出ます。</string>
+    <string name="device_background_always">常に接続</string>
+    <string name="device_background_always_desc">ペアリング中は PC とつなぎ続けます。作業が終わったらいつでも通知します (既定)。</string>
+    <string name="device_background_work_only">作業中だけ接続</string>
+    <string name="device_background_work_only_desc">オーケストレータが作業している間だけつなぎます。作業が終わって通知を出したらやめます。</string>
+    <string name="device_notifications_title">通知</string>
+    <string name="device_notifications_intro">オーケストレータの作業が終わり、あなたの番になったときに知らせます。</string>
+    <string name="device_notifications_allowed">通知は許可されています。</string>
+    <string name="device_notifications_blocked">通知が許可されていません。アプリを閉じていると、作業が終わっても知らせられません。</string>
+    <string name="device_notifications_allow">通知を許可する</string>
+    <string name="device_notifications_open_settings">OS の通知設定を開く</string>
+    <string name="device_notifications_denied_hint">許可の画面が出ないときは、OS の通知設定から許可してください。</string>
+    <string name="device_battery_title">電池の最適化</string>
+    <string name="device_battery_intro">常駐中は、画面を消していても通常は接続が保たれます。機種によっては OS (Doze や独自の電池節約) が通信を止めて、通知が遅れたり届かなかったりします。遅れるときだけ、対象から外してください。</string>
+    <string name="device_battery_unrestricted">最適化の対象外です。</string>
+    <string name="device_battery_optimized">最適化の対象です (既定)。</string>
+    <string name="device_battery_request">最適化の対象から外す</string>
+
+    <!-- 通知 -->
+    <string name="notif_channel_connection">PC への接続</string>
+    <string name="notif_channel_connection_desc">アプリを閉じていても PC とつないでいる間、出し続ける通知です。</string>
+    <string name="notif_channel_done">作業の完了</string>
+    <string name="notif_channel_done_desc">オーケストレータの作業が終わり、あなたの番になったときの通知です。</string>
+    <string name="notif_channel_alert">接続の異常</string>
+    <string name="notif_channel_alert_desc">この端末が PC から外されたときなどの通知です。</string>
+    <string name="notif_service_connected">Yhtye: PC に接続中</string>
+    <string name="notif_service_reconnecting">Yhtye: PC に再接続しています…</string>
+    <string name="notif_service_always">常に接続</string>
+    <string name="notif_service_work_only">作業が終わるまで接続</string>
+    <string name="notif_revoked_title">Yhtye: この端末は PC から外されました</string>
+    <string name="notif_revoked_text">使い続けるには、もう一度ペアリングしてください。</string>
+
+    <!-- 接続状態 -->
+    <string name="state_connecting">接続しています…</string>
+    <string name="state_reconnect_now">今すぐ再接続</string>
+    <string name="state_rejected">PC に接続を拒否されました。この端末が PC と同じ Tailscale ユーザーのものか確かめてください。</string>
+
+    <!-- ペアリングし直し -->
+    <string name="repair_title">ペアリングし直しますか?</string>
+    <string name="repair_message">新しいペアリングの情報を受け取りました。今のペアリングを解除して、新しい PC とペアリングしますか?</string>
+    <string name="repair_confirm">解除して続ける</string>
+</resources>

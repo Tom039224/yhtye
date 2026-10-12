@@ -8,26 +8,18 @@
 //   event) triggers a catch-up with ListEvents from `cursor`.
 // - reconnect: re-open the project (idempotent; the core may have restarted)
 //   and catch up from `cursor`. Streamed text of the dead connection is dropped.
+// - other clients (T-65): app-wide events (empty `project`) say that the project
+//   list or the settings changed, or that events were dropped for this client
+//   (`resync`: catch up like after a reconnect).
+// - clients (T-73): the PC and the paired devices for the host footer, read on
+//   every (re)connect and resync and replaced by each `clients_changed`.
 
-import type {
-  AgentRole,
-  AgentSettingsView,
-  ApiCommand,
-  ApiEvent,
-  ApiResponse,
-  ChatInfo,
-  GitOverview,
-  HarnessDetection,
-  HarnessModels,
-  ModelEfforts,
-  ProjectInfo,
-  RoleSettings,
-  UsageReport,
-} from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
-import { isOrchestratorKey, upsertChat } from "./chats";
+import { upsertChat } from "./chats";
 import { type Drafts, memoryDrafts } from "./drafts";
+import { changesGit, endsOrchestratorTurn, EVERYTHING, isAppWide, withTimeout } from "./eventRules";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
@@ -40,6 +32,11 @@ import {
   type ProjectView,
   removeChatNow,
 } from "./project";
+import { SettingsCommands } from "./settingsCommands";
+
+export type { RemoteEventBody, SettingsChange } from "./settingsCommands";
+
+type Expect<T extends ApiResponse["type"]> = Extract<ApiResponse, { type: T }>;
 
 export const EVENT_PAGE = 500;
 /** Events read for the transcripts when a project loads (older ones on demand). */
@@ -71,6 +68,11 @@ export interface GitView {
   /** Why the last read failed (shown in the panel). */
   error: string | null;
   loading: boolean;
+  /**
+   * Chats made since git was last read (`chat_created`, maybe by another client
+   * in a new worktree): not shown as "not found" until git is read again.
+   */
+  awaiting: string[];
 }
 
 /** Subscription usage for the status bar (read from the harness by the core). */
@@ -111,11 +113,11 @@ export interface AppState {
   git: GitView | null;
   usage: UsageView;
   host: HostView;
+  /** The paired devices (the core's `list_clients`), as the core ordered them. */
+  clients: ClientDevice[];
 }
 
-type Expect<T extends ApiResponse["type"]> = Extract<ApiResponse, { type: T }>;
-
-export class AppStore {
+export class AppStore extends SettingsCommands {
   private state: AppState;
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribe: (() => void)[] = [];
@@ -131,6 +133,8 @@ export class AppStore {
   private usageTimer: ReturnType<typeof setInterval> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
+  /** Bumped by every read and `clients_changed`: only the newest one is kept. */
+  private clientsToken = 0;
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
   /** Unsent composer text per chat (kept while another chat or project is shown). */
@@ -138,10 +142,8 @@ export class AppStore {
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
-  constructor(
-    private readonly transport: Transport,
-    options: AppStoreOptions = {},
-  ) {
+  constructor(transport: Transport, options: AppStoreOptions = {}) {
+    super(transport);
     this.prefs = options.prefs ?? memoryPrefs();
     this.historyWindow = options.historyWindow ?? HISTORY_WINDOW;
     this.historyPage = options.historyPage ?? HISTORY_PAGE;
@@ -155,6 +157,7 @@ export class AppStore {
       git: null,
       usage: { report: null, error: null, loading: false },
       host: { name: null, lastPingAt: null },
+      clients: [],
     };
   }
 
@@ -279,7 +282,7 @@ export class AppStore {
     const r = await this.run({ type: "create_chat", project, ...target }, "chat");
     if (!r) return false;
     // A branch may have got a new worktree: list it before showing the chat.
-    if ("branch" in target) await this.refreshGit();
+    if ("branch" in target) await this.readGitFor(r.chat);
     this.adoptChat(project, r.chat);
     return true;
   }
@@ -294,7 +297,7 @@ export class AppStore {
     if (!project) return;
     const r = await this.invoke({ type: "create_branch", project, name, from }, "chat");
     // Git first: a chat shown before the overview lists its worktree reads as "not found".
-    await this.refreshGit();
+    await this.readGitFor(r.chat);
     this.adoptChat(project, r.chat);
   }
 
@@ -329,7 +332,7 @@ export class AppStore {
     await this.invoke({ type: "delete_chat", project, chat }, "accepted");
     this.drafts.set(project, chat, "");
     if (this.state.project?.info.id !== project) return;
-    this.updateProject((v) => removeChatNow(v, chat));
+    this.updateChats((v) => removeChatNow(v, chat));
   }
 
   async cancelTask(task: string): Promise<void> {
@@ -388,15 +391,17 @@ export class AppStore {
     const project = view.info.id;
     const token = ++this.gitToken;
     const prev = this.state.git?.project === project ? this.state.git : null;
-    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true } });
+    const awaiting = prev?.awaiting ?? [];
+    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true, awaiting } });
     try {
       const r = await this.invoke({ type: "get_git_overview", project, limit: GIT_COMMITS }, "git_overview");
       if (token !== this.gitToken) return;
-      this.set({ git: { project, overview: r.git, error: null, loading: false } });
+      // Read after every chat it was waiting for was made: their worktrees are in it.
+      this.set({ git: { project, overview: r.git, error: null, loading: false, awaiting: [] } });
     } catch (e) {
       if (token !== this.gitToken) return;
       const error = toCommandError(e).message;
-      this.set({ git: { project, overview: prev?.overview ?? null, error, loading: false } });
+      this.set({ git: { ...(this.state.git ?? { project, overview: null, awaiting }), project, error, loading: false } });
     }
   }
 
@@ -466,7 +471,7 @@ export class AppStore {
         };
         const page = await this.invoke(cmd, "events");
         if (token !== this.loadToken) return;
-        this.updateProject((v) =>
+        this.updateChats((v) =>
           page.events.reduce((acc, ev) => (ev.seq === acc.cursor + 1 ? applyDurable(acc, ev) : acc), v),
         );
         if (!page.more) break;
@@ -488,6 +493,10 @@ export class AppStore {
   }
 
   private onEvent(ev: ApiEvent): void {
+    if (isAppWide(ev)) {
+      this.onAppWide(ev.body);
+      return;
+    }
     const view = this.state.project;
     if (!view || ev.project !== view.info.id) {
       // Not on screen: nothing to show of it but whether work is on (its ring).
@@ -495,7 +504,12 @@ export class AppStore {
       return;
     }
     if (view.phase === "error") return;
-    if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) this.scheduleGitRefresh();
+    if (!ev.live && ev.body.type === "domain" && ev.body.event.type === "chat_created") {
+      // Its worktree may be new: not "not found" while git is read again, at once.
+      void this.readGitFor(ev.body.event.chat);
+    } else if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) {
+      this.scheduleGitRefresh();
+    }
     if (this.syncing) {
       this.buffer.push(ev);
       return;
@@ -510,7 +524,7 @@ export class AppStore {
     }
     if (ev.seq <= view.cursor) return; // already applied (from the log or a replay)
     if (ev.seq === view.cursor + 1) {
-      this.updateProject((v) => applyDurable(v, ev));
+      this.updateChats((v) => applyDurable(v, ev));
       return;
     }
     this.buffer.push(ev);
@@ -528,9 +542,11 @@ export class AppStore {
     }
     this.startUsagePolling();
     this.startPinging();
+    void this.refreshClients();
     const reconnect = this.everOpen;
     this.everOpen = true;
     const view = this.state.project;
+    if (reconnect) this.settingsChanges.emit(EVERYTHING); // missed while disconnected
     if (reconnect && view) {
       void this.refreshProjects();
       void this.resync(view.info);
@@ -538,6 +554,43 @@ export class AppStore {
     } else {
       void this.reopenLast();
     }
+  }
+
+  /** An event of the whole app (no project): from another client, or a resync hint. */
+  private onAppWide(body: ApiEventBody): void {
+    switch (body.type) {
+      case "projects_changed":
+        void this.refreshProjects();
+        return;
+      case "settings_changed":
+        this.settingsChanges.emit({ kind: body.kind, project: body.project ?? null, revision: body.revision ?? null });
+        return;
+      case "resync":
+        this.catchUpAll();
+        return;
+      case "clients_changed":
+        this.clientsToken++; // newer than a read on its way
+        this.set({ clients: body.clients.devices });
+        return;
+      default:
+        return; // remote access: `onRemoteEvent`
+    }
+  }
+
+  /**
+   * Events were dropped for this client (it fell behind): read again what they
+   * would have changed — the project list, the open project's log and git, the
+   * chat on screen (whether it is starting), and the settings on display.
+   */
+  private catchUpAll(): void {
+    void this.refreshProjects();
+    void this.refreshClients();
+    this.settingsChanges.emit(EVERYTHING);
+    const view = this.state.project;
+    if (view?.phase !== "ready") return;
+    this.requestCatchUp();
+    void this.refreshGit();
+    this.openSelectedChat();
   }
 
   /** After a (re)load of the page: open the project that was open last. */
@@ -588,6 +641,20 @@ export class AppStore {
   }
 
   /**
+   * Reads the paired devices. A failure is not shown: the footer keeps the
+   * last list, and the next reconnect or resync reads again.
+   */
+  private async refreshClients(): Promise<void> {
+    const token = ++this.clientsToken;
+    try {
+      const r = await this.invoke({ type: "list_clients" }, "clients");
+      if (token === this.clientsToken) this.set({ clients: r.clients.devices });
+    } catch {
+      // Kept as it was (see above).
+    }
+  }
+
+  /**
    * Re-reads which projects have work on, soon: the events of a project that is
    * not on screen are not folded, so the core is asked (changes come in bursts).
    */
@@ -606,6 +673,37 @@ export class AppStore {
     if (!r || token !== this.activityToken) return;
     const projects = mergeActivity(this.state.projects, r.projects);
     if (projects !== this.state.projects) this.set({ projects });
+  }
+
+  /** `chat` was made after git was last read (see `GitView.awaiting`). */
+  private awaitGitFor(chat: string): void {
+    const git = this.state.git;
+    const project = this.state.project?.info.id;
+    if (!project || git?.project !== project || git.awaiting.includes(chat)) return;
+    this.set({ git: { ...git, awaiting: [...git.awaiting, chat] } });
+  }
+
+  /**
+   * Reads git at once because `chat` was made (a pending delayed read is
+   * dropped), unless it needs no read: its worktree is in the overview already,
+   * or a read waiting for it is in flight. That is the case for this client's
+   * own `create_chat` / `create_branch` (it reads git before adopting the chat)
+   * and for an event seen again (replayed from the buffer after a catch-up).
+   */
+  private readGitFor(chat: Pick<ChatInfo, "id" | "worktree">): Promise<void> {
+    if (this.gitCovers(chat)) return Promise.resolve();
+    this.awaitGitFor(chat.id);
+    if (this.gitTimer) clearTimeout(this.gitTimer);
+    this.gitTimer = null;
+    return this.refreshGit();
+  }
+
+  /** Git has been read since `chat` was made, or is being read for it. */
+  private gitCovers(chat: Pick<ChatInfo, "id" | "worktree">): boolean {
+    const git = this.state.git;
+    if (!git || git.project !== this.state.project?.info.id) return false;
+    if (git.overview?.worktrees.some((w) => w.path === chat.worktree)) return true;
+    return git.loading && git.awaiting.includes(chat.id);
   }
 
   private scheduleGitRefresh(): void {
@@ -629,73 +727,6 @@ export class AppStore {
     this.openSelectedChat(); // the core may have restarted
   }
 
-  // ---- agent settings (Stage 7b) --------------------------------------------
-  // Read and written by the settings panel, which shows failures itself
-  // (these reject with a CommandError instead of pushing an app error).
-
-  /** The harness × model settings, globally (`null`) or for a project. */
-  async getAgentSettings(project: string | null): Promise<AgentSettingsView> {
-    const r = await this.invoke({ type: "get_agent_settings", project: project ?? undefined }, "agent_settings");
-    return r.settings;
-  }
-
-  /** Replaces (or with `null` removes) one role of the global / a project's layer. */
-  async setAgentSettings(project: string | null, role: AgentRole, settings: RoleSettings | null): Promise<AgentSettingsView> {
-    const cmd: ApiCommand = { type: "set_agent_settings", project: project ?? undefined, role, settings };
-    const r = await this.invoke(cmd, "agent_settings");
-    return r.settings;
-  }
-
-  /** The models a harness offers (read from it by the core; cached there). */
-  async listHarnessModels(harness: string, refresh = false): Promise<HarnessModels> {
-    const r = await this.invoke({ type: "list_harness_models", harness, refresh }, "harness_models");
-    return r.models;
-  }
-
-  /** The efforts of one model whose efforts the model list did not include (Stage 7d). */
-  async listModelEfforts(harness: string, model: string): Promise<ModelEfforts> {
-    const r = await this.invoke({ type: "list_model_efforts", harness, model }, "model_efforts");
-    return r.efforts;
-  }
-
-  // ---- harness detection -----------------------------------------------------
-  // The core looks for the harnesses' executables again on each of these and
-  // registers the ones found, so the agent settings offer them afterwards.
-  // Like the agent settings, failures reject for the section to show.
-
-  /** Whether each harness is installed, and where its executables are. */
-  async getHarnesses(): Promise<HarnessDetection[]> {
-    return (await this.invoke({ type: "get_harnesses" }, "harnesses")).harnesses;
-  }
-
-  /** Like `getHarnesses`, and also forgets the models read from every harness. */
-  async detectHarnesses(): Promise<HarnessDetection[]> {
-    return (await this.invoke({ type: "detect_harnesses" }, "harnesses")).harnesses;
-  }
-
-  /** Sets the path of a harness's main executable (`null`: detect it automatically). */
-  async setHarnessPath(harness: string, path: string | null): Promise<HarnessDetection[]> {
-    return (await this.invoke({ type: "set_harness_path", harness, path }, "harnesses")).harnesses;
-  }
-
-  // ---- secret environment variables (Stage 7e) ------------------------------
-  // Only names come back; a value goes to the core once and is not kept here.
-  // Like the agent settings, failures reject for the section to show.
-
-  /** The registered names, sorted. */
-  async listSecretEnv(): Promise<string[]> {
-    return (await this.invoke({ type: "list_secret_env" }, "secret_env")).names;
-  }
-
-  /** Stores `value` in the OS keyring under `name` (replacing an earlier one). */
-  async setSecretEnv(name: string, value: string): Promise<string[]> {
-    return (await this.invoke({ type: "set_secret_env", name, value }, "secret_env")).names;
-  }
-
-  async deleteSecretEnv(name: string): Promise<string[]> {
-    return (await this.invoke({ type: "delete_secret_env", name }, "secret_env")).names;
-  }
-
   // ---- helpers --------------------------------------------------------------
 
   /** Runs a command; failures become visible errors and return `null`. */
@@ -708,17 +739,31 @@ export class AppStore {
     }
   }
 
-  private async invoke<T extends ApiResponse["type"]>(cmd: ApiCommand, expect: T): Promise<Expect<T>> {
-    const r = await this.transport.invoke(cmd);
-    if (r.type !== expect) {
-      throw new Error(`unexpected reply to ${cmd.type}: ${r.type}`);
-    }
-    return r as Expect<T>;
-  }
 
   private pushError(message: string): void {
     const error = { id: this.nextErrorId++, message };
     this.set({ errors: [...this.state.errors, error].slice(-MAX_ERRORS) });
+  }
+
+  /**
+   * `updateProject` for changes that may add or remove chats (possibly another
+   * client's): the drafts of deleted chats go, and when the chat on screen
+   * changed (it was deleted, or the project had none and got one), the one
+   * shown now is remembered and opened like a chat the user picked.
+   */
+  private updateChats(f: (v: ProjectView) => ProjectView): void {
+    const before = this.state.project;
+    this.updateProject(f);
+    const after = this.state.project;
+    if (!before || !after || before.info.id !== after.info.id || before.chats === after.chats) return;
+    const project = after.info.id;
+    for (const c of before.chats) {
+      if (!after.chats.some((x) => x.id === c.id)) this.drafts.set(project, c.id, "");
+    }
+    const next = after.selectedChat;
+    if (next === before.selectedChat) return;
+    this.prefs.set(chatPrefKey(project), next ?? "");
+    if (next && after.phase === "ready") void this.openChat(project, next);
   }
 
   private updateProject(f: (v: ProjectView) => ProjectView): void {
@@ -736,42 +781,6 @@ export class AppStore {
   private notify(): void {
     for (const l of [...this.listeners]) l();
   }
-}
-
-/**
- * An orchestrator finished a turn: it may have renamed or switched a branch
- * itself (Stage 8e: the tree shows what the worktrees have checked out now).
- */
-function endsOrchestratorTurn(ev: ApiEvent): boolean {
-  return ev.body.type === "agent" && ev.body.event.type === "turn_ended" && isOrchestratorKey(ev.body.session);
-}
-
-/** Durable domain events after which branches or commits may have changed. */
-function changesGit(ev: ApiEvent): boolean {
-  if (ev.body.type !== "domain") return false;
-  switch (ev.body.event.type) {
-    case "chat_created":
-    case "group_created":
-    case "group_base_changed":
-    case "group_merge_finished":
-    case "group_cancelled":
-    case "workspace_ready":
-    case "task_status_changed":
-    case "task_cancelled":
-    case "step_completed":
-      return true;
-    default:
-      return false;
-  }
-}
-
-/** `promise`, or a rejection if it takes longer than `ms`. */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`no answer within ${ms} ms`)), ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 function upsertProject(list: ProjectInfo[], p: ProjectInfo): ProjectInfo[] {

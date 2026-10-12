@@ -11,13 +11,18 @@ import type {
   ApiEvent,
   ApiResponse,
   ChatInfo,
+  ClientDevice,
+  Clients,
   GitOverview,
   HarnessDetection,
   HarnessInfo,
   HarnessModels,
   RoleSettings,
   LoggedEvent,
+  PairingCode,
   ProjectInfo,
+  RemoteDevice,
+  RemoteStatus,
   Snapshot,
   UsageReport,
 } from "../api/generated";
@@ -105,6 +110,8 @@ export class FakeCore {
   secretValues: Record<string, string> = {};
   /** Makes the secret commands fail like an unavailable OS keyring. */
   secretError: string | null = null;
+  /** Remote access served by the remote commands (`get_remote_status` ...). */
+  remote = new FakeRemote();
   /** Makes `create_branch` fail (an invalid or existing name). */
   branchError: CommandError | null = null;
   /** The host name `ping` answers with. */
@@ -199,6 +206,9 @@ export class FakeCore {
       case "get_agent_settings":
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "set_agent_settings":
+        if (cmd.expected_revision != null && cmd.expected_revision !== this.agents.revision) {
+          throw new CommandError("conflict", "the agent settings were changed elsewhere since they were read; read them again");
+        }
         this.agents.set(cmd.project ?? null, cmd.role, cmd.settings);
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "list_harness_models": {
@@ -229,10 +239,92 @@ export class FakeCore {
         this.secretNames = this.secretNames.filter((n) => n !== cmd.name);
         delete this.secretValues[cmd.name];
         return { type: "secret_env", names: [...this.secretNames] };
+      case "get_remote_status":
+        return { type: "remote_status", status: this.remote.status() };
+      case "set_remote_settings":
+        return { type: "remote_status", status: this.remote.set(cmd.enabled, cmd.port) };
+      case "create_pairing_code":
+        return { type: "pairing_code", pairing: this.remote.pair() };
+      case "list_remote_devices":
+        return { type: "remote_devices", devices: [...this.remote.devices] };
+      case "revoke_remote_device":
+        return { type: "remote_devices", devices: this.remote.revoke(cmd.device) };
+      case "list_clients":
+        return { type: "clients", clients: this.remote.clients(this.host) };
       default:
         return { type: "accepted" };
     }
   }
+}
+
+/** The core's remote access in miniature: a server that starts unless `startError` says why not. */
+export class FakeRemote {
+  enabled = false;
+  port = 1423;
+  running = false;
+  error: string | null = null;
+  /** Why the server fails to start (Tailscale stopped, ...); `null`: it starts. */
+  startError: string | null = null;
+  /** This PC on the tailnet while running. */
+  ip = "100.64.0.7";
+  dnsName: string | null = "pc.tailnet.ts.net";
+  devices: RemoteDevice[] = [];
+  /** The code `pair` issues next. */
+  nextCode = "ABCD2345";
+  /** How long a code lasts. */
+  codeTtlMs = 5 * 60_000;
+  pairingExpiresAt: number | null = null;
+
+  status(): RemoteStatus {
+    return {
+      enabled: this.enabled,
+      port: this.port,
+      running: this.running,
+      addresses: this.running ? [`${this.ip}:${this.port}`, `[fd7a:115c:a1e0::7]:${this.port}`] : [],
+      ip: this.running ? this.ip : null,
+      dns_name: this.running ? this.dnsName : null,
+      server_id: "0123456789abcdef0123456789abcdef",
+      error: this.error,
+      pairing_expires_at_ms: this.pairingExpiresAt !== null && Date.now() < this.pairingExpiresAt ? this.pairingExpiresAt : null,
+    };
+  }
+
+  set(enabled: boolean, port: number | undefined): RemoteStatus {
+    if (port === 0) throw new CommandError("invalid_argument", "the port must be 1-65535");
+    this.enabled = enabled;
+    this.port = port ?? this.port;
+    this.pairingExpiresAt = null;
+    this.running = enabled && this.startError === null;
+    this.error = enabled ? this.startError : null;
+    return this.status();
+  }
+
+  pair(): PairingCode {
+    if (!this.running) throw new CommandError("invalid_state", "remote access is not running");
+    this.pairingExpiresAt = Date.now() + this.codeTtlMs;
+    const host = this.dnsName ? `host=${this.dnsName}&` : "";
+    return {
+      code: this.nextCode,
+      expires_at_ms: this.pairingExpiresAt,
+      uri: `yhtye://pair?v=1&${host}ip=${this.ip}&port=${this.port}&code=${this.nextCode}&sid=${this.status().server_id}`,
+    };
+  }
+
+  /** `list_clients`: this PC and the paired devices (every one is the Android client). */
+  clients(host: string): Clients {
+    return { server: { host }, devices: this.devices.map(clientOf) };
+  }
+
+  revoke(device: string): RemoteDevice[] {
+    if (!this.devices.some((d) => d.id === device)) throw new CommandError("not_found", `unknown device ${device}`);
+    this.devices = this.devices.filter((d) => d.id !== device);
+    return [...this.devices];
+  }
+}
+
+/** A paired device as `list_clients` shows it. */
+export function clientOf(d: RemoteDevice): ClientDevice {
+  return { id: d.id, name: d.name, kind: "android", connected: d.connected, last_seen_ms: d.last_seen_ms };
 }
 
 const ROLES: AgentRole[] = ["orchestrator", "implementer", "investigator", "reviewer"];
@@ -247,6 +339,8 @@ export class FakeAgentSettings {
   builtin: AgentChoice = { harness: "claude-code", model: "haiku", effort: null };
   global: AgentSettingsLayer = emptyLayer();
   projects = new Map<string, AgentSettingsLayer>();
+  /** `AgentSettingsView.revision`: grows with every `set`. */
+  revision = 1_000;
   /** Served by `list_model_efforts` for models whose list entry has `efforts: null`, by `harness/model`. */
   efforts: Record<string, EffortOption[]> = {};
   /** Served by `list_harness_models`; a missing harness fails (unavailable). */
@@ -272,6 +366,7 @@ export class FakeAgentSettings {
     const layer = project === null ? this.global : (this.projects.get(project) ?? emptyLayer());
     layer[role] = settings;
     if (project !== null) this.projects.set(project, layer);
+    this.revision += 1;
   }
 
   view(project: string | null): AgentSettingsView {
@@ -287,6 +382,7 @@ export class FakeAgentSettings {
       project,
       project_layer: projectLayer ? { ...projectLayer } : null,
       effective,
+      revision: this.revision,
     };
   }
 }

@@ -261,6 +261,61 @@ describe("commands", () => {
     expect(s.getState().git?.overview?.branches.map((b) => b.name)).toContain("feat/new");
   });
 
+  it("reads git once for a branch it created, and not again for the chat's event that follows", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    const reads = transport.callsOf("get_git_overview").length;
+    await s.createBranch("feat/new", "main");
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads + 1);
+    const chat = view(s).chats.find((c) => c.id === "C-3");
+    if (!chat) throw new Error("the new chat is not listed");
+    transport.emit(ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat: { id: chat.id, worktree: chat.worktree, title: null } } }));
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads + 1);
+    expect(s.getState().git?.awaiting).toEqual([]);
+  });
+
+  it("reads git once for a branch it created when the chat's event comes before the answer", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    const reads = transport.callsOf("get_git_overview").length;
+    const worktree = "/data/worktrees/repo/branches/feat-new";
+    core.before = (cmd) => {
+      if (cmd.type !== "create_branch") return;
+      core.git = { ...core.git, worktrees: [...core.git.worktrees, { path: worktree, branch: "feat/new", head_sha: null, is_main: false, missing: false }] };
+      transport.emit(ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat: { id: "C-3", worktree, title: null } } }));
+    };
+    await s.createBranch("feat/new", "main");
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads + 1);
+    expect(view(s).selectedChat).toBe("C-3");
+    expect(s.getState().git?.awaiting).toEqual([]);
+  });
+
+  it("reads git once for a chat it created in a branch's new worktree, and not again for the event", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    const reads = transport.callsOf("get_git_overview").length;
+    expect(await s.createChat({ branch: "feat/y" })).toBe(true);
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads + 1);
+    const chat = view(s).chats.find((c) => c.id === "C-3");
+    if (!chat) throw new Error("the new chat is not listed");
+    transport.emit(ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat: { id: chat.id, worktree: chat.worktree, title: null } } }));
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads + 1);
+  });
+
+  it("does not read git for a chat it created in an existing worktree", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    const reads = transport.callsOf("get_git_overview").length;
+    expect(await s.createChat({ worktree: MAIN_WT })).toBe(true);
+    transport.emit(ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat: { id: "C-3", worktree: MAIN_WT, title: null } } }));
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads);
+  });
+
   it("rejects with the core's error so the form can show it", async () => {
     const s = newStore();
     await open(s);

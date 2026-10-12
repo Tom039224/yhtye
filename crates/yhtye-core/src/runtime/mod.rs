@@ -12,6 +12,7 @@ mod launch;
 mod messages;
 mod orchestration;
 mod port;
+mod repeats;
 mod sessions;
 mod transcript;
 

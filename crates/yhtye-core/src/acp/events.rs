@@ -7,6 +7,7 @@ use agent_client_protocol::schema::v1::{
     SessionInfoUpdate, SessionModeState, SessionUpdate, StopReason, ToolCall, ToolCallUpdate,
     UsageUpdate,
 };
+use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -17,22 +18,33 @@ use ts_rs::TS;
 // Events are moved through a channel once; boxing every `Output` would cost more
 // than the size difference.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum AgentEvent {
-    Ready(#[ts(type = "unknown")] Box<AgentInfo>),
+    Ready(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        Box<AgentInfo>,
+    ),
     /// One `session/update`, typed 1:1 (unknown kinds become [`AgentOutput::Unknown`]).
     Output(AgentOutput),
     PermissionAutoAnswered {
         #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
         tool_call: Box<ToolCallUpdate>,
         #[ts(type = "Array<unknown>")]
+        #[schemars(with = "Vec<serde_json::Value>")]
         options: Vec<PermissionOption>,
         /// `None` means the request was answered `Cancelled` (no allow option).
         #[ts(type = "string | null")]
+        #[schemars(with = "Option<String>")]
         chosen: Option<PermissionOptionKind>,
     },
-    TurnEnded(#[ts(as = "Result<String, AgentError>")] Result<StopReason, AgentError>),
+    TurnEnded(
+        #[ts(as = "Result<String, AgentError>")]
+        #[schemars(with = "Result<String, AgentError>")]
+        Result<StopReason, AgentError>,
+    ),
     /// One stderr line of the agent process (for logs, not for the UI).
     Stderr(String),
     /// The agent process is gone (always the final event).
@@ -111,22 +123,70 @@ pub fn effort_option<'a>(
 }
 
 /// A `session/update`, typed. Mirrors `SessionUpdate` of the ACP schema.
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "kind", content = "update", rename_all = "snake_case")]
 pub enum AgentOutput {
-    UserMessageChunk(#[ts(type = "unknown")] ContentChunk),
-    MessageChunk(#[ts(type = "unknown")] ContentChunk),
-    ThoughtChunk(#[ts(type = "unknown")] ContentChunk),
-    ToolCall(#[ts(type = "unknown")] Box<ToolCall>),
-    ToolCallUpdate(#[ts(type = "unknown")] Box<ToolCallUpdate>),
-    Plan(#[ts(type = "unknown")] Plan),
-    AvailableCommands(#[ts(type = "unknown")] AvailableCommandsUpdate),
-    ModeChanged(#[ts(type = "unknown")] CurrentModeUpdate),
-    ConfigOptions(#[ts(type = "unknown")] ConfigOptionUpdate),
-    SessionInfo(#[ts(type = "unknown")] SessionInfoUpdate),
-    Usage(#[ts(type = "unknown")] UsageUpdate),
+    UserMessageChunk(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        ContentChunk,
+    ),
+    MessageChunk(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        ContentChunk,
+    ),
+    ThoughtChunk(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        ContentChunk,
+    ),
+    ToolCall(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        Box<ToolCall>,
+    ),
+    ToolCallUpdate(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        Box<ToolCallUpdate>,
+    ),
+    Plan(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        Plan,
+    ),
+    AvailableCommands(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        AvailableCommandsUpdate,
+    ),
+    ModeChanged(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        CurrentModeUpdate,
+    ),
+    ConfigOptions(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        ConfigOptionUpdate,
+    ),
+    SessionInfo(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        SessionInfoUpdate,
+    ),
+    Usage(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        UsageUpdate,
+    ),
     /// An update kind this build does not know (kept verbatim, never dropped).
-    Unknown(#[ts(type = "unknown")] serde_json::Value),
+    Unknown(
+        #[ts(type = "unknown")]
+        #[schemars(with = "serde_json::Value")]
+        serde_json::Value,
+    ),
 }
 
 impl AgentOutput {
@@ -173,7 +233,7 @@ impl AgentOutput {
 }
 
 /// Errors surfaced by the ACP client. Messages are meant to be shown to people.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, JsonSchema, TS)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AgentError {
     #[error("failed to launch agent `{command}`: {message}")]

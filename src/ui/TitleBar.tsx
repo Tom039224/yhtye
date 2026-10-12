@@ -11,9 +11,10 @@ import { Icon } from "./Icon";
 export function TitleBar() {
   const branch = useAppState((s) => {
     if (!s.project) return null;
-    const overview = s.git && s.git.project === s.project.info.id ? s.git.overview : null;
+    const git = s.git && s.git.project === s.project.info.id ? s.git : null;
+    const overview = git?.overview ?? null;
     const chat = selectedChatInfo(s.project);
-    if (chat) return placeLabel(placeOf(chat, overview));
+    if (chat) return placeLabel(placeOf(chat, overview, git?.awaiting.includes(chat.id)));
     return overview?.head ?? null;
   });
   return (

@@ -570,10 +570,24 @@ async fn a_chat_is_deleted_with_its_idle_orchestrator_and_stays_gone() {
         code(&core, send(&project, "C-1", "hi")).await,
         ApiErrorCode::NotFound
     );
+    // Deleting it again (another client was first) is accepted; a chat that
+    // never existed is not found.
+    assert!(matches!(
+        core.command(delete(&project, "C-1")).await,
+        Ok(ApiResponse::Accepted)
+    ));
     assert_eq!(
-        code(&core, delete(&project, "C-1")).await,
+        code(&core, delete(&project, "C-7")).await,
         ApiErrorCode::NotFound
     );
+    // Only the id the core gave out counts, not another spelling of its number.
+    for spelling in ["C-01", "C-+1", "C-001"] {
+        assert_eq!(
+            code(&core, delete(&project, spelling)).await,
+            ApiErrorCode::NotFound,
+            "{spelling}"
+        );
+    }
     assert!(
         Path::new(&topic.worktree).is_dir(),
         "worktrees are not touched"

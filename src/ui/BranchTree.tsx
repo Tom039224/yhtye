@@ -14,6 +14,13 @@ function selectOverview(s: AppState): GitOverview | null {
   return s.git && s.project && s.git.project === s.project.info.id ? s.git.overview : null;
 }
 
+const NONE: string[] = [];
+
+/** Chats made after git was last read (`GitView.awaiting`). */
+function selectAwaiting(s: AppState): string[] {
+  return s.git && s.project && s.git.project === s.project.info.id ? s.git.awaiting : NONE;
+}
+
 /**
  * BRANCHES (orchestrator-desktop §9, Stage 8e): the worktrees as a collapsible
  * tree, each named by the branch it has checked out now, with its chats and
@@ -24,6 +31,7 @@ export function BranchTree() {
   const store = useStore();
   const view = useAppState((s) => s.project);
   const overview = useAppState(selectOverview);
+  const awaiting = useAppState(selectAwaiting);
   const gitError = useAppState((s) => (s.git && s.project && s.git.project === s.project.info.id ? s.git.error : null));
   const [formOpen, setFormOpen] = useState(false);
   // Explicit open / close per worktree; the default is "open if it has chats or
@@ -31,7 +39,7 @@ export function BranchTree() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const now = useNow(30_000);
   const ready = view?.phase === "ready" || view?.state != null;
-  const tree = buildTree(view?.chats ?? [], overview);
+  const tree = buildTree(view?.chats ?? [], overview, awaiting);
   const isOpen = (w: WorktreeNode) => toggled[w.path] ?? (w.chats.length > 0 || w.isMain);
   const toggle = (w: WorktreeNode) => setToggled((t) => ({ ...t, [w.path]: !isOpen(w) }));
   const empty = tree.worktrees.length === 0 && tree.lost.length === 0 && tree.otherBranches.length === 0;

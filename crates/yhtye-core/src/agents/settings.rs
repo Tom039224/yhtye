@@ -2,6 +2,7 @@
 //! and which one it uses by default, layered global → project
 //! (`core-design.md` §15.1). Everything here is pure.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -9,7 +10,7 @@ use crate::domain::{Role, TaskKind};
 
 /// A role as far as agent selection is concerned. `Investigator` is the agent
 /// of an `investigate` task (a domain `Role::Implementer` session).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
     Orchestrator,
@@ -51,7 +52,7 @@ impl AgentRole {
 /// own default (for harnesses that expose no model option); `effort: None` means
 /// "do not set the effort option" (Stage 7d, `core-design.md` §15.1). Old stored
 /// values without `effort` read as `None`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 pub struct AgentChoice {
     pub harness: String,
     #[serde(default)]
@@ -97,7 +98,7 @@ pub const MAX_NOTE_CHARS: usize = 400;
 /// A candidate row: an [`AgentChoice`] plus a free-text `note` saying when to
 /// use it (shown to the orchestrator, who picks by it). The same
 /// harness × model may appear in several rows with different efforts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Candidate {
     pub harness: String,
     #[serde(default)]
@@ -166,7 +167,7 @@ pub enum PickError {
 }
 
 /// The candidates of one role and its default (which is one of them).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RoleSettings {
     pub candidates: Vec<Candidate>,
     pub default: AgentChoice,
@@ -338,7 +339,7 @@ fn check_registered(c: &Candidate, harnesses: &[&str]) -> Result<(), String> {
 }
 
 /// The settings in effect for every role.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct AgentSettings {
     pub orchestrator: RoleSettings,
     pub implementer: RoleSettings,
@@ -359,7 +360,7 @@ impl AgentSettings {
 }
 
 /// One layer (global or a project): a role without settings inherits.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct AgentSettingsLayer {
     pub orchestrator: Option<RoleSettings>,
     pub implementer: Option<RoleSettings>,

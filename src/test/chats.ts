@@ -43,7 +43,7 @@ export const CHAT_LOG = [
 ];
 
 export function chatSnapshot(chats: ChatInfo[] = CHAT_INFOS, state: State = chatState()): Snapshot {
-  return { seq: CHAT_LOG.length, state, sessions: [], chats };
+  return { seq: CHAT_LOG.length, state, sessions: [], chats, starting: [] };
 }
 
 export const CHAT_GIT: GitOverview = {
