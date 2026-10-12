@@ -88,7 +88,7 @@ export function GitPanel({ view, lead }: { view: ProjectView; lead: ReactNode })
   const state = view.state;
   // The graph is repository-wide; the header and the base lane follow the selected chat.
   const chat = selectedChatInfo(view);
-  const place = chat ? placeOf(chat, overview) : null;
+  const place = chat ? placeOf(chat, overview, git?.awaiting.includes(chat.id)) : null;
   const chatBranch = place?.kind === "branch" ? place.name : null;
   const group = state ? focusGroup(scopeState(state, view.selectedChat)) : null;
   const base = group?.base_branch ?? chatBranch ?? overview?.head ?? null;

@@ -10,13 +10,15 @@ publish = false
 yhtye-core = { path = "../yhtye-core" }
 axum = { workspace = true, features = ["ws"] }
 tokio = { workspace = true, features = ["signal", "net"] }
-futures.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 getrandom.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
+serde_json.workspace = true
 tokio-tungstenite = "0.29"
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

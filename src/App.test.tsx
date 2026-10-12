@@ -38,7 +38,7 @@ function emptySnapshot(state?: Partial<State>): Snapshot {
   // The recordings' chat `C-1` (on `main`) exists and is selected.
   const chat = { id: "C-1", worktree: "/repo", title: null };
   const info = { ...chat, created_ms: 1, last_used_ms: 1 };
-  return { seq: 0, state: { ...emptyState("repo", { max_review_rounds: 2 }), chats: [chat], ...state }, sessions: [], chats: [info] };
+  return { seq: 0, state: { ...emptyState("repo", { max_review_rounds: 2 }), chats: [chat], ...state }, sessions: [], chats: [info], starting: [] };
 }
 
 describe("App", () => {

@@ -11,15 +11,20 @@
 //! - [`runtime`]: the loop that ties sessions, MCP, git and the state machine together
 //! - [`secrets`]: secret environment variables kept in the OS keyring
 //! - [`usage`]: subscription usage / quota read from the harness
+//! - [`ws`]: the API over a WebSocket (dev bridge and remote server)
+//! - [`remote`]: remote access over Tailscale (pairing, devices, the server)
 
 pub mod acp;
 pub mod agents;
 pub mod api;
+mod clock;
 pub mod domain;
 pub mod git;
 pub mod mcp;
 pub mod prompts;
+pub mod remote;
 pub mod runtime;
 pub mod secrets;
 pub mod store;
 pub mod usage;
+pub mod ws;

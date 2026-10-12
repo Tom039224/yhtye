@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- PC (Tailscale のアドレス) との通信と、QR コードの読み取り -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- 裏でも PC とつないでおく Foreground Service (種類は specialUse。理由は docs/planned/android-client.md の T-71)、
+         作業が終わった通知 (Android 13 以降は実行時に許可を求める)、再起動後に常駐を再開する受信機、
+         Doze で通信が止まるのを避けるための電池の最適化の除外の依頼 (設定の「この端末」から。端末の持ち主が確認で決める) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
+    <!-- カメラが無くても手入力でペアリングできる -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+
+    <!-- 端末トークンは Keystore の鍵で暗号化するので、バックアップから戻しても復号できない。
+         バックアップ・端末間転送の対象から外す -->
+    <application
+        android:name=".YhtyeApplication"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:enableOnBackInvokedCallback="true"
+        android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Yhtye"
+        tools:targetApi="33">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- PC の QR の中身 yhtye://pair?... (カメラ以外で読んだとき・adb での確認) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="pair"
+                    android:scheme="yhtye" />
+            </intent-filter>
+        </activity>
+
+        <!-- PC とつなぎ続けるための常駐。接続は Session が持つので、これはプロセスを生かして常設の通知を出すだけ。
+             specialUse の理由は Play の審査で読まれる (自由記述) -->
+        <service
+            android:name=".background.ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps a WebSocket open to the user's own PC (over Tailscale) so that a notification can be posted when the long-running AI coding work on that PC finishes while the app is closed. It is not a data transfer (dataSync has a 6-hour limit and cannot be started after boot) and no other service type describes it." />
+        </service>
+
+        <!-- 端末の再起動・アプリの更新の後に、「常に接続」なら常駐を再開する -->
+        <receiver
+            android:name=".background.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>

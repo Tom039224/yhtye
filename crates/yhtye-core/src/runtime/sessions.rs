@@ -60,9 +60,11 @@ struct Live {
     binding: SessionBinding,
     /// Prompts waiting for the current turn to end.
     queued: VecDeque<String>,
-    /// Turns whose end the loop has not processed yet. The agent's own turn flag
-    /// clears before the loop sees `TurnEnded`, so this is what tells that a
-    /// turn end is still to come.
+    /// Turns whose end the loop has not processed yet: a prompt was sent and its
+    /// `TurnEnded` is still to come. The agent's own turn flag clears as soon as
+    /// the agent answers, while the turn's last outputs and its `TurnEnded` may
+    /// still wait in the event channel; the next prompt must follow them, so the
+    /// loop goes by this count.
     open_turns: u32,
 }
 
@@ -72,6 +74,11 @@ impl Live {
         self.handle.prompt_text(text)?;
         self.open_turns += 1;
         Ok(())
+    }
+
+    /// Whether a turn is running or its end is still to be processed.
+    fn in_turn(&self) -> bool {
+        self.open_turns > 0 || self.handle.is_turn_running()
     }
 }
 
@@ -134,7 +141,7 @@ pub(super) struct Spawned {
 pub(super) struct Sessions {
     pub(super) cfg: Arc<OrchestrationConfig>,
     host: Option<McpHost>,
-    emit: Emitter,
+    pub(super) emit: Emitter,
     pub(super) agent_tx: mpsc::UnboundedSender<AgentMsg>,
     /// Number of the last launch (see [`AgentMsg`]).
     pub(super) launches: u64,
@@ -351,7 +358,7 @@ impl Sessions {
         let Some(live) = self.live.get_mut(key) else {
             return;
         };
-        if live.handle.is_turn_running() {
+        if live.in_turn() {
             return;
         }
         let Some(text) = live.queued.pop_front() else {
@@ -418,7 +425,7 @@ impl Sessions {
     /// Where `key` stands (see [`Route`]).
     pub(super) fn route(&self, key: &str) -> Route {
         match self.live.get(key) {
-            Some(l) if l.open_turns > 0 || l.handle.is_turn_running() => Route::InTurn {
+            Some(l) if l.in_turn() => Route::InTurn {
                 steering: l.handle.supports_steering(),
             },
             Some(_) => Route::Idle,
@@ -466,7 +473,7 @@ impl Sessions {
     pub(super) fn is_idle(&self, key: &str) -> bool {
         self.live
             .get(key)
-            .is_some_and(|l| !l.handle.is_turn_running() && l.queued.is_empty())
+            .is_some_and(|l| !l.in_turn() && l.queued.is_empty())
     }
 
     /// The process of `key` exited. Returns its binding if Yhtye did not stop it.

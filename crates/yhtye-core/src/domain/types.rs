@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// Role of an agent session. Decides which MCP tools it sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Orchestrator,
@@ -97,7 +97,7 @@ pub enum Verdict {
 }
 
 /// Whether a `message_task` message reached the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageOutcome {
     Delivered,
@@ -106,7 +106,7 @@ pub enum MessageOutcome {
 }
 
 /// How a delivered `message_task` message reached the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageVia {
     /// Injected into the running turn (`_session/steering`).
@@ -128,7 +128,7 @@ pub enum AgentHelpKind {
 
 /// Every kind of help: the agent kinds plus the ones Yhtye raises itself
 /// (`mcp-tools.md` §4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum HelpKind {
     Blocked,
@@ -173,7 +173,7 @@ impl From<AgentHelpKind> for HelpKind {
 }
 
 /// Error codes of tool errors (`mcp-tools.md` §1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     InvalidArgument,
@@ -186,7 +186,7 @@ pub enum ErrorCode {
 
 /// A tool call that failed in a way the calling agent should read and fix.
 /// Sent as `isError: true` with body `{"error": {"code", "message"}}`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error, JsonSchema, TS)]
 #[error("{code:?}: {message}")]
 pub struct ToolError {
     pub code: ErrorCode,

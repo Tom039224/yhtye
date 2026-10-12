@@ -4,6 +4,7 @@
 //! and the WebSocket bridge (`{id, cmd}`, see [`super::WsRequest`]) carry the
 //! same [`ApiCommand`] JSON and return the same [`ApiResponse`] / [`ApiError`].
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
@@ -15,6 +16,7 @@ use crate::agents::{
 };
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
+use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
@@ -24,7 +26,7 @@ pub const DEFAULT_EVENT_PAGE: u32 = 500;
 /// Largest page size of [`ApiCommand::ListEvents`].
 pub const MAX_EVENT_PAGE: u32 = 2000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApiCommand {
     /// A liveness check of the core: answers with the name of the machine it
@@ -188,12 +190,18 @@ pub enum ApiCommand {
     /// Replaces one role of the global layer (no `project`) or a project's
     /// layer; `settings: null` removes it (inherit). Applies to sessions
     /// started afterwards. Returns the settings like `get_agent_settings`.
+    /// With `expected_revision` (the `revision` of the settings the screen
+    /// shows), `conflict` if they were changed since (by another client), so an
+    /// old screen does not overwrite them.
     SetAgentSettings {
         #[serde(default)]
         #[ts(optional)]
         project: Option<String>,
         role: AgentRole,
         settings: Option<RoleSettings>,
+        #[serde(default)]
+        #[ts(optional)]
+        expected_revision: Option<u64>,
     },
     /// The models a harness offers, read from it over ACP (a short session
     /// without a prompt). Cached for 10 minutes; `refresh` asks again unless
@@ -239,16 +247,63 @@ pub enum ApiCommand {
     SetSecretEnv {
         name: String,
         #[ts(type = "string")]
+        #[schemars(with = "String")]
         value: SecretValue,
     },
     /// Removes the value and the name.
     DeleteSecretEnv {
         name: String,
     },
+    /// Remote access (`core-design.md` §18): its settings, whether it is
+    /// listening and where, and why not. Local only (like every `*remote*` /
+    /// pairing command; see [`ApiCommand::is_local_only`]).
+    GetRemoteStatus,
+    /// Turns remote access on or off and sets its port (`port` absent: keep
+    /// it; default 1423). Stored, and applied at once: starts, restarts or stops
+    /// the server. Turning it on when it failed to start tries again. A failure
+    /// to start (Tailscale missing or stopped, the port taken) is not an error
+    /// of the command: it is the status's `error`. `invalid_argument` for port 0.
+    SetRemoteSettings {
+        enabled: bool,
+        #[serde(default)]
+        #[ts(optional)]
+        port: Option<u16>,
+    },
+    /// Issues a pairing code (valid for 5 minutes, once; the previous code stops
+    /// working) and the QR code's URI. `invalid_state` unless the server is running.
+    CreatePairingCode,
+    /// The paired devices, oldest first.
+    ListRemoteDevices,
+    /// Forgets a paired device and closes its connections at once; its token
+    /// stops working. `not_found` for an unknown device.
+    RevokeRemoteDevice {
+        device: String,
+    },
+    /// This PC (its host name) and the paired devices with whether each is
+    /// connected (`core-design.md` §18.8): a read-only view for every client,
+    /// remote devices too (not local only). `clients_changed` says when it changed.
+    ListClients,
+}
+
+impl ApiCommand {
+    /// Commands that only the PC itself may run: a paired remote device may
+    /// not change remote access, issue pairing codes or manage devices (it
+    /// could otherwise add devices or keep itself from being revoked).
+    #[must_use]
+    pub fn is_local_only(&self) -> bool {
+        matches!(
+            self,
+            Self::GetRemoteStatus
+                | Self::SetRemoteSettings { .. }
+                | Self::CreatePairingCode
+                | Self::ListRemoteDevices
+                | Self::RevokeRemoteDevice { .. }
+        )
+    }
 }
 
 /// Everything the settings panel shows (`core-design.md` §15.7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct AgentSettingsView {
     pub harnesses: Vec<HarnessInfo>,
     /// Used for a role no layer sets.
@@ -259,13 +314,17 @@ pub struct AgentSettingsView {
     pub project_layer: Option<AgentSettingsLayer>,
     /// In effect for `project` (or globally).
     pub effective: AgentSettings,
+    /// Version of all agent settings layers: it grows with every change (also
+    /// across restarts of the core), so a larger one is newer. Passed back as
+    /// `set_agent_settings`' `expected_revision`.
+    pub revision: u64,
 }
 
 /// Default number of commits of [`ApiCommand::GetGitOverview`].
 pub const DEFAULT_GRAPH_COMMITS: u32 = 120;
 
 /// A project known to Yhtye.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct ProjectInfo {
     pub id: String,
     /// Display name (the directory name).
@@ -280,7 +339,7 @@ pub struct ProjectInfo {
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema, TS)]
 pub struct LoggedEvent {
     pub seq: u64,
     pub ts_ms: u64,
@@ -288,6 +347,7 @@ pub struct LoggedEvent {
     /// Always `false` (only durable events are stored).
     pub live: bool,
     #[ts(as = "ApiEventBody")]
+    #[schemars(with = "ApiEventBody")]
     pub body: Value,
 }
 
@@ -305,7 +365,7 @@ impl LoggedEvent {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiResponse {
     /// The core is alive; `host` is the name of the machine it runs on.
@@ -363,9 +423,25 @@ pub enum ApiResponse {
     Harnesses {
         harnesses: Vec<HarnessDetection>,
     },
+    /// Answer of `get_remote_status` and `set_remote_settings`.
+    RemoteStatus {
+        status: RemoteStatus,
+    },
+    /// Answer of `create_pairing_code`.
+    PairingCode {
+        pairing: PairingCode,
+    },
+    /// Answer of `list_remote_devices` and `revoke_remote_device`.
+    RemoteDevices {
+        devices: Vec<RemoteDevice>,
+    },
+    /// Answer of `list_clients`.
+    Clients {
+        clients: Clients,
+    },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiErrorCode {
     InvalidArgument,
@@ -379,7 +455,7 @@ pub enum ApiErrorCode {
 }
 
 /// A failed command. `message` is meant to be shown to the user.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS, thiserror::Error)]
 #[error("{code:?}: {message}")]
 pub struct ApiError {
     pub code: ApiErrorCode,
@@ -403,6 +479,11 @@ impl ApiError {
     #[must_use]
     pub fn not_found(message: impl Into<String>) -> Self {
         Self::new(ApiErrorCode::NotFound, message)
+    }
+
+    #[must_use]
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::new(ApiErrorCode::Conflict, message)
     }
 
     #[must_use]

@@ -3,11 +3,9 @@
 //! React app can run in a plain browser against the real core (development and
 //! browser E2E only; not shipped).
 //!
-//! Protocol (types in `yhtye_core::api::wire`): the client sends
-//! `{"id": n, "cmd": ApiCommand}` and gets `{"id": n, "ok": ApiResponse}` or
-//! `{"id": n, "err": ApiError}`; every core event is pushed as `{"event": ApiEvent}`.
-//! Requests run concurrently (opening a project takes a while; a cancel must
-//! not wait behind it), so replies may come out of order.
+//! Protocol and session handling: [`yhtye_core::ws`] (shared with the remote
+//! server). The bridge is a local client: every command is allowed, including
+//! the local-only ones (remote access settings, pairing, devices).
 //!
 //! Access: bind to 127.0.0.1 only, the `Origin` header (when present, i.e. from
 //! a browser) must be one of the allowed origins, and `?token=` must match.
@@ -16,16 +14,17 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use futures::{SinkExt, StreamExt};
-use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
-use yhtye_core::api::{ApiError, WsReply, WsRequest, WsServerMessage};
+use tokio_util::sync::CancellationToken;
+use yhtye_core::remote::constant_time_eq;
 use yhtye_core::runtime::Core;
+#[cfg(test)]
+use yhtye_core::ws::parse_request;
+use yhtye_core::ws::{SessionPolicy, run_session};
 
 /// Default port. Vite serves on 1420 and uses 1421 for HMR when
 /// `TAURI_DEV_HOST` is set, so the bridge takes the next one.
@@ -108,7 +107,9 @@ async fn upgrade(
         return (status, why).into_response();
     }
     let core = shared.core.clone();
-    ws.on_upgrade(move |socket| connection(socket, core))
+    ws.on_upgrade(move |socket| {
+        run_session(socket, core, SessionPolicy::LOCAL, CancellationToken::new())
+    })
 }
 
 /// Whether a connection may be accepted (`Err` = status and reason).
@@ -129,105 +130,6 @@ fn check_access(
         Some(t) if constant_time_eq(t.as_bytes(), cfg.token.as_bytes()) => Ok(()),
         _ => Err((StatusCode::UNAUTHORIZED, "missing or wrong token")),
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
-/// One client: a writer task owns the socket's sink; events and replies are
-/// queued to it. Requests are spawned and not aborted when the client leaves
-/// (a half-run `OpenProject` must finish; its reply is just dropped).
-async fn connection(socket: WebSocket, core: Core) {
-    let (mut sink, mut stream) = socket.split();
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
-    // Subscribe before reading requests so no event after a reply is missed.
-    let events = core.subscribe();
-    let writer = tokio::spawn(async move {
-        while let Some(text) = out_rx.recv().await {
-            if sink.send(Message::Text(text.into())).await.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
-    let forwarder = tokio::spawn(forward_events(events, out_tx.clone()));
-    while let Some(msg) = stream.next().await {
-        match msg {
-            Ok(Message::Text(text)) => handle_request(&core, text.as_str(), &out_tx),
-            Ok(Message::Close(_)) | Err(_) => break,
-            Ok(_) => {} // ping / pong are answered by axum; binary is not used
-        }
-    }
-    forwarder.abort();
-    drop(out_tx);
-    let _ = writer.await;
-}
-
-async fn forward_events(
-    mut events: broadcast::Receiver<yhtye_core::api::ApiEvent>,
-    out: mpsc::UnboundedSender<String>,
-) {
-    loop {
-        match events.recv().await {
-            Ok(event) => {
-                if out
-                    .send(to_json(&WsServerMessage::Event { event }))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            // The client sees a seq gap and catches up with ListEvents.
-            Err(broadcast::error::RecvError::Lagged(n)) => {
-                tracing::warn!("a bridge client fell behind; {n} events skipped");
-            }
-            Err(broadcast::error::RecvError::Closed) => return,
-        }
-    }
-}
-
-fn handle_request(core: &Core, text: &str, out: &mpsc::UnboundedSender<String>) {
-    let request = match parse_request(text) {
-        Ok(r) => r,
-        Err(Some((id, err))) => {
-            let _ = out.send(to_json(&WsServerMessage::Reply(WsReply::Err { id, err })));
-            return;
-        }
-        Err(None) => {
-            // Only the size: the message may be a command carrying a secret value.
-            tracing::warn!(
-                "ignored a bridge message without an id ({} bytes)",
-                text.len()
-            );
-            return;
-        }
-    };
-    let core = core.clone();
-    let out = out.clone();
-    tokio::spawn(async move {
-        let id = request.id;
-        let reply = match core.command(request.cmd).await {
-            Ok(ok) => WsReply::Ok { id, ok },
-            Err(err) => WsReply::Err { id, err },
-        };
-        let _ = out.send(to_json(&WsServerMessage::Reply(reply)));
-    });
-}
-
-/// A request, or the error to reply with (`None`: no id to reply to).
-fn parse_request(text: &str) -> Result<WsRequest, Option<(u64, ApiError)>> {
-    let value: Value = serde_json::from_str(text).map_err(|_| None)?;
-    let id = value.get("id").and_then(Value::as_u64).ok_or(None)?;
-    serde_json::from_value(value)
-        .map_err(|e| Some((id, ApiError::invalid_argument(format!("bad request: {e}")))))
-}
-
-fn to_json(msg: &WsServerMessage) -> String {
-    serde_json::to_string(msg).unwrap_or_else(|e| {
-        tracing::error!("could not serialize a bridge message: {e}");
-        String::from("{}")
-    })
 }
 
 #[cfg(test)]

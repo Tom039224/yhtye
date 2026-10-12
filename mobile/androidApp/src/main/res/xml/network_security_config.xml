@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PC の Yhtye とは平文 (http:// と ws://) で話す。暗号化と相手の保証は Tailscale (WireGuard) がする
+  (docs/planned/android-client.md 決定事項 2b)。
+
+  平文を許したいのは Tailscale のアドレス (100.64.0.0/10、fd7a:115c:a1e0::/48、*.ts.net) だけだが、
+  network security config は IP アドレスの範囲を書けない (domain は名前の後方一致だけ)。
+  QR に MagicDNS 名が無い tailnet では 100.x の IP でつなぐので、IP を許さないわけにはいかない。
+  そこで平文はアプリ全体で許し、接続先を Tailscale のアドレスに限るのはアプリのコード
+  (shared の TailscaleHosts。ペアリングの入力を読むときに検査し、保存した接続先もそこから来る) で行う。
+  このアプリは PC 以外と通信しない (ML Kit も端末内のモデルを使う)。
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
