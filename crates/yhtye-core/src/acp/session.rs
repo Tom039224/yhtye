@@ -1,7 +1,8 @@
 //! The session actor: one agent process = one ACP connection = one tokio task.
 //!
 //! The command loop never awaits a prompt response: each turn runs in its own
-//! connection task, so `Cancel` reaches the agent (`session/cancel`) mid-turn.
+//! connection task, so `Cancel` (`session/cancel`) and `Steer`
+//! (`_session/steering`) reach the agent mid-turn.
 //! Handlers answer immediately and never block the dispatch loop.
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use super::events::{AgentError, AgentEvent, AgentInfo, AgentOutput};
 use super::permission::{choose_permission, outcome_for};
 use super::process::{self, AgentProcess};
 use super::startup::{self, StartupParams};
+use super::steering::{STEERING_METHOD, SteerOutcome, SteeringRequest};
 
 /// How long `Shutdown` waits for a cancelled turn to end.
 const SHUTDOWN_CANCEL_WAIT: Duration = Duration::from_secs(10);
@@ -30,6 +32,11 @@ const RUNTIME_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) enum AgentCmd {
     Prompt(Vec<ContentBlock>),
     Cancel,
+    /// `_session/steering` (the handle has checked the agent supports it).
+    Steer {
+        blocks: Vec<ContentBlock>,
+        reply: oneshot::Sender<Result<SteerOutcome, AgentError>>,
+    },
     SetMode {
         mode: String,
         reply: oneshot::Sender<Result<(), AgentError>>,
@@ -269,6 +276,7 @@ impl CommandLoop {
                 None | Some(AgentCmd::Shutdown) => return self.shutdown().await,
                 Some(AgentCmd::Prompt(blocks)) => self.start_turn(blocks),
                 Some(AgentCmd::Cancel) => self.cancel(),
+                Some(AgentCmd::Steer { blocks, reply }) => self.steer(blocks, reply),
                 Some(AgentCmd::SetMode { mode, reply }) => self.set_mode(mode, reply),
                 Some(AgentCmd::SetConfigOption { id, value, reply }) => {
                     self.set_config_option(id, value, reply);
@@ -277,17 +285,20 @@ impl CommandLoop {
         }
     }
 
-    /// Sends the prompt from a connection task; the loop keeps serving commands.
+    /// Sends the prompt and awaits its response in a connection task; the loop
+    /// keeps serving commands. The request is queued here, so a later command's
+    /// message (a steer) reaches the agent after it.
     fn start_turn(&mut self, mut blocks: Vec<ContentBlock>) {
         if let Some(preamble) = self.preamble.take() {
             blocks.insert(0, ContentBlock::Text(TextContent::new(preamble)));
         }
-        let cx = self.cx.clone();
         let events = self.events.clone();
         let turn = self.turn.clone();
-        let request = PromptRequest::new(self.session.clone(), blocks);
+        let sent = self
+            .cx
+            .send_request(PromptRequest::new(self.session.clone(), blocks));
         let spawned = self.cx.spawn(async move {
-            let result = cx.send_request(request).block_task().await;
+            let result = sent.block_task().await;
             // A process that dies mid-turn fails the request with "incoming
             // transport closed"; report that as `Closed` like the exit path does.
             let result = result.map(|r| r.stop_reason).map_err(|e| {
@@ -316,6 +327,39 @@ impl CommandLoop {
         if let Err(e) = self.cx.send_notification(note) {
             tracing::warn!("failed to send session/cancel: {e}");
         }
+    }
+
+    /// Sends `_session/steering` and answers `reply` from a connection task.
+    /// Without a running turn nothing is sent (`PromptRequired`): an agent
+    /// that ignores `idleBehavior` would start a turn Yhtye does not track.
+    fn steer(
+        &self,
+        blocks: Vec<ContentBlock>,
+        reply: oneshot::Sender<Result<SteerOutcome, AgentError>>,
+    ) {
+        if !self.turn.is_running() {
+            let _ = reply.send(Ok(SteerOutcome::PromptRequired));
+            return;
+        }
+        let sent = self
+            .cx
+            .send_request(SteeringRequest::new(self.session.clone(), blocks));
+        self.spawn_or_close(reply, async move {
+            match tokio::time::timeout(RUNTIME_REQUEST_TIMEOUT, sent.block_task()).await {
+                Ok(Ok(response)) => response.into_outcome(),
+                Ok(Err(e)) if agent_client_protocol::is_incoming_transport_closed(&e) => {
+                    Err(AgentError::Closed)
+                }
+                Ok(Err(e)) => Err(AgentError::Request {
+                    method: STEERING_METHOD.into(),
+                    message: e.to_string(),
+                }),
+                Err(_) => Err(AgentError::Request {
+                    method: STEERING_METHOD.into(),
+                    message: format!("timed out after {RUNTIME_REQUEST_TIMEOUT:?}"),
+                }),
+            }
+        });
     }
 
     fn set_mode(&self, mode: String, reply: oneshot::Sender<Result<(), AgentError>>) {

@@ -32,6 +32,17 @@ const PERMISSION_MODE_CATEGORY: &str = "_permission";
 #[notification(method = "session/update")]
 struct RawSessionUpdate(serde_json::Value);
 
+/// The adapters' `_session/steering` request (see `scenario.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcRequest)]
+#[request(method = "_session/steering", response = serde_json::Value)]
+#[serde(rename_all = "camelCase")]
+struct SteeringRequest {
+    session_id: String,
+    prompt: Vec<ContentBlock>,
+    #[serde(default, rename = "_meta")]
+    meta: Option<serde_json::Value>,
+}
+
 /// Devin's vendor request asking the client for diagnostics.
 #[derive(Debug, Clone, Serialize, Deserialize, agent_client_protocol::JsonRpcRequest)]
 #[request(method = "_cognition.ai/request_diagnostics", response = serde_json::Value)]
@@ -56,6 +67,9 @@ struct State {
     /// Full `_meta` of `session/new` / `session/load`.
     meta: Option<serde_json::Map<String, serde_json::Value>>,
     next_seq: usize,
+    /// A prompt turn is running (set before the turn task starts, so a steer
+    /// right behind the prompt finds it).
+    turn_running: bool,
     /// URL of the first HTTP MCP server of the session.
     mcp_url: Option<String>,
     /// Placeholder values for `mcp_call` arguments.
@@ -67,6 +81,8 @@ struct Fake {
     state: Mutex<State>,
     /// `true` once `session/cancel` arrived for the running turn.
     cancelled: watch::Sender<bool>,
+    /// Text of the steering message injected into the running turn.
+    steered: watch::Sender<Option<String>>,
 }
 
 type Shared = Arc<Fake>;
@@ -87,8 +103,10 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         scenario,
         state: Mutex::new(state),
         cancelled: watch::Sender::new(false),
+        steered: watch::Sender::new(None),
     });
-    let (f1, f2, f3, f4, f5, f6, f7) = (
+    let (f1, f2, f3, f4, f5, f6, f7, f8) = (
+        fake.clone(),
         fake.clone(),
         fake.clone(),
         fake.clone(),
@@ -110,8 +128,15 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 let caps = AgentCapabilities::new()
                     .load_session(f1.scenario.load_session)
                     .mcp_capabilities(McpCapabilities::new().http(true));
-                responder
-                    .respond(InitializeResponse::new(req.protocol_version).agent_capabilities(caps))
+                let meta = f1
+                    .scenario
+                    .steering
+                    .then(|| json!({"steering": {"supported": true}}));
+                responder.respond(
+                    InitializeResponse::new(req.protocol_version)
+                        .agent_capabilities(caps)
+                        .meta(meta.and_then(|m| m.as_object().cloned())),
+                )
             },
             agent_client_protocol::on_receive_request!(),
         )
@@ -207,12 +232,17 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             async move |req: PromptRequest, responder, cx| {
                 let fake = f6.clone();
                 let turn_cx = cx.clone();
+                fake.begin_turn();
                 // Run the turn off the dispatch loop so session/cancel can arrive.
                 cx.spawn(async move {
                     let stop = run_turn(&fake, &turn_cx, &req).await;
                     responder.respond(PromptResponse::new(stop))
                 })
             },
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: SteeringRequest, responder, cx| steer(&f8, req, responder, &cx),
             agent_client_protocol::on_receive_request!(),
         )
         .on_receive_notification(
@@ -224,6 +254,52 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
         )
         .connect_to(Stdio::new())
         .await
+}
+
+/// Answers `_session/steering` (see `scenario.rs`); never waits.
+fn steer(
+    fake: &Shared,
+    req: SteeringRequest,
+    responder: agent_client_protocol::Responder<serde_json::Value>,
+    cx: &ConnectionTo<Client>,
+) -> Result<(), Error> {
+    if !fake.scenario.steering {
+        return responder.respond_with_error(Error::method_not_found());
+    }
+    let idle_behavior = req
+        .meta
+        .as_ref()
+        .and_then(|m| m.pointer("/steering/idleBehavior"));
+    let prompt_required = match idle_behavior {
+        None => false,
+        Some(b) if b == "promptRequired" => true,
+        Some(_) => {
+            return responder.respond_with_error(
+                Error::invalid_params().data(json!("unsupported steering idleBehavior")),
+            );
+        }
+    };
+    let injected = {
+        let st = fake.lock();
+        if st.turn_running {
+            fake.steered.send_replace(Some(blocks_text(&req.prompt)));
+        }
+        st.turn_running
+    };
+    if injected {
+        return responder.respond(json!({"outcome": "injected"}));
+    }
+    if prompt_required {
+        return responder.respond(json!({"outcome": "promptRequired", "reason": "noRunningTurn"}));
+    }
+    let prompt = PromptRequest::new(req.session_id, req.prompt);
+    let (fake, turn_cx) = (fake.clone(), cx.clone());
+    fake.begin_turn();
+    cx.spawn(async move {
+        run_turn(&fake, &turn_cx, &prompt).await;
+        Ok(())
+    })?;
+    responder.respond(json!({"outcome": "startedNewTurn"}))
 }
 
 /// Applies `fail_at` / `exit_at` / `hang_at` for a startup step.
@@ -255,6 +331,57 @@ impl Fake {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Marks a turn as running, with no cancel or steer yet.
+    fn begin_turn(&self) {
+        let mut st = self.lock();
+        st.turn_running = true;
+        self.cancelled.send_replace(false);
+        self.steered.send_replace(None);
+    }
+
+    /// Whether the running turn was cancelled or steered.
+    fn interrupted(&self) -> bool {
+        *self.cancelled.borrow() || self.steered.borrow().is_some()
+    }
+
+    /// The stop reason of an interrupted turn (a cancel wins over a steer).
+    fn interrupted_stop(&self) -> StopReason {
+        if *self.cancelled.borrow() {
+            StopReason::Cancelled
+        } else {
+            StopReason::EndTurn
+        }
+    }
+
+    /// Ends the turn: a steer that arrived (and was not cancelled) is reported
+    /// as `steered:<text>` and the turn ends with `end_turn`.
+    fn finish_turn(
+        &self,
+        cx: &ConnectionTo<Client>,
+        session: &str,
+        stop: StopReason,
+    ) -> StopReason {
+        let steered = {
+            let mut st = self.lock();
+            st.turn_running = false;
+            self.steered.send_replace(None)
+        };
+        match steered {
+            Some(steer) if stop != StopReason::Cancelled => {
+                let report = format!("steered:{steer}");
+                if let Err(e) = send_update(
+                    cx,
+                    session,
+                    json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}),
+                ) {
+                    eprintln!("fake: action failed: {e}");
+                }
+                StopReason::EndTurn
+            }
+            _ => stop,
+        }
     }
 
     fn remember_session(
@@ -416,7 +543,11 @@ fn send_vendor_notifications(fake: &Fake, cx: &ConnectionTo<Client>) -> Result<(
 }
 
 fn prompt_text(req: &PromptRequest) -> String {
-    req.prompt
+    blocks_text(&req.prompt)
+}
+
+fn blocks_text(blocks: &[ContentBlock]) -> String {
+    blocks
         .iter()
         .filter_map(|b| match b {
             ContentBlock::Text(t) => Some(t.text.as_str()),
@@ -426,8 +557,17 @@ fn prompt_text(req: &PromptRequest) -> String {
         .join("|")
 }
 
+/// Runs a turn begun with [`Fake::begin_turn`].
 async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -> StopReason {
-    fake.cancelled.send_replace(false);
+    let stop = run_turn_actions(fake, cx, req).await;
+    fake.finish_turn(cx, &req.session_id.0, stop)
+}
+
+async fn run_turn_actions(
+    fake: &Fake,
+    cx: &ConnectionTo<Client>,
+    req: &PromptRequest,
+) -> StopReason {
     let prompt = prompt_text(req);
     let actions = {
         let mut st = fake.lock();
@@ -451,8 +591,8 @@ async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -
         }
     }
     for action in actions {
-        if *fake.cancelled.borrow() {
-            return StopReason::Cancelled;
+        if fake.interrupted() {
+            return fake.interrupted_stop();
         }
         match run_action(fake, cx, &session, &prompt, action).await {
             Ok(Some(stop)) => return stop,
@@ -463,11 +603,7 @@ async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -
             }
         }
     }
-    if *fake.cancelled.borrow() {
-        StopReason::Cancelled
-    } else {
-        StopReason::EndTurn
-    }
+    fake.interrupted_stop()
 }
 
 /// Runs one action; `Some(stop)` ends the turn.
@@ -514,13 +650,13 @@ async fn run_action(
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
         Action::Sleep(ms) => {
-            if wait_or_cancel(fake, Some(Duration::from_millis(ms))).await {
-                return Ok(Some(StopReason::Cancelled));
+            if wait_or_interrupt(fake, Some(Duration::from_millis(ms))).await {
+                return Ok(Some(fake.interrupted_stop()));
             }
         }
         Action::WaitCancel => {
-            wait_or_cancel(fake, None).await;
-            return Ok(Some(StopReason::Cancelled));
+            wait_or_interrupt(fake, None).await;
+            return Ok(Some(fake.interrupted_stop()));
         }
         Action::End(reason) => {
             let stop = serde_json::from_value(json!(reason)).unwrap_or(StopReason::EndTurn);
@@ -639,13 +775,22 @@ async fn mcp_call(fake: &Fake, tool: &str, args: &serde_json::Value) -> String {
     mcp::report(tool, &result)
 }
 
-/// Waits for `timeout` (or forever) unless cancelled first; returns whether cancelled.
-async fn wait_or_cancel(fake: &Fake, timeout: Option<Duration>) -> bool {
-    let mut rx = fake.cancelled.subscribe();
-    let cancelled = rx.wait_for(|c| *c);
+/// Waits for `timeout` (or forever) unless cancelled or steered first;
+/// returns whether interrupted.
+async fn wait_or_interrupt(fake: &Fake, timeout: Option<Duration>) -> bool {
+    let (mut cancel_rx, mut steer_rx) = (fake.cancelled.subscribe(), fake.steered.subscribe());
+    let interrupted = async {
+        tokio::select! {
+            _ = cancel_rx.wait_for(|c| *c) => {}
+            _ = steer_rx.wait_for(Option::is_some) => {}
+        }
+    };
     match timeout {
-        Some(t) => tokio::time::timeout(t, cancelled).await.is_ok(),
-        None => cancelled.await.is_ok(),
+        Some(t) => tokio::time::timeout(t, interrupted).await.is_ok(),
+        None => {
+            interrupted.await;
+            true
+        }
     }
 }
 
