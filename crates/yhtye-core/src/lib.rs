@@ -17,6 +17,7 @@
 pub mod acp;
 pub mod agents;
 pub mod api;
+mod clock;
 pub mod domain;
 pub mod git;
 pub mod mcp;

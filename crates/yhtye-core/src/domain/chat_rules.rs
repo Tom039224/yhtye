@@ -36,13 +36,13 @@ pub fn orchestrator_session(chat: &str) -> String {
 /// Chat ids are this and a number from 1 (`C-1`, `C-2`, ...), never reused.
 const CHAT_ID_PREFIX: &str = "C-";
 
-/// The number of chat id `id` (`C-3` → 3), if it is one.
+/// The number of chat id `id` (`C-3` → 3), if it is one. Only the form the
+/// core hands out counts: `C-03` and `C-+3` are not chat ids.
 #[must_use]
 pub fn chat_number(id: &str) -> Option<u32> {
-    id.strip_prefix(CHAT_ID_PREFIX)?
-        .parse()
-        .ok()
-        .filter(|n| *n >= 1)
+    let digits = id.strip_prefix(CHAT_ID_PREFIX)?;
+    let number: u32 = digits.parse().ok().filter(|n| *n >= 1)?;
+    (number.to_string() == digits).then_some(number)
 }
 
 /// The chat whose orchestrator has session key `session`.
@@ -176,7 +176,10 @@ mod tests {
     #[test]
     fn chat_ids_are_numbered_from_one() {
         assert_eq!(chat_number("C-3"), Some(3));
-        for not_one in ["C-0", "C-", "C-x", "G-1", "c-1", "C--1"] {
+        for not_one in [
+            "C-0", "C-", "C-x", "G-1", "c-1", "C--1", "C-01", "C-+1", "C-00", "C-1 ", " C-1",
+            "C-１",
+        ] {
             assert_eq!(chat_number(not_one), None, "{not_one}");
         }
     }
