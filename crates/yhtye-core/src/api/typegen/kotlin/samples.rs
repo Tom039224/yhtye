@@ -830,6 +830,15 @@ fn domain_events() -> Vec<(String, Value)> {
             json!({"type": "nudge_sent", "task": "T-1", "step": 0}),
         ),
         (
+            "task_message_sent",
+            json!({"type": "task_message_sent", "task": "T-1", "step": 0, "text": "Also do X"}),
+        ),
+        (
+            "task_message_resolved/returned",
+            json!({"type": "task_message_resolved", "task": "T-1", "step": 0,
+                "outcome": "returned", "via": null, "detail": "the step already reported"}),
+        ),
+        (
             "help_answered",
             json!({"type": "help_answered", "help": "H-1", "action": "resume", "reply": "go"}),
         ),
@@ -851,6 +860,13 @@ fn domain_events() -> Vec<(String, Value)> {
     .into_iter()
     .map(|(n, v)| (n.to_string(), v))
     .collect();
+    for via in ["steering", "interrupt", "prompt"] {
+        out.push((
+            format!("task_message_resolved/delivered/{via}"),
+            json!({"type": "task_message_resolved", "task": "T-1", "step": 0,
+                "outcome": "delivered", "via": via, "detail": ""}),
+        ));
+    }
     for status in [
         "pending",
         "awaiting_instruction",
@@ -929,6 +945,7 @@ fn agent_info() -> AgentInfo {
             "currentValue": "opus", "options": [{"value": "opus", "name": "Opus"}]}])),
         capabilities: de(json!({"loadSession": true})),
         agent: Some(de(json!({"name": "fake", "version": "1.0.0"}))),
+        supports_steering: true,
     }
 }
 
@@ -1059,6 +1076,7 @@ fn agent_events() -> Vec<(String, AgentEvent)> {
             message: "install a harness".into(),
         },
         AgentError::Busy,
+        AgentError::SteeringUnsupported,
         AgentError::Request {
             method: "session/prompt".into(),
             message: "failed".into(),

@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::event::DomainEvent;
-use super::types::{Role, TaskKind, ToolError};
+use super::types::{MessageOutcome, MessageVia, Role, TaskKind, ToolError};
 use crate::mcp::SessionBinding;
-use crate::mcp::tools::{CreateGroupArgs, ToolCall};
+use crate::mcp::tools::{CreateGroupArgs, MessageTaskArgs, ToolCall};
 
 /// The agent session working on one step of a task. The runtime keeps one
 /// implementer session per task and a fresh reviewer session per review step.
@@ -158,6 +158,25 @@ pub enum DomainCommand {
         binding: SessionBinding,
         call: ToolCall,
     },
+    /// `message_task` by the orchestrator. Answered later, when the runtime has
+    /// delivered the message or handed it back ([`DomainCommand::MessageResolved`]);
+    /// only a refusal, or a message the state already rules out, is answered here.
+    MessageTask {
+        binding: SessionBinding,
+        args: MessageTaskArgs,
+        /// An earlier message to the same task is still being delivered (the
+        /// runtime knows; the state does not).
+        pending: bool,
+    },
+    /// The runtime settled a message that [`Effect::DeliverMessage`] asked it to
+    /// deliver: the answer of the `message_task` call.
+    MessageResolved {
+        task: String,
+        step: usize,
+        outcome: MessageOutcome,
+        via: Option<MessageVia>,
+        detail: String,
+    },
     UserMessage {
         chat: String,
         text: String,
@@ -252,6 +271,14 @@ pub enum Effect {
     },
     /// Send a follow-up prompt (help answer, reminder) to the step's session.
     PromptAgent {
+        agent: AgentRef,
+        text: String,
+    },
+    /// Deliver the orchestrator's `message_task` message to the agent of the
+    /// running step: steer it into the running turn, or interrupt the turn and
+    /// send it as the next prompt (`core-design.md` §8). The runtime settles it
+    /// with [`DomainCommand::MessageResolved`].
+    DeliverMessage {
         agent: AgentRef,
         text: String,
     },

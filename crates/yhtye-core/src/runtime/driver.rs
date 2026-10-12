@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::agent_args::{agents_status, choose_agents};
 use super::chats::{ChatTarget, Orchestrators};
 use super::emitter::{Emitter, Publisher};
+use super::messages::Deliveries;
 use super::orchestration::OrchestrationConfig;
 use super::port::ToolRequest;
 use super::sessions::{AgentMsg, AgentPick, Sessions, Spawned, agent_ref, session_key};
@@ -89,6 +90,8 @@ pub(super) struct Driver {
     stops: StopOrder,
     /// The orchestrators being started and what they were sent (§17.3).
     pub(super) orchestrators: Orchestrators,
+    /// `message_task` messages waiting to be delivered.
+    pub(super) deliveries: Deliveries,
 }
 
 /// Orders `SessionStopped` of a session Yhtye stopped after its last event.
@@ -128,7 +131,7 @@ impl StopOrder {
     }
 }
 
-type Reply = Result<Value, ToolError>;
+pub(super) type Reply = Result<Value, ToolError>;
 
 impl Driver {
     pub(super) fn new(
@@ -149,6 +152,7 @@ impl Driver {
             transcript: Transcript::default(),
             stops: StopOrder::default(),
             orchestrators: Orchestrators::default(),
+            deliveries: Deliveries::default(),
         }
     }
 
@@ -185,6 +189,10 @@ impl Driver {
                     Ok(_) => {}
                     Err(e) => tracing::error!("an agent stop task failed: {e}"),
                 },
+                Some(res) = self.deliveries.wakes.join_next() => match res {
+                    Ok(wake) => self.on_message_wake(wake).await,
+                    Err(e) => tracing::error!("a message delivery task failed: {e}"),
+                },
                 Some((key, launch, event)) = ch.agents.recv() => {
                     if self.sessions.is_stale(&key, launch) {
                         tracing::debug!(session = %key, "dropping an event of a replaced process: {event:?}");
@@ -198,6 +206,7 @@ impl Driver {
                     }
                 }
             }
+            self.settle_messages().await;
             self.flush_inbox().await;
             self.publisher.flush().await;
         }
@@ -357,6 +366,7 @@ impl Driver {
     }
 
     async fn shutdown(&mut self) {
+        self.return_messages("Yhtye is shutting down.").await;
         for body in self.transcript.close_all() {
             self.emit.send(body);
         }
@@ -365,9 +375,18 @@ impl Driver {
     }
 
     async fn on_tool(&mut self, req: ToolRequest) {
-        let reply = self.tool_reply(req.binding, req.call).await;
+        let ToolRequest {
+            binding,
+            call,
+            reply,
+        } = req;
+        if let ToolCall::MessageTask(args) = call {
+            // Answered when the message is delivered or handed back, not now.
+            return self.message_task(binding, args, reply).await;
+        }
+        let answer = self.tool_reply(binding, call).await;
         // The caller may have gone away (e.g. its HTTP request was dropped).
-        let _ = req.reply.send(reply);
+        let _ = reply.send(answer);
     }
 
     async fn tool_reply(&mut self, binding: SessionBinding, call: ToolCall) -> Reply {
@@ -511,6 +530,7 @@ impl Driver {
                 let result = self.git.run(&op).await;
                 return Some(DomainCommand::GitDone { op, result });
             }
+            Effect::DeliverMessage { agent, text } => return self.deliver_message(agent, text),
             Effect::WakeOrchestrator { .. } => {} // the inbox is flushed after every loop turn
         }
         None
@@ -593,7 +613,12 @@ impl Driver {
                 let binding = self.sessions.binding(&key);
                 let agent = binding.and_then(agent_ref);
                 let chat = binding.and_then(|b| b.chat.clone());
-                let outcome = turn_outcome(result);
+                let mut outcome = turn_outcome(result);
+                if let Some(agent) = &agent {
+                    // A message waiting for this turn end is queued here, before
+                    // `prompt_queued` is read.
+                    outcome = self.message_at_turn_end(agent, outcome).await;
+                }
                 let prompt_queued = self.sessions.has_queued(&key);
                 if let Some(agent) = agent {
                     self.execute(DomainCommand::TurnEnded {

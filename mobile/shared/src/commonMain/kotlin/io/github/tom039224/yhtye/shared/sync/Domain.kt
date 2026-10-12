@@ -123,6 +123,8 @@ fun applyDomainEvent(state: State, event: DomainEvent): State = when (event) {
     }
     is DomainEvent.StepReset -> state.mapStep(event.task, event.step) { it.copy(status = StepStatus.Pending) }
     is DomainEvent.NudgeSent -> state.mapStep(event.task, event.step) { it.copy(nudges = it.nudges + 1) }
+    // ログ用の事実だけ (Rust の reducer も状態を変えない)
+    is DomainEvent.TaskMessageSent, is DomainEvent.TaskMessageResolved -> state
     // 新しい PC が出した知らないイベント: 状態は変えない
     is DomainEvent.Unrecognized -> state
 }

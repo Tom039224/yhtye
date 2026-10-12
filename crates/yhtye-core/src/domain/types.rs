@@ -96,6 +96,27 @@ pub enum Verdict {
     NeedsChanges,
 }
 
+/// Whether a `message_task` message reached the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageOutcome {
+    Delivered,
+    /// Not delivered; the orchestrator decides what to do instead.
+    Returned,
+}
+
+/// How a delivered `message_task` message reached the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageVia {
+    /// Injected into the running turn (`_session/steering`).
+    Steering,
+    /// The running turn was cancelled and the message sent as the next prompt.
+    Interrupt,
+    /// Sent as a normal prompt: the agent was between turns.
+    Prompt,
+}
+
 /// Kinds of `help` an agent can raise with the `help` tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

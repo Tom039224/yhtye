@@ -46,7 +46,9 @@ impl Tx {
     fn unreported_turn(&mut self, agent: &AgentRef, outcome: &TurnOutcome) {
         match outcome {
             TurnOutcome::EndTurn => self.nudge_or_violation(agent),
-            // Cancelled: Yhtye cancelled it while stopping the task.
+            // Cancelled: Yhtye cancelled it while stopping the task. (To deliver a
+            // `message_task` message the runtime queues the message first, so the
+            // turn counts as one with a prompt queued and does not get here.)
             // Closed: the process is gone; `AgentExited` follows.
             TurnOutcome::Cancelled | TurnOutcome::Closed => {}
             TurnOutcome::Stopped(reason) => self.raise_yhtye_help(

@@ -149,6 +149,24 @@ function Item({
           <div className="prompt-body">{item.text}</div>
         </details>
       );
+    case "orchestrator_message":
+      return (
+        <div className="orch-msg" aria-label="orchestrator message">
+          <div className="orch-msg-head">
+            <Icon name="message" size={12} />
+            <span className="orch-msg-label">オーケストレータから</span>
+            {item.interrupted ? (
+              <span className="orch-msg-interrupted" title="エージェントのターンを止めて、このメッセージを送り直した (それまでの作業は残っている)">
+                割り込みで再送
+              </span>
+            ) : null}
+            <Time ts={item.ts} />
+          </div>
+          <div className="orch-msg-body msg-md">
+            <Markdown text={item.text} />
+          </div>
+        </div>
+      );
     case "text":
       return item.textKind === "thought" ? (
         <Thought text={item.text} />

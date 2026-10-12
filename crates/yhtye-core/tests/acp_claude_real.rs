@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use common::{Session, assert_group_gone, message_text};
 use tokio::sync::mpsc;
 use yhtye_core::acp::schema::{PermissionOptionKind, StopReason};
-use yhtye_core::acp::{AgentEvent, AgentOutput, HarnessConfig, SpawnOptions, spawn_agent};
+use yhtye_core::acp::{
+    AgentEvent, AgentOutput, HarnessConfig, SpawnOptions, SteerOutcome, spawn_agent,
+};
 
 const REAL_TIMEOUT: Duration = Duration::from_secs(180);
 const MODEL: &str = "haiku";
@@ -114,6 +116,43 @@ async fn real_cancel_mid_turn() {
     );
     assert_eq!(stop_reason, Ok(StopReason::Cancelled));
     assert!(t0.elapsed() < Duration::from_secs(30));
+    stop(s).await;
+}
+
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku)"]
+async fn real_steer_is_injected_into_the_running_turn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut s = start_claude(dir.path(), SpawnOptions::default()).await;
+    assert!(
+        s.handle.supports_steering(),
+        "the adapter advertises steering"
+    );
+    assert_eq!(
+        s.handle.steer_text("idle?").await,
+        Ok(SteerOutcome::PromptRequired)
+    );
+
+    s.handle
+        .prompt_text(
+            "Use the Bash tool to run `sleep 8; echo STEP1`, then reply with the single word FIRSTDONE.",
+        )
+        .expect("prompt");
+    loop {
+        if let AgentEvent::Output(AgentOutput::ToolCall(_)) = s.next().await {
+            break;
+        }
+    }
+    let outcome = s
+        .handle
+        .steer_text("(steer) Forget the rest; just reply with the single word STEERED.")
+        .await;
+    assert_eq!(outcome, Ok(SteerOutcome::Injected));
+    let (events, stop_reason) = s.turn().await;
+    let text = message_text(&events);
+    eprintln!("events: {:?}; text: {text:?}", summarize(&events));
+    assert_eq!(stop_reason, Ok(StopReason::EndTurn));
+    assert!(text.contains("STEERED"), "{text:?}");
     stop(s).await;
 }
 

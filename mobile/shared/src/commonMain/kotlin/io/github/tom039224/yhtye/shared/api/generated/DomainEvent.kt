@@ -165,6 +165,29 @@ sealed interface DomainEvent {
         val step: Long,
     ) : DomainEvent
 
+    /**
+     * The orchestrator's `message_task` for the agent of step `step` was accepted
+     * (log only: the state does not change).
+     */
+    @Serializable
+    data class TaskMessageSent(
+        val task: String,
+        val step: Long,
+        val text: String,
+    ) : DomainEvent
+
+    /**
+     * What became of that message (log only). `via` is set when it was delivered.
+     */
+    @Serializable
+    data class TaskMessageResolved(
+        val task: String,
+        val step: Long,
+        val outcome: MessageOutcome,
+        val via: MessageVia? = null,
+        val detail: String,
+    ) : DomainEvent
+
     @Serializable
     data class HelpRaised(
         val help: Help,
@@ -233,6 +256,8 @@ sealed interface DomainEvent {
             TaggedVariant<DomainEvent>("steps_replaced", StepsReplaced.serializer()) { it is StepsReplaced },
             TaggedVariant<DomainEvent>("review_steps_inserted", ReviewStepsInserted.serializer()) { it is ReviewStepsInserted },
             TaggedVariant<DomainEvent>("nudge_sent", NudgeSent.serializer()) { it is NudgeSent },
+            TaggedVariant<DomainEvent>("task_message_sent", TaskMessageSent.serializer()) { it is TaskMessageSent },
+            TaggedVariant<DomainEvent>("task_message_resolved", TaskMessageResolved.serializer()) { it is TaskMessageResolved },
             TaggedVariant<DomainEvent>("help_raised", HelpRaised.serializer()) { it is HelpRaised },
             TaggedVariant<DomainEvent>("help_answered", HelpAnswered.serializer()) { it is HelpAnswered },
             TaggedVariant<DomainEvent>("help_closed", HelpClosed.serializer()) { it is HelpClosed },

@@ -187,6 +187,28 @@ pub fn reminder_prompt(task_id: &str, step_index: usize) -> String {
     )
 }
 
+/// Header of the prompt that carries a `message_task` message to a sub-agent.
+pub const ORCHESTRATOR_MESSAGE_HEADER: &str = "[yhtye:orchestrator_message]";
+
+/// What a sub-agent receives for the orchestrator's `message_task` message
+/// (steered into its turn, or sent as a prompt). `interrupted`: Yhtye cancelled
+/// the agent's turn to deliver it.
+#[must_use]
+pub fn orchestrator_message_prompt(text: &str, interrupted: bool) -> String {
+    let note = if interrupted {
+        "(Your previous turn was interrupted by Yhtye to deliver this message; your work so far \
+         is kept.)\n"
+    } else {
+        ""
+    };
+    format!(
+        "{ORCHESTRATOR_MESSAGE_HEADER}\n{note}{}\n\n(This message is from the orchestrator while \
+         you are working on the current step. Take it into account and continue the step; when \
+         finished, call report_step_done (or help) as usual.)",
+        text.trim()
+    )
+}
+
 /// Body of the `group_settled` reminder sent when the orchestrator ends its turn
 /// while every task of an open group has settled (Stage 7a).
 #[must_use]
@@ -229,14 +251,29 @@ mod tests {
     #[test]
     fn every_role_has_a_prompt_naming_its_tools() {
         assert!(system_prompt(Role::Orchestrator).contains("create_task"));
+        assert!(system_prompt(Role::Orchestrator).contains("message_task"));
         for role in [Role::Implementer, Role::Reviewer] {
             let p = system_prompt(role);
             assert!(
                 p.contains("report_step_done") && p.contains("help"),
                 "{role}"
             );
+            assert!(p.contains(ORCHESTRATOR_MESSAGE_HEADER), "{role}");
         }
         assert!(system_prompt(Role::Reviewer).contains("verdict"));
+    }
+
+    #[test]
+    fn orchestrator_message_prompt_names_its_source_and_the_way_on() {
+        let plain = orchestrator_message_prompt("  use tabs\n", false);
+        assert!(plain.starts_with(
+            "[yhtye:orchestrator_message]\nuse tabs\n\n(This message is from the orchestrator"
+        ));
+        assert!(plain.ends_with("call report_step_done (or help) as usual.)"));
+        let cut = orchestrator_message_prompt("use tabs", true);
+        assert!(cut.starts_with(
+            "[yhtye:orchestrator_message]\n(Your previous turn was interrupted by Yhtye to deliver this message; your work so far is kept.)\nuse tabs\n"
+        ));
     }
 
     #[test]

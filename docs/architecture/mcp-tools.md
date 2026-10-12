@@ -31,6 +31,8 @@ Yhtye は MCP サーバーをプロセス内でホストし、各 ACP セッシ�
 - 全ツール呼び出しはイベントログに記録する (引数・結果・エラー)。
 - ツールは状態を変えたら即座に返る。**長時間ブロックするツールは作らない**
   (例: `help` は返答を待たずに返り、返答は後で新しいプロンプトとして届く)。
+  例外は「結果が確定するまで応答を待たせる」ツール: `finish_group` (マージが終わるまで) と
+  `message_task` (届けたか差し戻したかが確定するまで。最長で約 1 分)。待っている間も Yhtye のループは止まらない。
 
 共通エラーコード:
 
@@ -130,6 +132,26 @@ effort 違いで複数あるのに `effort` が無ければ、`invalid_argument`
 | 戻り値 | `{ task_id, status: "cancelled" }` |
 | 遷移 | 任意の非終端状態 → `cancelled`。ターン中なら ACP cancel、セッション終了、worktree 削除 (ブランチは残す)。このタスクに依存するタスクは自動では消さない — `group_settled` 判定では「依存先が cancelled のため開始できないタスク」を含めてオーケストレータに通知する |
 | エラー | `invalid_state` (既に終端), `not_found` |
+
+### `message_task`
+
+実行中タスクの担当エージェント (implement / review Step) へ、オーケストレータからメッセージを渡す
+(作業中の補足・訂正・方針の追加。[`orchestration-model.md`](orchestration-model.md) §2.5)。
+
+| | |
+|---|---|
+| 引数 | `task_id`, `text: string` (空不可) |
+| 戻り値 | `{ task_id, step, outcome: "delivered" \| "returned", via: "steering" \| "interrupt" \| "prompt" \| null, detail }`。`step` は Step の添字 (0 始まり、`get_task` の `steps[].index` と同じ)。**届けたか差し戻したかが確定するまで応答を待たせる** (数秒〜最長約 1 分) |
+| `delivered` | `via=steering`: 実行中のターンに注入した (`_session/steering`。Claude Code / Codex)。`via=interrupt`: ステアリング非対応のハーネスで、`session/cancel` でターンを止めてから次のプロンプトとして送った (それまでの作業は残る)。`via=prompt`: エージェントがターンの合間だったので通常のプロンプトとして送った |
+| `returned` | 届けなかった。`detail` に理由と次の手が書いてある。Step が既に `report_step_done` 済み / まだ始まっていない / エージェントのセッションが起動中・無い / ターンが 60 秒以内に止まらなかった / 待っている間にタスクが `running` でなくなった / ステアリングの要求が失敗した (注入されたかどうか不明なので、別の経路で再送はしない)。追加の作業は `modify_steps` で Step を足すか、新しいタスクで頼む |
+| 遷移 | 状態は変えない。イベントログに `task_message_sent` (受理) と `task_message_resolved` (結果) を残す。届けた本文はエージェントの会話に通常のプロンプトとして (`prompted`) 現れる (クライアントは `[yhtye:orchestrator_message]` で始まるものを「オーケストレータから」の枠で本文だけ表示する) |
+| エラー | `invalid_argument` (`text` が空), `not_found`, `forbidden` (他のチャットのタスク), `invalid_state` (タスクが `running` でない。message に状態と代わりの手段: `handling` → `answer_help`、`checkpoint` → `resolve_checkpoint` の `note`、`pending` / `awaiting_instruction` → `set_instruction` / `modify_steps`、`merging` / 終端 → 不可。`interrupted` は「再起動中、少し待って再送」), `conflict` (同じタスクへの `message_task` がまだ配達待ち) |
+
+- 送れるのは `running` で、現在の Step が `implement` / `review` のとき。`review` 担当にはレビュー観点の補足を送れる
+  (実装の変更指示は review の後ろに Step を足すのが筋)。
+- エージェントへ届く本文は `[yhtye:orchestrator_message]` で始まり、`text` と「オーケストレータからのメッセージ。今の Step を続け、
+  終わったら通常どおり `report_step_done` (か `help`) を呼ぶこと」という注記が付く。割り込みで送り直したときは先頭に
+  「前のターンはメッセージを届けるために Yhtye が止めた。ここまでの作業は残っている」と付く。
 
 ### `finish_group`
 

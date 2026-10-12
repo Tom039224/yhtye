@@ -75,6 +75,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | `session/cancel` | `CancelNotification::new(session_id)` (**通知**) | |
 | `session/set_mode` | `SetSessionModeRequest{session_id, mode_id}` | |
 | `session/set_config_option` | `SetSessionConfigOptionRequest{session_id, config_id, value}` | **モデル選択はこれ** (v1 に `set_session_model` は無い)。stable |
+| `_session/steering` | 自前の型 (`acp/steering.rs`) | アダプタ独自拡張。実行中のターンへメッセージを注入する。能力を広告したエージェントにだけ送る (§4.5) |
 
 `McpServer` は `Http{name,url,headers}` / `Sse{..}` / `Stdio{name,command,args,env}`
 (schema `agent.rs:2652-2892`)。
@@ -117,6 +118,49 @@ connect_with(agent, async |cx| {
   drop すると JSON-RPC の `$/cancel_request` が飛ぶだけで (`jsonrpc.rs:5440-5460`)、
   ACP の `session/cancel` にはならない。
 - `cx.spawn` のタスクが `Err` を返すと接続ごと落ちる。エラーはイベントにして `Ok(())` を返す。
+
+### 4.5 ターン中のメッセージ注入: `_session/steering` (T-80)
+
+ACP 本体ではなくアダプタ側の独自拡張。実行中のターンに追加のユーザーメッセージを差し込む
+(後続の `message_task` ツールの土台)。claude-agent-acp 0.84.0 と codex-acp 2.0.0 のソース
+(`dist/acp-agent.js` の `steer`、`dist/index.js` の `performSteeringRequest`) と実機で確認した。
+
+- **能力**: `initialize` の結果の**最上位** `_meta.steering.supported === true`
+  (`agentCapabilities._meta` ではない)。`AgentInfo.supports_steering` /
+  `AgentHandle::supports_steering()` に保存する。広告しないエージェント (opencode など) は
+  `-32601 Method not found` を返すので、**能力が無ければ送らない** (探索に -32601 を使わない)。
+- **リクエスト**: `{ sessionId, prompt: ContentBlock[], _meta: { steering: { idleBehavior: "promptRequired" } } }`。
+  `idleBehavior` は Claude が `params._meta.steering.idleBehavior` から読む
+  (`promptRequired` 以外の値は invalid params)。Codex 2.0.0 はこの `_meta` を読まない (下記)。
+- **応答**: `{ outcome }`。
+  - `injected`: 実行中のターンに入った。**2 つ目の `session/prompt` 応答は無く**、
+    結果は元のターンの応答 (`TurnEnded`) に載る。Claude は注入で現在の生成を中断し、
+    注入したメッセージに答え終えてから元のターンを返す (権限要求の待ち中は割り込まず後で入れる)。
+    Codex は実行中ターンへ `turn/steer` する。
+  - `promptRequired`: ターンが実行中でなかった (`idleBehavior` 指定時、Claude)。何もしていない。
+  - `startedNewTurn`: アイドル時に**エージェントが自分で新しいターンを始めた**。Claude は
+    `idleBehavior` 無しのときだけ。**Codex 2.0.0 は `idleBehavior` を読まないのでアイドル時は常にこれ**。
+    そのターンには `session/prompt` が無いので Yhtye は終わりを追えない。
+  - Codex は想定外の失敗を `{ outcome: "failed" }` で返す。Yhtye は未知の outcome を
+    `AgentError::Request` にする。
+- **Yhtye の送り方** (`AgentHandle::steer`、[`core-design.md`](core-design.md) §3.1):
+  能力が無ければ送らず `AgentError::SteeringUnsupported`。コマンドループで
+  **ターンが実行中でなければ送らず `SteerOutcome::PromptRequired`** を返す (Codex に送ると
+  追えないターンが始まるため)。送るときは `session/prompt` と同じくループで要求を積んでから
+  応答待ちを `cx.spawn` に逃がす (prompt の直後の steer が prompt より先に届かない)。
+  応答のタイムアウトは 30 秒。ループの判定と送信の間にターンが終わる競合だけは残り、
+  そのとき Claude は `promptRequired`、Codex は `startedNewTurn` を返しうる。
+- **ハーネスごとの対応**:
+
+  | ハーネス | 対応 |
+  |---|---|
+  | Claude Code (claude-agent-acp 0.84.0) | **対応** (能力を広告。実機テスト `acp_claude_real.rs` の `real_steer_is_injected_into_the_running_turn`) |
+  | Codex (codex-acp 2.0.0) | **対応** (能力を広告。アイドル時の `idleBehavior` は無視、上記) |
+  | OpenCode | 非対応 (能力なし、送ると -32601) |
+  | Devin / MiniMax Code / Grok Build / Google Antigravity | 未確認。能力フラグ次第で自動的に使う/使わない |
+- 偽エージェントはシナリオの `steering: true` で能力を広告し、注入されたら実行中ターンの次の
+  動作か待ちで `steered:<text>` を出して `end_turn` で終える (`session/cancel` が来ていれば
+  `cancelled`)。テスト `tests/acp_fake_steering.rs`。
 
 ## 5. Claude Code: `@agentclientprotocol/claude-agent-acp`
 

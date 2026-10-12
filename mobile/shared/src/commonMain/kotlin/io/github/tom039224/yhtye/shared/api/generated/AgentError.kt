@@ -50,6 +50,12 @@ sealed interface AgentError {
     @Serializable
     data object Busy : AgentError
 
+    /**
+     * The agent does not advertise `_session/steering`; nothing was sent.
+     */
+    @Serializable
+    data object SteeringUnsupported : AgentError
+
     @Serializable
     data class Request(
         val method: String,
@@ -76,6 +82,7 @@ sealed interface AgentError {
             TaggedVariant<AgentError>("unsupported", Unsupported.serializer()) { it is Unsupported },
             TaggedVariant<AgentError>("setup", Setup.serializer()) { it is Setup },
             TaggedVariant<AgentError>("busy", Busy.serializer()) { it is Busy },
+            TaggedVariant<AgentError>("steering_unsupported", SteeringUnsupported.serializer()) { it is SteeringUnsupported },
             TaggedVariant<AgentError>("request", Request.serializer()) { it is Request },
             TaggedVariant<AgentError>("closed", Closed.serializer()) { it is Closed },
         ),

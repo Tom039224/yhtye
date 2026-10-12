@@ -616,6 +616,18 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiEvent",
+        "domain/task_message_sent",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"task_message_sent\",\"task\":\"T-1\",\"step\":0,\"text\":\"Also do X\"}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "domain/task_message_resolved/returned",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"task_message_resolved\",\"task\":\"T-1\",\"step\":0,\"outcome\":\"returned\",\"via\":null,\"detail\":\"the step already reported\"}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
         "domain/help_answered",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"help_answered\",\"help\":\"H-1\",\"action\":\"resume\",\"reply\":\"go\"}}}",
@@ -643,6 +655,24 @@ internal val contractSamples: List<ContractSample> = listOf(
         "domain/inbox_delivered",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"inbox_delivered\",\"chat\":\"C-1\",\"up_to\":7}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "domain/task_message_resolved/delivered/steering",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"task_message_resolved\",\"task\":\"T-1\",\"step\":0,\"outcome\":\"delivered\",\"via\":\"steering\",\"detail\":\"\"}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "domain/task_message_resolved/delivered/interrupt",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"task_message_resolved\",\"task\":\"T-1\",\"step\":0,\"outcome\":\"delivered\",\"via\":\"interrupt\",\"detail\":\"\"}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "domain/task_message_resolved/delivered/prompt",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"domain\",\"event\":{\"type\":\"task_message_resolved\",\"task\":\"T-1\",\"step\":0,\"outcome\":\"delivered\",\"via\":\"prompt\",\"detail\":\"\"}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -954,7 +984,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "agent/ready",
         ApiEvent.serializer(),
-        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"ready\",\"data\":{\"acp_session_id\":\"acp-1\",\"resumed\":false,\"modes\":{\"currentModeId\":\"default\",\"availableModes\":[{\"id\":\"default\",\"name\":\"Default\"}]},\"config_options\":[{\"id\":\"model\",\"name\":\"Model\",\"type\":\"select\",\"currentValue\":\"opus\",\"options\":[{\"value\":\"opus\",\"name\":\"Opus\"}]}],\"capabilities\":{\"loadSession\":true,\"promptCapabilities\":{\"image\":false,\"audio\":false,\"embeddedContext\":false},\"mcpCapabilities\":{\"http\":false,\"sse\":false},\"sessionCapabilities\":{},\"auth\":{}},\"agent\":{\"name\":\"fake\",\"version\":\"1.0.0\"}}}}}",
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"ready\",\"data\":{\"acp_session_id\":\"acp-1\",\"resumed\":false,\"modes\":{\"currentModeId\":\"default\",\"availableModes\":[{\"id\":\"default\",\"name\":\"Default\"}]},\"config_options\":[{\"id\":\"model\",\"name\":\"Model\",\"type\":\"select\",\"currentValue\":\"opus\",\"options\":[{\"value\":\"opus\",\"name\":\"Opus\"}]}],\"capabilities\":{\"loadSession\":true,\"promptCapabilities\":{\"image\":false,\"audio\":false,\"embeddedContext\":false},\"mcpCapabilities\":{\"http\":false,\"sse\":false},\"sessionCapabilities\":{},\"auth\":{}},\"agent\":{\"name\":\"fake\",\"version\":\"1.0.0\"},\"supports_steering\":true}}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -1099,6 +1129,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "agent/turn_ended/busy",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"busy\"}}}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "agent/turn_ended/steering_unsupported",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"steering_unsupported\"}}}}}",
     ),
     ContractSample(
         "ApiEvent",

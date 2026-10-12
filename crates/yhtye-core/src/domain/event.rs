@@ -16,7 +16,7 @@ use super::state::{
     Chat, Group, GroupStatus, Help, HelpState, InboxEntry, State, Step, StepStatus, Task,
     TaskStatus,
 };
-use super::types::{StepSpec, Verdict};
+use super::types::{MessageOutcome, MessageVia, StepSpec, Verdict};
 use crate::mcp::tools::HelpAction;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -116,6 +116,21 @@ pub enum DomainEvent {
     NudgeSent {
         task: String,
         step: usize,
+    },
+    /// The orchestrator's `message_task` for the agent of step `step` was accepted
+    /// (log only: the state does not change).
+    TaskMessageSent {
+        task: String,
+        step: usize,
+        text: String,
+    },
+    /// What became of that message (log only). `via` is set when it was delivered.
+    TaskMessageResolved {
+        task: String,
+        step: usize,
+        outcome: MessageOutcome,
+        via: Option<MessageVia>,
+        detail: String,
     },
     HelpRaised {
         help: Help,
@@ -330,6 +345,8 @@ impl State {
                 self.with_step(task, *step, |s| s.status = StepStatus::Pending);
             }
             DomainEvent::NudgeSent { task, step } => self.with_step(task, *step, |s| s.nudges += 1),
+            // Facts for the log and the conversation view only.
+            DomainEvent::TaskMessageSent { .. } | DomainEvent::TaskMessageResolved { .. } => {}
             _ => {}
         }
     }
