@@ -104,6 +104,18 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
             taken,
         } => tx.create_group(&chat, args, base_branch, taken)?,
         DomainCommand::Tool { binding, call } => tx.tool(&binding, call)?,
+        DomainCommand::MessageTask {
+            binding,
+            args,
+            pending,
+        } => tx.message_task(&binding, args, pending)?,
+        DomainCommand::MessageResolved {
+            task,
+            step,
+            outcome,
+            via,
+            detail,
+        } => tx.message_resolved(&task, step, outcome, via, &detail),
         DomainCommand::UserMessage { chat, text } => tx.user_message(&chat, text)?,
         DomainCommand::OrchestratorTurnEnded {
             chat,

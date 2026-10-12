@@ -609,6 +609,41 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 ループはプロジェクトに 1 つのまま、オーケストレータのセッションだけがチャットごとになる。詳細は §17.3。
 
+### 8.3 `message_task` の配達 (T-81)
+
+[`orchestration-model.md`](orchestration-model.md) §2.5 の実装。判定はドメイン、ACP 操作は runtime (`runtime/messages.rs`)。
+
+- **ドメイン** (`domain/message_rules.rs`): `DomainCommand::MessageTask { binding, args, pending }`
+  (`pending` = 同じタスクに配達待ちがある、という runtime だけが知る事実)。`forbidden` / `invalid_argument` /
+  `not_found` / `invalid_state` / `conflict` をここで返す。Step が実行中なら `TaskMessageSent` を残して
+  `Effect::DeliverMessage { agent, text }` を出す (応答は保留)。Step が報告済み / 未開始ならその場で `returned`
+  (`TaskMessageSent` + `TaskMessageResolved` と応答)。runtime の結果は `DomainCommand::MessageResolved` で戻り、
+  `TaskMessageResolved` を残して**これが tool の応答になる**。2 つのイベントは状態を変えない (ログと会話表示用)。
+- **runtime**: `message_task` はループをブロックしない。`on_tool` が `ToolCall::MessageTask` を別の経路に振り、
+  配達待ちのメッセージは応答用の `oneshot` を持って `Deliveries` (タスクごとに 1 つ) に残る。応答は
+  steering の返答 / ターンの終わり / タイムアウト / タスクの状態変化のどれかで確定する。
+  本文は `prompts::orchestrator_message_prompt`。
+- **経路** (`Sessions::route` でセッションの状態を見る。`Sessions` は「ループがまだ処理していないターン終了」も数える `open_turns`
+  を持つ — エージェント側のターン中フラグはループが `TurnEnded` を見る前に下りるため):
+  1. ターン中 + ステアリング対応 → `AgentHandle::steer_text` を別タスクで待つ (`JoinSet`)。`Injected` →
+     `delivered`/`steering` (steering で届けた本文は `Prompted` として会話に出す)。`StartedNewTurn` → `delivered`
+     (detail に警告、`tracing::warn`)。`PromptRequired` (送る直前にターンが終わった) → Step が未報告なら次の
+     ターン終了で通常のプロンプトとして送る (ターン終了がまだ処理待ちなら待つ、処理済みで合間なら即送る) /
+     報告済みなら `returned`。`SteeringUnsupported` → 2 へ。それ以外のエラー (`Request`、30 秒のタイムアウトなど) →
+     `returned`: **注入されたかもしれない**ので別の経路で再送はしない (二重配達を避ける。detail に会話を確かめるよう書く)。
+     `Closed` → `returned`。
+  2. ターン中 + 非対応 → `cancel_turn` (`session/cancel`) して配達待ちの印を付ける。`TurnEnded` が来たら、
+     `message_at_turn_end` が**ドメインにターン終了を渡す前に**判定する: Step が未報告で `EndTurn` / `Cancelled` →
+     メッセージ (割り込みの前置き付き) をセッションの送信キューに積み `delivered`/`interrupt`。キューが空でないので
+     ドメインは `prompt_queued = true` として扱い、催促も `agent_stopped` もしない。Step が報告済み → `returned`
+     (ドメインの `Done` 分岐が `Cancelled` でも次の Step へ進める)。`Stopped` / `Error` / `Closed` → `returned` (ターン終了は
+     そのままドメインへ)。`INTERRUPT_TIMEOUT` (60 秒) 以内にターンが終わらなければ `returned` にし、印は `Abandoned` として残す:
+     そのあと `Cancelled` で未報告のままターンが終わったときは `EndTurn` として渡す (催促で Step が止まったままにならないように)。
+  3. 合間 (live でターン中でない) → 通常のプロンプトとしてキューに入れ `delivered`/`prompt`。
+  4. 起動中 / セッション無し → `returned` (起動中のキューには入れない: 最初のターンの後に届いてしまうため)。
+- **状態変化**: ループの 1 回ごとの最後に `settle_messages` が配達待ちを見直し、タスクが `running` でなくなった /
+  Step が替わった / (steering 要求中以外で) Step が報告済みになったものを `returned` にする。シャットダウンでは全て `returned`。
+
 ## 9. Tauri アプリ層 (`src-tauri`)
 
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
@@ -731,6 +766,10 @@ Stage 4 の構成 (`src/`):
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
   `steering: true` で `_session/steering` を広告・処理する (T-80、[`acp-harnesses.md`](acp-harnesses.md) §4.5)。
+  既定では steer を受けたターンは `steered:<text>` を報告して `end_turn` で終わるが、`steer_continues: true` なら
+  実アダプタのようにターンが続く (`sleep` は中断され、次の動作の前に `steered:<text>` を報告して残りを実行する)。
+  動作 `busy(ms)` は `session/cancel` にも steer にも反応せず待つ (止まらないエージェント。`message_task` のタイムアウトと
+  タスク取り消しのテスト用)。
   `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。

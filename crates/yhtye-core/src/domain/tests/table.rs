@@ -191,6 +191,20 @@ fn cancel_task() {
 }
 
 #[test]
+fn message_task() {
+    let e = Err(InvalidState);
+    check(
+        "message_task",
+        ToolName::MessageTask,
+        json!({"task_id": "T-2", "text": "hi"}),
+        orch(),
+        // A running step is handed to the runtime and a reported one is
+        // answered at once: the task stays running either way.
+        [e, e, Ok(Running), Ok(Running), e, e, e, e, e, e],
+    );
+}
+
+#[test]
 fn report_step_done() {
     let e = Err(InvalidState);
     check(

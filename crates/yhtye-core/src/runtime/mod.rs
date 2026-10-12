@@ -9,6 +9,7 @@ mod driver;
 mod emitter;
 mod host;
 mod launch;
+mod messages;
 mod orchestration;
 mod port;
 mod sessions;

@@ -7,6 +7,7 @@ mod chats;
 mod errors;
 mod flows;
 mod git;
+mod message;
 mod orch;
 mod restart;
 mod table;
@@ -141,6 +142,11 @@ impl Sim {
                     taken: 0,
                 }
             }
+            crate::mcp::ToolCall::MessageTask(args) => DomainCommand::MessageTask {
+                binding,
+                args,
+                pending: false,
+            },
             call => DomainCommand::Tool { binding, call },
         }
     }

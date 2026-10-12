@@ -207,6 +207,10 @@ function applyTaskEvent(state: State, event: TaskEvent): State {
       return mapStep(state, event.task, event.step, (s) => ({ ...s, status: "pending" }));
     case "nudge_sent":
       return mapStep(state, event.task, event.step, (s) => ({ ...s, nudges: s.nudges + 1 }));
+    case "task_message_sent":
+    case "task_message_resolved":
+      // `message_task` log entries: they change no state.
+      return state;
     default:
       return unreachable(event);
   }
