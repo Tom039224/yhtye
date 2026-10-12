@@ -75,6 +75,9 @@ jobs:
       # Installs the command-line tools and accepts the licenses; Gradle (AGP) downloads the platform and
       # the build tools it needs.
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the long-gone `tools` package, which makes sdkmanager fail.
+          packages: platform-tools
 
       # The key lives in the repository secrets only. It is restored to a temporary file that only this
       # job can read, and removed at the end.
