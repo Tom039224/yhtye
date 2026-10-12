@@ -22,6 +22,7 @@ import io.github.tom039224.yhtye.shared.sync.KEEP_ALIVE_GRACE_MS
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -35,6 +36,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * アプリ全体の状態: ペアリングしているか、PC への接続 ([YhtyeClient]) とその同期層 ([AppStore])、受け取ったディープリンク、
@@ -79,6 +82,12 @@ class Session(
 
     private val pairing = PairingClient(http)
     private val foreground = MutableStateFlow(false)
+
+    /**
+     * 認証情報の保存先への書き込み (保存と削除) を、頼んだ順に 1 つずつ行わせる鍵。削除は画面を戻したあとで非同期に走るので、
+     * すぐ新しくペアリングしても、遅れて走った古い削除が新しい認証情報 (と Keystore の鍵) を消さないようにする。
+     */
+    private val storeWrites = Mutex()
 
     /** 今の [YhtyeClient] の失効を待つコルーチン。 */
     private var revocationWatch: Job? = null
@@ -138,7 +147,7 @@ class Session(
     suspend fun pair(target: PairingTarget, deviceName: String): PairingResult {
         val result = pairing.pair(target, deviceName)
         if (result is PairingResult.Paired) {
-            store.save(result.credentials)
+            storeWrites.withLock { store.save(result.credentials) }
             _phase.value = paired(result.credentials)
         }
         return result
@@ -154,7 +163,15 @@ class Session(
         clientPrefs.clear()
         notifications.cancelAll()
         _phase.value = unpairedStart()
-        scope.launch { store.clear() }
+        clearStored()
+    }
+
+    /**
+     * 保存した認証情報を消すよう頼む (終わるのを待たない)。[storeWrites] の順番はこの呼び出しの時点で決まる
+     * ([CoroutineStart.UNDISPATCHED] で鍵を取りに行くまでを呼び出しの中で済ませる) ので、このあとの保存は削除の後になる。
+     */
+    private fun clearStored() {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { storeWrites.withLock { store.clear() } }
     }
 
     /** 失効の案内を閉じた。 */
@@ -248,14 +265,14 @@ class Session(
         background = null
     }
 
-    private suspend fun onRevoked(client: YhtyeClient) {
+    private fun onRevoked(client: YhtyeClient) {
         val current = _phase.value as? Phase.Paired ?: return
         if (current.client !== client) return
         stopBackground()
         current.sync.close()
         client.close()
         clientPrefs.clear()
-        store.clear()
+        clearStored()
         notifications.cancelAll()
         // 前面なら案内の画面がすぐ見えるので通知は要らない
         if (!foreground.value) notifications.revoked()

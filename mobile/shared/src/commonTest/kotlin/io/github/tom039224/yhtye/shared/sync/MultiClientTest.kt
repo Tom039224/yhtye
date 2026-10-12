@@ -16,6 +16,7 @@ import io.github.tom039224.yhtye.shared.client.ApiException
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -23,6 +24,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * PC の `src/store/multiClient.test.ts` の移植: 同じコアに他のクライアントがいるとき — アプリ全体のイベント
@@ -204,6 +206,43 @@ class MultiClientTest {
         assertEquals(Place.Branch("new"), placeOf(info, git()?.overview, false))
         // 読んだ後も一覧に無い作業ツリーのチャットは「見つからない」
         assertEquals(Place.Missing, placeOf(info.copy(worktree = "/gone"), git()?.overview, false))
+    }
+
+    @Test
+    fun doesNotReadGitAgainForAChatInAWorktreeGitListsAlready() = runTest {
+        val s = newStore(core, prefs)
+        openAndSettle(s)
+        assertEquals(false, s.state.value.git?.loading)
+        val reads = core.callsOf<ApiCommand.GetGitOverview>().size
+        push(core, domain(chatLog + 1, DomainEvent.ChatCreated(Chat("C-3", MAIN_WT, null))))
+        assertTrue(s.view().chats.any { it.id == "C-3" })
+        assertEquals(reads, core.callsOf<ApiCommand.GetGitOverview>().size)
+        assertEquals(emptyList(), s.state.value.git?.awaiting)
+    }
+
+    @Test
+    fun readsGitOnceForAChatMadeWhileTheProjectLoadsThoughTheEventIsSeenAgainFromTheBuffer() = runTest {
+        val wt = "/data/worktrees/repo/branches/new"
+        val created = domain(chatLog + 1, DomainEvent.ChatCreated(Chat("C-3", wt, null)))
+        core.log = CHAT_LOG + created
+        val s = newStore(core, prefs)
+        // スナップショットはイベントが来るまで止める: イベントは溜められ、読み込みの後で流し直される
+        val held = CompletableDeferred<Unit>()
+        core.before = { cmd -> if (cmd is ApiCommand.GetSnapshot) held.await() }
+        val opening = launch { s.openProject(PROJECT.path) }
+        runCurrent()
+        assertEquals(false, s.state.value.git?.loading)
+        // コアはチャットを知らせる前に作業ツリーを作っている
+        core.git = core.git.copy(worktrees = core.git.worktrees + GitWorktree(wt, "new", null, isMain = false, missing = false))
+        push(core, created)
+        held.complete(Unit)
+        runCurrent()
+        opening.join()
+        assertEquals(LoadPhase.Ready, s.view().phase)
+        assertTrue(s.view().chats.any { it.id == "C-3" })
+        // 読み込みが始めた読み取りと、イベントがすぐ頼んだもの。流し直しのためには読まない
+        assertEquals(2, core.callsOf<ApiCommand.GetGitOverview>().size)
+        assertEquals(emptyList(), s.state.value.git?.awaiting)
     }
 
     // ---- expected_revision と conflict (Kotlin で足した: PC は SettingsSync.test.tsx の画面で確かめている) ----

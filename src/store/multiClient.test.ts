@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApiEventBody } from "../api/generated";
-import { CHAT_LOG, chatSnapshot } from "../test/chats";
+import { CHAT_LOG, chatSnapshot, MAIN_WT } from "../test/chats";
 import { ev } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
@@ -225,5 +225,46 @@ describe("a chat made by another client", () => {
       // A chat whose worktree git does not list after reading is missing.
       expect(placeOf({ ...info, worktree: "/gone" }, git()?.overview ?? null, false)).toEqual({ kind: "missing" });
     }
+  });
+
+  it("does not read git again for a chat in a worktree git lists already", async () => {
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    const reads = transport.callsOf("get_git_overview").length;
+    const chat = { id: "C-3", worktree: MAIN_WT, title: null };
+    transport.emit(ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat } }));
+    expect(view(s).chats.map((c) => c.id)).toContain("C-3");
+    expect(transport.callsOf("get_git_overview")).toHaveLength(reads);
+    expect(s.getState().git?.awaiting).toEqual([]);
+  });
+
+  it("reads git once for a chat made while the project loads, though the event is seen again from the buffer", async () => {
+    const wt = "/data/worktrees/repo/branches/new";
+    const created = ev(CHAT_LOG.length + 1, { type: "domain", event: { type: "chat_created", chat: { id: "C-3", worktree: wt, title: null } } });
+    core.log = [...CHAT_LOG, created];
+    // The snapshot is held back until the event came: it is buffered, then replayed.
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    core.before = async (cmd) => {
+      if (cmd.type === "get_snapshot") await held;
+    };
+    const s = newStore();
+    const opening = s.openProject(PROJECT.path);
+    await vi.waitFor(() => expect(transport.callsOf("get_snapshot")).toHaveLength(1));
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    // The core made the worktree before it told about the chat.
+    core.git = { ...core.git, worktrees: [...core.git.worktrees, { path: wt, branch: "new", head_sha: null, is_main: false, missing: false }] };
+    transport.emit(created);
+    release();
+    await opening;
+    await vi.waitFor(() => expect(view(s).phase).toBe("ready"));
+    await vi.waitFor(() => expect(s.getState().git?.loading).toBe(false));
+    expect(view(s).chats.map((c) => c.id)).toContain("C-3");
+    // The read the load starts, and the one the event asked for at once; not another for the replay.
+    expect(transport.callsOf("get_git_overview")).toHaveLength(2);
+    expect(s.getState().git?.awaiting).toEqual([]);
   });
 });
