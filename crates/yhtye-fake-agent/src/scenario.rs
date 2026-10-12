@@ -51,6 +51,9 @@
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
 //!
+//! `{"wait_file": "/tmp/go"}` holds the turn until a test creates that file (it
+//! decides when the turn goes on, instead of a `sleep` that the machine may outlast).
+//!
 //! A prompt runs the first turn whose `match` is a substring of the prompt text;
 //! otherwise the next turn without `match`, in order. A turn without a trailing
 //! `end` ends with `end_turn`.
@@ -162,6 +165,10 @@ pub enum Action {
     Sleep(u64),
     /// Waits until `session/cancel` arrives.
     WaitCancel,
+    /// Waits until this file exists (an absolute path, or relative to the
+    /// working directory), so a test decides when the turn goes on; a
+    /// `session/cancel` ends the turn.
+    WaitFile(String),
     /// Ends the turn with this stop reason (`end_turn`, `max_tokens`, `refusal`, ...).
     End(String),
     /// `exit(code)` immediately.

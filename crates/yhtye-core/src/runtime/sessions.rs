@@ -59,6 +59,11 @@ struct Live {
     binding: SessionBinding,
     /// Prompts waiting for the current turn to end.
     queued: VecDeque<String>,
+    /// A prompt was sent and the loop has not processed its `TurnEnded` yet.
+    /// The handle clears its own flag as soon as the agent answers, while the
+    /// turn's last outputs and its `TurnEnded` may still wait in the event
+    /// channel; the next prompt must follow them, so the loop goes by this one.
+    in_turn: bool,
 }
 
 /// A session being started in the background.
@@ -290,6 +295,7 @@ impl Sessions {
             token: s.token,
             binding,
             queued,
+            in_turn: false,
         };
         self.live.insert(key.clone(), live);
         self.deliver(&key);
@@ -323,17 +329,20 @@ impl Sessions {
         let Some(live) = self.live.get_mut(key) else {
             return;
         };
-        if live.handle.is_turn_running() {
+        if live.in_turn {
             return;
         }
         let Some(text) = live.queued.pop_front() else {
             return;
         };
         match live.handle.prompt_text(text.clone()) {
-            Ok(()) => self.emit.send(ApiEventBody::Prompted {
-                session: key.to_string(),
-                text,
-            }),
+            Ok(()) => {
+                live.in_turn = true;
+                self.emit.send(ApiEventBody::Prompted {
+                    session: key.to_string(),
+                    text,
+                });
+            }
             Err(e) => {
                 tracing::warn!("prompt to {key} failed: {e}");
                 live.queued.push_front(text);
@@ -351,8 +360,9 @@ impl Sessions {
         if !self.is_idle(key) {
             return Err(AgentError::Busy);
         }
-        let live = self.live.get(key).ok_or(AgentError::Closed)?;
+        let live = self.live.get_mut(key).ok_or(AgentError::Closed)?;
         live.handle.prompt_text(text)?;
+        live.in_turn = true;
         self.emit.send(ApiEventBody::Prompted {
             session: key.to_string(),
             text: text.to_string(),
@@ -388,7 +398,14 @@ impl Sessions {
     pub(super) fn is_idle(&self, key: &str) -> bool {
         self.live
             .get(key)
-            .is_some_and(|l| !l.handle.is_turn_running() && l.queued.is_empty())
+            .is_some_and(|l| !l.in_turn && l.queued.is_empty())
+    }
+
+    /// The loop processed the `TurnEnded` of `key`'s turn: it is no longer in one.
+    pub(super) fn turn_ended(&mut self, key: &str) {
+        if let Some(live) = self.live.get_mut(key) {
+            live.in_turn = false;
+        }
     }
 
     /// The process of `key` exited. Returns its binding if Yhtye did not stop it.

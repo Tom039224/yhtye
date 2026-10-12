@@ -9,8 +9,8 @@ mod common;
 use std::path::Path;
 
 use common::chats::{
-    branch_worktree, canonical, cwd_of, is_domain, is_stopped, new_chat, none, repo_config, said,
-    say, start, started, wait,
+    Hold, branch_worktree, canonical, cwd_of, is_domain, is_stopped, new_chat, none, repo_config,
+    said, say, start, started, wait,
 };
 use common::orch::{messages, prompts_to, shutdown_and_check};
 use common::repo::{TempRepo, git_in};
@@ -42,8 +42,9 @@ fn finish_args(into: Option<&str>) -> Value {
 /// An orchestrator that plans one task (`work`), calls `finish_group` when the
 /// group settles (unless `finishes` is false), and on request calls it again
 /// (`again`) or with `into` (`into-<branch>`); the implementer writes `x.txt`
-/// slowly, so the test can change the worktree while the group runs.
-fn scripts(finishes: bool) -> (Value, Value) {
+/// only once `hold` is released, so the test can change the worktree while the
+/// group runs.
+fn scripts(hold: &Hold, finishes: bool) -> (Value, Value) {
     let settled = if finishes {
         vec![finish_args(None), json!({"message": "tried"})]
     } else {
@@ -67,7 +68,7 @@ fn scripts(finishes: bool) -> (Value, Value) {
         ]}));
     }
     let implementer = json!({"turns": [{"match": "write-x", "actions": [
-        {"sleep": 800},
+        hold.action(),
         {"write_file": {"path": "x.txt", "text": "x\n"}},
         {"mcp_call": {"tool": "report_step_done", "args": {"result": "wrote x.txt"}}}
     ]}]});
@@ -98,7 +99,8 @@ async fn a_rename_only_changes_the_display_until_the_merge_which_the_orchestrato
  {
     let r = TempRepo::new();
     r.git(&["branch", "feature"]);
-    let (orch_script, impl_script) = scripts(true);
+    let hold = Hold::new(&r, "x");
+    let (orch_script, impl_script) = scripts(&hold, true);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = new_chat(&orch, "feature").await;
     let wt = branch_worktree(&r, "feature");
@@ -107,6 +109,7 @@ async fn a_rename_only_changes_the_display_until_the_merge_which_the_orchestrato
 
     r.git(&["branch", "-m", "feature", "renamed"]);
     assert_eq!(shown_branch(&r.repo, &wt).await.as_deref(), Some("renamed"));
+    hold.release();
     wait(&mut rx, &mut events, merge_finished(false)).await;
     wait(&mut rx, &mut events, said(ORCH, "tried")).await;
 
@@ -165,13 +168,15 @@ async fn a_rename_only_changes_the_display_until_the_merge_which_the_orchestrato
 #[tokio::test]
 async fn a_checkout_in_the_main_clone_is_returned_the_same_way() {
     let r = TempRepo::new();
-    let (orch_script, impl_script) = scripts(true);
+    let hold = Hold::new(&r, "x");
+    let (orch_script, impl_script) = scripts(&hold, true);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = new_chat(&orch, "main").await;
     say(&orch, &chat, "work").await;
     wait(&mut rx, &mut events, said(ORCH, "planned")).await;
 
     r.git(&["checkout", "-q", "-b", "other"]);
+    hold.release();
     wait(&mut rx, &mut events, said(ORCH, "tried")).await;
     let reply = finish_replies(&events).pop().expect("a reply");
     assert!(
@@ -195,13 +200,15 @@ async fn a_checkout_in_the_main_clone_is_returned_the_same_way() {
 #[tokio::test]
 async fn a_detached_worktree_is_returned_and_merges_once_the_base_is_checked_out_again() {
     let r = TempRepo::new();
-    let (orch_script, impl_script) = scripts(true);
+    let hold = Hold::new(&r, "x");
+    let (orch_script, impl_script) = scripts(&hold, true);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = new_chat(&orch, "main").await;
     say(&orch, &chat, "work").await;
     wait(&mut rx, &mut events, said(ORCH, "planned")).await;
 
     r.git(&["checkout", "-q", "--detach"]);
+    hold.release();
     wait(&mut rx, &mut events, said(ORCH, "tried")).await;
     let reply = finish_replies(&events).pop().expect("a reply");
     assert!(reply.contains("detached HEAD"), "{reply}");
@@ -218,12 +225,14 @@ async fn a_detached_worktree_is_returned_and_merges_once_the_base_is_checked_out
 async fn a_group_yhtye_finishes_returns_the_mismatch_to_the_orchestrators_inbox() {
     let r = TempRepo::new();
     r.git(&["branch", "feature"]);
-    let (orch_script, impl_script) = scripts(false);
+    let hold = Hold::new(&r, "x");
+    let (orch_script, impl_script) = scripts(&hold, false);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = new_chat(&orch, "feature").await;
     say(&orch, &chat, "work").await;
     wait(&mut rx, &mut events, said(ORCH, "planned")).await;
     r.git(&["branch", "-m", "feature", "renamed"]);
+    hold.release();
 
     // Reminded once, then finished by Yhtye: blocked, and told as merge_result.
     wait(&mut rx, &mut events, said(ORCH, "got-merge-result")).await;
@@ -247,7 +256,8 @@ async fn a_group_yhtye_finishes_returns_the_mismatch_to_the_orchestrators_inbox(
 async fn a_group_cannot_be_created_on_a_detached_worktree() {
     let r = TempRepo::new();
     r.git(&["checkout", "-q", "--detach"]);
-    let (orch_script, impl_script) = scripts(true);
+    let hold = Hold::new(&r, "x");
+    let (orch_script, impl_script) = scripts(&hold, true);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = orch
         .create_chat_for(ChatTarget::Worktree(r.repo.clone()))
