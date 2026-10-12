@@ -16,6 +16,7 @@ use agent_client_protocol::{Agent, ConnectionTo, ErrorCode};
 
 use super::config::{HarnessConfig, SystemPromptStyle};
 use super::events::{AgentError, AgentInfo, config_value, effort_option};
+use super::steering;
 
 /// Everything needed to open the session.
 pub(crate) struct StartupParams {
@@ -143,6 +144,7 @@ pub(crate) async fn open_session(
         config_options: config_options.unwrap_or_default(),
         capabilities: caps,
         agent: init.agent_info,
+        supports_steering: steering::advertised(init.meta.as_ref()),
     };
     // What the agent already reports as current is not set again: it saves a
     // request that can hang (a `set_mode` timeout cost a restored session) and

@@ -196,6 +196,10 @@ impl AgentHandle {
     pub fn prompt(&self, blocks: Vec<ContentBlock>) -> Result<(), AgentError>; // 応答は AgentEvent::TurnEnded。ターン中は Busy
     pub fn prompt_text(&self, text: impl Into<String>) -> Result<(), AgentError>;
     pub fn cancel(&self) -> Result<(), AgentError>;                    // session/cancel 通知。ターン中でも即送る
+    pub fn supports_steering(&self) -> bool;                           // initialize の最上位 _meta.steering.supported
+    pub fn steer(&self, blocks: Vec<ContentBlock>)                      // _session/steering (T-80)。handle を借りない 'static な future
+        -> impl Future<Output = Result<SteerOutcome, AgentError>> + Send + 'static;
+    pub fn steer_text(&self, text: impl Into<String>) -> /* steer と同じ */;
     pub fn is_turn_running(&self) -> bool;
     pub async fn set_mode(&self, mode) -> Result<(), AgentError>;
     pub async fn set_config_option(&self, id, value) -> Result<Vec<SessionConfigOption>, AgentError>;
@@ -208,6 +212,12 @@ impl AgentHandle {
   ([`acp-harnesses.md`](acp-harnesses.md) §4.4)。`Prompt` は `cx.spawn` に切り出し、
   **コマンドループは prompt の応答を待たない**。これで `Cancel` がターン中に届く。
   `set_mode` / `set_config_option` も `cx.spawn` で送り、結果を oneshot で返す。
+- **steer** (T-80、[`acp-harnesses.md`](acp-harnesses.md) §4.5): 能力が無ければハンドルで即
+  `AgentError::SteeringUnsupported` (送らない)。ループはターンが実行中でなければ送らずに
+  `SteerOutcome::PromptRequired`、実行中なら `_session/steering` を積んで応答待ちを `cx.spawn` に
+  逃がし、結果を oneshot で返す (`Injected` / `PromptRequired` / `StartedNewTurn`)。`Injected` の
+  ターンは元の `TurnEnded` 1 回で終わる。`Prompt` もループで要求を積んでから応答待ちを
+  spawn するので、prompt 直後の steer が prompt を追い越さない。
 - 同時に実行中のターンは 1 つまで。ターン中の `prompt` は `AgentError::Busy` を返す。
   判定はハンドル側で同期的に行う (`watch` の check-and-set。アクターへの往復なし)。
   受信箱のまとめ送りは runtime の責務。
@@ -247,7 +257,7 @@ impl AgentHandle {
 
 ```rust
 pub enum AgentEvent {
-    Ready(Box<AgentInfo>),             // { acp_session_id, resumed, modes, config_options, capabilities, agent }
+    Ready(Box<AgentInfo>),             // { acp_session_id, resumed, modes, config_options, capabilities, agent, supports_steering }
     Output(AgentOutput),               // SessionUpdate を 1:1 で型付け。未知は Unknown(serde_json::Value)
     PermissionAutoAnswered { tool_call, options, chosen: Option<PermissionOptionKind> },
     TurnEnded(Result<StopReason, AgentError>),
@@ -720,6 +730,7 @@ Stage 4 の構成 (`src/`):
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+  `steering: true` で `_session/steering` を広告・処理する (T-80、[`acp-harnesses.md`](acp-harnesses.md) §4.5)。
   `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。

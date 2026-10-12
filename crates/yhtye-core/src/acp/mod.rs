@@ -14,6 +14,7 @@ mod permission;
 mod process;
 mod session;
 mod startup;
+mod steering;
 
 pub use config::{
     ANTIGRAVITY_DEFAULT_MODEL, ANTIGRAVITY_LOGIN_HINT, CODEX_ACP, CODEX_CONFIG_ENV,
@@ -28,6 +29,7 @@ pub use handle::{AgentHandle, SpawnOptions, spawn_agent};
 pub(crate) use orphan::start_registry as start_process_registry;
 pub use permission::{choose_permission, outcome_for};
 pub(crate) use process::PRIVATE_ENV;
+pub use steering::SteerOutcome;
 
 /// ACP schema types used in this module's public API.
 pub use agent_client_protocol::schema::v1 as schema;

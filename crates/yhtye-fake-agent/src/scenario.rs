@@ -19,6 +19,7 @@
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
+//!   "steering": false,          // true: advertise and serve `_session/steering`
 //!   "turns": [
 //!     { "match": "hello", "actions": [ {"message": "hi"}, {"end": "end_turn"} ] },
 //!     { "actions": [ {"sleep": 50}, "wait_cancel" ] }
@@ -47,6 +48,16 @@
 //! responses (the agent has none), and `vendor_notifications` are sent with their
 //! own (unknown) methods before the `session/new` / `session/load` response and at
 //! the start of every turn, like `grok`'s `_x.ai/...` notifications.
+//!
+//! Steering (Claude Code / Codex adapters): `steering` adds the top-level
+//! `_meta.steering.supported: true` to the `initialize` result and serves
+//! `_session/steering` (without it the request gets "method not found"). A
+//! steer during a turn answers `injected` and interrupts the turn at its next
+//! action or wait: the turn reports `steered:<text>` and ends with `end_turn`
+//! (one prompt response, like the real adapters; `session/cancel` still wins).
+//! With no turn running it answers `promptRequired` when asked to by
+//! `_meta.steering.idleBehavior`, else `startedNewTurn` and runs the text as a
+//! turn of its own (whose result goes nowhere).
 //!
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
@@ -113,6 +124,9 @@ pub struct Scenario {
     /// `session/load` response and at the start of every turn.
     #[serde(default)]
     pub vendor_notifications: Vec<VendorNotification>,
+    /// Advertise and serve `_session/steering`.
+    #[serde(default)]
+    pub steering: bool,
     #[serde(default)]
     pub turns: Vec<Turn>,
 }

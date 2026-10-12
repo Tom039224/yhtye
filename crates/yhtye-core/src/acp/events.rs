@@ -52,6 +52,9 @@ pub struct AgentInfo {
     pub config_options: Vec<SessionConfigOption>,
     pub capabilities: AgentCapabilities,
     pub agent: Option<Implementation>,
+    /// The agent advertises `_session/steering` (top-level `_meta.steering.supported`
+    /// of the `initialize` result); see [`super::AgentHandle::steer`].
+    pub supports_steering: bool,
 }
 
 impl AgentInfo {
@@ -190,6 +193,9 @@ pub enum AgentError {
     Setup { message: String },
     #[error("a turn is already running on this session")]
     Busy,
+    /// The agent does not advertise `_session/steering`; nothing was sent.
+    #[error("the agent does not support steering a running turn")]
+    SteeringUnsupported,
     #[error("agent request `{method}` failed: {message}")]
     Request { method: String, message: String },
     #[error("the agent session is closed")]
