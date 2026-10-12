@@ -144,8 +144,13 @@ async fn what_one_client_does_reaches_the_other() {
     };
     seen_or_wait(&mut b, &mut eb, note).await;
     let told = eb.iter().position(note).expect("told");
-    let turn_ended =
-        |e: &Value| e["body"]["type"] == "agent" && e["body"]["event"]["type"] == "turn_ended";
+    // The orchestrator's own turn on that note ends (the cancelled tasks' agents end
+    // turns of their own meanwhile: those say nothing about the chat).
+    let turn_ended = |e: &Value| {
+        e["body"]["type"] == "agent"
+            && e["body"]["session"] == "orchestrator:C-1"
+            && e["body"]["event"]["type"] == "turn_ended"
+    };
     if !eb[told..].iter().any(turn_ended) {
         until_event(&mut b, &mut eb, turn_ended).await;
     }
