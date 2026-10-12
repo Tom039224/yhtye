@@ -9,8 +9,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::chats::{
-    Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, new_chat, none, repo_config, said,
-    say, settle, start, started, wait,
+    Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, new_chat, none, repo_config,
+    said, say, settle, start, started, wait,
 };
 use common::fake_harness;
 use common::orch::{
@@ -69,8 +69,9 @@ async fn an_orchestrator_starts_lazily_in_its_chats_worktree() {
 }
 
 /// A shared orchestrator script for the group tests: each chat's message names
-/// its work; the implementer writes that file (slowly, so the groups overlap).
-fn planning_scripts() -> (Value, Value) {
+/// its work; the implementer writes that file once `hold` is released (so the
+/// groups can overlap).
+fn planning_scripts(hold: &Hold) -> (Value, Value) {
     let plan = |needle: &str, instruction: &str| {
         json!({"match": needle, "actions": [
             {"mcp_call": {"tool": "create_group", "args": {"title": needle}}},
@@ -89,7 +90,7 @@ fn planning_scripts() -> (Value, Value) {
     ]});
     let write = |needle: &str, path: &str| {
         json!({"match": needle, "actions": [
-            {"sleep": 500},
+            hold.action(),
             {"write_file": {"path": path, "text": format!("{path}\n")}},
             {"mcp_call": {"tool": "report_step_done", "args": {"result": format!("wrote {path}")}}}
         ]})
@@ -103,12 +104,20 @@ fn planning_scripts() -> (Value, Value) {
 async fn two_chats_on_different_branches_run_groups_at_once_and_merge_into_their_own_branch() {
     let r = TempRepo::new();
     r.git(&["branch", "feature"]);
-    let (orch_script, impl_script) = planning_scripts();
+    let hold = Hold::new(&r, "writes");
+    let (orch_script, impl_script) = planning_scripts(&hold);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let main = new_chat(&orch, "main").await;
     let feature = new_chat(&orch, "feature").await;
     say(&orch, &main, "main-work").await;
     say(&orch, &feature, "feature-work").await;
+    // Neither implementer writes before both groups exist.
+    let group_created =
+        |e: &ApiEvent| is_domain(e, |d| matches!(d, DomainEvent::GroupCreated { .. }));
+    while events.iter().filter(|e| group_created(e)).count() < 2 {
+        until(&mut rx, &mut events, TIMEOUT, group_created).await;
+    }
+    hold.release();
     let merged = |e: &ApiEvent| {
         is_domain(e, |d| {
             matches!(d, DomainEvent::GroupMergeFinished { ok: true, .. })
@@ -509,7 +518,9 @@ async fn a_chat_with_an_open_group_starts_when_its_group_settles_after_a_restart
 async fn a_group_completes_when_the_main_clone_is_detached() {
     let r = TempRepo::new();
     r.git(&["checkout", "-q", "--detach"]);
-    let (orch_script, impl_script) = planning_scripts();
+    let hold = Hold::new(&r, "writes");
+    hold.release(); // nothing to wait for in this test
+    let (orch_script, impl_script) = planning_scripts(&hold);
     let (orch, mut rx, mut events) = start(repo_config(&r, orch_script, impl_script)).await;
     let chat = new_chat(&orch, "main").await;
     say(&orch, &chat, "main-work").await;

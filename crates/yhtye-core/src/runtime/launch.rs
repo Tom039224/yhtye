@@ -11,6 +11,7 @@ use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
 use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions};
 use crate::agents::{AgentChoice, AgentRole};
+use crate::api::ApiEventBody;
 use crate::mcp::{McpToken, SessionBinding};
 use crate::prompts::{agent_choices_prompt, system_prompt};
 use crate::secrets::spawn_agent_with_secrets;
@@ -242,6 +243,10 @@ impl Sessions {
             pick,
             agent,
         };
+        // Every client sees it starting, not only the one that asked (T-65).
+        self.emit.send(ApiEventBody::SessionStarting {
+            session: key.clone(),
+        });
         self.starting.insert(key, starting);
         let secrets = self.cfg.agents.secrets();
         let slots = self.start_slots.clone();

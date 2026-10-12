@@ -37,9 +37,15 @@ export function findWorktree(overview: GitOverview | null, path: string): GitWor
   return overview?.worktrees.find((w) => w.path === path);
 }
 
-export function placeOf(chat: ChatInfo, overview: GitOverview | null): Place {
+/**
+ * `awaiting`: the chat was made after git was last read (by another client,
+ * maybe in a new worktree), so a worktree the reading does not list is not
+ * "missing" yet: it is unknown until git is read again.
+ */
+export function placeOf(chat: ChatInfo, overview: GitOverview | null, awaiting = false): Place {
   if (!overview) return { kind: "unknown" };
   const w = findWorktree(overview, chat.worktree);
+  if (!w && awaiting) return { kind: "unknown" };
   if (!w || w.missing) return { kind: "missing" };
   return w.branch ? { kind: "branch", name: w.branch } : { kind: "detached", sha: w.head_sha };
 }
@@ -78,14 +84,20 @@ function isShown(w: GitWorktree, chats: ChatInfo[]): boolean {
   return !w.missing && !(w.branch && isInternalBranch(w.branch));
 }
 
-export function buildTree(chats: ChatInfo[], overview: GitOverview | null): BranchTree {
+/** Worktree nodes named by their directory, for chats git has not listed (yet). */
+function unreadNodes(chats: ChatInfo[]): WorktreeNode[] {
+  const paths = [...new Set(chats.map((c) => c.worktree))];
+  return paths.map((path) => ({ path, label: dirName(path), isMain: false, missing: false, chats: chats.filter((c) => c.worktree === path) }));
+}
+
+/**
+ * `awaiting`: chats made after git was last read; one whose worktree the reading
+ * does not list is shown under its directory, not as lost, until git is read again.
+ */
+export function buildTree(chats: ChatInfo[], overview: GitOverview | null, awaiting: string[] = []): BranchTree {
   const sorted = byRecency(chats);
   const chatsOf = (path: string) => sorted.filter((c) => c.worktree === path);
-  if (!overview) {
-    const paths = [...new Set(sorted.map((c) => c.worktree))];
-    const worktrees = paths.map((path) => ({ path, label: dirName(path), isMain: false, missing: false, chats: chatsOf(path) }));
-    return { worktrees, lost: [], otherBranches: [] };
-  }
+  if (!overview) return { worktrees: unreadNodes(sorted), lost: [], otherBranches: [] };
   const worktrees: WorktreeNode[] = overview.worktrees
     .map((w) => ({ w, chats: chatsOf(w.path) }))
     .filter(({ w, chats: c }) => isShown(w, c))
@@ -95,7 +107,10 @@ export function buildTree(chats: ChatInfo[], overview: GitOverview | null): Bran
   const otherBranches = overview.branches
     .map((b) => b.name)
     .filter((n) => !isInternalBranch(n) && !checkedOut.has(n));
-  return { worktrees, lost: sorted.filter((c) => !listed.has(c.worktree)), otherBranches };
+  const unlisted = sorted.filter((c) => !listed.has(c.worktree));
+  const unread = unlisted.filter((c) => awaiting.includes(c.id));
+  const lost = unlisted.filter((c) => !awaiting.includes(c.id));
+  return { worktrees: [...worktrees, ...unreadNodes(unread)], lost, otherBranches };
 }
 
 export type Ring = "running" | "ready" | "stopped";

@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -18,7 +19,7 @@ use super::state::{
 use super::types::{MessageOutcome, MessageVia, StepSpec, Verdict};
 use crate::mcp::tools::HelpAction;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DomainEvent {
     /// A chat was created (Stage 8, `orchestration-model.md` §2.0).

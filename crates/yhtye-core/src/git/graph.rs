@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -20,7 +21,7 @@ const RECORD: char = '\u{1e}';
 pub const MAX_GRAPH_COMMITS: usize = 500;
 
 /// The repository as the git panel shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct GitOverview {
     /// Branch checked out in the project directory (`None`: detached HEAD or no commits).
     pub head: Option<String>,
@@ -37,14 +38,14 @@ pub struct GitOverview {
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct GitBranch {
     pub name: String,
     pub sha: String,
 }
 
 /// One worktree as `git worktree list --porcelain` shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct GitWorktree {
     /// As git shows it (what a chat's `worktree` is compared with).
     pub path: String,
@@ -58,7 +59,7 @@ pub struct GitWorktree {
     pub missing: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct GitCommit {
     pub sha: String,
     /// First parent first (the branch the commit was made on).

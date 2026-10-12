@@ -10,7 +10,7 @@
       "chats": [
         {
           "id": "C-1",
-          "worktree": "/tmp/.tmpOGkSfF/repo",
+          "worktree": "/tmp/.tmpGVSNnG/repo",
           "title": null
         }
       ],
@@ -30,17 +30,28 @@
     "chats": [
       {
         "id": "C-1",
-        "worktree": "/tmp/.tmpOGkSfF/repo",
+        "worktree": "/tmp/.tmpGVSNnG/repo",
         "title": null,
-        "created_ms": 1790766538443,
-        "last_used_ms": 1790766538443
+        "created_ms": 1791726916853,
+        "last_used_ms": 1791726916853
       }
-    ]
+    ],
+    "starting": []
   },
   "events": [
     {
+      "seq": 0,
+      "ts_ms": 1791726916849,
+      "project": "",
+      "live": true,
+      "body": {
+        "type": "projects_changed",
+        "project": "repo"
+      }
+    },
+    {
       "seq": 1,
-      "ts_ms": 1790766538443,
+      "ts_ms": 1791726916853,
       "project": "repo",
       "live": false,
       "body": {
@@ -49,7 +60,7 @@
           "type": "chat_created",
           "chat": {
             "id": "C-1",
-            "worktree": "/tmp/.tmpOGkSfF/repo",
+            "worktree": "/tmp/.tmpGVSNnG/repo",
             "title": null
           }
         }
@@ -57,7 +68,7 @@
     },
     {
       "seq": 2,
-      "ts_ms": 1790766538446,
+      "ts_ms": 1791726916857,
       "project": "repo",
       "live": false,
       "body": {
@@ -71,7 +82,7 @@
     },
     {
       "seq": 3,
-      "ts_ms": 1790766538446,
+      "ts_ms": 1791726916857,
       "project": "repo",
       "live": false,
       "body": {
@@ -91,8 +102,18 @@
       }
     },
     {
+      "seq": 3,
+      "ts_ms": 1791726916862,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "session_starting",
+        "session": "orchestrator:C-1"
+      }
+    },
+    {
       "seq": 4,
-      "ts_ms": 1790766538456,
+      "ts_ms": 1791726916872,
       "project": "repo",
       "live": false,
       "body": {
@@ -100,20 +121,20 @@
         "session": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "pid": 1771314,
-        "acp_session_id": "fake-1771314",
+        "pid": 2936975,
+        "acp_session_id": "fake-2936975",
         "resumed": false,
         "agent": {
           "harness": "fake",
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/repo"
+        "cwd": "/tmp/.tmpGVSNnG/repo"
       }
     },
     {
       "seq": 5,
-      "ts_ms": 1790766538456,
+      "ts_ms": 1791726916872,
       "project": "repo",
       "live": false,
       "body": {
@@ -124,7 +145,7 @@
     },
     {
       "seq": 6,
-      "ts_ms": 1790766538459,
+      "ts_ms": 1791726916875,
       "project": "repo",
       "live": false,
       "body": {
@@ -138,7 +159,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": false,
       "body": {
@@ -147,7 +168,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-1771314",
+            "acp_session_id": "fake-2936975",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -201,7 +222,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": true,
       "body": {
@@ -223,7 +244,7 @@
     },
     {
       "seq": 7,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": true,
       "body": {
@@ -245,7 +266,7 @@
     },
     {
       "seq": 8,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": false,
       "body": {
@@ -257,7 +278,7 @@
     },
     {
       "seq": 8,
-      "ts_ms": 1790766538460,
+      "ts_ms": 1791726916876,
       "project": "repo",
       "live": true,
       "body": {
@@ -278,63 +299,8 @@
       }
     },
     {
-      "seq": 8,
-      "ts_ms": 1790766538461,
-      "project": "repo",
-      "live": true,
-      "body": {
-        "type": "agent",
-        "session": "orchestrator:C-1",
-        "event": {
-          "type": "output",
-          "data": {
-            "kind": "message_chunk",
-            "update": {
-              "content": {
-                "type": "text",
-                "text": "a group for this."
-              }
-            }
-          }
-        }
-      }
-    },
-    {
       "seq": 9,
-      "ts_ms": 1790766538461,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "agent_text",
-        "session": "orchestrator:C-1",
-        "kind": "message",
-        "text": "I will create a group for this."
-      }
-    },
-    {
-      "seq": 10,
-      "ts_ms": 1790766538461,
-      "project": "repo",
-      "live": false,
-      "body": {
-        "type": "agent",
-        "session": "orchestrator:C-1",
-        "event": {
-          "type": "output",
-          "data": {
-            "kind": "tool_call",
-            "update": {
-              "toolCallId": "read-1",
-              "title": "Read README.md",
-              "kind": "edit"
-            }
-          }
-        }
-      }
-    },
-    {
-      "seq": 11,
-      "ts_ms": 1790766538464,
+      "ts_ms": 1791726916881,
       "project": "repo",
       "live": false,
       "body": {
@@ -357,8 +323,42 @@
       }
     },
     {
-      "seq": 12,
-      "ts_ms": 1790766538473,
+      "seq": 9,
+      "ts_ms": 1791726916894,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "message_chunk",
+            "update": {
+              "content": {
+                "type": "text",
+                "text": "a group for this."
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "ts_ms": 1791726916894,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent_text",
+        "session": "orchestrator:C-1",
+        "kind": "message",
+        "text": "I will create a group for this."
+      }
+    },
+    {
+      "seq": 11,
+      "ts_ms": 1791726916894,
       "project": "repo",
       "live": false,
       "body": {
@@ -367,18 +367,19 @@
         "event": {
           "type": "output",
           "data": {
-            "kind": "tool_call_update",
+            "kind": "tool_call",
             "update": {
               "toolCallId": "read-1",
-              "status": "completed"
+              "title": "Read README.md",
+              "kind": "edit"
             }
           }
         }
       }
     },
     {
-      "seq": 13,
-      "ts_ms": 1790766538474,
+      "seq": 12,
+      "ts_ms": 1791726916895,
       "project": "repo",
       "live": false,
       "body": {
@@ -406,7 +407,27 @@
     },
     {
       "seq": 13,
-      "ts_ms": 1790766538475,
+      "ts_ms": 1791726916895,
+      "project": "repo",
+      "live": false,
+      "body": {
+        "type": "agent",
+        "session": "orchestrator:C-1",
+        "event": {
+          "type": "output",
+          "data": {
+            "kind": "tool_call_update",
+            "update": {
+              "toolCallId": "read-1",
+              "status": "completed"
+            }
+          }
+        }
+      }
+    },
+    {
+      "seq": 13,
+      "ts_ms": 1791726916896,
       "project": "repo",
       "live": true,
       "body": {
@@ -428,7 +449,7 @@
     },
     {
       "seq": 14,
-      "ts_ms": 1790766538477,
+      "ts_ms": 1791726916898,
       "project": "repo",
       "live": false,
       "body": {
@@ -482,7 +503,7 @@
     },
     {
       "seq": 15,
-      "ts_ms": 1790766538477,
+      "ts_ms": 1791726916898,
       "project": "repo",
       "live": false,
       "body": {
@@ -496,7 +517,7 @@
     },
     {
       "seq": 16,
-      "ts_ms": 1790766538486,
+      "ts_ms": 1791726916908,
       "project": "repo",
       "live": false,
       "body": {
@@ -504,13 +525,13 @@
         "event": {
           "type": "workspace_ready",
           "task": "T-1",
-          "path": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1"
+          "path": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1"
         }
       }
     },
     {
       "seq": 17,
-      "ts_ms": 1790766538486,
+      "ts_ms": 1791726916908,
       "project": "repo",
       "live": false,
       "body": {
@@ -524,8 +545,18 @@
       }
     },
     {
+      "seq": 17,
+      "ts_ms": 1791726916909,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "session_starting",
+        "session": "T-1/implementer"
+      }
+    },
+    {
       "seq": 18,
-      "ts_ms": 1790766538487,
+      "ts_ms": 1791726916912,
       "project": "repo",
       "live": false,
       "body": {
@@ -574,7 +605,7 @@
     },
     {
       "seq": 18,
-      "ts_ms": 1790766538489,
+      "ts_ms": 1791726916913,
       "project": "repo",
       "live": true,
       "body": {
@@ -596,7 +627,7 @@
     },
     {
       "seq": 18,
-      "ts_ms": 1790766538489,
+      "ts_ms": 1791726916913,
       "project": "repo",
       "live": true,
       "body": {
@@ -618,7 +649,7 @@
     },
     {
       "seq": 19,
-      "ts_ms": 1790766538489,
+      "ts_ms": 1791726916914,
       "project": "repo",
       "live": false,
       "body": {
@@ -630,7 +661,7 @@
     },
     {
       "seq": 20,
-      "ts_ms": 1790766538489,
+      "ts_ms": 1791726916914,
       "project": "repo",
       "live": false,
       "body": {
@@ -646,7 +677,7 @@
     },
     {
       "seq": 21,
-      "ts_ms": 1790766538492,
+      "ts_ms": 1791726916919,
       "project": "repo",
       "live": false,
       "body": {
@@ -654,20 +685,20 @@
         "session": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "pid": 1771537,
-        "acp_session_id": "fake-1771537",
+        "pid": 2937227,
+        "acp_session_id": "fake-2937227",
         "resumed": false,
         "agent": {
           "harness": "fake",
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1"
+        "cwd": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1"
       }
     },
     {
       "seq": 22,
-      "ts_ms": 1790766538492,
+      "ts_ms": 1791726916919,
       "project": "repo",
       "live": false,
       "body": {
@@ -678,7 +709,7 @@
     },
     {
       "seq": 23,
-      "ts_ms": 1790766538493,
+      "ts_ms": 1791726916920,
       "project": "repo",
       "live": false,
       "body": {
@@ -687,7 +718,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-1771537",
+            "acp_session_id": "fake-2937227",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -741,7 +772,7 @@
     },
     {
       "seq": 23,
-      "ts_ms": 1790766538494,
+      "ts_ms": 1791726916921,
       "project": "repo",
       "live": true,
       "body": {
@@ -763,7 +794,7 @@
     },
     {
       "seq": 24,
-      "ts_ms": 1790766538494,
+      "ts_ms": 1791726916921,
       "project": "repo",
       "live": false,
       "body": {
@@ -775,7 +806,7 @@
     },
     {
       "seq": 25,
-      "ts_ms": 1790766538494,
+      "ts_ms": 1791726916921,
       "project": "repo",
       "live": false,
       "body": {
@@ -796,7 +827,7 @@
     },
     {
       "seq": 26,
-      "ts_ms": 1790766538495,
+      "ts_ms": 1791726916922,
       "project": "repo",
       "live": false,
       "body": {
@@ -816,7 +847,7 @@
     },
     {
       "seq": 27,
-      "ts_ms": 1790766538496,
+      "ts_ms": 1791726916923,
       "project": "repo",
       "live": false,
       "body": {
@@ -832,7 +863,7 @@
     },
     {
       "seq": 28,
-      "ts_ms": 1790766538497,
+      "ts_ms": 1791726916924,
       "project": "repo",
       "live": false,
       "body": {
@@ -861,7 +892,7 @@
     },
     {
       "seq": 28,
-      "ts_ms": 1790766538498,
+      "ts_ms": 1791726916927,
       "project": "repo",
       "live": true,
       "body": {
@@ -883,7 +914,7 @@
     },
     {
       "seq": 29,
-      "ts_ms": 1790766538498,
+      "ts_ms": 1791726916927,
       "project": "repo",
       "live": false,
       "body": {
@@ -895,7 +926,7 @@
     },
     {
       "seq": 30,
-      "ts_ms": 1790766538498,
+      "ts_ms": 1791726916927,
       "project": "repo",
       "live": false,
       "body": {
@@ -911,7 +942,7 @@
     },
     {
       "seq": 31,
-      "ts_ms": 1790766538498,
+      "ts_ms": 1791726916928,
       "project": "repo",
       "live": false,
       "body": {
@@ -925,8 +956,18 @@
       }
     },
     {
+      "seq": 31,
+      "ts_ms": 1791726916929,
+      "project": "repo",
+      "live": true,
+      "body": {
+        "type": "session_starting",
+        "session": "T-1/review-1"
+      }
+    },
+    {
       "seq": 32,
-      "ts_ms": 1790766538504,
+      "ts_ms": 1791726916935,
       "project": "repo",
       "live": false,
       "body": {
@@ -934,20 +975,20 @@
         "session": "T-1/review-1",
         "role": "reviewer",
         "task": "T-1",
-        "pid": 1771637,
-        "acp_session_id": "fake-1771637",
+        "pid": 2937343,
+        "acp_session_id": "fake-2937343",
         "resumed": false,
         "agent": {
           "harness": "fake",
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1"
+        "cwd": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1"
       }
     },
     {
       "seq": 33,
-      "ts_ms": 1790766538504,
+      "ts_ms": 1791726916935,
       "project": "repo",
       "live": false,
       "body": {
@@ -958,7 +999,7 @@
     },
     {
       "seq": 34,
-      "ts_ms": 1790766538504,
+      "ts_ms": 1791726916936,
       "project": "repo",
       "live": false,
       "body": {
@@ -967,7 +1008,7 @@
         "event": {
           "type": "ready",
           "data": {
-            "acp_session_id": "fake-1771637",
+            "acp_session_id": "fake-2937343",
             "resumed": false,
             "modes": {
               "currentModeId": "bypassPermissions",
@@ -1021,7 +1062,7 @@
     },
     {
       "seq": 34,
-      "ts_ms": 1790766538505,
+      "ts_ms": 1791726916937,
       "project": "repo",
       "live": true,
       "body": {
@@ -1043,7 +1084,7 @@
     },
     {
       "seq": 35,
-      "ts_ms": 1790766538507,
+      "ts_ms": 1791726916941,
       "project": "repo",
       "live": false,
       "body": {
@@ -1059,7 +1100,7 @@
     },
     {
       "seq": 36,
-      "ts_ms": 1790766538508,
+      "ts_ms": 1791726916941,
       "project": "repo",
       "live": false,
       "body": {
@@ -1089,7 +1130,7 @@
     },
     {
       "seq": 36,
-      "ts_ms": 1790766538509,
+      "ts_ms": 1791726916943,
       "project": "repo",
       "live": true,
       "body": {
@@ -1111,7 +1152,7 @@
     },
     {
       "seq": 37,
-      "ts_ms": 1790766538509,
+      "ts_ms": 1791726916943,
       "project": "repo",
       "live": false,
       "body": {
@@ -1123,7 +1164,7 @@
     },
     {
       "seq": 38,
-      "ts_ms": 1790766538509,
+      "ts_ms": 1791726916943,
       "project": "repo",
       "live": false,
       "body": {
@@ -1139,7 +1180,7 @@
     },
     {
       "seq": 39,
-      "ts_ms": 1790766538509,
+      "ts_ms": 1791726916944,
       "project": "repo",
       "live": false,
       "body": {
@@ -1154,7 +1195,7 @@
     },
     {
       "seq": 40,
-      "ts_ms": 1790766538509,
+      "ts_ms": 1791726916944,
       "project": "repo",
       "live": false,
       "body": {
@@ -1168,7 +1209,7 @@
     },
     {
       "seq": 41,
-      "ts_ms": 1790766538545,
+      "ts_ms": 1791726916984,
       "project": "repo",
       "live": false,
       "body": {
@@ -1177,14 +1218,14 @@
           "type": "step_completed",
           "task": "T-1",
           "step": 2,
-          "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (da36fceaec)",
+          "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (75f37c733a)",
           "verdict": null
         }
       }
     },
     {
       "seq": 42,
-      "ts_ms": 1790766538545,
+      "ts_ms": 1791726916984,
       "project": "repo",
       "live": false,
       "body": {
@@ -1198,7 +1239,7 @@
     },
     {
       "seq": 43,
-      "ts_ms": 1790766538545,
+      "ts_ms": 1791726916984,
       "project": "repo",
       "live": false,
       "body": {
@@ -1224,7 +1265,7 @@
     },
     {
       "seq": 44,
-      "ts_ms": 1790766538546,
+      "ts_ms": 1791726916985,
       "project": "repo",
       "live": false,
       "body": {
@@ -1235,7 +1276,7 @@
     },
     {
       "seq": 45,
-      "ts_ms": 1790766538547,
+      "ts_ms": 1791726916986,
       "project": "repo",
       "live": false,
       "body": {
@@ -1249,7 +1290,7 @@
     },
     {
       "seq": 46,
-      "ts_ms": 1790766538547,
+      "ts_ms": 1791726916986,
       "project": "repo",
       "live": false,
       "body": {
@@ -1266,7 +1307,7 @@
     },
     {
       "seq": 47,
-      "ts_ms": 1790766538547,
+      "ts_ms": 1791726916986,
       "project": "repo",
       "live": false,
       "body": {
@@ -1277,7 +1318,7 @@
     },
     {
       "seq": 48,
-      "ts_ms": 1790766538548,
+      "ts_ms": 1791726916987,
       "project": "repo",
       "live": false,
       "body": {
@@ -1294,7 +1335,7 @@
     },
     {
       "seq": 49,
-      "ts_ms": 1790766538548,
+      "ts_ms": 1791726916987,
       "project": "repo",
       "live": false,
       "body": {
@@ -1305,7 +1346,7 @@
     },
     {
       "seq": 50,
-      "ts_ms": 1790766538549,
+      "ts_ms": 1791726916989,
       "project": "repo",
       "live": false,
       "body": {
@@ -1319,7 +1360,7 @@
     },
     {
       "seq": 51,
-      "ts_ms": 1790766538566,
+      "ts_ms": 1791726917008,
       "project": "repo",
       "live": false,
       "body": {
@@ -1328,13 +1369,13 @@
           "type": "group_merge_finished",
           "group": "G-1",
           "ok": true,
-          "detail": "merged yhtye/G-1 into main (444ef0dc44)"
+          "detail": "merged yhtye/G-1 into main (c2b99a3d7a)"
         }
       }
     },
     {
       "seq": 52,
-      "ts_ms": 1790766538566,
+      "ts_ms": 1791726917008,
       "project": "repo",
       "live": false,
       "body": {
@@ -1357,7 +1398,7 @@
               "status": "done",
               "merge": {
                 "ok": true,
-                "detail": "merged yhtye/G-1 into main (444ef0dc44)"
+                "detail": "merged yhtye/G-1 into main (c2b99a3d7a)"
               }
             }
           }
@@ -1366,7 +1407,7 @@
     },
     {
       "seq": 52,
-      "ts_ms": 1790766538568,
+      "ts_ms": 1791726917010,
       "project": "repo",
       "live": true,
       "body": {
@@ -1379,7 +1420,7 @@
             "update": {
               "content": {
                 "type": "text",
-                "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (444ef0dc44)\"}}"
+                "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (c2b99a3d7a)\"}}"
               }
             }
           }
@@ -1388,7 +1429,7 @@
     },
     {
       "seq": 52,
-      "ts_ms": 1790766538568,
+      "ts_ms": 1791726917010,
       "project": "repo",
       "live": true,
       "body": {
@@ -1410,19 +1451,19 @@
     },
     {
       "seq": 53,
-      "ts_ms": 1790766538568,
+      "ts_ms": 1791726917010,
       "project": "repo",
       "live": false,
       "body": {
         "type": "agent_text",
         "session": "orchestrator:C-1",
         "kind": "message",
-        "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (444ef0dc44)\"}}Done: hello.txt is on main."
+        "text": "mcp:finish_group:ok:{\"group_id\":\"G-1\",\"status\":\"done\",\"merge\":{\"ok\":true,\"detail\":\"merged yhtye/G-1 into main (c2b99a3d7a)\"}}Done: hello.txt is on main."
       }
     },
     {
       "seq": 54,
-      "ts_ms": 1790766538568,
+      "ts_ms": 1791726917010,
       "project": "repo",
       "live": false,
       "body": {
@@ -1447,7 +1488,7 @@
       "chats": [
         {
           "id": "C-1",
-          "worktree": "/tmp/.tmpOGkSfF/repo",
+          "worktree": "/tmp/.tmpGVSNnG/repo",
           "title": "Add hello.txt please"
         }
       ],
@@ -1461,7 +1502,7 @@
           "group_branch": "yhtye/G-1",
           "status": "done",
           "finish_summary": "hello.txt added",
-          "detail": "merged yhtye/G-1 into main (444ef0dc44)",
+          "detail": "merged yhtye/G-1 into main (c2b99a3d7a)",
           "finish_nudges": 0
         }
       ],
@@ -1496,7 +1537,7 @@
               "kind": "done",
               "instruction": null,
               "status": "done",
-              "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (da36fceaec)",
+              "result": "merged yhtye/G-1-T-1 into yhtye/G-1 (75f37c733a)",
               "verdict": null,
               "note": null,
               "nudges": 0
@@ -1505,7 +1546,7 @@
           "current": 2,
           "status": "done",
           "review_rounds": 0,
-          "workdir": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1",
+          "workdir": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1",
           "cancel_reason": null
         }
       ],
@@ -1524,7 +1565,7 @@
         "session_key": "T-1/implementer",
         "role": "implementer",
         "task": "T-1",
-        "acp_session_id": "fake-1771537",
+        "acp_session_id": "fake-2937227",
         "status": "stopped",
         "turn_running": false,
         "agent": {
@@ -1532,13 +1573,13 @@
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1"
+        "cwd": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1"
       },
       {
         "session_key": "T-1/review-1",
         "role": "reviewer",
         "task": "T-1",
-        "acp_session_id": "fake-1771637",
+        "acp_session_id": "fake-2937343",
         "status": "stopped",
         "turn_running": false,
         "agent": {
@@ -1546,13 +1587,13 @@
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/data/worktrees/repo/G-1/T-1"
+        "cwd": "/tmp/.tmpGVSNnG/data/worktrees/repo/G-1/T-1"
       },
       {
         "session_key": "orchestrator:C-1",
         "role": "orchestrator",
         "task": null,
-        "acp_session_id": "fake-1771314",
+        "acp_session_id": "fake-2936975",
         "status": "live",
         "turn_running": false,
         "agent": {
@@ -1560,17 +1601,18 @@
           "model": "haiku",
           "effort": null
         },
-        "cwd": "/tmp/.tmpOGkSfF/repo"
+        "cwd": "/tmp/.tmpGVSNnG/repo"
       }
     ],
     "chats": [
       {
         "id": "C-1",
-        "worktree": "/tmp/.tmpOGkSfF/repo",
+        "worktree": "/tmp/.tmpGVSNnG/repo",
         "title": "Add hello.txt please",
-        "created_ms": 1790766538443,
-        "last_used_ms": 1790766538546
+        "created_ms": 1791726916853,
+        "last_used_ms": 1791726916985
       }
-    ]
+    ],
+    "starting": []
   }
 }

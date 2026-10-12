@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -14,7 +15,7 @@ use crate::agents::AgentChoice;
 /// Default `max_review_rounds` (`orchestration-model.md` §2.3).
 pub const DEFAULT_MAX_REVIEW_ROUNDS: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct DomainConfig {
     /// How many times a `needs_changes` review may insert implement + review.
     pub max_review_rounds: u32,
@@ -28,7 +29,7 @@ impl Default for DomainConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupStatus {
     Active,
@@ -51,7 +52,7 @@ impl GroupStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Pending,
@@ -88,7 +89,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum StepStatus {
     Pending,
@@ -115,7 +116,7 @@ pub fn task_branch(group: &str, task: &str) -> String {
 /// chat: it is read from the worktree when shown, and when a group is created
 /// or merged. Times are not part of the state (the store derives them from
 /// the event log).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Chat {
     /// `C-<n>`.
     pub id: String,
@@ -127,7 +128,7 @@ pub struct Chat {
     pub title: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Group {
     pub id: String,
     /// The chat that created the group (`C-<n>`).
@@ -157,7 +158,7 @@ impl Group {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Step {
     pub kind: StepKind,
     pub instruction: Option<String>,
@@ -185,7 +186,7 @@ impl Step {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Task {
     pub id: String,
     pub group: String,
@@ -255,7 +256,7 @@ impl Task {
 }
 
 /// Who raised a help.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(tag = "by", rename_all = "snake_case")]
 pub enum HelpSource {
     /// The agent of `role` working on the help's step (via the `help` tool).
@@ -264,7 +265,7 @@ pub enum HelpSource {
     Yhtye,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum HelpState {
     Open,
@@ -273,7 +274,7 @@ pub enum HelpState {
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Help {
     pub id: String,
     pub task: String,
@@ -295,7 +296,7 @@ impl Help {
 }
 
 /// An undelivered reason to wake the orchestrator.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct InboxEntry {
     pub id: u64,
     /// The chat whose orchestrator this is for.
@@ -304,7 +305,7 @@ pub struct InboxEntry {
 }
 
 /// Id counters (the number of each kind created so far).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Counters {
     #[serde(default)]
     pub chats: u32,
@@ -315,7 +316,7 @@ pub struct Counters {
 }
 
 /// Everything the state machine knows about one project.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct State {
     pub project: String,
     pub config: DomainConfig,

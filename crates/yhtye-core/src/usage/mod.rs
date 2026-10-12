@@ -11,6 +11,7 @@
 mod parse;
 mod probe;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -18,7 +19,7 @@ pub use parse::parse_usage_markdown;
 pub use probe::{UsageError, UsageService, probe_usage};
 
 /// The subscription usage reported by the harness.
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema, TS)]
 pub struct UsageReport {
     /// Subscription plan as Claude Code names it (`max`, `pro`, ...), if reported.
     pub plan: Option<String>,
@@ -36,7 +37,7 @@ impl UsageReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema, TS)]
 pub struct UsageWindow {
     pub kind: UsageWindowKind,
     /// Label as reported (`5-hour limit`, `Weekly · all models`, `Weekly · Opus`).
@@ -47,7 +48,7 @@ pub struct UsageWindow {
     pub resets_at_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum UsageWindowKind {
     /// The rolling 5-hour limit.

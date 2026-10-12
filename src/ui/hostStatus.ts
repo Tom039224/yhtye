@@ -1,7 +1,9 @@
 // What the sidebar's host footer shows (design §3.3): the machine the core runs
-// on, and how long ago the core last answered a ping.
+// on, how long ago the core last answered a ping, and the paired devices.
 
+import type { ClientDevice, ClientKind } from "../api/generated";
 import type { ConnectionStatus } from "../api/transport";
+import { formatDateTime } from "./labels";
 
 /** A ping this recent, or newer, reads "now". */
 export const PING_NOW_SECONDS = 5;
@@ -45,4 +47,29 @@ export function hostToneLabel(tone: HostTone, connection: ConnectionStatus["stat
   if (connection === "closed") return "切断";
   if (connection === "open" && tone === "bad") return "応答なし";
   return "接続を確認中";
+}
+
+/** Devices shown under the host before the rest are folded into "他 N 台". */
+export const CLIENTS_SHOWN = 3;
+
+/** Connected devices first, then the most recently seen; the core's order otherwise. */
+export function orderClients(devices: readonly ClientDevice[]): ClientDevice[] {
+  const seen = (d: ClientDevice) => d.last_seen_ms ?? -1;
+  return devices
+    .map((d, i) => ({ d, i }))
+    .sort((a, b) => Number(b.d.connected) - Number(a.d.connected) || seen(b.d) - seen(a.d) || a.i - b.i)
+    .map(({ d }) => d);
+}
+
+const KIND_LABELS: Record<ClientKind, string> = { android: "Android" };
+
+/** What kind of client a device is, in words. */
+export function clientKindLabel(kind: ClientKind): string {
+  return KIND_LABELS[kind] ?? kind;
+}
+
+/** A device's state in words (its accessible name and tooltip). */
+export function clientState(d: ClientDevice): string {
+  if (d.connected) return "接続中";
+  return d.last_seen_ms === null ? "オフライン · 未接続" : `オフライン · 最終接続 ${formatDateTime(d.last_seen_ms)}`;
 }

@@ -26,6 +26,27 @@ pub fn none() -> Value {
     json!({"turns": []})
 }
 
+/// A file that holds a fake agent's turn (`wait_file`) until the test releases
+/// it: the test decides when the agent goes on, whatever the machine's speed.
+pub struct Hold(PathBuf);
+
+impl Hold {
+    /// A hold named `name`, kept in the repository's data directory.
+    pub fn new(r: &TempRepo, name: &str) -> Self {
+        Self(r.data.join(name))
+    }
+
+    /// The scenario action that waits for [`Hold::release`].
+    pub fn action(&self) -> Value {
+        json!({"wait_file": self.0.display().to_string()})
+    }
+
+    /// Lets every turn waiting on this hold (and any later one) go on.
+    pub fn release(&self) {
+        std::fs::write(&self.0, "").expect("release the held turn");
+    }
+}
+
 /// A repository-backed config; every orchestrator runs `orch_script`, every
 /// implementer `impl_script`.
 pub fn repo_config(r: &TempRepo, orch_script: Value, impl_script: Value) -> OrchestrationConfig {
