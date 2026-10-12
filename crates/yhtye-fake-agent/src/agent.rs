@@ -20,6 +20,9 @@ use tokio::sync::watch;
 use crate::mcp;
 use crate::scenario::{Action, FailKind, PermissionChoice, Scenario};
 
+/// How often `wait_file` looks for its file.
+const FILE_POLL: Duration = Duration::from_millis(10);
+
 /// The id of the effort option unless the scenario names another.
 const DEFAULT_EFFORT_ID: &str = "effort";
 
@@ -521,6 +524,13 @@ async fn run_action(
         Action::WaitCancel => {
             wait_or_cancel(fake, None).await;
             return Ok(Some(StopReason::Cancelled));
+        }
+        Action::WaitFile(path) => {
+            while !std::path::Path::new(&path).exists() {
+                if wait_or_cancel(fake, Some(FILE_POLL)).await {
+                    return Ok(Some(StopReason::Cancelled));
+                }
+            }
         }
         Action::End(reason) => {
             let stop = serde_json::from_value(json!(reason)).unwrap_or(StopReason::EndTurn);

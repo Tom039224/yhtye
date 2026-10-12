@@ -61,6 +61,11 @@ export function isTerminal(task: Task): boolean {
   return task.status === "done" || task.status === "cancelled";
 }
 
+/** A date and time in the short Japanese form (`2026/10/10 12:00`). */
+export function formatDateTime(ms: number): string {
+  return new Date(ms).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" });
+}
+
 export function formatTime(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;

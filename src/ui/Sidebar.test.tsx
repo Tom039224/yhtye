@@ -1,15 +1,19 @@
 // The sidebar's section labels and its host footer: the core's host name, a dot
-// for the connection, and the time since the core last answered a ping.
+// for the connection, the time since the core last answered a ping, and the
+// paired devices under it (T-73).
 
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { RemoteDevice } from "../api/generated";
 import { CommandError } from "../api/transport";
 import { AppStore, PING_INTERVAL_MS } from "../store/app";
 import { StoreContext } from "../store/useStore";
 import { chatSnapshot } from "../test/chats";
+import { ev } from "../test/events";
 import { PROJECT } from "../test/fixtures";
-import { FakeCore, MemoryTransport } from "../test/memoryTransport";
+import { clientOf, FakeCore, MemoryTransport } from "../test/memoryTransport";
+import { CLIENTS_SHOWN } from "./hostStatus";
 import { Sidebar } from "./Sidebar";
 
 let transport: MemoryTransport;
@@ -115,3 +119,119 @@ describe("the host footer", () => {
     expect(footer()).toHaveTextContent("20s");
   });
 });
+
+const PIXEL: RemoteDevice = { id: "dev-1", name: "Pixel 9", created_ms: 1, last_seen_ms: Date.UTC(2026, 9, 10, 3, 0), connected: true };
+const TABLET: RemoteDevice = { id: "dev-2", name: "Tablet", created_ms: 2, last_seen_ms: Date.UTC(2026, 9, 9, 3, 0), connected: false };
+const NEVER: RemoteDevice = { id: "dev-3", name: "Old phone", created_ms: 3, last_seen_ms: null, connected: false };
+
+const clientList = () => screen.queryByRole("list", { name: "クライアント" });
+const clientRows = () => within(clientList() ?? document.createElement("ul")).queryAllByRole("listitem");
+const iconOf = (el: HTMLElement) => el.querySelector("svg.client-kind")?.getAttribute("data-icon");
+
+/** Pushes `clients_changed` like the core does (app-wide: no project, live). */
+function pushClients(devices: RemoteDevice[]): void {
+  const clients = { server: { host: "test-host" }, devices: devices.map(clientOf) };
+  act(() => transport.emit(ev(0, { type: "clients_changed", clients }, true, "")));
+}
+
+describe("the clients under the host", () => {
+  it("marks the server with the server icon and shows no client rows without devices", async () => {
+    mount();
+    await advance(0);
+    expect(iconOf(footer())).toBe("server");
+    expect(clientList()).toBeNull();
+    expect(transport.calls.some((c) => c.type === "list_clients")).toBe(true);
+  });
+
+  it("lists the paired devices with the phone icon, connected first, offline ones greyed out with their last connection", async () => {
+    mountWith([NEVER, TABLET, PIXEL]);
+    await advance(0);
+    const rows = clientRows();
+    expect(rows.map((r) => r.textContent)).toEqual(["Pixel 9", "Tablet", "Old phone"]);
+    expect(rows.map(iconOf)).toEqual(["phone", "phone", "phone"]);
+    expect(rows[0]).not.toHaveClass("offline");
+    expect(rows[0]).toHaveAttribute("aria-label", "Pixel 9 · 接続中");
+    expect(rows[1]).toHaveClass("offline");
+    expect(rows[1].getAttribute("title")).toMatch(/^Tablet · Android · オフライン · 最終接続 2026\/10\/09/);
+    expect(rows[2]).toHaveClass("offline");
+    expect(rows[2]).toHaveAttribute("title", "Old phone · Android · オフライン · 未接続");
+  });
+
+  it("follows clients_changed: a device connects, another is revoked, the last one goes", async () => {
+    mountWith([PIXEL, TABLET]);
+    await advance(0);
+    pushClients([PIXEL, { ...TABLET, connected: true }]);
+    expect(clientRows().map((r) => r.className)).toEqual(["client-row", "client-row"]);
+    pushClients([{ ...TABLET, connected: true }]);
+    expect(clientRows().map((r) => r.textContent)).toEqual(["Tablet"]);
+    pushClients([]);
+    expect(clientList()).toBeNull();
+  });
+
+  it("reads the devices again on a resync and after a reconnect", async () => {
+    mountWith([]);
+    await advance(0);
+    core.remote.devices = [TABLET];
+    act(() => transport.emit(ev(0, { type: "resync" }, true, "")));
+    await advance(0);
+    expect(clientRows().map((r) => r.textContent)).toEqual(["Tablet"]);
+    core.remote.devices = [TABLET, PIXEL];
+    act(() => transport.setStatus({ state: "closed", reason: "gone", retryInMs: 500 }));
+    act(() => transport.setStatus({ state: "open" }));
+    await advance(0);
+    expect(clientRows().map((r) => r.textContent)).toEqual(["Pixel 9", "Tablet"]);
+  });
+
+  it("keeps a clients_changed that came while an older read was on its way", async () => {
+    let release = () => {};
+    transport = new MemoryTransport();
+    core = new FakeCore(PROJECT, chatSnapshot());
+    core.remote.devices = [TABLET];
+    core.before = (cmd) => (cmd.type === "list_clients" ? new Promise<void>((r) => (release = r)) : undefined);
+    mountCore();
+    await advance(0);
+    pushClients([PIXEL]);
+    release();
+    await advance(0);
+    expect(clientRows().map((r) => r.textContent)).toEqual(["Pixel 9"]);
+  });
+
+  it("folds devices past the first three into 他 N 台, and unfolds them in a box of their own", async () => {
+    const many = Array.from({ length: 7 }, (_, i): RemoteDevice => ({ ...TABLET, id: `dev-${i}`, name: `Phone ${i}`, last_seen_ms: 1_000 - i }));
+    mountWith(many);
+    await advance(0);
+    expect(clientRows()).toHaveLength(CLIENTS_SHOWN);
+    const more = screen.getByRole("button", { name: "他 4 台" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(clientRows()).toHaveLength(7);
+    expect(clientList()).toHaveClass("expanded");
+    fireEvent.click(screen.getByRole("button", { name: "折りたたむ" }));
+    expect(clientRows()).toHaveLength(CLIENTS_SHOWN);
+  });
+
+  it("does not fold exactly three devices", async () => {
+    mountWith([PIXEL, TABLET, NEVER]);
+    await advance(0);
+    expect(clientRows()).toHaveLength(3);
+    expect(screen.queryByRole("button", { name: /^他/ })).toBeNull();
+  });
+});
+
+function mountWith(devices: RemoteDevice[]): void {
+  transport = new MemoryTransport();
+  core = new FakeCore(PROJECT, chatSnapshot());
+  core.remote.devices = devices;
+  mountCore();
+}
+
+function mountCore(): void {
+  core.attach(transport);
+  store = new AppStore(transport);
+  store.start();
+  render(
+    <StoreContext.Provider value={store}>
+      <Sidebar />
+    </StoreContext.Provider>,
+  );
+}

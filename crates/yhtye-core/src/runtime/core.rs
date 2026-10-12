@@ -5,6 +5,7 @@
 //! `command` / `subscribe` to it.
 
 mod harnesses;
+mod settings;
 
 pub use harnesses::DetectionConfig;
 
@@ -12,7 +13,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -23,19 +24,16 @@ use super::chats::ChatTarget;
 use super::host::host_name;
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
-use crate::agents::{
-    AgentCatalog, AgentChoice, AgentRole, HarnessPreset, ModelEfforts, ModelService, RoleSettings,
-};
+use crate::agents::{AgentCatalog, AgentChoice, HarnessPreset, ModelEfforts, ModelService};
 use crate::api::{
-    AgentSettingsView, ApiCommand, ApiError, ApiEvent, ApiResponse, DEFAULT_EVENT_PAGE,
+    ApiCommand, ApiError, ApiEvent, ApiEventBody, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
+use crate::clock::now_ms;
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
-use crate::secrets::{
-    KeyringBackend, SecretBackend, SecretError, SecretValue, Secrets, validate_secret_name,
-    validate_secret_value,
-};
+use crate::remote::{RemoteService, Tailscale, TailscaleCli};
+use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
@@ -76,6 +74,9 @@ pub struct CoreConfig {
     /// Where the values of the secret environment variables live (the OS
     /// credential store; tests use an in-memory one).
     pub secret_backend: Arc<dyn SecretBackend>,
+    /// This PC on Tailscale, for remote access (the `tailscale` command; tests
+    /// use a fake).
+    pub tailscale: Arc<dyn Tailscale>,
 }
 
 impl CoreConfig {
@@ -93,6 +94,7 @@ impl CoreConfig {
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
             secret_backend: Arc::new(KeyringBackend::new()),
+            tailscale: Arc::new(TailscaleCli),
         }
     }
 
@@ -122,11 +124,17 @@ struct Inner {
     opening: tokio::sync::Mutex<()>,
     /// Serializes the detections of the installed harnesses.
     detecting: tokio::sync::Mutex<()>,
+    /// Serializes the changes of the agent settings and the secrets, each from
+    /// its validation to its last step (several clients may change them at once).
+    settings_lock: tokio::sync::Mutex<()>,
+    /// [`crate::api::AgentSettingsView::revision`]: grows with every change.
+    settings_revision: AtomicU64,
     events: broadcast::Sender<ApiEvent>,
     usage: UsageService,
     agents: Arc<AgentCatalog>,
     models: ModelService,
     secrets: Arc<Secrets>,
+    remote: RemoteService,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -162,6 +170,8 @@ impl Core {
             agents.set(row.project.as_deref(), row.role, Some(row.settings));
         }
         let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
+        let remote =
+            RemoteService::new(store.clone(), cfg.tailscale.clone(), events.clone()).await?;
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -169,11 +179,14 @@ impl Core {
                 open: Mutex::new(HashMap::new()),
                 opening: tokio::sync::Mutex::new(()),
                 detecting: tokio::sync::Mutex::new(()),
+                settings_lock: tokio::sync::Mutex::new(()),
+                settings_revision: AtomicU64::new(settings::initial_revision()),
                 events,
                 usage,
                 agents,
                 models,
                 secrets,
+                remote,
                 closed: AtomicBool::new(false),
             }),
         })
@@ -338,8 +351,9 @@ impl Core {
                 project,
                 role,
                 settings,
+                expected_revision,
             } => {
-                self.set_agent_settings(project.as_deref(), role, settings)
+                self.set_agent_settings(project.as_deref(), role, settings, expected_revision)
                     .await?;
                 Ok(ApiResponse::AgentSettings {
                     settings: Box::new(self.agent_settings(project).await?),
@@ -401,91 +415,39 @@ impl Core {
                     names: self.inner.secrets.names(),
                 })
             }
-        }
-    }
-
-    /// Registers the name in the database, then stores the value in the
-    /// credential store; a failure of the second undoes the first (unless the
-    /// name was registered before), so the two never disagree.
-    async fn set_secret(&self, name: &str, value: SecretValue) -> Result<(), ApiError> {
-        let secrets = &self.inner.secrets;
-        validate_secret_name(name).map_err(secret_error)?;
-        validate_secret_value(value.expose()).map_err(secret_error)?;
-        let was_registered = secrets.names().iter().any(|n| n == name);
-        self.inner.store.add_secret_name(name, now_ms()).await?;
-        if let Err(e) = secrets.set(name, value).await {
-            if !was_registered && let Err(undo) = self.inner.store.remove_secret_name(name).await {
-                tracing::error!("could not undo registering the secret name {name}: {undo}");
+            ApiCommand::GetRemoteStatus => Ok(ApiResponse::RemoteStatus {
+                status: self.inner.remote.status().await,
+            }),
+            ApiCommand::SetRemoteSettings { enabled, port } => {
+                if enabled && self.inner.closed.load(Ordering::SeqCst) {
+                    return Err(ApiError::unavailable("Yhtye is shutting down"));
+                }
+                Ok(ApiResponse::RemoteStatus {
+                    status: self.inner.remote.set_settings(self, enabled, port).await?,
+                })
             }
-            return Err(secret_error(e));
+            ApiCommand::CreatePairingCode => Ok(ApiResponse::PairingCode {
+                pairing: self.inner.remote.create_pairing_code().await?,
+            }),
+            ApiCommand::ListRemoteDevices => Ok(ApiResponse::RemoteDevices {
+                devices: self.inner.remote.devices().await?,
+            }),
+            ApiCommand::RevokeRemoteDevice { device } => Ok(ApiResponse::RemoteDevices {
+                devices: self.inner.remote.revoke(&device).await?,
+            }),
+            ApiCommand::ListClients => Ok(ApiResponse::Clients {
+                clients: self.inner.remote.clients().await?,
+            }),
         }
-        Ok(())
     }
 
-    /// Removes the name from the database, then the value from the credential
-    /// store; a failure of the second registers the name again.
-    async fn delete_secret(&self, name: &str) -> Result<(), ApiError> {
-        validate_secret_name(name).map_err(secret_error)?;
-        self.inner.store.remove_secret_name(name).await?;
-        if let Err(e) = self.inner.secrets.remove(name).await {
-            if let Err(undo) = self.inner.store.add_secret_name(name, now_ms()).await {
-                tracing::error!("could not undo removing the secret name {name}: {undo}");
-            }
-            return Err(secret_error(e));
+    /// Starts remote access if its stored settings enable it (the app calls it
+    /// once after starting; `core-design.md` §18). A failure to start is kept
+    /// in the status (`GetRemoteStatus`), not returned.
+    pub async fn start_remote(&self) {
+        if !self.inner.closed.load(Ordering::SeqCst) {
+            self.inner.remote.start_if_enabled(self).await;
         }
-        Ok(())
-    }
-
-    /// The settings of every role, globally or for a registered `project`.
-    async fn agent_settings(&self, project: Option<String>) -> Result<AgentSettingsView, ApiError> {
-        if let Some(p) = &project {
-            self.known_project(p).await?;
-        }
-        let agents = &self.inner.agents;
-        let (global, project_layer) = agents.layers(project.as_deref());
-        Ok(AgentSettingsView {
-            harnesses: agents.harnesses(),
-            builtin: agents.builtin(),
-            global,
-            effective: agents.effective(project.as_deref()),
-            project,
-            project_layer,
-        })
-    }
-
-    /// Validates, stores and applies one role of a settings layer.
-    async fn set_agent_settings(
-        &self,
-        project: Option<&str>,
-        role: AgentRole,
-        settings: Option<RoleSettings>,
-    ) -> Result<(), ApiError> {
-        if let Some(p) = project {
-            self.known_project(p).await?;
-        }
-        let agents = &self.inner.agents;
-        // The rows of this scope as the UI shows them (the layer's own, else the
-        // inherited ones), which may include harnesses that are gone since.
-        let existing = agents.effective(project).get(role).clone();
-        let settings = settings
-            .map(|s| {
-                let valid = agents.validate(&s, &existing)?;
-                // An effort the model does not offer (Devin's models offer none)
-                // is refused when its efforts were read; see `check_efforts`.
-                valid.check_efforts(&existing.candidates, |harness, model| {
-                    let efforts = self.inner.models.cached_efforts(harness, model)?;
-                    Some(efforts.into_iter().map(|e| e.value).collect())
-                })?;
-                Ok::<_, String>(valid)
-            })
-            .transpose()
-            .map_err(|e| ApiError::invalid_argument(format!("{}: {e}", role.as_str())))?;
-        self.inner
-            .store
-            .set_agent_settings(project, role, settings.as_ref(), now_ms())
-            .await?;
-        agents.set(project, role, settings);
-        Ok(())
     }
 
     async fn known_project(&self, project: &str) -> Result<ProjectRecord, ApiError> {
@@ -557,6 +519,8 @@ impl Core {
     /// and refuses later opens.
     pub async fn shutdown(&self) {
         self.inner.closed.store(true, Ordering::SeqCst);
+        // First: remote clients must not start work while the projects stop.
+        self.inner.remote.shutdown().await;
         self.inner.usage.close().await;
         self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;
@@ -608,6 +572,13 @@ impl Core {
         let orch = Arc::new(orch);
         self.lock_open()
             .insert(record.id.clone(), Arc::clone(&orch));
+        // Registered, or open now: every client's project list changed.
+        let _ = self
+            .inner
+            .events
+            .send(ApiEvent::app_wide(ApiEventBody::ProjectsChanged {
+                project: record.id.clone(),
+            }));
         // Work that was interrupted may already be resuming.
         let running = is_running(&record.id, &orch).await;
         Ok(project_info(&record, true, running))
@@ -691,12 +662,6 @@ impl Core {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {
@@ -817,14 +782,6 @@ fn reason_or_default(reason: Option<String>) -> String {
     reason
         .filter(|r| !r.trim().is_empty())
         .unwrap_or_else(|| USER_CANCEL_REASON.to_string())
-}
-
-/// The message never contains a value (`SecretError` does not carry one).
-fn secret_error(e: SecretError) -> ApiError {
-    match e {
-        SecretError::Invalid(m) => ApiError::invalid_argument(m),
-        e @ SecretError::Unavailable(_) => ApiError::unavailable(e.to_string()),
-    }
 }
 
 fn orch_error(e: OrchError) -> ApiError {

@@ -20,7 +20,7 @@ Cargo.toml                    [workspace] members = crates/*, src-tauri
 crates/
   yhtye-core/                 ライブラリ。Tauri 非依存
     src/
-      api/        ApiEvent / Snapshot (3a)、ApiCommand / ApiResponse (serde + ts-rs で TS 型を生成)
+      api/        ApiEvent / Snapshot (3a)、ApiCommand / ApiResponse (serde。typegen/ で TS 型 (ts-rs) と Kotlin 型を生成)
       acp/        ACP クライアント: ハーネス起動・セッション・イベント型付け・自動承認
       mcp/        Yhtye MCP サーバー (rmcp + axum, streamable HTTP)
       domain/     状態機械 (純粋関数。I/O なし)
@@ -28,14 +28,17 @@ crates/
       git/        GitService トレイト + NoopGit (3a)、git CLI 実装 (3c)
       prompts.rs  役割別システムプロンプト (本文は crates/yhtye-core/prompts/*.md を include_str!)
       runtime/    上記を束ねる Core (Effect の実行・受信箱・再開処理)
+      ws.rs       API の WebSocket セッション (開発用ブリッジとリモートサーバーで共有、§10・§18)
+      remote/     リモート接続 (Tailscale 経由の Android クライアント用サーバー・ペアリング・端末、§18)
     tests/        偽エージェントを使う結合テスト, 実エージェントテスト (#[ignore])
   yhtye-fake-agent/           偽 ACP エージェント (bin)
-  yhtye-dev-bridge/           WS ブリッジ (bin)
+  yhtye-dev-bridge/           WS ブリッジ (bin。セッション処理は yhtye-core の ws.rs)
 src-tauri/                    Tauri アプリ (Core を manage し、コマンドとイベントを中継するだけ)
 src/                          React フロントエンド
   api/          transport.ts (抽象) / tauri.ts / ws.ts / generated/ (ts-rs 出力)
   store/        イベント駆動の状態ストア
   ...
+mobile/                       Android クライアント (Gradle。shared/ の api/generated/ は Rust から生成、§2)
 ```
 
 ## 2. 公開 API (`yhtye_core::api` / `runtime::Core`)
@@ -149,6 +152,8 @@ pub struct CoreConfig {
   - `agent_text { session, kind: message|thought, text }` (3b) — ストリーミングされたチャンクを
     まとめた 1 ブロック (下記)。
   - `tool_called { record: ToolCallRecord }` / `prompted { session, text }`
+  - T-65 (§19): `session_starting { session }` (live。起動を始めた) と、アプリ全体向けの `projects_changed { project }` /
+    `settings_changed { kind, project?, revision? }` / `resync` (project 空・seq 0・live)。
   - **durable と live** (3b): `live == false` のイベントはイベントログ (§6) に保存され、
     `seq` はログの行番号と一致し 1 から欠番なし。`live == true` のイベント
     (`agent` のうち `MessageChunk` / `ThoughtChunk` / `UserMessageChunk` / `Usage`) は保存せず、
@@ -156,19 +161,57 @@ pub struct CoreConfig {
     (同じセッションの別種の出力・ツール呼び出し・ターン終了・終了・シャットダウン) で
     `agent_text` として 1 回だけ保存・配信される。UI はストリーミング表示をこの
     `agent_text` で置き換える。トークン単位の行を DB に積まないための選択。
-  - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord> }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4)。
-  - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen.rs` のテスト)。`src/api/generated/` に型ごとの
+  - `Snapshot = { seq, state: State, sessions: Vec<SessionRecord>, chats, starting }` (`Orchestration::snapshot`。`seq` は最後の durable イベント。`sessions` は Stage 4、
+    `starting` (起動中のセッションのキー) は T-65)。
+  - TS 型生成 (Stage 4): **ts-rs 12** (`api/typegen/mod.rs` のテスト)。`src/api/generated/` に型ごとの
     ファイル + `index.ts` を出す。テスト `generated_typescript_is_up_to_date` が生成物とコミット済み
     ファイルの一致を検査し (`cargo test` に含まれる)、`pnpm gen:types` で更新する。`u64` は `number`
     (seq とミリ秒時刻は 2^53 より十分小さい)。`AgentEvent` 内の ACP スキーマ型は `unknown` で出し、
     UI は `src/api/acp.ts` で必要なフィールドだけ実行時に検査して読む (ACP の型を手で写さない)。
+  - Kotlin 型生成 (Android クライアント、T-59): `api/typegen/kotlin/` のテスト。API 型に `schemars::JsonSchema` を
+    derive し (ts-rs の `#[ts(type/as)]` には `#[schemars(with = ...)]` を対にして付ける)、schemars が serde の属性を
+    解釈して出す JSON Schema を **serialize と deserialize の 2 つの契約**で読み、小さな生成器
+    (`model.rs` → `emit.rs`) が kotlinx.serialization のクラスを
+    `mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/api/generated/`
+    (パッケージ `io.github.tom039224.yhtye.shared.api.generated`、型ごとに 1 ファイル) に書く。
+    - 対応: struct → `data class` (プロパティは camelCase、JSON のキーは `@SerialName`)。`Option<T>` → `T? = null`
+      (Rust と同じく null を書く)。Rust が既定値のとき書かないフィールド (`skip_serializing_if`) → `@EncodeDefault(NEVER)`、
+      `#[serde(default)]` の非 null → スキーマの `default` を既定値に。文字列 enum → `enum class` (`wire` 名つき)。
+      内部・隣接タグ付き enum → `sealed interface` + `data class` / `data object` の variant を手書きの `TaggedSerializer`
+      (`shared/api/ApiSerializers.kt`) で読み書き (隣接タグは内容キー `data` / `update` を 1 フィールドとして持つ variant。
+      単位 variant は `{"type":"ping"}`)。タグ無し・外部タグ付き (`Result`) → キーの有無で variant を選ぶ `UntaggedSerializer`
+      (newtype variant は `value class`、名前は `#[schemars(title = "...")]`)。u32 / usize / u64 / i64 → `Long`、
+      32 bit 以下 → `Int`、f64 → `Double`、`serde_json::Value` と ACP の型 → `JsonElement`、同じ型のタプル → `List`。
+      インラインのオブジェクトは持ち主の中の入れ子クラス (`AgentEvent.Exited.Data`)。variant と同名の型の参照は完全修飾。
+    - 失敗させるもの: 知らないスキーマのキーワード・インライン enum・型の混ざったタプル・タグと同名のフィールドなどで
+      生成が panic する。API 型のファイルに検査済みでない `#[serde(...)]` (現在は `tag` / `content` / `rename_all` /
+      `rename` / `default` / `skip_serializing_if` (`Option::is_none` / `Vec::is_empty`) / `deny_unknown_fields` /
+      `untagged` だけ) が現れるとテスト `api_types_use_only_supported_serde_attributes` が失敗する (`flatten` などは
+      スキーマに現れ方が違うため、足すときは生成物とサンプルを確かめてから許可する)。
+    - 前方互換: 生成されたタグ付き・タグ無しの型と文字列 enum はどれも `Unrecognized` を持ち、知らないタグ・形・値
+      (PC が新しい) はそこに入る (生の JSON を `raw` に保持。`UnrecognizedVariant`)。クラッシュしないが、知らないものを
+      送り返さないよう `Unrecognized` のエンコードは失敗する。増えたフィールドは共通の Json 設定 `ApiJson`
+      (`shared/api/ApiJson.kt`、手書き: `ignoreUnknownKeys` / `encodeDefaults` / `explicitNulls`) が無視する。
+    - 契約サンプル (`samples.rs`): すべてのコマンド・応答・イベント (ドメインイベント・エージェントイベント・出力・
+      エラーを含む)・`ApiError`・WS 封筒・リモートの HTTP 型について、各 variant と各 enum 値の代表 JSON を**本物の Rust の
+      型で**書き出す (コマンドは一度 Rust で読んでから書く)。テスト `contract_samples_cover_every_variant_and_match_the_model`
+      が、全 variant が網羅されていること、サンプルに生成器のモデルに無いキーが無く、常に書かれるはずのキーが欠けていない
+      ことを検査する。サンプルは `mobile/shared/src/commonTest/.../api/generated/ContractSamples.kt` に生成され、
+      Kotlin の `ContractTest` が全部を読んで書き戻し、意味的に (キー順と 1 / 1.0 の表記以外) 同じ JSON になることを確かめる。
+      コマンドのサンプルは Rust が読めるものなので、Kotlin が同じ JSON を書けることがそのまま「Kotlin の書いた
+      `ApiCommand` を Rust が読める」ことの確認になる。
+    - ズレ検出: `generated_kotlin_is_up_to_date` が生成物 (型とサンプル) とコミット済みファイルの一致を検査する。
+      `pnpm gen:kotlin` / `pnpm check:kotlin` (Kotlin だけ)。`pnpm gen:types` / `pnpm check:types` は TS と Kotlin の両方。
+    - この方式にした理由: typeshare は内部タグ付き enum を Kotlin に出せない。ts-rs の出力は TS の文字列で構造が取れない。
+      syn でソースを読む案は serde 属性の解釈を自前で持つことになる。schemars なら解釈は serde 準拠のライブラリに任せ、
+      生成器はスキーマの形だけを扱えばよく、その形が実際の serde の出力と合うことをサンプルで検査できる。
 - **クライアント同期の規則**: 接続時に `snapshot` (その時点の `seq` を含む) を取り、
   以降 `seq > snapshot.seq` の durable イベントだけ状態に適用する。durable イベント間の取りこぼし
   (seq の飛び) を検知したら `ListEvents` で欠けた分を取る (Stage 4 の実装。snapshot の取り直しでもよい)。live イベントは表示用で、状態には畳み込まない。
   履歴 (過去の会話・エージェント出力) はイベントログから読む (`Orchestration::events` /
   `Store::session_events`、Stage 4 で `ListEvents` に)。
 - WS ブリッジのメッセージ型 `WsRequest` / `WsReply` / `WsServerMessage` も `api::wire` に定義済み (§10、ブリッジ本体は Stage 5)。
-- Rust の API 型から ts-rs で `src/api/generated/*.ts` を生成し、手書きの重複定義をしない。
+- Rust の API 型から ts-rs で `src/api/generated/*.ts` を、schemars 経由で Android の Kotlin 型を生成し、手書きの重複定義をしない。
 
 ## 3. `acp` モジュール
 
@@ -604,13 +647,19 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
   `#[tauri::command] async fn yhtye_command(cmd: ApiCommand) -> Result<ApiResponse, ApiError>`
   の 1 本だけ。`subscribe` した `ApiEvent` を `app.emit("yhtye://event", ev)` で流す
-  (broadcast の `Lagged` は捨てる。UI が seq 飛びで補う)。
+  (broadcast の `Lagged` では `resync` を送り、UI が追いつく。T-65、§19)。
+- **データディレクトリのロック (T-65)**: `start_core` が `Core::start` の前に `<データディレクトリ>/yhtye.lock` を排他ロックし
+  (`src-tauri/src/data_lock.rs`、std の `File::try_lock`)、終了までアプリが持つ。取れなければ (同じデータで動いているアプリがある)
+  ログと stderr に理由を出して終了コード 1 で終わる (コアを 2 つにしない)。`YHTYE_DATA_DIR` が違えば別に動く。開発用ブリッジは
+  ロックしない (既定で別のデータ)。プロセスが落ちても OS がロックを外す。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
 - Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
   app data dir (Linux: `~/.local/share/io.github.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- リモート接続 (§18): 起動後に `Core::start_remote()` をバックグラウンドで呼ぶ (設定が有効なら Tailscale の
+  アドレスで待ち受ける)。終了時は `Core::shutdown` がリモートサーバーを最初に止める。
 - **CSP (Stage 6b)**: `tauri.conf.json` の `app.security.csp` を `null` から
   `default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
   img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'`
@@ -643,12 +692,42 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 - Stage 5 の実装 (`crates/yhtye-dev-bridge`、lib = `router` / `serve` + bin): axum 0.8 の `ws`。
   `Origin` ヘッダが**ある**接続 (= ブラウザ) だけ Origin を検査し、無い接続 (スクリプト・テスト) は
   トークンだけで通す。拒否は 403 (Origin) / 401 (トークン)。要求は接続ごとに並行実行 (OpenProject の
-  間もキャンセルが通る。応答は順不同で id で対応付け)。接続が切れても実行中の要求は中断しない
+  間もキャンセルが通る。応答は順不同で id で対応付け)。**同じ接続の要求でも実行順は保証されない** (要求ごとに spawn する。
+  T-65 で明記): 前の要求の結果に依存する要求は、前の応答を待ってから送る。接続が切れても実行中の要求は中断しない
   (半端な OpenProject を残さない)。id の無い不正メッセージは無視、id があれば `invalid_argument`。
   トークンは `--token` / `YHTYE_BRIDGE_TOKEN`、無ければランダムで、起動時に stdout に
   `YHTYE_BRIDGE_URL=ws://...?token=...` を 1 行出す。データディレクトリは `--data-dir` /
   `YHTYE_DATA_DIR`、無ければ `$XDG_DATA_HOME/yhtye-dev-bridge` (アプリの DB とは分ける)。
   SIGINT / SIGTERM で `Core::shutdown` してから終了。起動後に `resume_unfinished`。
+- **セッション処理の共有 (T-55)**: 要求の解析・並行実行・イベントの転送は `yhtye_core::ws::run_session(socket, core,
+  policy, cancel)` に切り出し、ブリッジとリモートサーバー (§18) が使う。接続を受けるかどうか (ブリッジは Origin と
+  `?token=`、リモートは whois と端末トークン) は各サーバーが upgrade の前に決める。`SessionPolicy { local }` は
+  ローカル専用のコマンドとイベント (§18.5) を許すかで、ブリッジは `LOCAL` (すべて許す。開発中の React の設定画面が
+  使う)。`cancel` が発火すると実行中の要求があっても close (1001 "going away") を送ってすぐ閉じる (端末の失効。
+  ブリッジは発火しないトークンを渡すので挙動は変わらない)。送信キューは有界 (`OUT_QUEUE` = 1024、T-65): あふれたら
+  プロジェクトの live イベント (ストリーミング・使用量・`session_starting`) は捨て、durable イベントかアプリ全体のイベント
+  (`resync` などのヒント) が入らなければ close (1013 "fell behind; reconnect") で閉じて再接続に任せる。
+  応答は捨てない (空きを待つ。待つ要求の数は下の上限で抑える)。broadcast の `Lagged` ではその接続に `resync` を送る (§19)。置き場所を yhtye-core にしたのは、リモートサーバーの
+  開始/停止を `ApiCommand` から操作するため (Core → remote → ws → Core が同じ crate の中で閉じ、crate の循環依存にならない)。
+- **受け付ける要求の上限 (T-75、PR #8 のレビュー)**: 以前は要求ごとに `tokio::spawn` して `out.send(...).await` で空きを待っていたので、
+  応答を読まない端末が要求を送り続けると、送信待ちのタスクと応答の文字列が際限なく溜まった (キューを有界にした意味が無い)。
+  今は 1 接続あたり **`MAX_IN_FLIGHT` = 64** 件までしか受け付けない (tokio の `Semaphore`)。要求 (テキストメッセージ) 1 件ごとに枠を 1 つ取り、
+  **応答がキューに入るまで** (端末が去ったときはキューが閉じて捨てるまで) 持つ。不正な要求や `forbidden` の応答も同じ。枠が無ければ
+  reader は次の要求を読まない (読まれなかった分は TCP の窓で送信側が止まる)。これで 1 接続が抱えるのは、枠の数のタスクと
+  `OUT_QUEUE` (1024) 本までの応答だけになる。
+  **「あふれたら閉じる」にせず「待たせる」にした理由**: 正当な端末も再接続の直後などに一度に十数件を送るので、上限を超えるたびに切ると
+  再接続の繰り返しになる。待たせれば遅れるだけで済み、悪意のある端末は TCP で止まる。ただし**枠が `IDLE_TIMEOUT` (60 秒) の間 1 つも空かない**
+  (= 応答を受け取らない) 端末は close (1013 "fell behind; reconnect") で閉じる。居座って枠とキューを塞ぎ続けることはできない。
+  取りこぼせないイベントがキューにあふれたとき閉じる扱い (上) と同じ「追いつけない端末は閉じる」の考え方。
+  開発用ブリッジ (ローカル) も同じ `run_session` を通るので同じ上限が効く (ブラウザは枠を使い切るほど送らない)。
+- **サーバー側の生存確認 (T-75、PR #8 のレビュー)**: 端末が FIN なしに消えても (機内モード・ローミング・プロセスの強制終了) TCP の
+  再送が尽きるまで何時間も接続中のままになっていたので、サーバーから確かめる。writer が **`PING_INTERVAL` = 20 秒**ごとに WS の Ping を送り、
+  reader は何かを受け取るたび (テキスト・Ping・Pong など何でも生存の印。Android の OkHttp が 15 秒ごとに送る ping (T-61) も数える) に
+  **`IDLE_TIMEOUT` = 60 秒**のタイマーを張り直す。切れたら close (1001 "no sign of life; reconnect") して reader を抜け、
+  通常の終わり方と同じ後始末が走る (リモートなら `detach` → `remote_devices_changed` / `clients_changed` で「未接続」)。
+  ブラウザ・OkHttp・tungstenite は Ping に自動で Pong を返すので、クライアントの実装は要らない (3 回分の余裕を持たせた 60 秒)。
+  消えた端末は TCP の送信バッファが詰まって close フレームを渡せないことがあるので、writer の終了は `CLOSE_GRACE` = 5 秒だけ待って abort する
+  (待ち続けると `detach` まで進まず、もとの問題に戻る)。値はどれも `ws.rs` の名前付きの定数。
 - `pnpm dev:browser [ポートの指定] [ブリッジの引数]` (`scripts/dev-browser.mjs`) がブリッジをビルドして Vite と一緒に
   起動し、同じランダムトークンを両方に渡す。片方が終わるか Ctrl+C で両方止める。
   ポートは既定 Vite 1420 / ブリッジ 1422 で、`--vite-port` / `--bridge-port` / `--port-base` (環境変数
@@ -706,7 +785,9 @@ Stage 4 の構成 (`src/`):
   `message` / `thought` / `tool_call{id,title}` / `tool_call_update{id,status}` / `plan([..])` /
   `update(<任意の update JSON>)` (未知の種類も送れる) / `request_permission([{id,kind}])`
   (結果を `permission:selected:<id>` / `permission:cancelled` というメッセージで返す) /
-  `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `end(stop_reason)` / `crash(code)` /
+  `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `wait_file(path)` (そのファイルができるまで
+  ターンを止める。テストが進めるタイミングを決める。`sleep` でテストの操作を待たない) /
+  `end(stop_reason)` / `crash(code)` /
   `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
   `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
   (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /
@@ -967,8 +1048,10 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
 
 - `get_agent_settings{project?}` → `agent_settings{settings: AgentSettingsView{harnesses: [{id, label}], builtin, global, project, project_layer, effective}}`
   (`project` があればその実効値。プロジェクトは登録済みであること、開いていなくてよい)。
-- `set_agent_settings{project?, role, settings: RoleSettings | null}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
+- `set_agent_settings{project?, role, settings: RoleSettings | null, expected_revision?}` → 同じ `agent_settings` (更新後)。`null` = その層の役割を消す
   (プロジェクトなら全体を継承、全体なら組み込みの既定)。検査に通らなければ `invalid_argument`。
+  T-65: `AgentSettingsView.revision` (全層で 1 つの版。変更のたびに増える) を `expected_revision` に渡すと、他のクライアントが
+  その後に変えていれば `conflict` (古い画面からの上書き防止)。成功すると `settings_changed{kind: agent_settings, project?, revision}` (§19)。
 - `list_harness_models{harness, refresh?}` → `harness_models{models}`。未知のハーネスは `not_found`、起動・取得の失敗は `unavailable`。
 - `list_model_efforts{harness, model}` (7d) → `model_efforts{efforts: {harness, model, efforts: [{value, name, description?}]}}`。エラーは同上。
 - `get_harnesses` / `detect_harnesses` → `harnesses{harnesses: [HarnessDetection]}` (T-6, §15.2): 検出をやり直して登録簿を更新し、全ハーネスの状態を返す
@@ -976,6 +1059,8 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
 - `set_harness_path{harness, path?}` (T-6) → 同じ `harnesses`。`path: null` は手動パスの削除 (自動検出に戻る)。未知のハーネスは `not_found`、
   絶対パスの実行可能な通常ファイルでなければ `invalid_argument`。保存後に再検出し、そのハーネスのモデルのキャッシュを捨てる。
 - `list_secret_env` / `set_secret_env{name, value}` / `delete_secret_env{name}` (7e) → `secret_env{names}` (§16)。
+- T-65 (§19): `set_agent_settings` と `set_secret_env` / `delete_secret_env` はコアの設定用ロックの中で検証から反映まで行い、
+  変更を `settings_changed` で知らせる (秘密は `kind: secrets`、`set_harness_path` と検出で登録簿が変わったときは `kind: harnesses`)。
 - **設定 UI (7d)**: アプリ全体の設定モーダル ([`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。API は上のとおりで、
   行の編集はすべてクライアント側で「役割の設定全体を `set_agent_settings` で置き換える」形 (同じ組の重複は UI が先に断る)。
 
@@ -1202,7 +1287,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **`rename_chat{project, chat, title}`** → `chat{chat}`: 空白を 1 つに畳んで trim、空は `invalid_argument`、80 文字 (`MAX_RENAMED_TITLE_CHARS`) 超も `invalid_argument`、未知のチャットは `not_found`。
   `DomainCommand::RenameChat` は既存の `DomainEvent::ChatTitled` を出す (同じタイトルなら何も出さない)。`user_message` は `title.is_none()` のときだけ最初のメッセージで題を付けるので、ユーザーの名前は上書きされない。
 - **`delete_chat{project, chat}`** → `accepted`: `DomainCommand::DeleteChat` は `DomainEvent::ChatDeleted { chat }` を出す。
-  - 拒否: 未知のチャットは `not_found`。**未完了のグループ** (`active` / `finishing` / `merge_blocked`) があれば `invalid_state` (グループを片付けられるのはそのチャットのオーケストレータだけ)。
+  - 拒否: 未知のチャットは `not_found` (T-65: 削除済みのチャット (`C-<n>` で n がチャットのカウンタ以下) はもう一度削除しても `accepted`。§19)。**未完了のグループ** (`active` / `finishing` / `merge_blocked`) があれば `invalid_state` (グループを片付けられるのはそのチャットのオーケストレータだけ)。
     **オーケストレータがターン中 (または起動中)** なら runtime が `invalid_state` で断る (ターンを切るのはユーザーの `cancel_orchestrator_turn` の仕事で、削除は勝手に中断しない)。
   - 成功時: 待機中 (live で idle) のオーケストレータのプロセスは `Sessions::stop` で止める。`State::apply(ChatDeleted)` はチャットと、そのグループ・タスク・help・受信箱を落とす (カウンタは戻さない = ID は再利用しない)。
   - store (`projection::write` が before / after の差分で行う): `chats` / `task_groups` / `tasks` / `steps` / `task_deps` / `helps` / `inbox` の行と、`agent_sessions` のオーケストレータ (`orchestrator:<chat>`) とタスクのセッションの行を消し、
@@ -1275,3 +1360,244 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
   回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
 - テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。
+
+## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)
+
+設計の背景は [`docs/planned/android-client.md`](../planned/android-client.md)。段階 1 (PC 側のサーバーと認証) の実装。
+コードは `crates/yhtye-core/src/remote/` (`mod.rs` = `RemoteService`、`server.rs` = ルート、`pairing.rs` = コードとトークン、
+`tailscale.rs` = Tailscale の trait と CLI 実装、`whois.rs` = whois の結果のキャッシュと同時数の上限) と `src/ws.rs` (共有の WS セッション、§10)。
+
+### 18.1 構成
+
+- `Core` が `RemoteService` を 1 つ持つ (`Core::start` で作るがサーバーは起動しない)。`Core::start_remote()` が保存された
+  設定が有効なら起動し (アプリが起動後に呼ぶ)、`Core::shutdown` が最初に止める (リモートから新しい作業を始めさせない)。
+- サーバーは axum。`tailscale status` が返した **Tailscale のアドレスにだけ** bind する (100.64.0.0/10 と fd7a:115c:a1e0::/48 に
+  絞るのは `TailscaleCli` の役目)。0.0.0.0 / 127.0.0.1 / LAN では待ち受けない。IPv4 の bind に失敗したら起動失敗、IPv6 の失敗は警告だけ。
+  アドレスごとに `axum::serve` を 1 つ動かし、停止は `CancellationToken` (graceful shutdown + すべての WS を閉じる。5 秒で abort)。
+- `CoreConfig.tailscale: Arc<dyn Tailscale>` (既定 `TailscaleCli`、テストは偽物)。`Tailscale::status()` → `TailscaleSelf { addresses
+  (IPv4 が先), dns_name (末尾の . を除く。MagicDNS が無効なら None), user_id }`、`Tailscale::whois(ip)` → ユーザー ID。
+  CLI は `tailscale status --json` / `tailscale whois --json <ip>` (5 秒でタイムアウト。macOS はアプリ内のパスも試す)。
+  コマンドが無い・`BackendState` が `Running` 以外・アドレスが無いときは、そう書いたエラー (状態の `error` に出る)。
+- **タグ付きの PC は使えない (T-75、PR #8 のレビュー)**: `--advertise-tags` で動かしたノードは、ユーザーではなくタグに属し、tailnet の
+  タグ付きのノードはすべて同じ「タグ付きデバイス」ユーザーとして報告される。PC がタグ付きだと「同じ Tailscale ユーザー」の照合
+  (§18.3) が他人のタグ付きマシン (共用の CI、他の管理者のサーバー) まで通してしまう。`tailscale status --json` の `Self.Tags` が空でなければ
+  (`TailscaleSelf.tagged`)、サーバーを起動せず `RemoteStatus.error` に「タグ付きの Tailscale ノードでは使えない (自分のユーザーに属する
+  ノードで使う)」と出す。タグを外して有効のまま `set_remote_settings {enabled: true}` をもう一度送ると再試行する。
+
+### 18.2 保存 (マイグレーション `0010_remote.sql`)
+
+- `remote_devices (id, name, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+- `app_settings (key, value JSON, updated_ms)`: `remote.settings` = `{enabled, port}` (既定 `false` / 1423)、
+  `remote.server_id` = 128 bit のランダム (hex 32 文字。初回の `Core::start` で `INSERT OR IGNORE` して以後同じ)。
+- 端末 ID は `dev-` + 64 bit のランダム (hex)。端末トークンは 256 bit のランダム (hex 64 文字)。
+
+### 18.3 ペアリング (`POST /pair`)
+
+- 要求 `{"code", "device_name"}` (JSON、4 KiB まで) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
+  400 (JSON や端末名が不正。端末名は前後の空白と制御文字を除いて 1〜64 文字)、401 (コードが違う / 有効なコードが無い)、403 (whois)。
+  型は `remote::{PairRequest, PairResponse, RemoteError}` (`/ws` を拒否するときの本文も `RemoteError`)。TS には出さず、Kotlin には生成する (§2)。
+- コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
+  無視する。有効 5 分、1 回使ったら無効、誤り 5 回で無効、新しく発行したら古いのは無効 (同時に 1 つ)。比較は定数時間。
+  サーバーを止めるとコードも無効。コードの発行はサーバーの起動中だけ (`invalid_state`)。
+- **コードを使い切る順序 (T-75、PR #8 のレビュー)**: 正しいコードは**端末を保存する前**に使用済みにする (`Pairing::redeem` が使用済みの
+  コードを `Redeemed` として返す)。これで同じコードの同時の `/pair` は 1 台しか通らない (2 台目は 401。保存の後に消費する方式だと、
+  保存の最中に 2 台目が同じコードで通れてしまう)。**DB への保存が失敗したら** (ロック・ディスクがいっぱいなど。500
+  "could not store the device") `Pairing::restore` でコードを戻すので、同じコードでやり直せる (失敗の回数と期限は元のまま。戻すまでの間に
+  PC で新しいコードを発行していたり、期限が切れていたりしたら戻さない)。コードを戻したとき、状態 (`pairing_expires_at_ms`) は
+  変わっていないので `remote_status_changed` は出ない。保存の最中に端末が切断して要求が捨てられたときは、保存が済んだかどうか分からないので
+  コードは戻さない (使い切られたまま。1 回限りを守る側に倒す)。
+- **whois が先**: 接続元が PC と同じ Tailscale ユーザーでなければ、コードを見る前に 403 (他人の端末がコードの試行回数を使い切れない)。
+  **接続元がタグ付きのノード** (`tailscale whois --json` の `Node.Tags` が空でない。`TailscalePeer.tagged`) なら、ユーザーが同じでも 403
+  ("tagged Tailscale devices cannot connect")。PC がタグ付きなら起動しない (§18.1) ので、タグ付きの接続元はそもそも正当な端末ではない。
+
+### 18.4 接続 (`GET /ws`)
+
+- 順に: whois (403) → `Authorization: Bearer <token>` (無い・知らない → 401。保存されたすべてのハッシュと定数時間で比較し、途中で抜けない)
+  → upgrade → §10 のセッション (`SessionPolicy::REMOTE`)。接続のたびに `last_seen_ms` を更新し、`remote_devices_changed` と
+  `clients_changed` (§18.8) を出す (切断でも同じ)。
+- 失効 (`revoke_remote_device`) は DB の行を消し、その端末の接続のトークンを cancel する → 実行中の要求があってもすぐ close
+  (1001)。以後の接続は 401。認証と失効の競合: 接続の登録 (upgrade 後) と失効は同じ `auth_gate` を取り、登録時に端末がまだ DB に
+  あるかを確かめ直すので、失効をすり抜けて残る接続は無い。
+- 要求は他の WS と同じで、切断しても実行中の要求は中断しない。1 接続が受け付ける要求の数と、サーバーからの ping・無応答の接続の切断は §10
+  (`MAX_IN_FLIGHT` = 64、`PING_INTERVAL` = 20 秒、`IDLE_TIMEOUT` = 60 秒)。無応答で切った接続も、失効や通常の切断と同じ後始末
+  (`detach`、`last_seen_ms` はその接続の開始時、`remote_devices_changed` / `clients_changed`) を通る。
+- **whois の抑制** (`remote/whois.rs` の `WhoisCache`。`/pair` と `/ws` 共通): 同じ tailnet の他ユーザーの端末が要求を連打しても
+  `tailscale` の子プロセスを大量に起こせないようにする。照合の内容 (PC と同じ Tailscale ユーザーか) と順序 (whois が先) は変えない。
+  - 接続元 IP (`to_canonical`) ごとに whois の答え (ユーザー ID) を **60 秒** (`WHOIS_TTL`) 覚える。許可 (同じユーザー) も拒否
+    (他のユーザー) も覚える (ノードのユーザーは 1 分では変わらない。拒否を覚えることが連打対策の本体)。**失敗** (Tailscale の一時エラー、
+    タイムアウト、ユーザー無し) は覚えず次の要求で再照合する。最大 **256** IP (`WHOIS_CACHE_CAPACITY`)。満杯なら期限切れを捨て、
+    それでも満杯なら最も古いものを捨てる。サーバーを止めると全部忘れる (再起動で再照合)。
+  - 答えは `TailscalePeer { user_id, tagged }` (ユーザー ID とタグの有無) で、タグ付きかどうかも同じ 60 秒覚える。
+  - whois の同時実行は **4** (`WHOIS_CONCURRENCY`、tokio の `Semaphore`)。上限を超えた要求は **503 にせず空きを待つ**: 1 回の whois は
+    CLI のタイムアウト (5 秒) で必ず終わり、待つ間は子プロセスを使わない。空きを取ったらキャッシュを見直すので、同じ IP の連打は
+    同時に走る分 (最大 4) を除いて 1 回の whois で済む。503 にすると他人の連打で自分の端末が断られるが、待たせるなら遅れるだけで済む。
+
+### 18.5 API (ローカル専用)
+
+`ApiCommand::is_local_only()` が真のコマンドは、リモート経由 (`SessionPolicy::REMOTE`) では `forbidden`
+("this command can only be run on the PC itself")。Tauri と開発用ブリッジからは使える。他の `ApiCommand` はリモートからもすべて使える
+(表示用のクライアント一覧 `list_clients` もリモートから使える。§18.8)。
+
+| コマンド | 応答 |
+|---|---|
+| `get_remote_status` | `remote_status { status: RemoteStatus }` |
+| `set_remote_settings { enabled: bool, port?: number }` (port 省略 = 今のまま、0 は `invalid_argument`) | `remote_status { status }` |
+| `create_pairing_code` | `pairing_code { pairing: PairingCode }` |
+| `list_remote_devices` | `remote_devices { devices: RemoteDevice[] }` |
+| `revoke_remote_device { device: string }` (知らない端末は `not_found`) | `remote_devices { devices }` |
+
+- `RemoteStatus { enabled, port, running, addresses: string[] ("100.x:1423", "[fd7a:…]:1423"), ip: string|null (IPv4),
+  dns_name: string|null, server_id, error: string|null, pairing_expires_at_ms: number|null }`。起動の失敗 (Tailscale が無い・止まっている、
+  ポート使用中) はコマンドのエラーではなく `error` に入り、`enabled: true, running: false` になる。有効のままもう一度
+  `set_remote_settings {enabled: true}` を送ると再試行する。設定が変わらず起動中なら何もしない。
+- `PairingCode { code, expires_at_ms, uri }`。`uri` = `yhtye://pair?v=1&host=<MagicDNS 名>&ip=<100.x>&port=<N>&code=<コード>&sid=<サーバー ID>`
+  (MagicDNS が無ければ `host` を省く。値はパーセントエンコード)。
+- `RemoteDevice { id, name, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
+- **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
+  `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
+  `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
+  リモートの WS には流さない (T-65 で足したアプリ全体向けの `projects_changed` / `settings_changed` / `resync` と、T-73 の `clients_changed` はリモートにも流す。§19)。UI (`store/transcript.ts`) は無視する。コードの期限切れ (時間経過) はイベントを出さない (`pairing_expires_at_ms` で分かる)。
+  ペアリングの失敗 (コード誤り) では、状態 (`pairing_expires_at_ms`) が変わったとき (誤り 5 回目でコードが無効になった、期限切れのコードが
+  捨てられた) だけ `remote_status_changed` を出す (最後に出した状態と比べる)。
+
+### 18.6 試し方とテスト
+
+- `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
+  (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
+  `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。
+  `--fake-agent <yhtye-fake-agent>` で全役割を偽エージェントにし、`--fake-orchestrator` / `--fake-implementer` / `--fake-reviewer`
+  にそのシナリオ (`YHTYE_FAKE_SCRIPT` の JSON。省略は何もしない) を渡す (Android の同期層の結合テスト `SyncRealServerTest`。T-66)。
+- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
+  リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
+  誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
+  再起動で server_id・設定・端末が残る、Tailscale 停止とポート使用中のエラー、一連の要求で whois が 1 回、他ユーザーは何度でも 403 で
+  whois は 1 回 (サーバーの再起動で再照合)、コード誤りで状態イベントはコードが無効になった時だけ。コードの期限切れは `pairing.rs` の単体テスト。
+  whois のキャッシュ (期限後の再照合、一時エラーを覚えない、同時数が上限を超えない、大きさの上限、タグ付きを覚える) は `whois.rs` の単体テスト (tokio の時間を止めて進める)。
+  T-75 で足した分: タグ付きの PC は起動せず `error` に理由が出てタグを外すと再試行で起動する、タグ付きの接続元は同じユーザーでも `/pair` `/ws` とも 403 でコードの試行を
+  使わない (`a_tagged_pc_does_not_start_remote_access_and_says_why` / `a_tagged_peer_is_refused_whoever_its_user_is`、`tailscale.rs` の `Tags` の解釈)。
+  DB の書き込みを失敗させて (別の接続で `remote_devices` への INSERT を拒むトリガーを作る) 500 の後も同じコードで 1 回だけ通る、同じコードで 8 台が同時に `/pair` しても 1 台だけ
+  (`a_failed_write_gives_the_pairing_code_back_and_it_still_works_once` / `the_same_pairing_code_pairs_only_one_of_many_simultaneous_devices`、`pairing.rs` の `restore`)。
+  応答しない端末が 3 分間 (tokio の時間を止めて進める) で切られて `clients_changed` で未接続になり、ping に答える端末は残って ping を受け取り続ける
+  (`a_device_that_stops_answering_is_dropped_and_one_that_answers_stays`)。`ws.rs` の単体: 無言の接続が `IDLE_TIMEOUT` で終わり ping・pong・任意のメッセージで
+  タイマーが戻る、枠が無ければ次の要求を読まず `IDLE_TIMEOUT` で `Stalled`、読まない端末の 1000 件の要求のうち受け付けるのは「応答キューの大きさ + 枠の数」だけ、
+  writer が `PING_INTERVAL` ごとに ping して理由に応じた close フレームを送る。 開発用ブリッジにも同じ ping と切断が効くことは `yhtye-dev-bridge/tests/liveness.rs` (同じ `run_session`。無言の接続は切られ、読んで pong を返す接続は残る)。
+  `real_tailscale_round_trip` (`#[ignore]`) は本物の Tailscale で同じ流れ + 127.0.0.1 で待ち受けていないことを確かめる。
+
+### 18.7 設定画面「リモート接続」(T-56)
+
+- `src/ui/RemoteSettingsSection.tsx` (設定モーダルの 4 つ目の項目)。GPUI 移行で作り直す前提の最小限。ストアは
+  `AppStore.getRemoteStatus` / `setRemoteSettings` / `createPairingCode` / `listRemoteDevices` / `revokeRemoteDevice` と、
+  プロジェクトに属さないイベントを受ける `onRemoteEvent` (トランスポートを直接購読する。プロジェクトの同期とは別)。
+- オン/オフはスイッチ。オンにするときは入力中のポートも送る (1〜65535 以外は送らずその場で示す)。ポートだけの保存は
+  `{enabled: 今のまま, port}`。起動失敗は `status.error` をそのまま出し、「再試行」は `{enabled: true}` (ポート省略)。
+- QR は `uqr` (依存なし) で `encode` した行列を React の SVG に描く (白地に黒で固定。URI はページの外に出ない)。手入力用に
+  ホスト (MagicDNS 名、無ければ IP)・ポート・コード (`ABCD-2345` と 4+4 で表示) と残り時間。
+- コードの終わり: 時間切れは `expires_at_ms` と時計で判断。使用済み (や誤り 5 回・再起動) は、`pairing_expires_at_ms` が
+  発行したコードの期限と一致する状態を一度見た後 (応答の前でも後でもよい) に、期限前なのに一致しない状態が来たとき。
+  サーバーが止まればコードの表示ごと消す。どちらの終わりも QR とコードを消して「新しいコード」を出す。
+- 端末一覧は名前・接続中か・最終接続・追加日時と「失効」(確認してから送る)。
+- テストは `src/ui/RemoteSettings.test.tsx` (`FakeCore.remote` = `FakeRemote`)。`pnpm check:layout` に QR 表示中の状態がある。
+
+### 18.8 クライアント一覧 (表示用、誰でも読める。T-73)
+
+§18.5 の端末一覧は失効などの**管理用** (ローカル専用) なので、それとは別に、PC の左下と Android に「誰がいるか」を出すための
+**読み取り専用のビュー**を足した。コードは `remote/clients.rs`。トークン・ハッシュ・追加日時は含めない。管理操作 (失効・設定) は
+これまでどおりローカル専用。
+
+| コマンド | 応答 |
+|---|---|
+| `list_clients` (**ローカル専用ではない**: リモート端末からも使える) | `clients { clients: Clients }` |
+
+- `Clients { server: ClientServer, devices: ClientDevice[] }`
+  - `ClientServer { host: string }`: コアが動くマシンのホスト名 (`pong.host` と同じ `host_name()`)。
+  - `ClientDevice { id: string, name: string, kind: ClientKind, connected: bool, last_seen_ms: number|null }`。並びは
+    `list_remote_devices` と同じ (ペアリングの古い順)。`last_seen_ms` は最後に接続した時刻 (`null` = ペアリング後まだ接続していない)。
+  - `ClientKind` = `"android"` だけ (今のペアリング済み端末はすべて Android クライアント。DB に種類の列は無い)。Kotlin では知らない値は
+    `Unrecognized` になる。
+- **イベント** `clients_changed { clients: Clients }`: アプリ全体 (project `""`・seq 0・live)。`remote_devices_changed` と同じ契機
+  (ペアリング・失効・接続・切断) で、その直後に出す (`Shared::emit_device_changes`)。`is_app_wide()` は真、`is_local_only()` は**偽**で、
+  **リモートの WS にも流す**。リモート接続が止まっていても `list_clients` は読める (端末はすべて未接続)。
+- Android の表示は左パネルの下端 (`planned/android-client.md` の T-74。同期層は接続・再接続・`resync` で読み、`clients_changed` で置き換える)。
+- PC の GUI の表示は `docs/design/orchestrator-desktop.md` §3.3 のフッタ。ストア (`store/app.ts`) は接続 (再接続を含む) と `resync` で
+  `list_clients` を読み、`clients_changed` で置き換える (読んでいる途中に来たイベントの方が新しいので、その読みの答えは捨てる)。
+- テスト: `remote/clients.rs` (JSON の形)、`ws.rs` (`list_clients` はローカル専用でない、`clients_changed` はリモートに流れる)、
+  `tests/remote_access.rs` の `every_client_sees_the_clients_and_their_changes` (ローカルとリモート端末の両方から読める、
+  トークン・ハッシュを含まない、ペアリング・接続・切断・失効でローカルと接続中の別端末に `clients_changed` が届く)、
+  vitest の `ui/Sidebar.test.tsx` (アイコン・オフラインのグレー・イベントでの更新・resync と再接続での読み直し・古い読みを捨てる・折りたたみ)。
+
+## 19. 複数クライアントの同時操作 (T-65)
+
+PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザが 1 つのコアを同時に操作する。調査 (T-64) と修正一覧は
+[`planned/android-client.md`](../planned/android-client.md) の「複数クライアントの同時操作」。DB と状態の整合はプロジェクトの
+ドライバータスクの直列化 (§8) で守られており、ここで足したのは「他のクライアントの操作に追従する」ための仕組み。
+
+### 19.1 イベント (Android の同期層もこれを使う)
+
+| イベント (`ApiEventBody`) | 種類 | 意味 / クライアントの対応 |
+|---|---|---|
+| `projects_changed { project: string }` | アプリ全体 (project `""`・seq 0・live)。リモートにも流す | `open_project` がプロジェクトを新しく登録した、またはこのプロセスで初めて開いた (オーケストレーションを起動した)。`list_projects` を読み直す。開いているプロジェクトを開き直しても出ない |
+| `settings_changed { kind: agent_settings \| harnesses \| secrets, project?: string, revision?: number }` | アプリ全体。リモートにも流す | ヒント。表示中の設定画面は読み直す (`get_agent_settings` / `get_harnesses` / `list_secret_env`)。`agent_settings` では `project` (プロジェクトの層を変えた。全体なら省略) と新しい `revision` が付く |
+| `clients_changed { clients: Clients }` | アプリ全体。リモートにも流す | 端末のペアリング・失効・接続・切断 (§18.8)。クライアント一覧の表示を置き換える |
+| `resync` | アプリ全体。**その接続にだけ**送る | そのクライアント向けのイベントを取りこぼした (broadcast の `Lagged`)。durable はログにあるので `list_events` で cursor から追いつき、`list_projects`・git・表示中のチャット (`open_chat` で起動中か)・設定を読み直す。live (ストリーミング・アプリ全体) は失われている |
+| `session_starting { session: string }` | プロジェクトの live (seq は直前の durable) | セッションの起動を始めた (復元の再試行のたびにも出る)。`session_started` / `session_stopped` / `retrying: false` の `session_failed` で終わる。起動を要求したクライアント以外も「起動中」を出せる |
+
+- `Snapshot.starting: string[]`: スナップショットの時点で起動中のセッションのキー (途中で接続したクライアント用)。
+- `AgentSettingsView.revision: number`: 全層で 1 つの版。コア起動時は時計 (マイクロ秒)、以後は変更ごとに `max(前 + 1, 時計)`
+  (大きいほど新しい。再起動をまたいでも増える。2^53 未満)。`set_agent_settings.expected_revision` に渡すと、一致しなければ `conflict`
+  ("the agent settings were changed elsewhere since they were read; read them again")。省略すれば検査しない (従来どおり)。
+- `ApiEventBody::is_app_wide()` (Rust) がアプリ全体のイベント (上の 4 つ + `remote_*`)、`is_local_only()` はそのうち `remote_*` だけ。
+  `ApiEvent::app_wide(body)` が作る。
+
+### 19.2 コア
+
+- **設定の直列化**: `Core` の `settings_lock` (tokio の Mutex) が `set_agent_settings` (検証 → DB → メモリ → 版を進める → イベント) と
+  `set_secret` / `delete_secret` (DB の名前 → キーリング → 失敗なら名前を戻す → イベント) を囲む (`runtime/core/settings.rs`)。
+  同時に変えても DB と実効値が食い違わない (`tests/multi_client.rs` が 16 並行の変更の後に再起動して DB の値と比べる)。
+- **二重実行の敗者** (`runtime/repeats.rs`): 目標状態に既に達している操作はコアで `accepted` を返し、何もしない
+  (ツール呼び出しを記録しない・オーケストレータに 2 度知らせない)。**すべてコアで冪等化した** (GUI で握りつぶすものは無い):
+  - `cancel_task` / `cancel_group`: 対象が既に `cancelled`。完了 (`done`) したものの中止は意味が違うので従来どおり `invalid_state`。
+  - `retry_group_merge`: グループが既に `done` (別のクライアントの再試行でマージ済み)。`merge_blocked` のままなら再試行する。
+  - `delete_chat`: 状態に無く、ID が `C-<n>` で n がチャットのカウンタ以下 (= 作られて消された)。一度も無い ID は `not_found`。
+    `C-<n>` はコアが払い出した**正規の書式だけ**を指す (`domain::chat_number` は番号を作り直して一致するものだけ受ける。`C-01`・`C-+1` は
+    `C-1` が作られていても `not_found`。T-75、PR #8 のレビュー)。
+  - `compact_chat`: そのチャットの `/compact` のターンが既に動いている。
+  - `cancel_orchestrator_turn` は元から常に `accepted`、`rename_chat` は同じ題なら何も出さない、`open_chat` は冪等。
+- **送信キューと取りこぼし**: §10 (WS) と §9 (Tauri) のとおり。`forward_events` (`ws.rs`) が `Lagged` で `resync` を送る。
+- **起動中の共有**: `Sessions::launch_attempt` が `starting` に入れるときに `session_starting` を出し、`Driver::snapshot` が
+  `starting` のキーを `Snapshot.starting` に入れる。
+- **単一インスタンス**: §9 のデータディレクトリのロック。
+
+### 19.3 PC の GUI (`src/`)
+
+- `store/app.ts`: `project` が空のイベントは `eventRules.ts` の `isAppWide` で分けて `onAppWide` へ。`projects_changed` →
+  `refreshProjects`、`settings_changed` → `onSettingsChanged` の購読者 (設定画面) へ、`resync` → `catchUpAll`
+  (`list_projects`・`list_clients`・cursor からの追いつき・git・`open_chat`・設定画面へ「何でも変わったかもしれない」(`kind: null`))。
+  `clients_changed` → `clients` を置き換える (§18.8)。
+  再接続でも設定画面に `kind: null` を知らせる。設定画面向けのコマンドは `store/settingsCommands.ts` (`AppStore` の基底クラス) に分けた。
+- 起動中: `applySnapshot` が `Snapshot.starting` のオーケストレータを `resuming` に、`applyLive` が `session_starting` で
+  `resuming` を立てる (終わりは従来の `settleResuming`)。
+- チャットの増減 (`updateChats`): 削除されたチャットの下書きを消し、表示中のチャットが変わった (他のクライアントが消した、
+  チャットの無いプロジェクトに作られた) ときは、新しく表示するチャットを記憶 (`prefs`) して `open_chat` する (ユーザーが選んだのと同じ)。
+  チャットの無いプロジェクトに作られたチャットは `applyDurable` が選ぶ。
+- `chat_created` を受けたら git の概要を debounce せず読み直し、そのチャットを `GitView.awaiting` に入れる。読み直しが終わるまで
+  (`awaiting` の間) は作業ツリーが一覧に無くても「見つからない」ではなく不明 (`placeOf` が `unknown`、ブランチ木では
+  ディレクトリ名のノード) と扱う。
+- 設定画面 (`AgentSettingsSection` / `HarnessSettingsSection` / `SecretEnvSection`): `useSettingsChanges` (`ui/useSettingsChanges.ts`) が
+  該当する `settings_changed` で読み直す。編集中 (テキスト欄にフォーカス、未保存のパス、秘密の入力欄に内容がある) なら読み直さず
+  `StaleBanner` (「他の端末で設定が変更されました … 再読込」) を出す。保存中に来た変更は保存の後に判断する (自分の保存の通知かもしれない)。
+  エージェント設定は表示中の `revision` 以下の通知を無視し (自分の保存も含む)、保存に `expected_revision` を付け、`conflict` なら
+  「他の端末で設定が変更されていたため、この変更は保存していません。最新の設定を読み込み直しました。」を出して読み直す。
+
+### 19.4 テストと実機確認
+
+- コア: `ws.rs` の単体 (キューがあふれたら live は捨てて durable で閉じる、`Lagged` で `resync`、リモートに `remote_*` 以外の
+  アプリ全体イベントが届く)、`runtime/core/settings.rs` (版)、`tests/multi_client.rs` (conflict と通知、並行の設定変更と DB の一致、
+  秘密とプロジェクトの通知、起動中の共有)、`tests/core_facade.rs` / `core_chats.rs` / `orchestration_fake_git.rs` /
+  `orchestration_fake_compact.rs` (二重の中止・削除・再試行・圧縮が `accepted`)、`yhtye-dev-bridge/tests/multi_client.rs`
+  (2 つの WS クライアント: 片方の操作がもう片方に届く・conflict・同時の中止と削除が両方 `accepted` で 1 回だけ起きる)。
+  `src-tauri/src/data_lock.rs` (同じディレクトリは 1 つだけ)。
+- PC: `store/multiClient.test.ts`、`ui/SettingsSync.test.tsx`。
+- 実機: `pnpm dev:browser --port-base 15420 --data-dir /tmp/…` を Playwright の 2 タブで開き、偽エージェントを Devin のパスに指定して、
+  片方でプロジェクトを開く・設定 (エージェントとハーネスのパス) を変える・チャットを作る/削除する・タスクを中止する・両方で同時に中止する、
+  をしてもう片方が追従し、エラーが出ないことを確かめた (T-65)。
+

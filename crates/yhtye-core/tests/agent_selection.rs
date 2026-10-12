@@ -97,6 +97,7 @@ async fn set(
         project: project.map(str::to_string),
         role,
         settings,
+        expected_revision: None,
     };
     match run(core, cmd).await {
         ApiResponse::AgentSettings { settings } => *settings,
@@ -534,6 +535,7 @@ async fn settings_are_validated_layered_and_stored() {
             project: None,
             role: AgentRole::Reviewer,
             settings: Some(s),
+            expected_revision: None,
         };
         assert_eq!(
             core.command(cmd).await.expect_err("invalid").code,
@@ -544,6 +546,7 @@ async fn settings_are_validated_layered_and_stored() {
         project: Some("nope".into()),
         role: AgentRole::Reviewer,
         settings: None,
+        expected_revision: None,
     };
     assert_eq!(
         core.command(cmd).await.expect_err("unknown").code,
@@ -663,6 +666,7 @@ async fn an_effort_the_model_does_not_offer_is_refused() {
         project: None,
         role: AgentRole::Implementer,
         settings: Some(RoleSettings::only(choice)),
+        expected_revision: None,
     };
     // Not read yet: accepted.
     set(
@@ -727,6 +731,7 @@ async fn a_harness_that_requires_a_model_rejects_a_choice_without_one() {
             &[c("fake", Some("haiku")), c("fake-b", None)],
             &c("fake", Some("haiku")),
         )),
+        expected_revision: None,
     };
     let err = core.command(cmd).await.expect_err("no model");
     assert_eq!(err.code, ApiErrorCode::InvalidArgument);

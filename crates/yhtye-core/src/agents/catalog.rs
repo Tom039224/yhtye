@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -89,7 +90,7 @@ pub struct HarnessPreset {
 }
 
 /// A registered harness, for the UI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
 pub struct HarnessInfo {
     pub id: String,
     pub label: String,

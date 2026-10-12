@@ -163,6 +163,19 @@ const GLYPHS = {
   list: <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />,
   layers: <path d="M12 4.5l8 4.2-8 4.2-8-4.2zM4 12.8l8 4.2 8-4.2M4 16.8l8 4.2 8-4.2" />,
   minimize: <path d="M9 4.5V9H4.5M15 4.5V9h4.5M9 19.5V15H4.5M15 19.5V15h4.5" />,
+  phone: (
+    <>
+      <rect x="7" y="3.5" width="10" height="17" rx="2" />
+      <path d="M11 17.5h2" />
+    </>
+  ),
+  server: (
+    <>
+      <rect x="4.5" y="4.5" width="15" height="6.5" rx="1.5" />
+      <rect x="4.5" y="13" width="15" height="6.5" rx="1.5" />
+      <path d="M8 7.75h.01M8 16.25h.01M12 7.75h4M12 16.25h4" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;
@@ -196,6 +209,7 @@ export function Icon({ name, size = DEFAULT_SIZE, spin = false, className }: Ico
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
+      data-icon={name}
     >
       {GLYPHS[name]}
     </svg>

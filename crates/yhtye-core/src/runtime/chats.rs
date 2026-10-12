@@ -44,7 +44,7 @@ pub(super) struct Orchestrators {
     failed: HashMap<String, u64>,
     /// Chats whose orchestrator is running a `/compact` turn the user asked for.
     /// Its end is not the orchestrator's own (no group-finish reminder follows).
-    compacting: HashSet<String>,
+    pub(super) compacting: HashSet<String>,
 }
 
 impl Orchestrators {
@@ -103,6 +103,9 @@ impl Driver {
     /// chat is not finished; an idle orchestrator process is stopped once the
     /// chat is gone.
     pub(super) async fn delete_chat(&mut self, chat: String) -> Result<(), ToolError> {
+        if self.already_deleted(&chat) {
+            return Ok(()); // another client deleted it first
+        }
         let key = orchestrator_session(&chat);
         let working = self.sessions.is_starting(&key)
             || (self.sessions.is_live(&key) && !self.sessions.is_idle(&key));
@@ -128,6 +131,9 @@ impl Driver {
     pub(super) fn compact_chat(&mut self, chat: &str) -> Result<(), ToolError> {
         if self.state.chat(chat).is_none() {
             return Err(ToolError::not_found(format!("no chat {chat}")));
+        }
+        if self.already_compacting(chat) {
+            return Ok(()); // another client asked first
         }
         let key = orchestrator_session(chat);
         if self.sessions.is_starting(&key) {

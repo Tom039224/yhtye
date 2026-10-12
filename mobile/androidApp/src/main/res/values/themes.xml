@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 起動直後 (Compose の描画前) の窓の背景。中身の配色は Compose の YhtyeTheme が決める (Theme.kt の bgApp と同じ色) -->
+    <style name="Theme.Yhtye" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/yhtye_bg_app</item>
+    </style>
+</resources>

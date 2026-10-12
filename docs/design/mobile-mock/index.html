@@ -1,0 +1,1466 @@
+<!doctype html>
+<!--
+  Yhtye Android クライアントの GUI モック (段階 3 の前に画面構成とジェスチャの感触を確かめるためのもの)。
+  1 ファイル完結: 外部の CSS / JS / フォント / 画像を読まない。データはすべてダミー。
+
+  T-63 で PC 版 (src/ui/) に合わせて作り直した。原則:
+  - ユーザーはオーケストレータとだけ対話する。help / checkpoint / グループ完了はオーケストレータが扱うので、
+    スマホも PC と同じく状態を表示するだけ (タスクカードが「対処中」の色になり help の文を出す)。
+  - 文言・状態ラベル・操作は PC 版にあるものだけ (labels.ts / taskInfo.ts / TaskCard.tsx / TaskColumn.tsx ...)。
+  - スマホならではの割り当て: 左右のスワイプでパネル、タスクの行の右→左スワイプでメンション、詳細は左→右スワイプで閉じる。
+  仕様: docs/planned/android-client.md「段階 3: GUI の決定事項」、docs/design/orchestrator-desktop.md、
+  docs/architecture/orchestration-model.md。色は src/styles/tokens.css (PC と同じダーク)。
+-->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<title>Yhtye モバイル モック</title>
+<style>
+/* ---------- トークン (PC の src/styles/tokens.css と同じ値) ---------- */
+:root {
+  --font-ui: system-ui, "Noto Sans JP", "Hiragino Sans", "Roboto", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "Roboto Mono", "Menlo", monospace;
+  --peek: 64px;          /* パネルが開いたとき中央が見えている幅 */
+  --mockbar: 24px;
+  --bg-app: #141312;
+  --bg-center: #1e1d1b;
+  --bg-panel: #1b1a18;
+  --bg-rail: #141312;
+  --bg-card: #23211f;
+  --bg-inset: #1a1917;
+  --bg-selected: #2c2824;
+  --bg-chip: #2b2825;
+  --bg-chip-dim: #232120;
+  --bg-pressed: #33302b;
+  --line: #2a2724;
+  --line-card: #34302b;
+  --line-dashed: #3a352f;
+  --tx: #e8e5df;
+  --tx-body: #ddd9d2;
+  --tx-2: #b5afa5;
+  --tx-3: #9a948a;
+  --tx-4: #7d776e;
+  --tx-5: #57524b;
+  --accent: #d9a066;
+  --accent-strong: #e0a45c;
+  --on-accent: #1e1a15;
+  --accent-soft: color-mix(in srgb, #d9a066 14%, transparent);
+  --bubble-bg: color-mix(in srgb, #d9a066 11%, #1e1d1b);
+  --bubble-line: color-mix(in srgb, #d9a066 26%, #1e1d1b);
+  --impl-fg: oklch(0.86 0.07 250); --impl-bg: oklch(0.35 0.06 250); --impl-bar: oklch(0.66 0.11 250); --impl-sheen: oklch(0.9 0.06 250 / .55);
+  --rev-fg: oklch(0.87 0.06 300);  --rev-bg: oklch(0.36 0.05 300);  --rev-bar: oklch(0.66 0.11 300);  --rev-sheen: oklch(0.9 0.06 300 / .55);
+  --hand-fg: oklch(0.93 0.05 40);  --hand-bg: oklch(0.42 0.13 30);  --hand-bar: oklch(0.58 0.14 30);
+  --done-fg: oklch(0.85 0.09 150); --done-bg: oklch(0.33 0.05 150); --done-bar: oklch(0.72 0.13 150);
+  --hand-card-bg: oklch(0.23 0.03 30); --hand-card-line: oklch(0.4 0.09 30);
+  --hand-card-tx: #d8c4b4; --hand-card-title: #f0e7df; --hand-card-meta: #8e7f74; --hand-card-meta-strong: #bfa48f; --hand-card-icon: #c7ab97;
+  --usage-5h: oklch(0.7 0.14 55); --usage-week: oklch(0.72 0.11 150);
+  --ring-head: oklch(0.75 0.15 150); --ring-track: oklch(0.72 0.13 150 / .28); --ring-stop: #4a453f;
+  --code-bg: #161514;
+  --shadow: 0 0 0 1px #2a2724, -8px 0 24px rgba(0,0,0,.45), 8px 0 24px rgba(0,0,0,.45);
+  --scrim: rgba(0,0,0,.35);
+  --sheet-scrim: rgba(0,0,0,.5);
+}
+
+/* ---------- 土台 ---------- */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+/* 横スワイプはアプリが扱う: 既定ではブラウザに縦のパンだけ任せる。横にスクロールできる要素は下で上書きする */
+* { touch-action: pan-y; }
+.hscroll, .hscroll * { touch-action: pan-x pan-y; }
+html, body { margin: 0; height: 100%; background: var(--bg-app); color: var(--tx-body);
+  font-family: var(--font-ui); -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+body { overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:disabled { cursor: default; }
+input, textarea, select { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); }
+.dim { color: var(--tx-4); }
+.spacer { flex: 1; }
+svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75;
+  stroke-linecap: round; stroke-linejoin: round; display: block; }
+svg.i.s16 { width: 16px; height: 16px; } svg.i.s14 { width: 14px; height: 14px; } svg.i.s12 { width: 12px; height: 12px; } svg.i.s24 { width: 24px; height: 24px; }
+.spin { animation: yspin .9s linear infinite; }
+@keyframes yspin { to { transform: rotate(360deg); } }
+@keyframes ypulse { 0%,100% { opacity: .3 } 50% { opacity: 1 } }
+@keyframes ybreathe { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
+@keyframes ysheen { 0% { transform: translateX(-120%) } 100% { transform: translateX(320%) } }
+@keyframes caret { 50% { opacity: 0 } }
+
+/* ---------- モック表示 (アプリの一部ではない) ---------- */
+#mockbar { position: fixed; top: 0; left: 0; right: 0; height: var(--mockbar); z-index: 100;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  font: 500 10.5px/1 var(--font-mono); letter-spacing: .06em; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-app)); border-bottom: 1px solid var(--line); }
+#mockbar button { height: 18px; padding: 0 8px; border-radius: 9px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); font: inherit; color: inherit; }
+
+/* ---------- 3 層 (左パネル / 右パネル / 中央) ---------- */
+#app { position: fixed; left: 0; right: 0; top: var(--mockbar); bottom: 0; overflow: hidden; background: var(--bg-app); }
+.panel { position: absolute; top: 0; bottom: 0; width: calc(100% - var(--peek)); visibility: hidden;
+  background: var(--bg-panel); display: flex; flex-direction: column; }
+#left { left: 0; }
+#right { right: 0; }
+#app[data-reveal="left"] #left, #app[data-reveal="right"] #right { visibility: visible; }
+#center { position: absolute; inset: 0; background: var(--bg-center); display: flex; flex-direction: column;
+  will-change: transform; z-index: 2; }
+#center.shifted { box-shadow: var(--shadow); border-radius: 14px; overflow: hidden; }
+#shield { position: absolute; inset: 0; z-index: 20; display: none; background: var(--scrim); opacity: 0; touch-action: none; }
+#center.shifted #shield { display: block; }
+#app.dragging, #app.dragging * { user-select: none; -webkit-user-select: none; }
+
+/* 端のスワイプの表示 (Android では戻るジェスチャの領域) */
+.edge-hint { position: absolute; top: 0; bottom: 0; width: 24px; z-index: 60; pointer-events: none; opacity: 0;
+  transition: opacity .25s; display: flex; align-items: center; }
+.edge-hint.left { left: 0; background: linear-gradient(90deg, var(--accent-soft), transparent); }
+.edge-hint.right { right: 0; justify-content: flex-end; background: linear-gradient(270deg, var(--accent-soft), transparent); }
+.edge-hint.show { opacity: 1; }
+.edge-hint span { font: 500 10px/1.3 var(--font-mono); color: var(--accent); writing-mode: vertical-rl; padding: 4px 2px; }
+
+/* ---------- 共通の部品 ---------- */
+.iconbtn { width: 48px; height: 48px; border-radius: 24px; display: grid; place-items: center; color: var(--tx-2); position: relative; flex: none; }
+.iconbtn:active { background: var(--bg-pressed); }
+.iconbtn.sm { width: 40px; height: 40px; border-radius: 20px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px 0 5px; border-radius: 6px;
+  font: 500 11.5px/1 var(--font-ui); white-space: nowrap; flex: none; }
+.chip svg.i { width: 13px; height: 13px; stroke-width: 2; }
+.tone-waiting { color: var(--tx-3); background: var(--bg-chip); }
+.tone-implementing, .gs-active { color: var(--impl-fg); background: var(--impl-bg); }
+.tone-reviewing, .gs-finishing { color: var(--rev-fg); background: var(--rev-bg); }
+.tone-handling, .gs-merge_blocked { color: var(--hand-fg); background: var(--hand-bg); }
+.tone-done, .gs-done { color: var(--done-fg); background: var(--done-bg); }
+.tone-cancelled, .gs-cancelled { color: var(--tx-4); background: var(--bg-chip-dim); }
+.ti-waiting { color: var(--tx-3); } .ti-implementing { color: var(--impl-bar); } .ti-reviewing { color: var(--rev-bar); }
+.ti-handling { color: var(--hand-bar); } .ti-done { color: var(--done-bar); } .ti-cancelled { color: var(--tx-5); }
+.pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 20px; padding: 0 7px; border-radius: 10px;
+  border: 1px solid var(--line-card); color: var(--tx-3); font: 400 11px/1 var(--font-mono); white-space: nowrap; overflow: hidden; }
+.pill span { overflow: hidden; text-overflow: ellipsis; }
+/* リング: PC の .ring と同じ 3 形 (running = 上辺が濃い緑で回る / ready = 中を抜いた緑 / stopped = グレーの輪郭) */
+.ring { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--ring-stop); flex: none; }
+.ring.ready { border-color: var(--done-bar); }
+.ring.running { border-color: var(--ring-track); border-top-color: var(--ring-head); animation: yspin .9s linear infinite; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: #403c37; }
+.dot.ok { background: var(--done-bar); }
+.unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+/* オーケストレータの状態 (PC の SessionBadge): 中を抜いた丸 = 未起動 / 緑 = 待機 / 青 + 光輪 = 作業中 */
+.sdot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--tx-4); flex: none; }
+.sdot.idle { border-color: var(--done-bar); background: var(--done-bar); }
+.sdot.working { border-color: var(--impl-bar); background: var(--impl-bar); box-shadow: 0 0 0 3px var(--impl-bg); animation: ybreathe 2s ease-in-out infinite; }
+.sbadge { width: 40px; height: 48px; display: grid; place-items: center; flex: none; color: var(--tx-3); }
+.empty { margin: auto; padding: 32px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; color: var(--tx-3); font-size: 14px; line-height: 1.7; }
+.empty svg.i { width: 26px; height: 26px; color: var(--tx-5); }
+.section-h { display: flex; align-items: center; gap: 6px; padding: 14px 14px 6px 16px; color: var(--tx-4);
+  font: 500 11.5px/1 var(--font-ui); }
+.btn { height: 36px; padding: 0 14px; border-radius: 18px; font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.btn.tonal { background: var(--bg-chip); color: var(--tx); }
+.btn.outline { border: 1px solid var(--line-card); color: var(--tx-2); }
+
+/* ---------- 中央: トップバー ---------- */
+.topbar { height: 56px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 4px; border-bottom: 1px solid var(--line); }
+.topbar .titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-left: 2px; }
+.topbar .title { font-size: 16px; font-weight: 600; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topbar .sub { display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+/* ---------- 会話 (PC の TranscriptView と同じ種類の項目) ---------- */
+.msgs { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 12px 0 8px; overscroll-behavior: contain; display: flex; flex-direction: column; }
+.msgs > .empty { flex: 1; }
+.row { padding: 5px 16px; }
+.row.user { display: flex; justify-content: flex-end; padding-top: 14px; }
+.bubble { max-width: 86%; background: var(--bubble-bg); border: 1px solid var(--bubble-line); color: var(--tx);
+  border-radius: 18px 18px 6px 18px; padding: 9px 13px; font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.bubble .queued { display: inline-flex; vertical-align: -2px; margin-left: 6px; color: var(--tx-3); }
+.md { font-size: 15px; line-height: 1.7; color: var(--tx-body); word-break: break-word; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md h3 { font-size: 17px; margin: 18px 0 8px; color: var(--tx); font-weight: 650; }
+.md h4 { font-size: 15.5px; margin: 16px 0 6px; color: var(--tx); font-weight: 650; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 2px 0; }
+.md strong { color: var(--accent-strong); font-weight: 600; }
+.md code.inl { font: 13px/1 var(--font-mono); background: var(--bg-chip); border-radius: 4px; padding: 2px 5px; color: var(--tx); }
+.code { margin: 4px 0 12px; border: 1px solid var(--line-card); border-radius: 10px; background: var(--code-bg); overflow: hidden; }
+.code .lang { font: 500 10.5px/1 var(--font-mono); color: var(--tx-4); padding: 8px 12px 0; letter-spacing: .06em; }
+.code pre { margin: 0; padding: 8px 12px 12px; overflow-x: auto; font: 12.5px/1.6 var(--font-mono); color: var(--tx); }
+.tablewrap { margin: 4px 0 12px; overflow-x: auto; border: 1px solid var(--line-card); border-radius: 10px; }
+.tablewrap table { border-collapse: collapse; font-size: 13.5px; line-height: 1.5; min-width: 100%; }
+.tablewrap th, .tablewrap td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tablewrap th { color: var(--tx-3); font-weight: 600; font-size: 12.5px; background: var(--bg-inset); }
+.tablewrap tr:last-child td { border-bottom: 0; }
+.caret { display: inline-block; width: 8px; height: 16px; vertical-align: -3px; background: var(--accent); margin-left: 2px; animation: caret 1s steps(1) infinite; }
+/* ツール・Yhtye のツール・思考: 控えめなモノスペースの 1 行 */
+.line { display: flex; align-items: center; gap: 8px; min-height: 30px; width: 100%; text-align: left; color: var(--tx-4);
+  font: 400 12px/1.4 var(--font-mono); padding: 3px 0; }
+.line .lbl { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.line .k { color: var(--tx-5); flex: none; }
+.line .st { flex: none; display: inline-flex; }
+.line .st.completed { color: var(--done-bar); } .line .st.failed { color: var(--hand-bar); } .line .st.in_progress { color: var(--tx-3); }
+.line .chev { flex: none; color: var(--tx-5); transition: transform .15s; }
+.line[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.line.err { color: var(--hand-fg); }
+.fold-body { margin: 2px 0 6px 22px; padding: 8px 10px; border-radius: 8px; background: var(--bg-inset); border: 1px solid var(--line);
+  font: 12px/1.55 var(--font-mono); color: var(--tx-3); white-space: pre-wrap; word-break: break-word; }
+.fold-body.prose { font: 13.5px/1.6 var(--font-ui); }
+/* 受信箱の通知: PC の .notice と同じく破線の控えめな枠 (色で警告しない) */
+.notice { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border: 1px dashed var(--line-dashed); border-radius: 8px;
+  padding: 8px 10px; font: 400 11.5px/1.5 var(--font-mono); color: var(--tx-4); }
+.notice .nk { color: var(--tx-3); }
+.notice .nb { flex: 1 1 100%; color: var(--tx-3); font-family: var(--font-ui); font-size: 13px; line-height: 1.55; }
+.gcardc { border: 1px solid var(--line-card); border-radius: 10px; overflow: hidden; }
+.gcardc .h { display: flex; align-items: center; gap: 7px; padding: 8px 10px; font: 500 12px/1.3 var(--font-mono); color: var(--tx-3); background: var(--bg-inset); }
+.gcardc .h .t { flex: 1; min-width: 0; color: var(--tx); font-family: var(--font-ui); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcardc .r { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--line); font-size: 13.5px; color: var(--tx-body); }
+.gcardc .r .n { font: 500 11.5px/1 var(--font-mono); color: var(--tx-4); flex: none; }
+.gcardc .r .tt { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* グループ待機バナー (PC の WaitBanner。文はツールチップの代わりに見せる) */
+.waitbar { flex: none; margin: 0 12px 6px; display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: start; padding: 8px 12px 9px;
+  border: 1px dashed var(--line-dashed); border-radius: 10px; background: var(--bg-inset); color: var(--tx-3); font-size: 12.5px; line-height: 1.5; }
+.waitbar svg.i { margin-top: 2px; color: var(--tx-4); }
+.waitbar .busy { color: var(--rev-bar); animation: ybreathe 1.4s ease-in-out infinite; }
+.waitbar .wp { grid-column: 2; height: 3px; border-radius: 2px; background: var(--line-card); overflow: hidden; }
+.waitbar .wp i { display: block; height: 100%; background: var(--done-bar); transition: width .3s; }
+
+/* コンポーザ (PC の Composer: 本文 + 右下のボタン、下にメンションのチップとヒント) */
+.composer { flex: none; padding: 4px 10px calc(10px + env(safe-area-inset-bottom)); }
+.composer .box { display: flex; align-items: flex-end; gap: 4px; background: var(--bg-inset); border: 1px solid var(--line-card);
+  border-radius: 24px; padding: 4px 4px 4px 16px; }
+.composer .box:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-card)); }
+.composer textarea { flex: 1; min-height: 40px; max-height: 128px; resize: none; border: 0; outline: 0; background: transparent;
+  padding: 9px 0; font-size: 15.5px; line-height: 22px; color: var(--tx); }
+.composer textarea::placeholder { color: var(--tx-4); }
+.cbtn { width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; flex: none; }
+.cbtn.send { background: var(--accent); color: var(--on-accent); }
+.cbtn.send:disabled { background: var(--bg-chip); color: var(--tx-5); }
+.cbtn.stop { color: var(--hand-fg); border: 1px solid var(--line-card); }
+.cbtn.stop svg { fill: currentColor; stroke: none; width: 13px; height: 13px; }
+.crow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px 0; }
+.crow:empty { display: none; }
+.mchip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; height: 30px; padding: 0 6px 0 8px; border-radius: 15px;
+  background: var(--accent-soft); color: var(--accent); font: 500 12px/1 var(--font-mono); }
+.mchip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mchip.new { animation: chipin .42s cubic-bezier(.3,1.5,.5,1); }
+@keyframes chipin { 0% { transform: scale(.4); opacity: 0 } 60% { transform: scale(1.1); opacity: 1 } 100% { transform: none } }
+.hint { display: inline-flex; align-items: center; gap: 5px; font: 11.5px/1.3 var(--font-mono); color: var(--tx-3); }
+
+/* ---------- 左パネル ---------- */
+#left .cols { flex: 1; min-height: 0; display: flex; }
+/* アイコンレール: PC の .rail と同じ「コーディング / 履歴」+ 一番下に設定 */
+.rail { width: 56px; flex: none; background: var(--bg-rail); padding: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.rail-btn { position: relative; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--tx-4); }
+.rail-btn:active { background: var(--bg-pressed); }
+.rail-btn.active { background: var(--bg-chip); color: var(--accent); }
+.rail-btn.active::before { content: ""; position: absolute; left: -6px; top: 13px; width: 3px; height: 18px; border-radius: 0 2px 2px 0; background: var(--accent); }
+.rail .spacer { flex: 1; }
+.side { flex: 1; min-width: 0; overflow-y: auto; padding-bottom: 12px; position: relative; display: flex; flex-direction: column; }
+.side-label { display: flex; align-items: center; gap: 6px; padding: 14px 16px 6px; color: var(--tx-4); font-size: 12px; }
+/* プロジェクトのドロップダウン (PC の ProjectPicker) */
+.picker { position: relative; margin: 0 12px; }
+.ptrigger { display: flex; align-items: center; gap: 10px; width: 100%; height: 46px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid var(--line-card); background: var(--bg-card); text-align: left; }
+.ptrigger .name { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; color: var(--tx); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptrigger .chev { color: var(--tx-4); transition: transform .15s; }
+.ptrigger[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.ppop { position: absolute; left: 0; right: 0; top: 50px; z-index: 30; background: var(--bg-card); border: 1px solid var(--line-card);
+  border-radius: 12px; padding: 6px 0; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.popt { display: flex; align-items: center; gap: 10px; width: 100%; height: 48px; padding: 0 14px; text-align: left; color: var(--tx-body); font-size: 14.5px; }
+.popt:active { background: var(--bg-pressed); }
+.popt .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.popt .check { color: var(--accent); }
+/* バックグラウンドで動作中のプロジェクト (PC の BackgroundProjects) */
+.bgp { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px 2px 16px; }
+.bgp .cap { color: var(--done-bar); padding-top: 9px; flex: none; }
+.bgp ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.bgchip { display: inline-flex; align-items: center; gap: 7px; height: 34px; max-width: 200px; padding: 0 12px 0 10px; border-radius: 17px;
+  border: 1px solid var(--line-card); background: var(--bg-chip-dim); color: var(--tx-2); font-size: 13px; }
+.bgchip:active { background: var(--bg-pressed); }
+.bgchip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ブランチ (作業ツリー) とチャット (PC の BranchTree / ChatRow) */
+.wt { display: flex; align-items: center; }
+.wtrow { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px 0 12px; text-align: left; color: var(--tx-2); }
+.wtrow .wcaret { color: var(--tx-4); transition: transform .15s; }
+.wtrow[aria-expanded="false"] .wcaret { transform: rotate(-90deg); }
+.wtrow .bname { flex: 1; min-width: 0; font: 12.5px/1.3 var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt .add { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 20px; color: var(--tx-4); margin-right: 4px; flex: none; }
+.chat { display: flex; align-items: center; gap: 10px; width: calc(100% - 16px); margin: 1px 8px; min-height: 42px; padding: 0 10px 0 30px;
+  border-radius: 10px; text-align: left; color: var(--tx-2); }
+.chat.sel { background: var(--bg-selected); color: var(--tx); }
+.chat:active { background: var(--bg-pressed); }
+.chat .ct { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat .ago { font: 11px/1 var(--font-mono); color: var(--tx-4); }
+.other { padding-left: 30px; }
+.bform { margin: 2px 12px 10px; padding: 10px; border: 1px solid var(--line-card); border-radius: 12px; background: var(--bg-inset); display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.bform input, .bform select { height: 40px; min-width: 0; border-radius: 8px; border: 1px solid var(--line-card); background: var(--bg-center); padding: 0 10px; font: 13px var(--font-mono); outline: 0; }
+.bform input { grid-column: 1 / -1; }
+.bform .err { grid-column: 1 / -1; color: var(--hand-fg); font-size: 12.5px; }
+.bform .ok { width: 40px; height: 40px; border-radius: 20px; display: grid; place-items: center; background: var(--bg-chip); color: var(--tx); }
+/* 下端: コアのホスト (PC の HostFooter) とプラン・使用量 (PC の StatusBar) */
+.side-foot { flex: none; border-top: 1px solid var(--line); background: var(--bg-rail); padding: 9px 14px calc(10px + env(safe-area-inset-bottom)); display: grid; gap: 7px;
+  font: 11.5px/1 var(--font-mono); color: var(--tx-3); }
+.side-foot .host { display: flex; align-items: center; gap: 7px; }
+.side-foot .host b { font-weight: 500; color: var(--tx-2); }
+.side-foot .usage { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.meter { display: inline-flex; align-items: center; gap: 5px; }
+.meter .bar { width: 40px; height: 4px; border-radius: 2px; background: var(--line-card); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; border-radius: 2px; }
+.meter .rs { display: inline-flex; align-items: center; gap: 2px; color: var(--tx-4); }
+.sep { width: 1px; height: 12px; background: var(--line-card); }
+
+/* ---------- 右パネル (PC の TaskColumn) ---------- */
+.rhead { flex: none; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 14px 0 16px; border-bottom: 1px solid var(--line); color: var(--tx-3); }
+.rhead .gchip { min-width: 0; max-width: 100%; height: 26px; padding: 0 10px; border-radius: 7px; background: var(--bg-chip); color: var(--tx); font-size: 13.5px;
+  display: inline-flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rhead .subs { display: inline-flex; align-items: center; gap: 4px; font: 12px/1 var(--font-mono); flex: none; }
+.rbody { flex: 1; overflow-y: auto; padding: 10px 10px 24px 12px; }
+.gbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 2px 2px 10px; font: 11.5px/1.3 var(--font-mono); color: var(--tx-3); }
+.gbar .gid { color: var(--tx-2); font-weight: 500; }
+.gbar .gbr { flex: 1 1 100%; order: 9; display: inline-flex; align-items: center; gap: 4px; min-width: 0; color: var(--tx-4); overflow: hidden; white-space: nowrap; }
+.gbar .gbr span { overflow: hidden; text-overflow: ellipsis; }
+.gbar .cnt { display: inline-flex; align-items: center; gap: 3px; }
+.gbar .cnt.h { color: var(--hand-bar); }
+.galert { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 10px; padding: 9px 12px; border-radius: 10px;
+  background: var(--hand-card-bg); border: 1px solid var(--hand-card-line); color: var(--hand-card-tx); font-size: 13px; line-height: 1.55; }
+.galert svg.i { color: var(--hand-bar); }
+.galert > span { flex: 1 1 220px; min-width: 0; }
+.galert .btn { margin-left: auto; }
+.gmeta { margin: -4px 2px 10px; font: 11.5px/1.4 var(--font-mono); color: var(--tx-4); }
+.past > summary { list-style: none; display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 4px; color: var(--tx-3); font: 500 12px/1 var(--font-ui); }
+.past > summary::-webkit-details-marker { display: none; }
+.past > summary .chev { transition: transform .15s; transform: rotate(-90deg); }
+.past[open] > summary .chev { transform: none; }
+.past .pg { margin-top: 6px; }
+/* タスクカード (PC の TaskCard)。右→左のスワイプで中身 (.slide) が指に付いてずれ、下の @ が見える */
+.task { position: relative; border: 1px solid var(--line-card); border-radius: 12px; overflow: hidden; margin-bottom: 8px; }
+.task .slide { position: relative; z-index: 1; display: grid; gap: 7px; padding: 8px 6px 9px 12px; background: var(--bg-card); will-change: transform; }
+.task.c-handling { border-color: var(--hand-card-line); }
+.task.c-handling .slide { background: var(--hand-card-bg); }
+.task.c-done .slide, .task.c-cancelled .slide { background: var(--bg-inset); }
+.task .th { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.task .tid { font: 500 11.5px/1 var(--font-mono); color: var(--tx-3); }
+.task .tt { padding-right: 8px; font-size: 14.5px; line-height: 1.45; color: var(--tx); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: -4px; }
+.task.c-done .tt, .task.c-cancelled .tt { color: var(--tx-4); }
+.task.c-handling .tt { color: var(--hand-card-title); }
+.task.c-handling .tid, .task.c-handling .log { color: var(--hand-card-meta); }
+.task.c-handling .meta { color: var(--hand-card-meta-strong); }
+.task.c-handling .iconbtn { color: var(--hand-card-icon); }
+.task .iconbtn { color: var(--tx-3); }
+.iconbtn svg.stopi { fill: currentColor; stroke: none; width: 12px; height: 12px; }
+.prog { position: relative; height: 2px; margin-right: 6px; border-radius: 2px; background: var(--line-card); overflow: hidden; }
+.prog i { position: absolute; left: 0; top: 0; bottom: 0; }
+.prog b { position: absolute; top: 0; bottom: 0; width: 34%; animation: ysheen 1.9s ease-in-out infinite; }
+.prog.implementing i { background: var(--impl-bar); } .prog.implementing b { background: linear-gradient(90deg, transparent, var(--impl-sheen), transparent); }
+.prog.reviewing i { background: var(--rev-bar); } .prog.reviewing b { background: linear-gradient(90deg, transparent, var(--rev-sheen), transparent); }
+.note { display: flex; gap: 7px; padding-right: 6px; font-size: 13.5px; line-height: 1.55; color: var(--hand-card-tx); }
+.note svg.i { margin-top: 3px; color: var(--hand-card-icon); }
+.log { display: grid; gap: 2px; padding-right: 6px; font: 11.5px/1.45 var(--font-mono); color: var(--tx-4); }
+.log div { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.log span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tfoot { display: flex; align-items: center; gap: 8px; padding-right: 6px; font: 11.5px/1 var(--font-mono); color: var(--tx-4); }
+.steps { display: flex; align-items: center; gap: 3px; list-style: none; margin: 0; padding: 0; }
+.steps li { display: grid; place-items: center; color: var(--tx-5); }
+.steps li.done { color: var(--done-bar); }
+.steps li.running.implementing, .steps li.running.waiting { color: var(--impl-bar); animation: ypulse 1.4s ease-in-out infinite; }
+.steps li.running.reviewing { color: var(--rev-bar); animation: ypulse 1.4s ease-in-out infinite; }
+.steps li.running.handling { color: var(--hand-bar); }
+.steps .lk { width: 6px; height: 1px; background: var(--line-card); }
+.tagent { display: inline-flex; align-items: center; gap: 4px; }
+.meta { display: flex; align-items: center; gap: 6px; padding-right: 6px; font: 11.5px/1.4 var(--font-mono); color: var(--tx-4); }
+.under { position: absolute; inset: 0; z-index: 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 18px;
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-panel)); opacity: 0; }
+.under .at { width: 44px; height: 44px; border-radius: 22px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft);
+  transform: scale(.8); transition: transform .18s cubic-bezier(.3,1.7,.5,1), background .15s, color .15s; }
+.task.armed .under .at { transform: scale(1.18); background: var(--accent); color: var(--on-accent); }
+.task.fired .under .at { animation: atfire .34s ease-out forwards; }
+@keyframes atfire { 0% { transform: scale(1.18) } 45% { transform: scale(1.45) } 100% { transform: scale(1.1); opacity: .2 } }
+
+/* ---------- 積み重ねの画面 (タスク詳細・設定) ---------- */
+.screen { position: absolute; inset: 0; z-index: 40; background: var(--bg-center); display: flex; flex-direction: column;
+  transform: translateX(100%); transition: transform .26s cubic-bezier(.2,.8,.2,1); visibility: hidden; box-shadow: -10px 0 30px rgba(0,0,0,.35); }
+.screen.open { transform: none; visibility: visible; }
+.screen.closing { visibility: visible; }
+.screen-dim { position: absolute; inset: 0; z-index: 39; background: var(--sheet-scrim); opacity: 0; pointer-events: none; transition: opacity .26s; }
+.screen-dim.on { opacity: 1; }
+.dhead { flex: none; display: flex; align-items: center; gap: 2px; min-height: 60px; padding: 0 8px 0 4px; border-bottom: 1px solid var(--line); }
+.dhead .titles { flex: 1; min-width: 0; padding: 8px 2px; }
+.dhead .tid { display: flex; align-items: center; gap: 8px; font: 500 11.5px/1 var(--font-mono); color: var(--tx-4); }
+.dhead .tt { font-size: 15.5px; font-weight: 600; color: var(--tx); line-height: 1.35; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dbody { flex: 1; overflow-y: auto; }
+.stabs { display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; background: var(--bg-center); }
+.stab { height: 34px; padding: 0 14px; border-radius: 17px; font: 500 12.5px/1 var(--font-mono); color: var(--tx-3); display: inline-flex; align-items: center; gap: 7px; flex: none;
+  border: 1px solid var(--line-card); }
+.stab.sel { background: var(--bg-chip); color: var(--tx); border-color: transparent; }
+.stab .sdot { width: 8px; height: 8px; }
+.results { display: grid; gap: 6px; padding: 10px 16px 4px; }
+.result { display: flex; gap: 8px; font: 12px/1.55 var(--font-mono); color: var(--tx-3); }
+.result svg.i { margin-top: 2px; color: var(--tx-4); }
+.result .v.approve { color: var(--done-bar); } .result .v.needs_changes { color: var(--hand-bar); }
+.dout { padding: 8px 0 32px; }
+/* 設定 (PC の SettingsModal の項目。「リモート接続」は PC 専用なので出さない) */
+.stabs2 { display: flex; gap: 6px; padding: 10px 12px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.stabs2 button { height: 36px; padding: 0 14px; border-radius: 18px; display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--tx-3); flex: none; border: 1px solid var(--line-card); }
+.stabs2 button.sel { background: var(--bg-chip); color: var(--tx); border-color: transparent; }
+.sbody { padding: 12px 14px 32px; display: grid; gap: 14px; }
+.snote { font-size: 12.5px; line-height: 1.6; color: var(--tx-3); }
+.scope { display: inline-flex; border: 1px solid var(--line-card); border-radius: 18px; overflow: hidden; justify-self: start; }
+.scope button { height: 36px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--tx-3); }
+.scope button.sel { background: var(--accent-soft); color: var(--accent); }
+.role { border: 1px solid var(--line-card); border-radius: 12px; overflow: hidden; }
+.role .rh { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg-inset); font-size: 14px; color: var(--tx); }
+.role .rh small { color: var(--tx-4); font-size: 12px; }
+.cand { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.cand .star { color: var(--tx-5); } .cand .star.on { color: var(--accent); }
+.cand .m { font: 12.5px/1.4 var(--font-mono); color: var(--tx); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand .memo { grid-column: 2 / 4; font-size: 12.5px; color: var(--tx-3); }
+.cand .del { color: var(--tx-4); }
+.addrow { display: flex; align-items: center; gap: 6px; width: 100%; height: 42px; padding: 0 12px; border-top: 1px solid var(--line); color: var(--tx-3); font-size: 13px; }
+.inherit { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--tx-2); }
+.hlist { display: grid; gap: 8px; }
+.hitem { border: 1px solid var(--line-card); border-radius: 12px; padding: 10px 12px; display: grid; gap: 6px; }
+.hitem .hn { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--tx); }
+.hitem .hp { font: 11.5px/1.5 var(--font-mono); color: var(--tx-3); word-break: break-all; }
+.sform { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.sform input { height: 42px; min-width: 0; border-radius: 10px; border: 1px solid var(--line-card); background: var(--bg-inset); padding: 0 10px; font: 13px var(--font-mono); outline: 0; }
+.sform input:first-child { grid-column: 1 / -1; }
+
+/* ---------- 通知の見本 (Android のヘッドアップ通知の見た目) ---------- */
+.notif { position: fixed; left: 8px; right: 8px; top: calc(var(--mockbar) + 8px); z-index: 110; display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
+  padding: 12px 14px; border-radius: 22px; background: #2d2a27; color: var(--tx); box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  transform: translateY(-140%); visibility: hidden; transition: transform .32s cubic-bezier(.2,.8,.2,1), visibility 0s .32s; text-align: left; }
+.notif.show { transform: none; visibility: visible; transition: transform .32s cubic-bezier(.2,.8,.2,1); }
+.notif .ap { grid-row: span 3; width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; background: var(--accent); color: var(--on-accent); font: 700 16px/1 var(--font-ui); }
+.notif .src { font-size: 12px; color: var(--tx-3); }
+.notif .nt { font-size: 14.5px; font-weight: 600; }
+.notif .nbd { font-size: 13.5px; color: var(--tx-2); line-height: 1.45; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div id="mockbar"><span>モック · ダミーデータ</span><button type="button" id="mock-notify">通知の見本 ▶</button></div>
+<div id="app">
+  <aside id="left" class="panel" aria-label="プロジェクトとチャット"></aside>
+  <aside id="right" class="panel" aria-label="tasks"></aside>
+  <main id="center">
+    <div id="shield"></div>
+    <header class="topbar" id="topbar"></header>
+    <div class="msgs" id="msgs"></div>
+    <div id="waitbar-slot"></div>
+    <div class="composer" id="composer">
+      <div class="box">
+        <textarea id="input" rows="1" placeholder="オーケストレータに指示する…" aria-label="オーケストレータへのメッセージ"></textarea>
+        <button class="cbtn stop" id="stop" aria-label="ターンを中止"></button>
+        <button class="cbtn send" id="send" aria-label="送信"></button>
+      </div>
+      <div class="crow" id="crow"></div>
+    </div>
+  </main>
+  <div class="screen-dim" id="screendim"></div>
+  <section class="screen" id="detail" aria-label="エージェントの出力"></section>
+  <section class="screen" id="settings" aria-label="設定"></section>
+  <div class="edge-hint left" id="edgeL"><span>端 = 戻る</span></div>
+  <div class="edge-hint right" id="edgeR"><span>端 = 戻る</span></div>
+</div>
+<button type="button" class="notif" id="notif" aria-live="polite"></button>
+
+<script>
+"use strict";
+/* ======================= アイコン (PC の Icon と同じ流儀: 線だけ、線幅 1.75) ======================= */
+const ICONS = {
+  menu: ['M4 6h16', 'M4 12h16', 'M4 18h16'],
+  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+  layers: ['M12 3 21 8 12 13 3 8Z', 'M3 12.5 12 17.5 21 12.5', 'M3 17 12 22 21 17'],
+  send: ['M12 19V5', 'M5 12l7-7 7 7'],
+  back: ['M19 12H5', 'M12 19l-7-7 7-7'],
+  arrowL: ['M19 12H5', 'M11 18l-6-6 6-6'],
+  chevR: ['M9 18l6-6-6-6'],
+  chevD: ['M6 9l6 6 6-6'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  msgPlus: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', 'M12 7v6', 'M9 10h6'],
+  message: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'],
+  branch: ['M6 3v12', 'M18 9a9 9 0 0 1-9 9', {c: [18, 6, 3]}, {c: [6, 18, 3]}],
+  merge: [{c: [18, 18, 3]}, {c: [6, 6, 3]}, 'M6 21V9a9 9 0 0 0 9 9'],
+  check: ['M20 6 9 17l-5-5'],
+  x: ['M18 6 6 18', 'M6 6l12 12'],
+  loader: ['M21 12a9 9 0 1 1-6.2-8.56'],
+  wrench: ['M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z'],
+  bolt: ['M13 2 3 14h9l-1 8 10-12h-9l1-8z'],
+  alert: ['M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z', 'M12 9v4', 'M12 17h.01'],
+  help: [{c: [12, 12, 10]}, 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
+  eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', {c: [12, 12, 3]}],
+  code: ['M16 18l6-6-6-6', 'M8 6l-6 6 6 6'],
+  search: [{c: [11, 11, 7]}, 'M21 21l-4.3-4.3'],
+  hourglass: ['M5 22h14', 'M5 2h14', 'M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22', 'M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2'],
+  ban: [{c: [12, 12, 9]}, 'M5.6 5.6l12.8 12.8'],
+  flag: ['M4 22V4', 'M4 4h13l-2 4 2 4H4'],
+  sliders: ['M4 21v-7', 'M4 10V3', 'M12 21v-9', 'M12 8V3', 'M20 21v-5', 'M20 12V3', 'M1 14h6', 'M9 8h6', 'M17 16h6'],
+  history: ['M3 12a9 9 0 1 0 3-6.7L3 8', 'M3 3v5h5', 'M12 7v5l4 2'],
+  at: [{c: [12, 12, 4]}, 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'],
+  thought: ['M9 18h6', 'M10 22h4', 'M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z'],
+  refresh: ['M21 12a9 9 0 1 1-3-6.7L21 8', 'M21 3v5h-5'],
+  bot: [{r: [4, 8, 16, 12, 2]}, 'M12 8V4H8', 'M2 14h2', 'M20 14h2', 'M15 13v2', 'M9 13v2'],
+  user: [{c: [12, 8, 4]}, 'M20 21a8 8 0 0 0-16 0'],
+  bell: ['M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9', 'M10.3 21a1.94 1.94 0 0 0 3.4 0'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  activity: ['M22 12h-4l-3 9L9 3l-3 9H2'],
+  clock: [{c: [12, 12, 10]}, 'M12 6v6l4 2'],
+  globe: [{c: [12, 12, 10]}, 'M2 12h20', 'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z'],
+  key: [{c: [7.5, 15.5, 5.5]}, 'M21 2l-9.6 9.6', 'M15.5 7.5l3 3L22 7l-3-3'],
+  terminal: ['M4 17l6-6-6-6', 'M12 19h8'],
+  star: ['M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z'],
+  trash: ['M3 6h18', 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2'],
+  info: [{c: [12, 12, 10]}, 'M12 16v-4', 'M12 8h.01'],
+  stop: [],
+};
+function icon(name, cls = '') {
+  if (name === 'stop') return `<svg class="i stopi ${cls}" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>`;
+  const parts = ICONS[name].map(p => typeof p === 'string' ? `<path d="${p}"/>`
+    : p.c ? `<circle cx="${p.c[0]}" cy="${p.c[1]}" r="${p.c[2]}"/>`
+    : `<rect x="${p.r[0]}" y="${p.r[1]}" width="${p.r[2]}" height="${p.r[3]}" rx="${p.r[4]}"/>`).join('');
+  return `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${parts}</svg>`;
+}
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const $ = id => document.getElementById(id);
+
+/* ======================= 小さな Markdown (見出し・リスト・表・コード・強調・インラインコード) ======================= */
+function inline(s) {
+  return esc(s).replace(/`([^`]+)`/g, '<code class="inl">$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+function renderMd(src) {
+  const L = src.split('\n'); let i = 0, h = '';
+  const isBlockStart = l => /^(~~~|```)|^#{1,3} |^\||^\s*([-*]|\d+\.) /.test(l);
+  while (i < L.length) {
+    const l = L[i];
+    if (/^(~~~|```)/.test(l)) {
+      const lang = l.slice(3).trim(), buf = []; i++;
+      while (i < L.length && !/^(~~~|```)/.test(L[i])) buf.push(L[i++]);
+      i++;
+      h += `<div class="code">${lang ? `<div class="lang">${esc(lang)}</div>` : ''}<pre class="hscroll"><code>${esc(buf.join('\n'))}</code></pre></div>`;
+    } else if (/^#{1,3} /.test(l)) {
+      const n = l.match(/^#+/)[0].length; h += `<h${n + 2}>${inline(l.slice(n + 1))}</h${n + 2}>`; i++;
+    } else if (/^\|/.test(l)) {
+      const rows = []; while (i < L.length && /^\|/.test(L[i])) rows.push(L[i++]);
+      const cells = r => r.replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+      const head = cells(rows[0]), body = rows.slice(2).map(cells);
+      h += `<div class="tablewrap hscroll"><table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>` +
+        body.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('') + '</tbody></table></div>';
+    } else if (/^\s*([-*]|\d+\.) /.test(l)) {
+      const ordered = /^\s*\d+\./.test(l), items = [];
+      while (i < L.length && /^\s*([-*]|\d+\.) /.test(L[i])) items.push(L[i++].replace(/^\s*([-*]|\d+\.) /, ''));
+      const t = ordered ? 'ol' : 'ul'; h += `<${t}>${items.map(x => `<li>${inline(x)}</li>`).join('')}</${t}>`;
+    } else if (!l.trim()) { i++; }
+    else {
+      const buf = []; while (i < L.length && L[i].trim() && !isBlockStart(L[i])) buf.push(L[i++]);
+      h += `<p>${buf.map(inline).join('<br>')}</p>`;
+    }
+  }
+  return h;
+}
+
+/* ======================= 文言 (PC の labels.ts / statusIcons.tsx / taskInfo.ts と同じ) ======================= */
+const TONE_LABEL = {waiting: '待機', implementing: '実装中', reviewing: 'レビュー中', handling: '対処中', done: '完了', cancelled: '中止'};
+const TONE_ICON = {waiting: 'hourglass', implementing: 'code', reviewing: 'eye', handling: 'alert', done: 'check', cancelled: 'ban'};
+const GROUP_LABEL = {active: '進行中', finishing: 'マージ中', done: '完了', cancelled: '中止', merge_blocked: 'マージ保留'};
+const GROUP_ICON = {active: 'layers', finishing: 'merge', done: 'check', merge_blocked: 'alert', cancelled: 'ban'};
+const HELP_LABEL = {blocked: '詰まり', question: '質問', policy: '方針の相談', merge_conflict: 'マージコンフリクト', review_rounds_exhausted: 'レビュー回数超過',
+  protocol_violation: '報告なしでターン終了', agent_stopped: 'エージェント停止', agent_crashed: 'エージェント異常終了'};
+const HELP_ICON = {blocked: 'alert', question: 'help', policy: 'help', merge_conflict: 'merge', review_rounds_exhausted: 'refresh', protocol_violation: 'alert', agent_stopped: 'stop', agent_crashed: 'alert'};
+const STEP_LABEL = {implement: '実装', review: 'レビュー', checkpoint: 'チェックポイント', done: '完了'};
+const NEW_CHAT_TITLE = '新しいチャット';
+
+/* ======================= ダミーデータ ======================= */
+const step = (kind, status = 'pending', extra = {}) => Object.assign({kind, status}, extra);
+const user = text => ({type: 'user', text});
+const md = (...lines) => ({type: 'md', text: lines.join('\n')});
+const thought = text => ({type: 'thought', text});
+const tool = (title, status = 'completed') => ({type: 'tool', title, status});
+const ytool = (name, detail, ok = true, by = null) => ({type: 'ytool', name, detail, ok, by});
+const notice = (kind, attrs, body) => ({type: 'notice', kind, attrs, body});
+const groupCard = id => ({type: 'group', id});
+
+const TASKS = {};
+function T(o) { TASKS[o.id] = Object.assign({kind: 'code', depends_on: [], helps: [], sessions: {}, elapsed: null, cancel_reason: null}, o); }
+// sessions: セッションキーの末尾 (implementer / review-1) → {state: working | live | ended, items}
+T({id: 'T-107', group: 'G-14', title: '重複バリデーションの棚卸し', kind: 'investigate', status: 'done', elapsed: '12m',
+  steps: [step('implement', 'done', {result: '重複は 4 か所。郵便番号の規則が 3 通りある (表は出力)'}), step('done', 'done')],
+  sessions: {implementer: {state: 'ended', items: [
+    md('`validate` を含む関数を洗い出しました。'),
+    tool('Grep "validate|isValid" src web'), tool('Read src/checkout/validate.ts'), tool('Read web/src/forms/address.ts'),
+    md('## 結果', '重複は 4 か所。住所と郵便番号の規則が 3 通りある。', '', '| 規則 | validate.ts | order.ts | address.ts |', '|---|---|---|---|', '| 郵便番号 | `\\d{7}` | `\\d{3}-?\\d{4}` | `\\d{3}-\\d{4}` |', '| 電話 | なし | E.164 | 数字のみ |'),
+    ytool('report_step_done', '重複は 4 か所。郵便番号の規則が 3 通りある'),
+  ]}}});
+T({id: 'T-108', group: 'G-14', title: '共通の検証モジュール src/validation を作る', status: 'running', elapsed: '14m',
+  steps: [step('implement', 'done', {result: 'src/validation に住所・郵便番号の検証をまとめた。テスト 24 件が通る'}), step('review', 'running'), step('done')],
+  sessions: {
+    implementer: {state: 'live', items: [
+      md('`src/validation/` に住所・郵便番号・カード番号の検証をまとめます。'),
+      tool('Write src/validation/index.ts'), tool('Write src/validation/address.ts'), tool('Write src/validation/postal.ts'), tool('pnpm vitest run src/validation'),
+      md('郵便番号は v3 と同じく **数字 7 桁に正規化してから検査** する形にしました。', '', '~~~ts', "export const postalCode = z.string().transform(s => s.replace(/[-\\s]/g, '')).pipe(z.string().regex(/^\\d{7}$/, '郵便番号は 7 桁の数字'))", '~~~'),
+      ytool('report_step_done', 'src/validation に住所・郵便番号の検証をまとめた。テスト 24 件が通る'),
+    ]},
+    'review-1': {state: 'working', items: [
+      md('T-108 の差分 (group ブランチから) を審査します。'),
+      tool('git diff yhtye/G-14...HEAD --stat'), tool('Read src/validation/postal.ts'), tool('Read src/validation/address.ts', 'in_progress'),
+      {type: 'live', text: '住所の都道府県の検査が `address.ts` と既存の `checkout/validate.ts` で'},
+    ]},
+  }});
+T({id: 'T-109', group: 'G-14', title: '注文 API スキーマを v3 に移行', status: 'checkpoint', elapsed: '21m',
+  steps: [step('implement', 'done', {result: 'v3 の定義を追加。OrderV2 を消すとレガシー側 (呼び出し元 9 か所のうち 3) が壊れる'}), step('checkpoint', 'running'), step('review'), step('done')],
+  sessions: {implementer: {state: 'live', items: [
+    md('注文スキーマを v3 に寄せます。まず呼び出し元を調べます。'),
+    tool('Grep "OrderV2" src'), tool('Edit src/api/schema/order.ts'), tool('pnpm tsc --noEmit', 'failed'),
+    md('v3 の定義は入れましたが、`OrderV2` を消すとレガシー側 (T-110 の範囲) が壊れます。', '', '- 呼び出し元: **9 か所** (うち 3 か所はレガシー)', '- `OrderV2` は当面 deprecated で残すのが安全'),
+    ytool('report_step_done', 'v3 の定義を追加。OrderV2 を消すとレガシー側が壊れる'),
+  ]}}});
+T({id: 'T-110', group: 'G-14', title: 'レガシーの合計金額チェックを置き換え', status: 'handling', elapsed: '18m',
+  steps: [step('implement', 'running'), step('review'), step('done')],
+  helps: [{id: 'H-3', kind: 'blocked', message: '注文スキーマが v2 (税込の整数) と v3 (decimal の文字列) で混在しています。合計金額の検査をどちらに合わせるか決められません。'}],
+  sessions: {implementer: {state: 'live', items: [
+    md('`src/legacy/checkoutHelpers.js` の合計金額チェックを `src/validation/` に寄せます。'),
+    tool('Read src/legacy/checkoutHelpers.js'), tool('Grep "calcTotal" src'), tool('Read src/api/schema/order.ts'),
+    md('`order.ts` に v2 と v3 の定義が混在しています:', '', '~~~ts', "export const OrderV2 = z.object({ total: z.number().int(), currency: z.literal('JPY') })            // v2: 税込の整数", 'export const OrderV3 = z.object({ total: z.object({ amount: z.string(), currency: z.string() }) })  // v3: decimal の文字列', '~~~'),
+    ytool('help', 'kind=blocked · 注文スキーマが v2 と v3 で混在'),
+  ]}}});
+T({id: 'T-111', group: 'G-14', title: '住所フォームを共通モジュールへ差し替え', status: 'pending', depends_on: ['T-108'],
+  steps: [step('implement'), step('review'), step('done')]});
+T({id: 'T-112', group: 'G-14', title: 'カード番号の検証を Luhn 込みで共通化', status: 'running', elapsed: '9m',
+  steps: [step('implement', 'running'), step('review'), step('done')],
+  sessions: {implementer: {state: 'working', items: [
+    md('カード番号の検証を `src/validation/card.ts` にまとめます。Luhn のチェックも入れます。'),
+    tool('Read src/checkout/validate.ts'), tool('Write src/validation/card.ts'), tool('Write src/validation/card.test.ts'), tool('pnpm vitest run src/validation/card', 'in_progress'),
+  ]}}});
+const doneTask = (id, group, title, kind = 'code', review = true) => T({id, group, title, kind, status: 'done', elapsed: '7m',
+  steps: [step('implement', 'done', {result: `${title}: 完了`}), ...(review ? [step('review', 'done', {verdict: 'approve', result: '問題なし'})] : []), step('done', 'done')],
+  sessions: {implementer: {state: 'ended', items: [md(`${title}を進めます。`), tool('Read …'), ytool('report_step_done', `${title}: 完了`)]}}});
+doneTask('T-101', 'G-12', '決済画面の型エラーを解消');
+doneTask('T-102', 'G-12', 'Stripe の型定義を更新', 'code', false);
+doneTask('T-103', 'G-12', 'any を減らす (checkout/*)');
+doneTask('T-104', 'G-11', 'webhook の再送ロジックを調べる', 'investigate', false);
+doneTask('T-105', 'G-11', '再送間隔を指数バックオフに');
+T({id: 'T-106', group: 'G-11', title: '重複イベントの除外', status: 'cancelled', cancel_reason: 'T-105 に含めた', steps: [step('implement'), step('review'), step('done')]});
+doneTask('T-98', 'G-10', '返金額の丸めを銀行丸めに統一');
+doneTask('T-99', 'G-10', '丸めのテストを追加', 'code', false);
+
+const GROUPS = {
+  'G-12': {id: 'G-12', chat: 'C-7', title: '決済画面の型エラー解消', status: 'done', base: 'feat/checkout-refactor'},
+  'G-14': {id: 'G-14', chat: 'C-7', title: 'checkout バリデーション統合', status: 'active', base: 'feat/checkout-refactor'},
+  'G-11': {id: 'G-11', chat: 'C-5', title: 'webhook 再送の整理', status: 'active', base: 'feat/checkout-refactor'},
+  'G-10': {id: 'G-10', chat: 'C-6', title: '返金額の丸め', status: 'merge_blocked', base: 'fix/refund-rounding',
+    detail: 'fix/refund-rounding へのマージでコンフリクト (src/refund/calc.ts)'},
+};
+
+const CHATS = {};
+function C(o) { CHATS[o.id] = Object.assign({session: 'stopped', unread: false, queue: [], msgs: []}, o); }
+C({id: 'C-7', project: 'payments', wt: 0, title: 'チェックアウトのバリデーション整理', ago: '1m', session: 'running', msgs: [
+  user('チェックアウトのバリデーションを整理したい。まず現状を調べて、必要ならタスクに割って進めて。'),
+  thought('まず validate 系の関数がどこにあるかを Grep で洗い出し、スキーマとフォームを読む。重複が多ければグループに分ける。'),
+  tool('Grep "validate|isValid" src web'), tool('Read src/checkout/validate.ts'), tool('Read src/api/schema/order.ts'), tool('Read web/src/forms/address.ts'),
+  md('## 現状', 'バリデーションが **4 か所に重複** しています。', '',
+    '| 場所 | 対象 | 方式 |', '|---|---|---|',
+    '| `src/checkout/validate.ts` | 住所・カード | 手書き |', '| `src/api/schema/order.ts` | 注文 API | zod (v2 と v3 が混在) |',
+    '| `web/src/forms/address.ts` | 住所フォーム | yup |', '| `src/legacy/checkoutHelpers.js` | 合計金額 | 手書き |', '',
+    '郵便番号の規則も食い違っています:', '', '~~~ts',
+    "postalCode: z.string().regex(/^\\d{3}-?\\d{4}$/),  // order.ts (v2): ハイフン任意。v3 は数字 7 桁に正規化してから検査する",
+    '~~~', '', '## 進め方', '1. 共通の検証モジュール `src/validation/` を作る', '2. 注文 API のスキーマを v3 に寄せる (影響範囲を見てから続ける)',
+    '3. フォームとレガシーを差し替える', '4. カード番号の検証も同じ場所へ'),
+  ytool('create_group', 'G-14 checkout バリデーション統合 · 6 タスク'),
+  groupCard('G-14'),
+  md('G-14 として 6 タスクに分けて配りました。T-111 (フォーム) は T-108 の共通モジュールができてから始まります。'),
+  user('フォームの方は yup をやめて zod に揃えてほしい'),
+  ytool('set_instruction', 'T-111 · yup を外して zod に統一'),
+  md('了解です。T-111 の指示に「yup を外して zod に統一」を加えました。'),
+  notice('help_raised', 'help_id=H-3 task=T-110 kind=blocked', '注文スキーマが v2 (税込の整数) と v3 (decimal の文字列) で混在しています。合計金額の検査をどちらに合わせるか決められません。'),
+  notice('checkpoint_reached', 'task=T-109 step=2', 'v3 の定義を追加。OrderV2 を消すとレガシー側 (呼び出し元 9 か所のうち 3) が壊れる'),
+  md('T-110 が詰まりました。方針は **v3 へ寄せる** にします。T-109 の checkpoint とも関係するので、先に `order.ts` の v2 の定義を私の方で整理します。'),
+  tool('Read src/api/schema/order.ts'), tool('Edit src/api/schema/order.ts', 'in_progress'),
+  {type: 'live', text: ''},
+]});
+C({id: 'C-5', project: 'payments', wt: 0, title: '決済 webhook の再送処理を調べる', ago: '2h', session: 'ready', msgs: [
+  user('決済 webhook の再送処理を調べて、必要なら直して'),
+  tool('Grep "retryWebhook" src'), tool('Read src/webhook/retry.ts'),
+  md('再送は **固定 5 秒間隔で無制限** になっていました。', '', '- 指数バックオフ (最大 1 時間) に変える', '- 同じイベント ID の重複を除く'),
+  ytool('create_group', 'G-11 webhook 再送の整理 · 3 タスク'),
+  groupCard('G-11'),
+  ytool('cancel_task', 'T-106 · T-105 に含めた'),
+  notice('group_settled', 'group=G-11', '全タスクが終端になりました (完了 2 · 中止 1)。'),
+  md('T-104 と T-105 が完了し、T-106 は T-105 に含めたので中止しました。差分を確かめてからグループを完了 (マージ) します。'),
+]});
+C({id: 'C-3', project: 'payments', wt: 0, title: '依存の更新', ago: '6d', msgs: [user('依存を最新にして'), md('`pnpm up --latest` を実行し、テストが通ることを確認しました。')]});
+C({id: 'C-6', project: 'payments', wt: 1, title: '返金額の丸め誤差', ago: '1d', unread: true, msgs: [
+  user('返金額の丸め誤差を直して。銀行丸めに統一したい'),
+  ytool('create_group', 'G-10 返金額の丸め · 2 タスク'),
+  groupCard('G-10'),
+  notice('group_settled', 'group=G-10', '全タスクが終端になりました (完了 2)。'),
+  ytool('finish_group', 'CONFLICT (content): Merge conflict in src/refund/calc.ts\nマージを中止しました (merge_blocked)', false),
+  notice('merge_result', 'group=G-10 ok=false', 'fix/refund-rounding へのマージでコンフリクト (src/refund/calc.ts)'),
+  md('`fix/refund-rounding` へのマージが `src/refund/calc.ts` のコンフリクトで保留になりました。この作業ツリーの `calc.ts` が別の変更で書き換わっています。'),
+]});
+C({id: 'C-2', project: 'ledger', wt: 0, title: '月次締めの CSV に摘要の列', ago: 'now', session: 'running', msgs: [
+  user('月次締めの CSV 出力に摘要の列を足したい'),
+  tool('Read src/export/monthly.ts'), tool('Edit src/export/monthly.ts', 'in_progress'),
+]});
+C({id: 'C-1', project: 'infra', wt: 0, title: null, ago: '3d', session: 'ready', msgs: []});
+C({id: 'C-9', project: 'docs', wt: 0, title: 'ドキュメントのリンク切れを直す', ago: '12d', msgs: [user('リンク切れを直して'), md('12 件のリンクを直しました。')]});
+
+const PROJECTS = [
+  {id: 'payments', name: 'payments-api', path: '~/src/payments-api', open: true, worktrees: [
+    {branch: 'feat/checkout-refactor', main: true}, {branch: 'fix/refund-rounding'}, {branch: 'chore/deps-2026-10'}],
+    otherBranches: ['release/2026.9', 'spike/stripe-v3']},
+  {id: 'ledger', name: 'ledger', path: '~/src/ledger', open: true, worktrees: [{branch: 'main', main: true}], otherBranches: []},
+  {id: 'infra', name: 'infra-terraform', path: '~/src/infra-terraform', open: true, worktrees: [{branch: 'main', main: true}], otherBranches: ['feat/vpc-split']},
+  {id: 'docs', name: 'docs-site', path: '~/src/docs-site', open: false, worktrees: [{branch: 'main', main: true}], otherBranches: []},
+];
+CHATS['C-3'].wt = 2;
+
+/* ======================= 状態から読むもの (PC の taskInfo.ts / labels.ts と同じ規則) ======================= */
+const ui = {projectId: 'payments', chatId: 'C-7', view: 'work', mentions: [], newMention: null, picker: false,
+  branchForm: false, branchErr: '', otherOpen: false, wtOpen: {}, detailTab: null, settingsTab: 'agents', scope: 'global'};
+const project = () => PROJECTS.find(p => p.id === ui.projectId);
+const chat = () => CHATS[ui.chatId];
+const chatsOf = (pid, wt) => Object.values(CHATS).filter(c => c.project === pid && (wt === undefined || c.wt === wt));
+const groupsOf = cid => Object.values(GROUPS).filter(g => g.chat === cid);
+const tasksOf = gid => Object.values(TASKS).filter(t => t.group === gid);
+const isTerminal = t => t.status === 'done' || t.status === 'cancelled';
+const isOpenGroup = g => g.status === 'active' || g.status === 'finishing';
+function tone(t) {
+  switch (t.status) {
+    case 'pending': case 'awaiting_instruction': return 'waiting';
+    case 'running': return t.steps.find(s => s.status === 'running')?.kind === 'review' ? 'reviewing' : 'implementing';
+    case 'checkpoint': case 'handling': case 'interrupted': return 'handling';
+    case 'merging': case 'done': return 'done';
+    default: return 'cancelled';
+  }
+}
+const toneIcon = t => tone(t) === 'implementing' && t.kind === 'investigate' ? 'search' : TONE_ICON[tone(t)];
+const stepIcon = (s, t) => s.kind === 'implement' ? (t.kind === 'investigate' ? 'search' : 'code') : s.kind === 'review' ? 'eye' : s.kind === 'checkpoint' ? 'flag' : 'check';
+const awaitingFinish = g => g.status === 'active' && tasksOf(g.id).length > 0 && tasksOf(g.id).every(isTerminal);
+const groupLabel = g => awaitingFinish(g) ? '完了待ち' : GROUP_LABEL[g.status];
+const groupIcon = g => awaitingFinish(g) ? 'hourglass' : GROUP_ICON[g.status];
+function focusGroup(cid) {
+  const gs = groupsOf(cid), open = gs.filter(isOpenGroup);
+  return open.length ? open[open.length - 1] : gs[gs.length - 1] || null;
+}
+function groupProgress(g) {
+  const ts = tasksOf(g.id).filter(t => t.status !== 'cancelled');
+  return {done: ts.filter(t => t.status === 'done').length, total: ts.length, handling: ts.filter(t => tone(t) === 'handling').length};
+}
+function taskProgress(t) {
+  const done = t.steps.filter(s => s.status === 'done').length, run = t.steps.some(s => s.status === 'running') ? 0.5 : 0;
+  return Math.min(1, (done + run) / t.steps.length);
+}
+function taskMeta(t) {
+  const g = GROUPS[t.group];
+  if (t.status === 'done' && isOpenGroup(g)) {
+    if (g.status === 'finishing') return {icon: 'merge', text: 'マージ中'};
+    if (awaitingFinish(g)) return {icon: 'hourglass', text: 'グループの完了待ち'};
+    return {icon: 'hourglass', text: '他タスクの完了待ち'};
+  }
+  if (t.helps.length) return {icon: 'hourglass', text: '対処待ち'};
+  if (t.status === 'awaiting_instruction') return {icon: 'hourglass', text: '指示待ち'};
+  if (t.status === 'pending' && t.depends_on.length) return {icon: 'hourglass', text: t.depends_on.join(', ')};
+  return null;
+}
+const sessionKeys = t => Object.keys(t.sessions);
+const taskAgent = t => sessionKeys(t).slice(-1)[0] || null;
+function taskLog(t) {
+  const k = taskAgent(t); if (!k) return [];
+  const out = [];
+  for (const it of [...t.sessions[k].items].reverse()) {
+    if (out.length === 2) break;
+    if (it.type === 'tool') out.push({icon: 'wrench', text: it.title});
+    else if (it.type === 'ytool') out.push({icon: 'wrench', text: it.name});
+    else if ((it.type === 'md' || it.type === 'live') && it.text) out.push({icon: 'message', text: it.text.split('\n')[0]});
+  }
+  return out.reverse();
+}
+const liveSubagents = cid => groupsOf(cid).flatMap(g => tasksOf(g.id)).flatMap(t => Object.values(t.sessions)).filter(s => s.state !== 'ended').length;
+const chatRunning = c => c.session === 'running' || c.session === 'starting';
+// プロジェクトのリング (PC の projectRing, T-49): 動作中 (ターン実行中 or タスクが running / merging) なら回る緑、なければ中を抜いた緑
+function projectRunning(p) {
+  return chatsOf(p.id).some(c => chatRunning(c) || groupsOf(c.id).some(g => tasksOf(g.id).some(t => t.status === 'running' || t.status === 'merging')));
+}
+const projectRing = p => projectRunning(p) ? 'running' : 'ready';
+const chatRing = c => chatRunning(c) ? 'running' : c.session === 'ready' ? 'ready' : 'stopped';
+
+/* ======================= 描画: 左パネル ======================= */
+function renderLeft() {
+  const p = project();
+  const rail = `
+    <nav class="rail" aria-label="views">
+      <button class="rail-btn ${ui.view === 'work' ? 'active' : ''}" data-act="view" data-v="work" aria-label="コーディング" aria-pressed="${ui.view === 'work'}">${icon('code')}</button>
+      <button class="rail-btn ${ui.view === 'runs' ? 'active' : ''}" data-act="view" data-v="runs" aria-label="履歴" aria-pressed="${ui.view === 'runs'}">${icon('history')}</button>
+      <span class="spacer"></span>
+      <button class="rail-btn" data-act="settings" aria-label="設定">${icon('sliders')}</button>
+    </nav>`;
+  const side = ui.view === 'runs'
+    ? `<div class="empty">${icon('history')}現状は何もありません</div>`
+    : `<div class="side-label">${icon('folder', 's14')}Project</div>${pickerHtml(p)}${bgProjectsHtml()}${branchesHtml(p)}`;
+  $('left').innerHTML = `
+    <div class="cols">${rail}<div class="side" id="side">${side}</div></div>
+    <div class="side-foot">
+      <div class="host"><span class="dot ok" aria-label="接続中"></span><b>desk-arch</b><span class="spacer"></span>${icon('clock', 's12')}now</div>
+      <div class="usage">Claude Max<span class="sep"></span>
+        <span class="meter">5h <span class="bar"><i style="width:94%;background:var(--usage-5h)"></i></span>94% <span class="rs">${icon('hourglass', 's12')}3h 35m</span></span>
+        <span class="meter">7d <span class="bar"><i style="width:40%;background:var(--usage-week)"></i></span>40% <span class="rs">${icon('hourglass', 's12')}2d 4h</span></span>
+      </div>
+    </div>`;
+}
+function pickerHtml(p) {
+  const opts = ui.picker ? `<div class="ppop" role="listbox" aria-label="プロジェクト">${PROJECTS.map(q => `
+      <button class="popt" role="option" aria-selected="${q.id === p.id}" data-act="project" data-id="${q.id}">
+        <span class="ring ${projectRing(q)}"></span><span class="name">${esc(q.name)}</span>${q.id === p.id ? icon('check', 's16 check') : ''}</button>`).join('')}</div>` : '';
+  return `<div class="picker" id="picker">
+      <button class="ptrigger" data-act="picker" aria-haspopup="listbox" aria-expanded="${ui.picker}">
+        <span class="ring ${projectRing(p)}" data-testid="current-ring"></span><span class="name">${esc(p.name)}</span>${icon('chevD', 's16 chev')}</button>${opts}</div>`;
+}
+function bgProjectsHtml() {
+  const bg = PROJECTS.filter(q => q.open && q.id !== ui.projectId);
+  if (!bg.length) return '';
+  return `<div class="bgp"><span class="cap" title="バックグラウンドで動作中">${icon('activity', 's14')}</span>
+    <ul aria-label="バックグラウンドで動作中のプロジェクト">${bg.map(q => `<li><button class="bgchip" data-act="project" data-id="${q.id}" aria-label="${esc(q.name)} に切り替え">
+      <span class="ring ${projectRing(q)}"></span><span class="name">${esc(q.name)}</span></button></li>`).join('')}</ul></div>`;
+}
+function branchesHtml(p) {
+  const form = ui.branchForm ? `
+    <form class="bform" id="bform" aria-label="新しいブランチ">
+      <input id="bname" placeholder="feature/name" aria-label="ブランチ名" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <select id="bfrom" aria-label="開始点">${[`HEAD (${p.worktrees[0].branch})`, ...p.worktrees.slice(1).map(w => w.branch), ...p.otherBranches].map(b => `<option>${esc(b)}</option>`).join('')}</select>
+      <button class="ok" aria-label="作成">${icon('check', 's16')}</button>
+      ${ui.branchErr ? `<div class="err" role="alert">${esc(ui.branchErr)}</div>` : ''}
+    </form>` : '';
+  const wts = p.worktrees.map((w, wi) => {
+    const chats = chatsOf(p.id, wi).sort((a, b) => ageRank(a.ago) - ageRank(b.ago));
+    const key = p.id + ':' + wi, open = ui.wtOpen[key] ?? (chats.length > 0 || !!w.main);
+    const running = chats.some(chatRunning);
+    return `<div class="wt">
+        <button class="wtrow" data-act="toggle-wt" data-key="${key}" aria-expanded="${open}">${icon('chevD', 's14 wcaret')}
+          ${running ? '<span class="ring running" aria-label="実行中"></span>' : `<span class="dot ${w.main ? 'ok' : ''}"></span>`}
+          <span class="bname">${esc(w.branch)}</span></button>
+        <button class="add" data-act="newchat" data-wt="${wi}" aria-label="${esc(w.branch)} の新しいチャット">${icon('msgPlus', 's16')}</button>
+      </div>
+      ${open ? chats.map(c => `<button class="chat ${c.id === ui.chatId ? 'sel' : ''}" data-act="chat" data-id="${c.id}">
+          <span class="ring ${chatRing(c)}"></span><span class="ct">${esc(c.title || NEW_CHAT_TITLE)}</span>
+          ${c.unread ? '<span class="unread-dot" aria-label="未読の通知"></span>' : ''}<span class="ago">${esc(c.ago)}</span></button>`).join('') : ''}`;
+  }).join('');
+  const others = p.otherBranches.length ? `
+    <div class="wt"><button class="wtrow" data-act="toggle-others" aria-expanded="${ui.otherOpen}" aria-label="他のブランチ (${p.otherBranches.length})">${icon('chevD', 's14 wcaret')}${icon('branch', 's14')}
+      <span class="bname">${p.otherBranches.length}</span></button></div>
+    ${ui.otherOpen ? p.otherBranches.map(b => `<button class="chat other" data-act="newchat-branch" data-branch="${esc(b)}" aria-label="${esc(b)} の新しいチャット">
+      ${icon('msgPlus', 's16')}<span class="ct mono" style="font-size:12.5px">${esc(b)}</span></button>`).join('') : ''}` : '';
+  return `<div class="section-h">${icon('branch', 's14')}<span class="spacer">Branch</span>
+      <button class="iconbtn sm" style="margin:-10px -8px -10px 0" data-act="branch-new" aria-label="新しいブランチ" aria-expanded="${ui.branchForm}">${icon('plus', 's16')}</button></div>
+    ${form}${wts}${others}`;
+}
+const ageRank = a => a === 'now' ? 0 : ({m: 1, h: 60, d: 1440}[a.slice(-1)] || 1e6) * parseInt(a, 10);
+
+/* ======================= 描画: 中央 ======================= */
+function sessionBadge(c) {
+  if (c.session === 'starting') return `<span class="sbadge" aria-label="オーケストレータ: starting">${icon('loader', 's16 spin')}</span>`;
+  const cls = c.session === 'running' ? 'working' : c.session === 'ready' ? 'idle' : '';
+  const label = c.session === 'running' ? 'working' : c.session === 'ready' ? 'idle' : 'not started';
+  return `<span class="sbadge" aria-label="オーケストレータ: ${label}"><span class="sdot ${cls}"></span></span>`;
+}
+function renderTopbar() {
+  if (ui.view === 'runs') {
+    $('topbar').innerHTML = `<button class="iconbtn" data-act="open-left" aria-label="プロジェクトとチャット">${icon('menu')}</button>
+      <div class="titles"><div class="title">履歴</div></div>`;
+    return;
+  }
+  const c = chat(), p = project();
+  $('topbar').innerHTML = `
+    <button class="iconbtn" data-act="open-left" aria-label="プロジェクトとチャット">${icon('menu')}</button>
+    <div class="titles">
+      <div class="title" data-testid="chat-title">${esc(c.title || NEW_CHAT_TITLE)}</div>
+      <div class="sub"><span class="pill">${icon('branch', 's12')}<span>${esc(p.worktrees[c.wt].branch)}</span></span></div>
+    </div>
+    ${sessionBadge(c)}
+    <button class="iconbtn" data-act="open-right" aria-label="タスク">${icon('list')}</button>`;
+}
+function lineFold(key, iconName, label, extra, body, cls = '') {
+  const open = openKeys.has(key);
+  return `<button class="line ${cls}" data-act="toggle" data-key="${key}" aria-expanded="${open}">${icon(iconName, 's14 k')}<span class="lbl">${label}</span>${extra}${icon('chevR', 's14 chev')}</button>
+    ${open ? body : ''}`;
+}
+const TOOL_ST = {completed: 'check', failed: 'x', in_progress: 'loader', pending: 'clock'};
+function renderItems(items, prefix) {
+  return items.map((m, i) => {
+    const key = prefix + ':' + i;
+    switch (m.type) {
+      case 'user': return `<div class="row user"><div class="bubble">${esc(m.text)}${m.queued ? `<span class="queued" aria-label="待機中">${icon('clock', 's14')}</span>` : ''}</div></div>`;
+      case 'md': return `<div class="row"><div class="md">${renderMd(m.text)}</div></div>`;
+      case 'live': return `<div class="row"><div class="md">${m.text ? renderMd(m.text) : ''}<span class="caret"></span></div></div>`;
+      case 'thought': return `<div class="row">${lineFold(key, 'thought', '', '', `<div class="fold-body prose">${esc(m.text)}</div>`)}</div>`;
+      case 'tool': return `<div class="row"><div class="line">${icon('wrench', 's14 k')}<span class="lbl">${esc(m.title)}</span>
+          <span class="st ${m.status}">${icon(TOOL_ST[m.status], 's14' + (m.status === 'in_progress' ? ' spin' : ''))}</span></div></div>`;
+      case 'ytool': return `<div class="row">${lineFold(key, 'bolt', esc(m.name),
+          `${m.by === 'user' ? icon('user', 's12') : ''}<span class="st ${m.ok ? 'completed' : 'failed'}">${icon(m.ok ? 'check' : 'alert', 's14')}</span>`,
+          `<div class="fold-body">${esc(m.detail)}</div>`, m.ok ? '' : 'err')}</div>`;
+      case 'notice': return `<div class="row"><div class="notice">${icon('bell', 's12')}<span class="nk">${esc(m.kind)}</span><span>${esc(m.attrs)}</span>
+          ${m.body ? `<div class="nb">${esc(m.body)}</div>` : ''}</div></div>`;
+      case 'turn': return `<div class="row"><div class="line">${icon('stop', 's12 k')}<span class="lbl">turn ended: ${esc(m.outcome)}</span></div></div>`;
+      case 'group': {
+        const g = GROUPS[m.id];
+        return `<div class="row"><div class="gcardc"><div class="h">${icon('layers', 's14')}<span class="t">${esc(g.title)}</span><span>${g.id}</span></div>
+          ${tasksOf(g.id).map(t => `<div class="r">${icon(toneIcon(t), 's14 ti-' + tone(t))}<span class="n">${t.id}</span><span class="tt">${esc(t.title)}</span></div>`).join('')}</div></div>`;
+      }
+    }
+    return '';
+  }).join('');
+}
+const openKeys = new Set();
+function renderMsgs(stick = true) {
+  const box = $('msgs');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  if (ui.view === 'runs') box.innerHTML = `<div class="empty">${icon('history')}現状は何もありません</div>`;
+  else {
+    const c = chat();
+    box.innerHTML = c.msgs.length ? renderItems(c.msgs, 'c:' + c.id) : `<div class="empty">${icon('message')}会話はまだありません</div>`;
+  }
+  if (stick && atBottom) box.scrollTop = box.scrollHeight;
+}
+// グループ待機バナー: active / finishing のグループがある間だけ (PC の WaitBanner と同じ文)
+function renderWaitbar() {
+  const g = ui.view === 'work' ? focusGroup(ui.chatId) : null;
+  if (!g || !isOpenGroup(g)) { $('waitbar-slot').innerHTML = ''; return; }
+  const p = groupProgress(g), finishing = g.status === 'finishing', awaiting = awaitingFinish(g);
+  const text = finishing ? `グループ「${g.title}」を base ブランチへマージ中`
+    : awaiting ? `グループ「${g.title}」の全タスクが完了 — オーケストレータがグループを完了 (マージ) するのを待っています`
+    : `グループ「${g.title}」の全タスク完了まで待機中 — ${p.done}/${p.total} 完了${p.handling ? ` · ${p.handling} 件 対処中` : ''}`;
+  const share = p.total ? Math.round(p.done / p.total * 100) : 0;
+  $('waitbar-slot').innerHTML = `<div class="waitbar" role="status" data-testid="wait-banner">${icon(finishing ? 'merge' : awaiting ? 'hourglass' : 'layers', 's14' + (finishing ? ' busy' : ''))}
+    <span>${esc(text)}</span><span class="wp"><i style="width:${share}%"></i></span></div>`;
+}
+function renderComposer() {
+  const runs = ui.view === 'runs';
+  $('composer').style.display = runs ? 'none' : '';
+  if (runs) return;
+  const c = chat(), running = c.session === 'running', starting = c.session === 'starting';
+  $('stop').innerHTML = icon('stop');
+  $('stop').style.display = running ? '' : 'none';
+  $('send').innerHTML = icon('send');
+  $('send').disabled = !$('input').value.trim();
+  const hint = starting ? `<span class="hint" role="status">${icon('loader', 's12 spin')}起動中…</span>`
+    : running ? `<span class="hint" role="status">${icon('clock', 's12')}作業中 · 送信分はターン終了後に届きます</span>` : '';
+  const html = ui.mentions.map(m => `<button class="mchip ${m.task === ui.newMention ? 'new' : ''}" data-act="unmention" data-id="${m.task}" aria-label="${m.task} の引用を外す">
+      ${icon('at', 's14')}<span>${esc(m.task)} ${esc(m.title)}</span>${icon('x', 's12')}</button>`).join('') + hint;
+  if (html !== lastCrow) { $('crow').innerHTML = html; lastCrow = html; }   // 流れている間の再描画で、積んだチップの弾みを切らない
+}
+let lastCrow = null;
+function renderCenter(stick = true) { renderTopbar(); renderMsgs(stick); renderWaitbar(); renderComposer(); }
+
+/* ======================= 描画: 右パネル (PC の TaskColumn / TaskCard) ======================= */
+function taskCard(t) {
+  const tn = tone(t), active = tn === 'implementing' || tn === 'reviewing';
+  const log = isTerminal(t) ? [] : taskLog(t), meta = taskMeta(t), agent = taskAgent(t);
+  const steps = t.steps.map((s, i) => `${i ? '<li class="lk"></li>' : ''}<li class="${s.status} ${tn}" aria-label="${STEP_LABEL[s.kind]} ${s.status}">${icon(stepIcon(s, t), 's14')}</li>`).join('');
+  return `<article class="task c-${tn}" data-task="${t.id}" aria-label="task ${t.id}">
+    <div class="under" aria-hidden="true"><span class="at">${icon('at')}</span></div>
+    <div class="slide" data-act="task" data-id="${t.id}">
+      <div class="th">
+        <span class="chip tone-${tn}">${icon(toneIcon(t))}${TONE_LABEL[tn]}</span>
+        <span class="tid">${t.id}</span><span class="spacer"></span>
+        <button class="iconbtn sm" data-act="mention" data-id="${t.id}" aria-label="${t.id} をオーケストレータへ引用">${icon('at', 's16')}</button>
+        ${isTerminal(t) ? '' : `<button class="iconbtn sm" data-act="cancel-task" data-id="${t.id}" aria-label="${t.id} を中止 (エージェントを停止)">${icon('stop')}</button>`}
+      </div>
+      <div class="tt">${esc(t.title)}</div>
+      ${active ? `<div class="prog ${tn}"><i style="width:${Math.round(taskProgress(t) * 100)}%"></i><b></b></div>` : ''}
+      ${t.helps.map(h => `<div class="note">${icon(HELP_ICON[h.kind], 's14')}<span>${esc(h.message)}</span></div>`).join('')}
+      ${t.cancel_reason ? `<div class="meta">${icon('ban', 's12')}${esc(t.cancel_reason)}</div>` : ''}
+      ${log.length ? `<div class="log">${log.map(l => `<div>${icon(l.icon, 's12')}<span>${esc(l.text)}</span></div>`).join('')}</div>` : ''}
+      <div class="tfoot"><ol class="steps">${steps}</ol><span class="spacer"></span>
+        ${agent ? `<span class="tagent">${icon('bot', 's12')}${esc(agent)}${t.elapsed ? ' · ' + esc(t.elapsed) : ''}</span>` : ''}</div>
+      ${meta ? `<div class="meta">${icon(meta.icon, 's12')}${esc(meta.text)}</div>` : ''}
+    </div>
+  </article>`;
+}
+function groupBar(g) {
+  const p = groupProgress(g), cancellable = g.status === 'active' || g.status === 'merge_blocked';
+  return `<div class="gbar" aria-label="group ${g.id}">
+      <span class="chip gs-${g.status}" data-testid="group-status-${g.id}">${icon(groupIcon(g))}${groupLabel(g)}</span>
+      <span class="gid">${g.id}</span><span class="spacer"></span>
+      <span class="cnt">${icon('check', 's12')}${p.done}/${p.total}</span>
+      ${p.handling ? `<span class="cnt h" aria-label="${p.handling} 件 対処中">${icon('alert', 's12')}${p.handling}</span>` : ''}
+      ${cancellable ? `<button class="iconbtn sm" data-act="cancel-group" data-id="${g.id}" aria-label="グループを中止">${icon('stop')}</button>` : ''}
+      <span class="gbr">${icon('branch', 's12')}<span>yhtye/${g.id}</span>${icon('arrowL', 's12')}<span>${esc(g.base)}</span></span>
+    </div>
+    ${g.status === 'merge_blocked' ? `<div class="galert" role="alert">${icon('alert', 's16')}<span>base ブランチへのマージが保留されています: ${esc(g.detail || '理由不明')}</span>
+      <button class="btn tonal" data-act="retry-merge" data-id="${g.id}">${icon('refresh', 's14')}マージを再試行</button></div>` : ''}
+    ${g.detail && g.status !== 'merge_blocked' ? `<div class="gmeta">${esc(g.detail)}</div>` : ''}`;
+}
+function renderRight() {
+  if (ui.view === 'runs') { $('right').innerHTML = ''; return; }
+  const g = focusGroup(ui.chatId);
+  const older = g ? groupsOf(ui.chatId).filter(x => x.id !== g.id).reverse() : [];
+  const cards = x => tasksOf(x.id).map(taskCard).join('') || `<div class="empty">${icon('list')}タスクはまだありません</div>`;
+  const body = !g ? `<div class="empty" style="margin-top:40px">${icon('list')}グループはまだありません</div>`
+    : `${groupBar(g)}${cards(g)}
+      ${older.length ? `<details class="past" ${openKeys.has('past') ? 'open' : ''}><summary data-act="toggle-past" aria-label="過去のグループ (${older.length})">${icon('chevD', 's14 chev')}${icon('history', 's14')}過去のグループ ${older.length}</summary>
+        ${older.map(x => `<div class="pg">${groupBar(x)}${cards(x)}</div>`).join('')}</details>` : ''}`;
+  $('right').innerHTML = `
+    <header class="rhead">${icon('list', 's16')}${g ? `<span class="gchip">${esc(g.title)}</span>` : ''}<span class="spacer"></span>
+      <span class="subs" aria-label="動いているサブエージェントのセッション数">${icon('bot', 's14')}${liveSubagents(ui.chatId)}</span></header>
+    <div class="rbody" id="rbody">${body}</div>`;
+}
+
+/* ======================= 描画: タスク詳細 = エージェントの出力 (PC の AgentOutput) ======================= */
+function renderDetail(id) {
+  const t = TASKS[id], tn = tone(t), keys = sessionKeys(t);
+  if (!ui.detailTab || !t.sessions[ui.detailTab]) ui.detailTab = keys[keys.length - 1] || null;
+  const tabs = keys.length ? `<div class="stabs hscroll">${keys.map(k => {
+    const st = t.sessions[k].state;
+    return `<button class="stab ${k === ui.detailTab ? 'sel' : ''}" data-act="dtab" data-k="${k}"><span class="sdot ${st === 'working' ? 'working' : st === 'live' ? 'idle' : ''}"></span>${esc(k)}</button>`;
+  }).join('')}</div>` : '';
+  const results = t.steps.filter(s => s.result);
+  const res = results.length ? `<div class="results" aria-label="step results">${results.map(s => `<div class="result">${icon(stepIcon(s, t), 's14')}
+      ${s.verdict ? `<span class="v ${s.verdict}">${icon(s.verdict === 'approve' ? 'check' : 'refresh', 's12')}</span>` : ''}<span>${esc(s.result)}</span></div>`).join('')}</div>` : '';
+  const body = ui.detailTab ? renderItems(t.sessions[ui.detailTab].items, 'd:' + id + ':' + ui.detailTab)
+    : `<div class="empty" style="margin-top:24px">${icon('bot')}${t.id} のエージェントは未起動です</div>`;
+  $('detail').innerHTML = `
+    <header class="dhead">
+      <button class="iconbtn" data-act="back" aria-label="戻る">${icon('back')}</button>
+      <div class="titles"><div class="tid"><span class="chip tone-${tn}">${icon(toneIcon(t))}${TONE_LABEL[tn]}</span>${t.id} · ${t.group}</div><div class="tt">${esc(t.title)}</div></div>
+    </header>
+    <div class="dbody">${tabs}${res}<div class="dout">${body}</div></div>`;
+}
+
+/* ======================= 描画: 設定 (PC の SettingsModal。リモート接続は除く) ======================= */
+const AGENTS = [
+  {role: 'オーケストレータ', hint: 'あなたと話し、タスクを組む', icon: 'message', rows: [{h: 'Claude Code', m: 'claude-opus-5-5', e: 'high', memo: '', def: true}]},
+  {role: '実装', hint: 'code タスク', icon: 'code', rows: [{h: 'Claude Code', m: 'claude-sonnet-5-5', e: 'medium', memo: 'ふつうの変更', def: true}, {h: 'Claude Code', m: 'claude-opus-5-5', e: 'high', memo: '設計が絡む難しい変更に'}]},
+  {role: '調査', hint: 'investigate タスク', icon: 'search', rows: [{h: 'Claude Code', m: 'claude-haiku-4-5', e: '指定なし', memo: '', def: true}]},
+  {role: 'レビュー', hint: 'review Step', icon: 'eye', rows: [{h: 'Codex', m: 'gpt-5.5-codex', e: 'high', memo: '', def: true}]},
+];
+const HARNESSES = [
+  {n: 'Claude Code', ok: true, p: 'npx — /usr/bin/npx (PATH)'}, {n: 'OpenCode', ok: true, p: 'opencode — ~/.bun/bin/opencode (既知の場所)'},
+  {n: 'Codex', ok: true, p: 'codex — ~/.local/bin/codex (PATH) · npx — /usr/bin/npx (PATH)'}, {n: 'Devin', ok: false, p: 'devin — 見つかりません'},
+  {n: 'MiniMax Code', ok: false, p: 'mcode — 見つかりません'}, {n: 'Google Antigravity', ok: false, p: 'agy_acp_server.par — 見つかりません'}, {n: 'Grok Build', ok: false, p: 'grok — 見つかりません'},
+];
+const SECRETS = ['OPENROUTER_API_KEY_CODEX', 'STRIPE_TEST_KEY'];
+function renderSettings() {
+  const tabs = [['agents', 'bot', 'エージェント'], ['harnesses', 'terminal', 'ハーネス'], ['secrets', 'key', '秘密の環境変数']]
+    .map(([k, ic, l]) => `<button class="${ui.settingsTab === k ? 'sel' : ''}" data-act="stab" data-k="${k}">${icon(ic, 's16')}${l}</button>`).join('');
+  let body = '';
+  if (ui.settingsTab === 'agents') {
+    body = `<div class="scope" role="group" aria-label="設定の範囲">
+        <button class="${ui.scope === 'global' ? 'sel' : ''}" data-act="scope" data-k="global">${icon('globe', 's14')}全体</button>
+        <button class="${ui.scope === 'project' ? 'sel' : ''}" data-act="scope" data-k="project">${icon('folder', 's14')}${esc(project().name)}</button></div>
+      <div class="snote">役割ごとに、使えるハーネス × モデル × effort の行を並べます。★ の行が既定で、オーケストレータは各行の用途メモを読んでタスクごとに行を選べます。変更はすぐ保存され、新しく起動するエージェントから有効です。</div>
+      ${AGENTS.map(a => `<section class="role"><div class="rh">${icon(a.icon, 's16')}${a.role}<small>${a.hint}</small></div>
+        ${ui.scope === 'project' ? `<label class="inherit"><input type="checkbox" checked> 全体の設定を使う</label>` : `
+        ${a.rows.map(r => `<div class="cand"><span class="star ${r.def ? 'on' : ''}" aria-label="既定">${icon('star', 's16')}</span>
+          <span class="m">${esc(r.h)} · ${esc(r.m)} · ${esc(r.e)}</span><button class="del" aria-label="この行を削除">${icon('trash', 's16')}</button>
+          <span class="memo">${r.memo ? esc(r.memo) : '<span class="dim">用途メモ (例: 設計が絡む難しい変更に)</span>'}</span></div>`).join('')}
+        <button class="addrow">${icon('plus', 's14')}行を追加</button>`}</section>`).join('')}`;
+  } else if (ui.settingsTab === 'harnesses') {
+    body = `<button class="btn outline" style="justify-self:start">${icon('refresh', 's14')}再検出</button>
+      <div class="hlist">${HARNESSES.map(h => `<div class="hitem"><div class="hn">${esc(h.n)}<span class="chip ${h.ok ? 'tone-done' : 'tone-cancelled'}">${h.ok ? 'インストール済み' : '未インストール'}</span></div>
+        <div class="hp">${esc(h.p)}</div>${h.ok ? '' : `<form class="sform" onsubmit="return false"><input placeholder="主実行ファイルの絶対パス" aria-label="${esc(h.n)} の手動パス"><button class="btn outline" style="height:42px">保存</button></form>`}</div>`).join('')}</div>`;
+  } else {
+    body = `<div class="snote">エージェントに渡す秘密の環境変数 (API キーなど) を登録します。値は OS のキーリングに保存され、Yhtye は名前だけを覚えます。登録した変数は、これから起動するすべてのエージェントの環境に入ります。</div>
+      <form class="sform" onsubmit="return false"><input placeholder="NAME (例 OPENROUTER_API_KEY_CODEX)" aria-label="変数名"><input type="password" placeholder="値" aria-label="値"><button class="btn outline" style="height:42px">${icon('plus', 's14')}登録</button></form>
+      <div class="hlist">${SECRETS.map(s => `<div class="hitem"><div class="hn"><span class="mono" style="font-size:12.5px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">${s}</span><span class="chip tone-done">登録済み</span>
+        <button class="iconbtn sm" aria-label="上書き">${icon('refresh', 's16')}</button><button class="iconbtn sm" aria-label="削除">${icon('trash', 's16')}</button></div></div>`).join('')}</div>`;
+  }
+  $('settings').innerHTML = `
+    <header class="dhead"><button class="iconbtn" data-act="back" aria-label="戻る">${icon('back')}</button><div class="titles"><div class="tt">設定</div></div></header>
+    <div class="stabs2 hscroll">${tabs}</div>
+    <div class="dbody"><div class="sbody">${body}</div></div>`;
+}
+
+/* ======================= 画面の積み重ねと「戻る」 =======================
+   状態 = { panel: null|'left'|'right', screen: null|'detail'|'settings', task }。開くたびに history に積む。
+   戻る (Android の戻る = ブラウザの戻る、モックでは Esc も) は 1 段ずつ閉じる: 詳細 → パネル → 中央。 */
+let nav = {panel: null, screen: null, task: null, depth: 0};
+const historyOk = (() => { try { history.replaceState({panel: null, screen: null, task: null, depth: 0}, ''); return true; } catch { return false; } })();
+function pushNav(next) {
+  next = Object.assign({}, nav, next, {depth: nav.depth + 1});
+  if (historyOk) history.pushState(next, '');
+  applyNav(next);
+}
+function back(steps = 1) {
+  if (nav.depth <= 0) return;
+  steps = Math.min(steps, nav.depth);
+  if (historyOk) history.go(-steps);
+  else applyNav(steps >= nav.depth ? {panel: null, screen: null, task: null, depth: 0} : Object.assign({}, nav, nav.screen ? {screen: null, depth: nav.depth - 1} : {panel: null, depth: nav.depth - 1}));
+}
+window.addEventListener('popstate', e => applyNav(e.state || {panel: null, screen: null, task: null, depth: 0}));
+function applyNav(next) {
+  const prev = nav; nav = next;
+  const W = panelW(), target = next.panel === 'left' ? W : next.panel === 'right' ? -W : 0;
+  if (target !== pos) setPos(target, 240);
+  if (next.panel === 'right') renderRight();
+  if (next.panel !== 'left' && ui.picker) { ui.picker = false; renderLeft(); }
+  for (const id of ['detail', 'settings']) {
+    const el = $(id), want = next.screen === id;
+    if (want && (!el.classList.contains('open') || prev.task !== next.task)) {
+      if (id === 'detail') { if (prev.task !== next.task) ui.detailTab = null; renderDetail(next.task); $('detail').querySelector('.dbody').scrollTop = 0; }
+      else renderSettings();
+      el.classList.add('open');
+    } else if (!want && el.classList.contains('open')) {
+      el.classList.remove('open'); el.classList.add('closing');
+      setTimeout(() => el.classList.remove('closing'), 280);
+    }
+  }
+  $('screendim').classList.toggle('on', !!next.screen);
+}
+
+/* ======================= パネルの位置 ======================= */
+const app = $('app'), center = $('center'), shield = $('shield');
+const PEEK = 64;
+let pos = 0;
+const panelW = () => app.clientWidth - PEEK;
+function setPos(x, ms) {
+  center.style.transition = ms ? `transform ${ms}ms cubic-bezier(.2,.8,.2,1)` : 'none';
+  center.style.transform = x ? `translate3d(${x}px,0,0)` : '';
+  pos = x;
+  const W = panelW();
+  if (x > 0) app.dataset.reveal = 'left'; else if (x < 0) app.dataset.reveal = 'right';
+  center.classList.toggle('shifted', x !== 0 || !!ms && app.dataset.reveal);
+  shield.style.opacity = Math.min(1, Math.abs(x) / W);
+  if (x === 0) {
+    const done = () => { if (pos === 0) { app.dataset.reveal = ''; center.classList.remove('shifted'); } };
+    if (ms) setTimeout(done, ms + 20); else done();
+  }
+}
+window.addEventListener('resize', () => { const W = panelW(); setPos(nav.panel === 'left' ? W : nav.panel === 'right' ? -W : 0, 0); });
+
+/* ======================= ジェスチャ =======================
+   1. 画面の左右 24px から始まったタッチは Android の「戻る」ジェスチャ用として無視する (端を光らせて知らせる)。
+   2. 横にスクロールできる要素 (.hscroll: コードブロック・表・セッションのタブ) の上で、実際にはみ出していれば、その要素のスクロールを優先する。
+   3. 最初の 10px の向きで決める。縦なら縦スクロールに固定し、その指では横に切り替えない。
+   4. 横に決まったら、始めた場所と向きで 1 つを選ぶ (以後その指では変えない):
+      - タスク詳細が開いている: 右向き (左→右) = 詳細を閉じるドラッグ。左向きは何もしない。
+      - 右パネルが開いていて、タスクカードの上で始めた: 左向き (右→左) = カードのメンションスワイプ。右向きはパネルを閉じるドラッグ。
+      - それ以外: パネルのドラッグ (1 回で動けるのは今の位置から隣まで)。
+   5. 離したとき: パネルと詳細は、速度が 0.35px/ms を超えていればその向きへ、そうでなければ近い方 (詳細は幅の 35%) へ。
+      カードは 88px を超えていれば (または 40px 以上で 0.45px/ms 超のフリック) メンションを確定、足りなければ戻る。 */
+const EDGE = 24, SLOP = 10, FLING = 0.35, ROW_ARM = 88, ROW_MAX = 132, ROW_FLING = 0.45, ROW_FLING_MIN = 40, DETAIL_CLOSE = 0.35;
+let g = null, suppressClick = false;
+function flashEdge(side) {
+  const el = side === 'left' ? $('edgeL') : $('edgeR');
+  el.classList.add('show'); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 650);
+}
+function velocity(samples) {
+  const a = samples[0], b = samples[samples.length - 1];
+  return b[0] > a[0] ? (b[1] - a[1]) / (b[0] - a[0]) : 0;
+}
+app.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (g) return;
+  const r = app.getBoundingClientRect(), x = e.clientX - r.left;
+  if (x < EDGE || x > r.width - EDGE) { g = {id: e.pointerId, mode: 'edge'}; flashEdge(x < EDGE ? 'left' : 'right'); return; }
+  const hs = e.target.closest('.hscroll');
+  if (hs && hs.scrollWidth > hs.clientWidth + 1) {
+    g = {id: e.pointerId, mode: 'native', el: hs, sx: e.clientX, sl: hs.scrollLeft, mouse: e.pointerType === 'mouse'};
+    return;
+  }
+  if (e.target.closest('textarea, input, select, .ppop')) return;
+  const ctx = nav.screen === 'detail' ? 'detail' : nav.screen ? null : 'panel';
+  if (!ctx) return;
+  const row = ctx === 'panel' && nav.panel === 'right' ? e.target.closest('#right .task') : null;
+  g = {id: e.pointerId, mode: 'pending', ctx, row, sx: e.clientX, sy: e.clientY, base: pos, dx: 0, samples: [[e.timeStamp, e.clientX]], mouse: e.pointerType === 'mouse'};
+});
+app.addEventListener('pointermove', e => {
+  if (!g || e.pointerId !== g.id) return;
+  if (g.mode === 'native') { if (g.mouse) { g.el.scrollLeft = g.sl - (e.clientX - g.sx); if (Math.abs(e.clientX - g.sx) > 4) suppressClick = true; } return; }
+  if (g.mode === 'pending') {
+    const dx = e.clientX - g.sx, dy = e.clientY - g.sy;
+    if (Math.hypot(dx, dy) < SLOP) return;
+    if (Math.abs(dx) <= Math.abs(dy)) { g.mode = 'vertical'; return; }
+    g.mode = g.ctx === 'detail' ? (dx > 0 ? 'detail' : 'none') : g.row && dx < 0 ? 'row' : 'drag';
+    if (g.mode === 'none') return;
+    g.sx = e.clientX;                        // スロップ分を飛ばさない (指の下から動き始める)
+    try { app.setPointerCapture(e.pointerId); } catch {}
+    app.classList.add('dragging');
+    if (g.mode === 'row') g.slide = g.row.querySelector('.slide');
+    if (g.mode === 'detail') { g.el = $('detail'); g.el.style.transition = 'none'; $('screendim').style.transition = 'none'; }
+  }
+  if (g.mode === 'none' || g.mode === 'vertical' || g.mode === 'edge') return;
+  g.samples.push([e.timeStamp, e.clientX]);
+  while (g.samples.length > 2 && e.timeStamp - g.samples[0][0] > 100) g.samples.shift();
+  const raw = e.clientX - g.sx;
+  if (g.mode === 'drag') {
+    const W = panelW();
+    const lo = g.base > 0 || ui.view === 'runs' ? 0 : -W, hi = g.base < 0 ? 0 : W;
+    setPos(Math.max(lo, Math.min(hi, g.base + raw)), 0);
+  } else if (g.mode === 'row') {
+    let dx = Math.min(0, raw);
+    if (dx < -ROW_MAX) dx = -ROW_MAX - (-dx - ROW_MAX) * 0.25;   // 先はゴムのように重くする
+    g.dx = dx;
+    g.slide.style.transition = 'none';
+    g.slide.style.transform = `translate3d(${dx}px,0,0)`;
+    g.row.querySelector('.under').style.opacity = Math.min(1, -dx / 36);
+    g.row.classList.toggle('armed', -dx >= ROW_ARM);
+  } else if (g.mode === 'detail') {
+    const dx = Math.max(0, raw);
+    g.dx = dx;
+    g.el.style.transform = `translate3d(${dx}px,0,0)`;
+    $('screendim').style.opacity = String(1 - dx / app.clientWidth);
+  }
+});
+function endGesture(e) {
+  if (!g || e.pointerId !== g.id) return;
+  const was = g; g = null;
+  app.classList.remove('dragging');
+  if (was.mode === 'native' && was.mouse && suppressClick) setTimeout(() => suppressClick = false, 0);
+  if (!['drag', 'row', 'detail'].includes(was.mode)) return;
+  suppressClick = true; setTimeout(() => suppressClick = false, 0);
+  const v = e.type === 'pointercancel' ? 0 : velocity(was.samples);
+  if (was.mode === 'row') return finishRow(was.row, was.slide, -was.dx >= ROW_ARM || (v < -ROW_FLING && -was.dx >= ROW_FLING_MIN));
+  if (was.mode === 'detail') return finishDetail(was.el, was.dx, was.dx > app.clientWidth * DETAIL_CLOSE || v > FLING, v);
+  const W = panelW();
+  const snaps = [-W, 0, W].filter(p => p >= (was.base > 0 || ui.view === 'runs' ? 0 : -W) && p <= (was.base < 0 ? 0 : W));
+  let target;
+  if (Math.abs(v) > FLING) target = v > 0 ? (snaps.find(p => p > pos + 0.5) ?? snaps[snaps.length - 1]) : ([...snaps].reverse().find(p => p < pos - 0.5) ?? snaps[0]);
+  else target = snaps.reduce((best, p) => Math.abs(p - pos) < Math.abs(best - pos) ? p : best, snaps[0]);
+  const dist = Math.abs(target - pos), ms = Math.max(120, Math.min(300, dist / Math.max(Math.abs(v), 1.1)));
+  setPos(target, ms);
+  const panel = target > 0 ? 'left' : target < 0 ? 'right' : null;
+  if (panel !== nav.panel) {
+    if (panel && !nav.panel) { if (panel === 'right') renderRight(); pushNav({panel}); }
+    else if (!panel) back();
+  }
+}
+app.addEventListener('pointerup', endGesture);
+app.addEventListener('pointercancel', endGesture);   // 縦スクロールが始まるとブラウザが cancel を送る
+document.addEventListener('click', e => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); suppressClick = false; } }, true);
+shield.addEventListener('click', () => { if (nav.panel) back(); });
+
+// カードのスワイプの終わり: 確定なら @ が弾んでからカードが戻り、メンションを積んで中央へ。足りなければ戻るだけ
+function finishRow(row, slide, confirm) {
+  const id = row.dataset.task, under = row.querySelector('.under');
+  slide.style.transition = 'transform .24s cubic-bezier(.2,.8,.2,1)';
+  if (confirm) {
+    row.classList.add('armed', 'fired');
+    setTimeout(() => { slide.style.transform = ''; under.style.transition = 'opacity .24s'; under.style.opacity = '0'; }, 120);
+    setTimeout(() => { addMention(id); toCenter(); }, 300);
+  } else {
+    slide.style.transform = ''; under.style.transition = 'opacity .2s'; under.style.opacity = '0';
+  }
+  setTimeout(() => { row.classList.remove('armed', 'fired'); slide.style.transition = ''; under.style.transition = ''; }, 420);
+}
+// 詳細を閉じるスワイプの終わり: 指を離した位置と速度で閉じる / 戻る
+function finishDetail(el, dx, close, v) {
+  const W = app.clientWidth, dim = $('screendim');
+  const ms = close ? Math.max(140, Math.min(280, (W - dx) / Math.max(v, 1.2))) : 220;
+  el.style.transition = `transform ${ms}ms cubic-bezier(.2,.8,.2,1)`;
+  dim.style.transition = `opacity ${ms}ms`;
+  if (close) { el.style.transform = 'translate3d(100%,0,0)'; dim.style.opacity = '0'; back(); }
+  else { el.style.transform = 'translate3d(0,0,0)'; dim.style.opacity = '1'; }
+  setTimeout(() => { el.style.transition = el.style.transform = dim.style.transition = dim.style.opacity = ''; }, ms + 40);
+}
+
+/* ======================= 操作 (PC にあるものだけ) ======================= */
+function addMention(id) {
+  const t = TASKS[id];
+  if (!ui.mentions.some(m => m.task === id)) {
+    ui.mentions.push({task: id, title: t.title}); ui.newMention = id;
+    setTimeout(() => { if (ui.newMention === id) ui.newMention = null; }, 500);
+  }
+  renderComposer();
+}
+function toCenter() { if (nav.depth) back(nav.depth); }
+function selectChat(id) {
+  const c = CHATS[id];
+  ui.chatId = id; ui.projectId = c.project; c.unread = false; ui.mentions = [];
+  renderLeft(); renderCenter(); $('msgs').scrollTop = $('msgs').scrollHeight; renderRight();
+}
+function switchProject(pid) {
+  const p = PROJECTS.find(q => q.id === pid); p.open = true; ui.picker = false;
+  if (pid === ui.projectId) { renderLeft(); return; }
+  const latest = chatsOf(pid).sort((a, b) => ageRank(a.ago) - ageRank(b.ago))[0];
+  ui.projectId = pid; ui.branchForm = false; ui.otherOpen = false;
+  selectChat(latest.id);
+}
+let chatSeq = 30;
+function newChat(pid, wt) {
+  const id = 'C-' + (chatSeq++);
+  C({id, project: pid, wt, title: null, ago: 'now', session: 'stopped'});
+  ui.wtOpen[pid + ':' + wt] = true;
+  selectChat(id); toCenter(); setTimeout(() => $('input').focus(), 300);
+}
+function cancelTask(id, why) {
+  const t = TASKS[id]; if (isTerminal(t)) return;
+  t.status = 'cancelled'; t.cancel_reason = why; t.helps = [];
+  t.steps.forEach(s => { if (s.status === 'running') s.status = 'pending'; });
+  Object.values(t.sessions).forEach(s => { s.state = 'ended'; s.items = s.items.filter(x => x.type !== 'live'); });
+}
+document.addEventListener('click', e => {
+  if (ui.picker && !e.target.closest('#picker')) { ui.picker = false; renderLeft(); if (!e.target.closest('[data-act]')) return; }
+  const el = e.target.closest('[data-act]'); if (!el) return;
+  const act = el.dataset.act;
+  switch (act) {
+    case 'open-left': pushNav({panel: 'left'}); break;
+    case 'open-right': renderRight(); pushNav({panel: 'right'}); break;
+    case 'view': ui.view = el.dataset.v; renderLeft(); renderCenter(); renderRight(); break;
+    case 'picker': ui.picker = !ui.picker; renderLeft(); break;
+    case 'project': switchProject(el.dataset.id); break;
+    case 'chat': selectChat(el.dataset.id); back(); break;
+    case 'toggle-wt': { const k = el.dataset.key; ui.wtOpen[k] = el.getAttribute('aria-expanded') !== 'true'; renderLeft(); break; }
+    case 'toggle-others': ui.otherOpen = !ui.otherOpen; renderLeft(); break;
+    case 'newchat': newChat(ui.projectId, +el.dataset.wt); break;
+    case 'newchat-branch': {
+      const p = project(), b = el.dataset.branch;
+      p.otherBranches = p.otherBranches.filter(x => x !== b); p.worktrees.push({branch: b});
+      newChat(p.id, p.worktrees.length - 1); break;
+    }
+    case 'branch-new': ui.branchForm = !ui.branchForm; ui.branchErr = ''; renderLeft(); if (ui.branchForm) setTimeout(() => $('bname')?.focus(), 50); break;
+    case 'settings': pushNav({screen: 'settings'}); break;
+    case 'stab': ui.settingsTab = el.dataset.k; renderSettings(); break;
+    case 'scope': ui.scope = el.dataset.k; renderSettings(); break;
+    case 'toggle': { const k = el.dataset.key; openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k);
+      if (k.startsWith('d:')) renderDetail(nav.task); else renderMsgs(false); break; }
+    case 'toggle-past': e.preventDefault(); openKeys.has('past') ? openKeys.delete('past') : openKeys.add('past'); renderRight(); break;
+    case 'task': pushNav({screen: 'detail', task: el.dataset.id}); break;
+    case 'dtab': ui.detailTab = el.dataset.k; renderDetail(nav.task); break;
+    case 'back': back(); break;
+    case 'mention': addMention(el.dataset.id); toCenter(); break;
+    case 'unmention': ui.mentions = ui.mentions.filter(m => m.task !== el.dataset.id); renderComposer(); break;
+    // ■ = エージェントを停止 (タスクを中止)。PC と同じく確認なし。オーケストレータへはユーザー操作として届く
+    case 'cancel-task': {
+      const t = TASKS[el.dataset.id]; cancelTask(t.id, 'ユーザーが中止');
+      const c = CHATS[GROUPS[t.group].chat]; c.msgs.splice(lastIndex(c), 0, ytool('cancel_task', `${t.id} · ユーザーが中止`, true, 'user'));
+      renderRight(); renderCenter(false); break;
+    }
+    case 'cancel-group': {
+      const gr = GROUPS[el.dataset.id]; tasksOf(gr.id).forEach(t => cancelTask(t.id, 'グループを中止')); gr.status = 'cancelled';
+      const c = CHATS[gr.chat]; c.msgs.splice(lastIndex(c), 0, ytool('cancel_group', `${gr.id} · ユーザーが中止`, true, 'user'));
+      renderRight(); renderCenter(false); break;
+    }
+    case 'retry-merge': retryMerge(el.dataset.id); break;
+  }
+});
+// ストリーミング中の発話の前に差し込む (末尾が流れている途中ならその前)
+const lastIndex = c => c.msgs.length && c.msgs[c.msgs.length - 1].type === 'live' ? c.msgs.length - 1 : c.msgs.length;
+document.addEventListener('submit', e => {
+  if (e.target.id !== 'bform') return; e.preventDefault();
+  const name = $('bname').value.trim(), p = project();
+  if (!name) return;
+  if (!/^[\w.\-/]+$/.test(name) || name.endsWith('/')) { ui.branchErr = `'${name}' is not a valid branch name`; renderLeft(); $('bname').value = name; return; }
+  if (p.worktrees.some(w => w.branch === name) || p.otherBranches.includes(name)) { ui.branchErr = `a branch named '${name}' already exists`; renderLeft(); $('bname').value = name; return; }
+  p.worktrees.push({branch: name}); ui.branchForm = false;
+  newChat(p.id, p.worktrees.length - 1);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') back();
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target.id === 'input') { e.preventDefault(); send(); }
+});
+
+/* ======================= コンポーザ (送信 / 中止 / 応答の真似) ======================= */
+const input = $('input');
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(128, input.scrollHeight) + 'px'; renderComposer(); });
+$('send').addEventListener('click', () => send());
+$('stop').addEventListener('click', () => stopTurn(ui.chatId));
+const timers = {};
+const later = (id, ms, fn) => (timers[id] = timers[id] || []).push(setTimeout(fn, ms));
+function send() {
+  const body = input.value.trim(); if (!body) return;
+  const c = chat();
+  const text = ui.mentions.length ? `${ui.mentions.map(m => `@${m.task} ${m.title}`).join('\n')}\n\n${body}` : body;
+  const m = user(text);
+  if (!c.title) c.title = body.slice(0, 24);
+  c.ago = 'now'; input.value = ''; input.style.height = ''; ui.mentions = [];
+  c.msgs.splice(lastIndex(c), 0, m);
+  if (chatRunning(c)) { m.queued = true; c.queue.push(m); }   // ターン中: 受信箱で待ち、ターン終了後に届く
+  else startReply(c);
+  renderCenter(); $('msgs').scrollTop = $('msgs').scrollHeight; renderLeft();
+}
+function startReply(c) {
+  const cold = c.session === 'stopped';
+  c.session = cold ? 'starting' : 'running';
+  const id = c.id, delay = cold ? 1600 : 400;
+  const reply = ['受け取りました。**これはモックの返答** です。PC にはつながっていません。', '', '- 実際にはここにオーケストレータの返事が Markdown で流れてきます', '- ツール呼び出しは控えめな 1 行で出ます'].join('\n');
+  later(id, delay, () => { c.session = 'running'; c.msgs.push(tool('Read README.md', 'in_progress')); refresh(id); });
+  later(id, delay + 900, () => { c.msgs[c.msgs.length - 1].status = 'completed'; c.msgs.push({type: 'live', text: ''}); refresh(id); });
+  const chars = [...reply]; let n = 0;
+  const tick = () => {
+    n = Math.min(chars.length, n + 3);
+    c.msgs[c.msgs.length - 1].text = chars.slice(0, n).join('');
+    refresh(id);
+    if (n < chars.length) later(id, 28, tick);
+    else { c.msgs[c.msgs.length - 1].type = 'md'; turnEnded(c, 'end_turn'); }
+  };
+  later(id, delay + 1100, tick);
+}
+function stopTurn(id) {
+  (timers[id] || []).forEach(clearTimeout); timers[id] = [];
+  const c = CHATS[id], last = c.msgs[c.msgs.length - 1];
+  if (last && last.type === 'live') { if (last.text) last.type = 'md'; else c.msgs.pop(); }
+  c.msgs.forEach(m => { if (m.type === 'tool' && m.status === 'in_progress') m.status = 'failed'; });
+  c.msgs.push({type: 'turn', outcome: 'cancelled'});
+  turnEnded(c, 'cancelled');
+}
+// ターンの終わり: 受信箱に溜まった送信があれば次のターンへ。無ければ「作業全体の完了」かを見て通知する
+function turnEnded(c, outcome) {
+  c.session = 'ready';
+  if (c.queue.length) { c.queue.forEach(m => delete m.queued); c.queue = []; startReply(c); }
+  else if (outcome === 'end_turn' && isWorkComplete(c) && c.id !== ui.chatId) notify(c);
+  refresh(c.id); renderLeft(); if (nav.panel === 'right') renderRight();
+}
+// 作業全体の完了 (案): ターンが正常に終わり、受信箱が空で、そのチャットに終わっていないグループ (active / finishing / merge_blocked) が無い
+const isWorkComplete = c => c.session === 'ready' && !c.queue.length && !groupsOf(c.id).some(g => isOpenGroup(g) || g.status === 'merge_blocked');
+function refresh(id) { if (id === ui.chatId) { renderMsgs(); renderComposer(); renderTopbar(); renderWaitbar(); } }
+
+// マージの再試行 (merge_blocked のグループ。PC の TaskColumn にある)
+function retryMerge(gid) {
+  const gr = GROUPS[gid], c = CHATS[gr.chat];
+  gr.status = 'finishing'; delete gr.detail; renderRight(); renderCenter(false);
+  later(c.id, 1400, () => {
+    gr.status = 'done';
+    c.session = 'running';
+    c.msgs.push(notice('merge_result', `group=${gid} ok=true`, `yhtye/${gid} を ${gr.base} にマージしました`));
+    refresh(c.id); renderLeft(); if (nav.panel === 'right') renderRight();
+  });
+  later(c.id, 2600, () => {
+    c.msgs.push(md(`${gid} (${gr.title}) を \`${gr.base}\` にマージしました。銀行丸めへの統一とテストの追加が入っています。`));
+    turnEnded(c, 'end_turn');
+  });
+}
+
+/* ======================= 通知 (作業全体の完了だけ。help / checkpoint では出さない) ======================= */
+function notify(c) {
+  const p = PROJECTS.find(q => q.id === c.project), el = $('notif');
+  el.innerHTML = `<span class="ap">Y</span><span class="src">Yhtye · ${esc(p.name)} · 今</span>
+    <span class="nt">${esc(c.title || NEW_CHAT_TITLE)} の作業が完了しました</span><span class="nbd">${esc(lastSummary(c))}</span>`;
+  el.dataset.chat = c.id; el.classList.add('show');
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 6000);
+}
+const lastSummary = c => (([...c.msgs].reverse().find(m => m.type === 'md') || {text: ''}).text.split('\n')[0]).replace(/[*`]/g, '').slice(0, 80);
+$('notif').addEventListener('click', () => {
+  const el = $('notif'); el.classList.remove('show');
+  const id = el.dataset.chat; if (!id) return;
+  ui.view = 'work'; selectChat(id); toCenter();
+});
+// モックのボタン: C-5 のオーケストレータが G-11 を完了 (マージ) してターンを終える → 通知。
+// 表示中のチャットでも見本として出す (実際は表示中なら出さない案)。
+$('mock-notify').addEventListener('click', () => {
+  const c = CHATS['C-5'], gr = GROUPS['G-11'];
+  if (gr.status !== 'active') { notify(c); return; }
+  c.session = 'running'; refresh(c.id); renderLeft();
+  later(c.id, 700, () => { c.msgs.push(ytool('finish_group', 'G-11 → feat/checkout-refactor')); gr.status = 'finishing'; refresh(c.id); if (nav.panel === 'right') renderRight(); });
+  later(c.id, 1900, () => { gr.status = 'done'; c.msgs.push(notice('merge_result', 'group=G-11 ok=true', 'yhtye/G-11 を feat/checkout-refactor にマージしました')); refresh(c.id); if (nav.panel === 'right') renderRight(); });
+  later(c.id, 2600, () => {
+    c.msgs.push(md('G-11 (webhook 再送の整理) を `feat/checkout-refactor` にマージしました。再送は指数バックオフ (最大 1 時間) になり、重複イベントの除外は T-105 に含めています。'));
+    c.session = 'ready'; refresh(c.id); renderLeft();
+    if (isWorkComplete(c)) notify(c);
+  });
+});
+
+// 最初から走っている C-7 のターン: 少し進めてから、作業中のまま (中止ボタンを試せるように)
+(function initialTurn() {
+  const c = CHATS['C-7'];
+  const text = ['`order.ts` の `OrderV2` を deprecated にして、v3 の型から v2 の形を作る変換を足しています。', '', '~~~ts', 'export const toOrderV2 = (o: OrderV3): OrderV2 => ({ total: Number(o.total.amount), currency: "JPY" })  // T-110 のレガシー側はこれを使う', '~~~', '', '終わったら T-110 に「v3 に合わせる、レガシーは `toOrderV2` を通す」と返答して再開させます。'].join('\n');
+  const chars = [...text]; let n = 0;
+  const tick = () => {
+    n = Math.min(chars.length, n + 2);
+    c.msgs[c.msgs.length - 1].text = chars.slice(0, n).join('');
+    refresh('C-7');
+    if (n < chars.length) later('C-7', 45, tick);
+  };
+  later('C-7', 1200, tick);
+})();
+
+renderLeft(); renderCenter(); renderRight();
+$('msgs').scrollTop = $('msgs').scrollHeight;
+</script>
+</body>
+</html>

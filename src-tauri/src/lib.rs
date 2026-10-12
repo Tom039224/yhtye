@@ -1,7 +1,9 @@
 //! The Tauri shell (`core-design.md` §9): starts the [`Core`] with the
 //! production configuration, forwards `yhtye_command` to it, emits every core
-//! event as `yhtye://event`, and shuts every agent down when the app exits.
+//! event as `yhtye://event`, starts remote access if it is on, and shuts every
+//! agent down (and remote access) when the app exits.
 
+mod data_lock;
 mod legacy_data;
 mod webkit_env;
 
@@ -9,7 +11,7 @@ use std::path::PathBuf;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 use tokio::sync::broadcast;
-use yhtye_core::api::{ApiCommand, ApiError, ApiResponse};
+use yhtye_core::api::{ApiCommand, ApiError, ApiEvent, ApiEventBody, ApiResponse};
 use yhtye_core::runtime::{Core, CoreConfig};
 
 /// Event name the frontend listens to (`src/api/tauri.ts`).
@@ -37,30 +39,34 @@ fn data_dir(app: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(dir)
 }
 
-fn start_core(app: &AppHandle) -> Result<Core, Box<dyn std::error::Error>> {
+/// Locks the data directory (one app per directory, see [`data_lock`]) and
+/// starts the core on it.
+fn start_core(app: &AppHandle) -> Result<(Core, data_lock::DataLock), Box<dyn std::error::Error>> {
     let dir = data_dir(app)?;
     std::fs::create_dir_all(&dir)?;
+    let lock = data_lock::acquire(&dir)?;
     let model = std::env::var("YHTYE_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     tracing::info!("data dir {}, model {model}", dir.display());
     let core = tauri::async_runtime::block_on(Core::start(CoreConfig::installed(&dir, &model)))?;
-    Ok(core)
+    Ok((core, lock))
 }
 
 /// Emits every core event to the webview. A lagging receiver skips events; the
-/// frontend sees the `seq` gap and catches up with `ListEvents`.
-fn forward_events(app: AppHandle, mut rx: broadcast::Receiver<yhtye_core::api::ApiEvent>) {
+/// webview is then sent a `resync` hint and catches up (the event log, the
+/// project list, the settings on display; T-65).
+fn forward_events(app: AppHandle, mut rx: broadcast::Receiver<ApiEvent>) {
     tauri::async_runtime::spawn(async move {
         loop {
-            match rx.recv().await {
-                Ok(ev) => {
-                    if let Err(e) = app.emit(EVENT, &ev) {
-                        tracing::warn!("could not emit an event: {e}");
-                    }
-                }
+            let ev = match rx.recv().await {
+                Ok(ev) => ev,
                 Err(broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!("the webview fell behind; {n} events skipped");
+                    ApiEvent::app_wide(ApiEventBody::Resync)
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
+            };
+            if let Err(e) = app.emit(EVENT, &ev) {
+                tracing::warn!("could not emit an event: {e}");
             }
         }
     });
@@ -110,12 +116,28 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![yhtye_command])
         .setup(|app| {
             let handle = app.handle().clone();
-            let core = start_core(&handle)?;
+            let (core, lock) = match start_core(&handle) {
+                Ok(started) => started,
+                Err(e) if e.is::<data_lock::LockError>() => {
+                    // Not a crash: the other app is the one in use.
+                    tracing::error!("{e}");
+                    eprintln!("Yhtye: {e}");
+                    std::process::exit(1);
+                }
+                Err(e) => return Err(e),
+            };
+            app.manage(lock);
             forward_events(handle.clone(), core.subscribe());
             // Interrupted work resumes without waiting for the UI to open it.
             let resume = core.clone();
             tauri::async_runtime::spawn(async move {
                 resume.resume_unfinished().await;
+            });
+            // Remote access (Android client), if the settings turn it on; it
+            // stops with `Core::shutdown` on exit.
+            let remote = core.clone();
+            tauri::async_runtime::spawn(async move {
+                remote.start_remote().await;
             });
             app.manage(core);
             exit_on_signal(handle);
