@@ -785,7 +785,9 @@ Stage 4 の構成 (`src/`):
   `message` / `thought` / `tool_call{id,title}` / `tool_call_update{id,status}` / `plan([..])` /
   `update(<任意の update JSON>)` (未知の種類も送れる) / `request_permission([{id,kind}])`
   (結果を `permission:selected:<id>` / `permission:cancelled` というメッセージで返す) /
-  `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `end(stop_reason)` / `crash(code)` /
+  `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `wait_file(path)` (そのファイルができるまで
+  ターンを止める。テストが進めるタイミングを決める。`sleep` でテストの操作を待たない) /
+  `end(stop_reason)` / `crash(code)` /
   `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
   `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
   (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /

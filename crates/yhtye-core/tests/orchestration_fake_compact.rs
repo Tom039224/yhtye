@@ -5,7 +5,7 @@
 mod common;
 
 use common::chats::{
-    Rx, TIMEOUT, is_domain, new_chat, repo_config, said, say, settle, start, wait,
+    Hold, Rx, TIMEOUT, is_domain, new_chat, repo_config, said, say, settle, start, wait,
 };
 use common::orch::{prompts_to, shutdown_and_check, until};
 use common::repo::TempRepo;
@@ -17,8 +17,16 @@ use yhtye_core::runtime::{Orchestration, UserActionError};
 
 const SESSION: &str = "orchestrator:C-1";
 
+/// Thought chunks the compact turn streams before it reports: the agent is done
+/// while the core is still reading them, which is when a prompt must not slip in.
+const COMPACT_CHUNKS: usize = 150;
+
 fn turn_ended(e: &ApiEvent) -> bool {
     matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(_) } if session == SESSION)
+}
+
+fn is_later_prompt(e: &ApiEvent) -> bool {
+    matches!(&e.body, ApiEventBody::Prompted { text, .. } if text.contains("later"))
 }
 
 async fn compact_error(orch: &Orchestration, chat: &str) -> ErrorCode {
@@ -38,13 +46,17 @@ async fn ended_turns(rx: &mut Rx, events: &mut Vec<ApiEvent>, n: usize) {
 #[tokio::test]
 async fn compact_sends_the_bare_command_and_the_inbox_follows_after_its_turn() {
     let r = TempRepo::new();
+    // The compact turn is held until the test has seen the message queued.
+    let hold = Hold::new(&r, "compact");
+    let mut compact = vec![
+        json!({"update": {"sessionUpdate": "usage_update", "used": 21000, "size": 200000}}),
+        hold.action(),
+    ];
+    compact.extend((0..COMPACT_CHUNKS).map(|i| json!({"thought": format!("compacting-{i}")})));
+    compact.push(json!("report_state"));
     let script = json!({"turns": [
         {"match": "hello", "actions": [{"message": "hi"}]},
-        {"match": COMPACT_PROMPT, "actions": [
-            {"sleep": 500},
-            {"update": {"sessionUpdate": "usage_update", "used": 21000, "size": 200000}},
-            "report_state"
-        ]},
+        {"match": COMPACT_PROMPT, "actions": compact},
         {"match": "later", "actions": [{"message": "got-later"}]}
     ]});
     let (orch, mut rx, mut events) = start(repo_config(&r, script, json!({"turns": []}))).await;
@@ -65,6 +77,18 @@ async fn compact_sends_the_bare_command_and_the_inbox_follows_after_its_turn() {
         .await
         .expect("compacting already: accepted");
     say(&orch, &chat, "later").await;
+    wait(&mut rx, &mut events, |e| {
+        is_domain(
+            e,
+            |d| matches!(d, DomainEvent::InboxQueued { entry } if entry.item.body == "later"),
+        )
+    })
+    .await;
+
+    // While the compact turn is held, the message stays in the inbox.
+    settle(&mut rx, &mut events).await;
+    assert!(!events.iter().any(is_later_prompt), "sent mid-turn");
+    hold.release();
     wait(&mut rx, &mut events, said(SESSION, "got-later")).await;
     settle(&mut rx, &mut events).await;
 
@@ -94,7 +118,7 @@ async fn compact_sends_the_bare_command_and_the_inbox_follows_after_its_turn() {
     );
 
     // The message waited for the end of the compact turn: it was queued while
-    // the turn ran and sent after the turn's last output.
+    // the turn ran and sent after the turn's last output and its end.
     let at = |f: &dyn Fn(&ApiEvent) -> bool| events.iter().position(f).expect("event");
     let queued = at(&|e| {
         is_domain(
@@ -104,9 +128,19 @@ async fn compact_sends_the_bare_command_and_the_inbox_follows_after_its_turn() {
     });
     let last_output =
         at(&|e| common::orch::message(e, SESSION).is_some_and(|m| m.starts_with("state:")));
-    let delivered =
-        at(&|e| matches!(&e.body, ApiEventBody::Prompted { text, .. } if text.contains("later")));
-    assert!(queued < last_output && last_output < delivered);
+    let compact_ended = events
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| turn_ended(e))
+        .nth(1)
+        .map(|(i, _)| i)
+        .expect("the compact turn ended");
+    let delivered = at(&is_later_prompt);
+    assert!(
+        queued < last_output && last_output < compact_ended && compact_ended < delivered,
+        "queued {queued}, last output {last_output}, compact turn ended {compact_ended}, \
+         delivered {delivered}"
+    );
 
     // Usage updates are streamed live, never stored.
     let usage = events
