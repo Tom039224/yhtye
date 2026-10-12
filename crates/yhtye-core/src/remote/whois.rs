@@ -2,8 +2,8 @@
 //! §18.4): answers are kept per peer address for a short time, and only a few
 //! lookups run at once.
 //!
-//! Both answers are kept (this PC's user and another user): a node's user does
-//! not change in a minute, and keeping the refusal is what stops another
+//! Both answers are kept (this PC's user and another user): a node's user and
+//! tags do not change in a minute, and keeping the refusal is what stops another
 //! user's device from making this PC start a process per request. Failures
 //! (Tailscale briefly unreachable, a timeout) are not kept, so they are retried.
 //!
@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio::time::Instant;
 
-use super::tailscale::{Tailscale, TailscaleError};
+use super::tailscale::{Tailscale, TailscaleError, TailscalePeer};
 
 /// How long an answer is kept.
 pub const WHOIS_TTL: Duration = Duration::from_secs(60);
@@ -41,7 +41,7 @@ pub struct WhoisCache {
 
 #[derive(Debug, Clone, Copy)]
 struct Entry {
-    user: u64,
+    peer: TailscalePeer,
     expires_at: Instant,
 }
 
@@ -62,15 +62,15 @@ impl WhoisCache {
         }
     }
 
-    /// The Tailscale user of `ip`: kept, or asked of `tailscale` (waiting for
-    /// a free slot).
-    pub async fn user_of(
+    /// The node at `ip` (its Tailscale user and tags): kept, or asked of
+    /// `tailscale` (waiting for a free slot).
+    pub async fn peer_of(
         &self,
         tailscale: &dyn Tailscale,
         ip: IpAddr,
-    ) -> Result<u64, TailscaleError> {
-        if let Some(user) = self.cached(ip) {
-            return Ok(user);
+    ) -> Result<TailscalePeer, TailscaleError> {
+        if let Some(peer) = self.cached(ip) {
+            return Ok(peer);
         }
         let _slot = self
             .slots
@@ -78,12 +78,12 @@ impl WhoisCache {
             .await
             .map_err(|_| TailscaleError("the Tailscale lookup was stopped".into()))?;
         // Another request from the same address may have asked meanwhile.
-        if let Some(user) = self.cached(ip) {
-            return Ok(user);
+        if let Some(peer) = self.cached(ip) {
+            return Ok(peer);
         }
-        let user = tailscale.whois(ip).await?;
-        self.insert(ip, user);
-        Ok(user)
+        let peer = tailscale.whois(ip).await?;
+        self.insert(ip, peer);
+        Ok(peer)
     }
 
     /// Forgets every answer (the server stopped).
@@ -91,17 +91,17 @@ impl WhoisCache {
         self.lock().clear();
     }
 
-    fn cached(&self, ip: IpAddr) -> Option<u64> {
+    fn cached(&self, ip: IpAddr) -> Option<TailscalePeer> {
         let mut entries = self.lock();
         let entry = *entries.get(&ip)?;
         if Instant::now() < entry.expires_at {
-            return Some(entry.user);
+            return Some(entry.peer);
         }
         entries.remove(&ip);
         None
     }
 
-    fn insert(&self, ip: IpAddr, user: u64) {
+    fn insert(&self, ip: IpAddr, peer: TailscalePeer) {
         let now = Instant::now();
         let mut entries = self.lock();
         if entries.len() >= self.capacity && !entries.contains_key(&ip) {
@@ -118,7 +118,7 @@ impl WhoisCache {
         entries.insert(
             ip,
             Entry {
-                user,
+                peer,
                 expires_at: now + self.ttl,
             },
         );
@@ -143,6 +143,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct Counting {
         user: u64,
+        tagged: bool,
         failing: AtomicBool,
         calls: AtomicUsize,
         running: AtomicUsize,
@@ -156,7 +157,7 @@ mod tests {
             Err(TailscaleError("not used".into()))
         }
 
-        async fn whois(&self, _ip: IpAddr) -> Result<u64, TailscaleError> {
+        async fn whois(&self, _ip: IpAddr) -> Result<TailscalePeer, TailscaleError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.most_running.fetch_max(now, Ordering::SeqCst);
@@ -165,8 +166,19 @@ mod tests {
             if self.failing.load(Ordering::SeqCst) {
                 return Err(TailscaleError("tailscaled is not answering".into()));
             }
-            Ok(self.user)
+            Ok(TailscalePeer {
+                user_id: self.user,
+                tagged: self.tagged,
+            })
         }
+    }
+
+    async fn user_of(
+        cache: &WhoisCache,
+        tailscale: &dyn Tailscale,
+        ip: IpAddr,
+    ) -> Result<u64, TailscaleError> {
+        cache.peer_of(tailscale, ip).await.map(|p| p.user_id)
     }
 
     fn ip(n: u8) -> IpAddr {
@@ -185,20 +197,20 @@ mod tests {
         let ts = counting(7);
         let cache = WhoisCache::new(Duration::from_secs(60), 16, 4);
         for _ in 0..10 {
-            assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(7));
+            assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(7));
         }
         assert_eq!(ts.calls.load(Ordering::SeqCst), 1);
         tokio::time::advance(Duration::from_secs(59)).await;
-        assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(7));
+        assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(7));
         assert_eq!(ts.calls.load(Ordering::SeqCst), 1, "still fresh");
         tokio::time::advance(Duration::from_secs(1)).await;
-        assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(7));
+        assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(7));
         assert_eq!(
             ts.calls.load(Ordering::SeqCst),
             2,
             "asked again after expiry"
         );
-        assert_eq!(cache.user_of(&ts, ip(2)).await, Ok(7));
+        assert_eq!(user_of(&cache, &ts, ip(2)).await, Ok(7));
         assert_eq!(ts.calls.load(Ordering::SeqCst), 3, "per address");
     }
 
@@ -207,7 +219,22 @@ mod tests {
         let ts = counting(2);
         let cache = WhoisCache::default();
         for _ in 0..5 {
-            assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(2));
+            assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(2));
+        }
+        assert_eq!(ts.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_tagged_node_is_kept_as_tagged() {
+        let ts = Counting {
+            user: 7,
+            tagged: true,
+            ..Counting::default()
+        };
+        let cache = WhoisCache::default();
+        for _ in 0..3 {
+            let peer = cache.peer_of(&ts, ip(1)).await.expect("peer");
+            assert_eq!((peer.user_id, peer.tagged), (7, true));
         }
         assert_eq!(ts.calls.load(Ordering::SeqCst), 1);
     }
@@ -217,12 +244,12 @@ mod tests {
         let ts = counting(7);
         ts.failing.store(true, Ordering::SeqCst);
         let cache = WhoisCache::default();
-        assert!(cache.user_of(&ts, ip(1)).await.is_err());
-        assert!(cache.user_of(&ts, ip(1)).await.is_err());
+        assert!(user_of(&cache, &ts, ip(1)).await.is_err());
+        assert!(user_of(&cache, &ts, ip(1)).await.is_err());
         assert_eq!(ts.calls.load(Ordering::SeqCst), 2);
         ts.failing.store(false, Ordering::SeqCst);
-        assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(7));
-        assert_eq!(cache.user_of(&ts, ip(1)).await, Ok(7));
+        assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(7));
+        assert_eq!(user_of(&cache, &ts, ip(1)).await, Ok(7));
         assert_eq!(ts.calls.load(Ordering::SeqCst), 3);
     }
 
@@ -237,7 +264,7 @@ mod tests {
         let lookups: Vec<_> = (0..20u8)
             .map(|n| {
                 let (ts, cache) = (Arc::clone(&ts), Arc::clone(&cache));
-                tokio::spawn(async move { cache.user_of(&*ts, ip(n)).await })
+                tokio::spawn(async move { user_of(&cache, &*ts, ip(n)).await })
             })
             .collect();
         for l in lookups {
@@ -249,7 +276,7 @@ mod tests {
         let same: Vec<_> = (0..20)
             .map(|_| {
                 let (ts, cache) = (Arc::clone(&ts), Arc::clone(&cache));
-                tokio::spawn(async move { cache.user_of(&*ts, ip(200)).await })
+                tokio::spawn(async move { user_of(&cache, &*ts, ip(200)).await })
             })
             .collect();
         for l in same {
@@ -266,10 +293,10 @@ mod tests {
         let ts = counting(7);
         let cache = WhoisCache::new(Duration::from_secs(60), 3, 4);
         for n in 1..=3 {
-            cache.user_of(&ts, ip(n)).await.expect("user");
+            user_of(&cache, &ts, ip(n)).await.expect("user");
             tokio::time::advance(Duration::from_secs(1)).await;
         }
-        cache.user_of(&ts, ip(4)).await.expect("user");
+        user_of(&cache, &ts, ip(4)).await.expect("user");
         assert_eq!(cache.lock().len(), 3);
         assert!(cache.cached(ip(1)).is_none(), "the oldest went");
         assert!(cache.cached(ip(2)).is_some() && cache.cached(ip(4)).is_some());

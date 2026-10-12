@@ -4,13 +4,16 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ApiError
 import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
+import io.github.tom039224.yhtye.shared.api.generated.Chat
 import io.github.tom039224.yhtye.shared.api.generated.DomainEvent
+import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.InboxKind
 import io.github.tom039224.yhtye.shared.api.generated.SessionStatus
 import io.github.tom039224.yhtye.shared.client.ApiException
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
@@ -257,6 +260,61 @@ class AppStoreChatsTest {
         assertEquals(listOf(ApiCommand.CreateBranch("repo", "feat/new", "main")), core.callsOf<ApiCommand.CreateBranch>())
         assertEquals("C-3", s.view().selectedChat)
         assertTrue(s.state.value.git?.overview?.branches.orEmpty().any { it.name == "feat/new" })
+    }
+
+    @Test
+    fun readsGitOnceForABranchItCreatedAndNotAgainForTheChatsEventThatFollows() = runTest {
+        val s = newStore(core, prefs)
+        openAndSettle(s)
+        val reads = core.callsOf<ApiCommand.GetGitOverview>().size
+        s.createBranch("feat/new", "main")
+        assertEquals(reads + 1, core.callsOf<ApiCommand.GetGitOverview>().size)
+        val chat = s.view().chats.first { it.id == "C-3" }
+        push(core, domain(CHAT_LOG.size + 1L, DomainEvent.ChatCreated(Chat(chat.id, chat.worktree, null))))
+        assertEquals(reads + 1, core.callsOf<ApiCommand.GetGitOverview>().size)
+        assertEquals(emptyList(), s.state.value.git?.awaiting)
+    }
+
+    @Test
+    fun readsGitOnceForABranchItCreatedWhenTheChatsEventComesBeforeTheAnswer() = runTest {
+        val s = newStore(core, prefs)
+        openAndSettle(s)
+        val reads = core.callsOf<ApiCommand.GetGitOverview>().size
+        val wt = "/data/worktrees/repo/branches/feat-new"
+        core.before = { cmd ->
+            if (cmd is ApiCommand.CreateBranch) {
+                core.git = core.git.copy(worktrees = core.git.worktrees + GitWorktree(wt, "feat/new", null, isMain = false, missing = false))
+                core.emit(domain(CHAT_LOG.size + 1L, DomainEvent.ChatCreated(Chat("C-3", wt, null))))
+                repeat(3) { yield() }
+            }
+        }
+        s.createBranch("feat/new", "main")
+        runCurrent()
+        assertEquals(reads + 1, core.callsOf<ApiCommand.GetGitOverview>().size)
+        assertEquals("C-3", s.view().selectedChat)
+        assertEquals(emptyList(), s.state.value.git?.awaiting)
+    }
+
+    @Test
+    fun readsGitOnceForAChatItCreatedInABranchsNewWorktreeAndNotAgainForTheEvent() = runTest {
+        val s = newStore(core, prefs)
+        openAndSettle(s)
+        val reads = core.callsOf<ApiCommand.GetGitOverview>().size
+        assertTrue(s.createChat(branch = "feat/y"))
+        assertEquals(reads + 1, core.callsOf<ApiCommand.GetGitOverview>().size)
+        val chat = s.view().chats.first { it.id == "C-3" }
+        push(core, domain(CHAT_LOG.size + 1L, DomainEvent.ChatCreated(Chat(chat.id, chat.worktree, null))))
+        assertEquals(reads + 1, core.callsOf<ApiCommand.GetGitOverview>().size)
+    }
+
+    @Test
+    fun doesNotReadGitForAChatItCreatedInAnExistingWorktree() = runTest {
+        val s = newStore(core, prefs)
+        openAndSettle(s)
+        val reads = core.callsOf<ApiCommand.GetGitOverview>().size
+        assertTrue(s.createChat(worktree = MAIN_WT))
+        push(core, domain(CHAT_LOG.size + 1L, DomainEvent.ChatCreated(Chat("C-3", MAIN_WT, null))))
+        assertEquals(reads, core.callsOf<ApiCommand.GetGitOverview>().size)
     }
 
     @Test

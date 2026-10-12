@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -24,6 +24,7 @@ use crate::acp::schema::{
     SessionConfigSelectOption, SessionConfigSelectOptions,
 };
 use crate::acp::{AgentHandle, SpawnOptions, effort_option};
+use crate::clock::now_ms;
 use crate::secrets::{Secrets, spawn_agent_with_secrets};
 
 /// Upper bound for starting the listing session.
@@ -510,12 +511,6 @@ impl ModelService {
         }
         outcome
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]

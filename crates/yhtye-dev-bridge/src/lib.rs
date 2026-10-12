@@ -20,6 +20,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use tokio_util::sync::CancellationToken;
+use yhtye_core::remote::constant_time_eq;
 use yhtye_core::runtime::Core;
 #[cfg(test)]
 use yhtye_core::ws::parse_request;
@@ -129,10 +130,6 @@ fn check_access(
         Some(t) if constant_time_eq(t.as_bytes(), cfg.token.as_bytes()) => Ok(()),
         _ => Err((StatusCode::UNAUTHORIZED, "missing or wrong token")),
     }
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]

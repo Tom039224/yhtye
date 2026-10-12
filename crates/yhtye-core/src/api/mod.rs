@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 use crate::acp::{AgentEvent, AgentOutput};
 use crate::agents::AgentChoice;
+use crate::clock::now_ms;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{Clients, RemoteDevice, RemoteStatus};
@@ -65,12 +66,6 @@ impl ApiEvent {
             body,
         }
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// What changed in the settings ([`ApiEventBody::SettingsChanged`]).

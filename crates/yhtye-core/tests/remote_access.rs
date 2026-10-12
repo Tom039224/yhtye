@@ -6,7 +6,7 @@
 
 use std::net::IpAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,7 +20,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use yhtye_core::api::{ApiCommand, ApiEventBody, ApiResponse};
 use yhtye_core::remote::{
     ClientKind, Clients, MAX_FAILURES, PairingCode, RemoteDevice, RemoteStatus, Tailscale,
-    TailscaleCli, TailscaleError, TailscaleSelf, token_hash,
+    TailscaleCli, TailscaleError, TailscalePeer, TailscaleSelf, token_hash,
 };
 use yhtye_core::runtime::{Core, CoreConfig, host_name};
 use yhtye_core::secrets::MemoryBackend;
@@ -38,6 +38,10 @@ struct FakeTailscale {
     up: Mutex<bool>,
     /// The user every peer belongs to.
     peer_user: u64,
+    /// This PC is a tagged node.
+    pc_tagged: AtomicBool,
+    /// Every peer is a tagged node.
+    peers_tagged: bool,
     /// `whois` lookups so far.
     whois_calls: AtomicUsize,
 }
@@ -51,6 +55,19 @@ impl FakeTailscale {
         Arc::new(Self {
             up: Mutex::new(true),
             peer_user,
+            pc_tagged: AtomicBool::new(false),
+            peers_tagged: false,
+            whois_calls: AtomicUsize::new(0),
+        })
+    }
+
+    /// Every peer is tagged, whoever the user is.
+    fn with_tagged_peers(peer_user: u64) -> Arc<Self> {
+        Arc::new(Self {
+            up: Mutex::new(true),
+            peer_user,
+            pc_tagged: AtomicBool::new(false),
+            peers_tagged: true,
             whois_calls: AtomicUsize::new(0),
         })
     }
@@ -72,12 +89,16 @@ impl Tailscale for FakeTailscale {
             addresses: vec!["127.0.0.1".parse().unwrap()],
             dns_name: Some("pc.test.ts.net".into()),
             user_id: ME,
+            tagged: self.pc_tagged.load(Ordering::SeqCst),
         })
     }
 
-    async fn whois(&self, _ip: IpAddr) -> Result<u64, TailscaleError> {
+    async fn whois(&self, _ip: IpAddr) -> Result<TailscalePeer, TailscaleError> {
         self.whois_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(self.peer_user)
+        Ok(TailscalePeer {
+            user_id: self.peer_user,
+            tagged: self.peers_tagged,
+        })
     }
 }
 
@@ -531,6 +552,281 @@ async fn a_stopped_tailscale_is_reported_and_retried() {
     );
     other.shutdown().await;
     core.shutdown().await;
+}
+
+/// A PC that is a tagged node cannot tell its owner's devices from the other
+/// tagged nodes of the tailnet (they share one user): remote access does not
+/// start, and says why. Untagging it and enabling again retries.
+#[tokio::test]
+async fn a_tagged_pc_does_not_start_remote_access_and_says_why() {
+    let dir = tempfile::tempdir().expect("dir");
+    let tailscale = FakeTailscale::new();
+    tailscale.pc_tagged.store(true, Ordering::SeqCst);
+    let core = Core::start(config(dir.path(), tailscale.clone()))
+        .await
+        .expect("core");
+    let port = free_port();
+    let st = enable(&core, port).await;
+    assert!(
+        st.enabled && !st.running && st.addresses.is_empty(),
+        "{st:?}"
+    );
+    assert!(
+        st.error.as_deref().is_some_and(|e| e.contains("tagged")),
+        "{st:?}"
+    );
+    assert!(TcpStream::connect(("127.0.0.1", port)).await.is_err());
+    assert!(
+        core.command(ApiCommand::CreatePairingCode).await.is_err(),
+        "no code while not running"
+    );
+    // Also when it is enabled at app start.
+    core.shutdown().await;
+    drop(core);
+    let core = Core::start(config(dir.path(), tailscale.clone()))
+        .await
+        .expect("restart");
+    core.start_remote().await;
+    let st = status(&core, ApiCommand::GetRemoteStatus).await;
+    assert!(!st.running && st.error.is_some(), "{st:?}");
+
+    tailscale.pc_tagged.store(false, Ordering::SeqCst);
+    let st = enable(&core, port).await;
+    assert!(st.running && st.error.is_none(), "{st:?}");
+    core.shutdown().await;
+}
+
+/// A tagged node is refused before anything else, even when `whois` names this
+/// PC's own user (the code's tries are not used, no device is stored).
+#[tokio::test]
+async fn a_tagged_peer_is_refused_whoever_its_user_is() {
+    let dir = tempfile::tempdir().expect("dir");
+    let tailscale = FakeTailscale::with_tagged_peers(ME);
+    let core = Core::start(config(dir.path(), tailscale.clone()))
+        .await
+        .expect("core");
+    let port = free_port();
+    assert!(enable(&core, port).await.running);
+    let base = format!("http://127.0.0.1:{port}");
+    let ws_url = format!("ws://127.0.0.1:{port}/ws");
+    let code = new_code(&core).await;
+    for _ in 0..=MAX_FAILURES {
+        assert_eq!(pair(&base, "WRONGCDE", "CI box").await.0, 403);
+    }
+    assert_eq!(pair(&base, &code.code, "CI box").await.0, 403);
+    let token = "0".repeat(64);
+    assert_eq!(
+        http_status(connect(&ws_url, Some(&token)).await.unwrap_err()),
+        403
+    );
+    assert_eq!(
+        status(&core, ApiCommand::GetRemoteStatus)
+            .await
+            .pairing_expires_at_ms,
+        Some(code.expires_at_ms),
+        "the code's tries were not used"
+    );
+    assert!(
+        devices(&core, ApiCommand::ListRemoteDevices)
+            .await
+            .is_empty()
+    );
+    core.shutdown().await;
+}
+
+/// Makes storing a device fail (a locked or full database, as far as the
+/// server can tell) until the trigger is dropped.
+async fn failing_writes(dir: &Path) -> sqlx::SqlitePool {
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(db_path(dir));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("second connection");
+    sqlx::query(
+        "CREATE TRIGGER fail_device_writes BEFORE INSERT ON remote_devices \
+         BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END",
+    )
+    .execute(&pool)
+    .await
+    .expect("trigger");
+    pool
+}
+
+/// The pairing code is used up when it is redeemed, so two requests with it
+/// never both pair; if the device cannot be stored, the code is given back.
+#[tokio::test]
+async fn a_failed_write_gives_the_pairing_code_back_and_it_still_works_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let core = Core::start(config(dir.path(), FakeTailscale::new()))
+        .await
+        .expect("core");
+    let mut local_events = core.subscribe();
+    let port = free_port();
+    assert!(enable(&core, port).await.running);
+    let base = format!("http://127.0.0.1:{port}");
+    let code = new_code(&core).await;
+    let blocker = failing_writes(dir.path()).await;
+
+    drain(&mut local_events);
+    let (st, body) = pair(&base, &code.code, "Pixel").await;
+    assert_eq!(st, 500, "{body}");
+    assert_eq!(body["error"], "could not store the device");
+    assert!(
+        devices(&core, ApiCommand::ListRemoteDevices)
+            .await
+            .is_empty()
+    );
+    assert_eq!(
+        status(&core, ApiCommand::GetRemoteStatus)
+            .await
+            .pairing_expires_at_ms,
+        Some(code.expires_at_ms),
+        "the code is valid again, with its expiry"
+    );
+    assert_eq!(
+        status_events(&mut local_events),
+        0,
+        "the status the PC shows never changed"
+    );
+
+    // Tries a wrong code had counted stay counted: the code was not renewed.
+    assert_eq!(pair(&base, "WRONGCDE", "Pixel").await.0, 401);
+    sqlx::query("DROP TRIGGER fail_device_writes")
+        .execute(&blocker)
+        .await
+        .expect("drop trigger");
+    let (st, paired) = pair(&base, &code.code, "Pixel").await;
+    assert_eq!(st, 200, "{paired}");
+    assert_eq!(devices(&core, ApiCommand::ListRemoteDevices).await.len(), 1);
+    let (st, _) = pair(&base, &code.code, "Again").await;
+    assert_eq!(st, 401, "used for good now");
+    assert!(
+        status(&core, ApiCommand::GetRemoteStatus)
+            .await
+            .pairing_expires_at_ms
+            .is_none()
+    );
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_same_pairing_code_pairs_only_one_of_many_simultaneous_devices() {
+    let dir = tempfile::tempdir().expect("dir");
+    let core = Core::start(config(dir.path(), FakeTailscale::new()))
+        .await
+        .expect("core");
+    let port = free_port();
+    assert!(enable(&core, port).await.running);
+    let base = format!("http://127.0.0.1:{port}");
+    for _ in 0..5 {
+        let code = new_code(&core).await;
+        let attempts: Vec<_> = (0..8)
+            .map(|n| {
+                let (base, code) = (base.clone(), code.code.clone());
+                tokio::spawn(async move { pair(&base, &code, &format!("Phone {n}")).await.0 })
+            })
+            .collect();
+        let mut statuses = Vec::new();
+        for a in attempts {
+            statuses.push(a.await.expect("joined"));
+        }
+        statuses.sort_unstable();
+        assert_eq!(statuses, [200, 401, 401, 401, 401, 401, 401, 401]);
+    }
+    assert_eq!(devices(&core, ApiCommand::ListRemoteDevices).await.len(), 5);
+    core.shutdown().await;
+}
+
+/// Moves the (paused) clock forward `total`, a second at a time. After each
+/// step, real time passes too (a blocking task keeps the paused clock from
+/// jumping meanwhile), so the sockets' data moves and the tasks answer.
+async fn advance_secs(total: u64) {
+    for _ in 0..total {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(3)))
+            .await
+            .expect("slept");
+    }
+}
+
+/// A device that vanishes without closing the connection (airplane mode, a
+/// killed process) is dropped after the idle timeout and shown as not
+/// connected, while one that answers the server's pings stays.
+#[tokio::test]
+async fn a_device_that_stops_answering_is_dropped_and_one_that_answers_stays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let core = Core::start(config(dir.path(), FakeTailscale::new()))
+        .await
+        .expect("core");
+    let mut local_events = core.subscribe();
+    let addr = enable(&core, free_port()).await.addresses[0].clone();
+    let base = format!("http://{addr}");
+    let ws_url = format!("ws://{addr}/ws");
+    let (_, a) = pair(&base, &new_code(&core).await.code, "Healthy").await;
+    let (_, b) = pair(&base, &new_code(&core).await.code, "Vanishing").await;
+    let (id_a, token_a) = (
+        a["device_id"].as_str().unwrap(),
+        a["token"].as_str().unwrap(),
+    );
+    let (id_b, token_b) = (
+        b["device_id"].as_str().unwrap(),
+        b["token"].as_str().unwrap(),
+    );
+
+    let mut ws_a = connect(&ws_url, Some(token_a)).await.expect("a connects");
+    let mut ws_b = connect(&ws_url, Some(token_b)).await.expect("b connects");
+    let r = call(&mut ws_b, 1, json!({"type": "ping"}), &mut Vec::new()).await;
+    assert_eq!(r["ok"]["type"], "pong");
+    // A reads whatever comes, which answers the server's pings; B is never read.
+    let pings = tokio::spawn(async move {
+        let mut pings = 0;
+        while let Some(Ok(msg)) = ws_a.next().await {
+            pings += usize::from(matches!(msg, Message::Ping(_)));
+        }
+        pings
+    });
+    let connected = |clients: &Clients, id: &str| {
+        clients
+            .devices
+            .iter()
+            .find(|d| d.id == id)
+            .is_some_and(|d| d.connected)
+    };
+    let now = clients(&core).await;
+    assert!(connected(&now, id_a) && connected(&now, id_b));
+    drain(&mut local_events);
+
+    // The clock runs on by itself from here only as the test moves it.
+    tokio::time::pause();
+    advance_secs(yhtye_core::ws::IDLE_TIMEOUT.as_secs() * 3).await;
+    tokio::time::resume();
+
+    // B's connection ended on the server: it is detached and announced.
+    let announced = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let ev = local_events.recv().await.expect("event");
+            if let ApiEventBody::ClientsChanged { clients } = ev.body
+                && !connected(&clients, id_b)
+            {
+                return clients;
+            }
+        }
+    })
+    .await
+    .expect("clients_changed in time");
+    assert!(connected(&announced, id_a), "the healthy device stays");
+    let now = clients(&core).await;
+    assert!(connected(&now, id_a) && !connected(&now, id_b), "{now:?}");
+    let listed = devices(&core, ApiCommand::ListRemoteDevices).await;
+    assert!(listed.iter().any(|d| d.id == id_a && d.connected));
+    assert!(listed.iter().any(|d| d.id == id_b && !d.connected));
+
+    // The vanished device's socket got the close frame (it was never read until now).
+    closed(&mut ws_b).await;
+    // The healthy one was pinged all along (every 20 s over 3 minutes).
+    core.shutdown().await;
+    assert!(pings.await.expect("joined") >= 8);
 }
 
 /// The whole flow against this PC's real Tailscale: listens only on the

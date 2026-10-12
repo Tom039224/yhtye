@@ -17,9 +17,11 @@ mod tailscale;
 mod whois;
 
 pub use clients::{ClientDevice, ClientKind, ClientServer, Clients};
-pub use pairing::{CODE_LEN, CODE_TTL_MS, MAX_FAILURES, token_hash};
+pub use pairing::{CODE_LEN, CODE_TTL_MS, MAX_FAILURES, constant_time_eq, token_hash};
 pub use server::{PairRequest, PairResponse, RemoteError};
-pub use tailscale::{Tailscale, TailscaleCli, TailscaleError, TailscaleSelf, is_tailscale_address};
+pub use tailscale::{
+    Tailscale, TailscaleCli, TailscaleError, TailscalePeer, TailscaleSelf, is_tailscale_address,
+};
 pub use whois::{WHOIS_CACHE_CAPACITY, WHOIS_CONCURRENCY, WHOIS_TTL};
 
 use std::collections::HashMap;
@@ -35,6 +37,7 @@ use tokio_util::sync::CancellationToken;
 use ts_rs::TS;
 
 use crate::api::{ApiError, ApiEvent, ApiEventBody};
+use crate::clock::now_ms;
 use crate::runtime::{Core, host_name};
 use crate::store::{DeviceRecord, Store};
 use pairing::Pairing;
@@ -44,6 +47,12 @@ use whois::WhoisCache;
 pub const DEFAULT_PORT: u16 = 1423;
 /// Longest device name (characters).
 pub const MAX_DEVICE_NAME_CHARS: usize = 64;
+
+/// Why remote access does not start on a tagged Tailscale node.
+const TAGGED_NODE_ERROR: &str = "remote access cannot run on a tagged Tailscale node \
+    (one started with --advertise-tags): every tagged device of the tailnet shares one user, \
+    so other people's tagged devices could not be told from yours. \
+    Use this PC as a node that belongs to your Tailscale user";
 
 const SETTINGS_KEY: &str = "remote.settings";
 const SERVER_ID_KEY: &str = "remote.server_id";
@@ -361,6 +370,9 @@ impl RemoteService {
         port: u16,
     ) -> Result<(Vec<tokio::net::TcpListener>, TailscaleSelf), String> {
         let me = self.shared.tailscale.status().await.map_err(|e| e.0)?;
+        if me.tagged {
+            return Err(TAGGED_NODE_ERROR.into());
+        }
         let mut listeners = Vec::new();
         let mut port = port;
         for (i, ip) in me.addresses.iter().enumerate() {
@@ -488,7 +500,7 @@ impl Shared {
         let hash = token_hash(token);
         let mut found = None;
         for d in self.store.remote_devices().await? {
-            if pairing::constant_time_eq(d.token_hash.as_bytes(), hash.as_bytes()) {
+            if constant_time_eq(d.token_hash.as_bytes(), hash.as_bytes()) {
                 found = Some(d);
             }
         }
@@ -626,12 +638,6 @@ fn device_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,6 +653,7 @@ mod tests {
                 ],
                 dns_name: Some("pc.tail1234.ts.net".into()),
                 user_id: 1,
+                tagged: false,
             },
             cancel: CancellationToken::new(),
             tasks: Vec::new(),

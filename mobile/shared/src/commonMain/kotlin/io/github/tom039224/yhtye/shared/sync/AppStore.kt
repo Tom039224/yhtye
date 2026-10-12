@@ -263,7 +263,7 @@ class AppStore(
         val r = report<ApiResponse.Chat>(ApiCommand.CreateChat(project, branch, worktree), options.longCallTimeoutMs)
             ?: return@onConfined false
         // ブランチには新しい作業ツリーができたかも: チャットを出す前に一覧に載せる
-        if (branch != null) refreshGit()
+        if (branch != null && gitReadNeededFor(r.chat.id, r.chat.worktree)) refreshGit()
         adoptChat(project, r.chat)
         true
     }
@@ -277,7 +277,7 @@ class AppStore(
             val project = _state.value.project?.info?.id ?: return@onConfined
             val r = core.expect<ApiResponse.Chat>(ApiCommand.CreateBranch(project, name, from), options.longCallTimeoutMs)
             // git が先: 概要が作業ツリーを出す前に表示したチャットは「見つからない」に見える
-            refreshGit()
+            if (gitReadNeededFor(r.chat.id, r.chat.worktree)) refreshGit()
             adoptChat(project, r.chat)
         }
     }
@@ -497,11 +497,10 @@ class AppStore(
             return
         }
         if (view.phase == LoadPhase.Error) return
-        val body = ev.body
-        if (!ev.live && body is ApiEventBody.Domain && body.event is DomainEvent.ChatCreated) {
+        val created = ((ev.body as? ApiEventBody.Domain)?.event as? DomainEvent.ChatCreated)?.chat
+        if (!ev.live && created != null) {
             // 作業ツリーは新しいかも: git を読み直す間は「見つからない」にしない。すぐ読む
-            awaitGitFor((body.event as DomainEvent.ChatCreated).chat.id)
-            refreshGitNow()
+            if (gitReadNeededFor(created.id, created.worktree)) refreshGitNow()
         } else if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) {
             scheduleGitRefresh()
         }
@@ -710,12 +709,18 @@ class AppStore(
         }
     }
 
-    /** [chat] は git を最後に読んだ後に作られた ([GitView.awaiting])。 */
-    private fun awaitGitFor(chat: String) {
-        val project = _state.value.project?.info?.id ?: return
-        val git = _state.value.git
-        if (git?.project != project || chat in git.awaiting) return
-        set { it.copy(git = git.copy(awaiting = git.awaiting + chat)) }
+    /**
+     * [chat] が作られた後に git を読む必要があるか。あれば、読み終えるまで待つチャットとして覚える ([GitView.awaiting])。
+     * 要らないのは、作業ツリーがいまの概要に載っているか、そのチャットのために読んでいる最中のとき。この端末の
+     * `create_chat` / `create_branch` (チャットを出す前に git を読む) と、追いつきの後に溜めたものから流し直したイベント。
+     */
+    private fun gitReadNeededFor(chat: String, worktree: String): Boolean {
+        val project = _state.value.project?.info?.id ?: return true
+        val git = _state.value.git?.takeIf { it.project == project } ?: return true
+        if (git.overview?.worktrees?.any { it.path == worktree } == true) return false
+        if (git.loading && chat in git.awaiting) return false
+        set { it.copy(git = git.copy(awaiting = git.awaiting + chat, error = null, loading = true)) }
+        return true
     }
 
     /** git をすぐ読み直す (待っている遅延の読み直しは捨てる)。 */

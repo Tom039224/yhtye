@@ -29,6 +29,7 @@ use crate::api::{
     ApiCommand, ApiError, ApiEvent, ApiEventBody, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
+use crate::clock::now_ms;
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
@@ -661,12 +662,6 @@ impl Core {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {

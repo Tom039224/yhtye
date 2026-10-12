@@ -3,6 +3,10 @@
 //! A code is 8 characters from an alphabet without look-alikes (no 0/O, 1/I/L),
 //! valid for 5 minutes, used once, and dropped after 5 wrong tries. Only one
 //! code is valid at a time: issuing a new one drops the old one.
+//!
+//! A right code is used up when it is redeemed, before the device is stored, so
+//! two requests with the same code can never both pair. If storing the device
+//! then fails, the code is given back ([`Pairing::restore`]).
 
 use sha2::{Digest, Sha256};
 
@@ -29,6 +33,11 @@ struct ActiveCode {
     failures: u32,
 }
 
+/// A code that was redeemed and is not valid any more; kept to give it back
+/// if the device could not be stored.
+#[derive(Debug)]
+pub struct Redeemed(ActiveCode);
+
 /// Why a code was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PairRefused {
@@ -51,7 +60,7 @@ impl Pairing {
     }
 
     /// Uses the code: `Ok` drops it (it was right); a wrong one counts a try.
-    pub fn redeem(&mut self, input: &str, now_ms: u64) -> Result<(), PairRefused> {
+    pub fn redeem(&mut self, input: &str, now_ms: u64) -> Result<Redeemed, PairRefused> {
         let Some(active) = self.active.as_mut() else {
             return Err(PairRefused::NoCode);
         };
@@ -60,14 +69,22 @@ impl Pairing {
             return Err(PairRefused::NoCode);
         }
         if constant_time_eq(normalize(input).as_bytes(), active.code.as_bytes()) {
-            self.active = None;
-            return Ok(());
+            return self.active.take().map(Redeemed).ok_or(PairRefused::NoCode);
         }
         active.failures += 1;
         if active.failures >= MAX_FAILURES {
             self.active = None;
         }
         Err(PairRefused::Wrong)
+    }
+
+    /// Gives a redeemed code back (the device could not be stored, so the
+    /// person may try again with it), unless a newer code was issued meanwhile
+    /// or it has expired.
+    pub fn restore(&mut self, redeemed: Redeemed, now_ms: u64) {
+        if self.active.is_none() && now_ms < redeemed.0.expires_at_ms {
+            self.active = Some(redeemed.0);
+        }
     }
 
     /// The expiry of the valid code, if one is.
@@ -161,8 +178,12 @@ mod tests {
         let (code, expires) = p.issue(1000).expect("issue");
         assert_eq!(expires, 1000 + CODE_TTL_MS);
         let typed = format!(" {}-{} ", &code[..4], code[4..].to_lowercase());
-        assert_eq!(p.redeem(&typed, 2000), Ok(()));
-        assert_eq!(p.redeem(&code, 2001), Err(PairRefused::NoCode), "used");
+        assert!(p.redeem(&typed, 2000).is_ok());
+        assert_eq!(
+            p.redeem(&code, 2001).unwrap_err(),
+            PairRefused::NoCode,
+            "used"
+        );
     }
 
     #[test]
@@ -171,7 +192,10 @@ mod tests {
         let (code, _) = p.issue(0).expect("issue");
         assert_eq!(p.expires_at_ms(CODE_TTL_MS - 1), Some(CODE_TTL_MS));
         assert_eq!(p.expires_at_ms(CODE_TTL_MS), None);
-        assert_eq!(p.redeem(&code, CODE_TTL_MS), Err(PairRefused::NoCode));
+        assert_eq!(
+            p.redeem(&code, CODE_TTL_MS).unwrap_err(),
+            PairRefused::NoCode
+        );
     }
 
     #[test]
@@ -179,9 +203,9 @@ mod tests {
         let mut p = Pairing::default();
         let (code, _) = p.issue(0).expect("issue");
         for _ in 0..MAX_FAILURES {
-            assert_eq!(p.redeem("WRONGCDE", 1), Err(PairRefused::Wrong));
+            assert_eq!(p.redeem("WRONGCDE", 1).unwrap_err(), PairRefused::Wrong);
         }
-        assert_eq!(p.redeem(&code, 2), Err(PairRefused::NoCode));
+        assert_eq!(p.redeem(&code, 2).unwrap_err(), PairRefused::NoCode);
         assert_eq!(p.expires_at_ms(2), None);
     }
 
@@ -191,9 +215,43 @@ mod tests {
         let (old, _) = p.issue(0).expect("issue");
         let (new, _) = p.issue(1).expect("issue");
         if old != new {
-            assert_eq!(p.redeem(&old, 2), Err(PairRefused::Wrong));
+            assert_eq!(p.redeem(&old, 2).unwrap_err(), PairRefused::Wrong);
         }
-        assert_eq!(p.redeem(&new, 3), Ok(()));
+        assert!(p.redeem(&new, 3).is_ok());
+    }
+
+    #[test]
+    fn a_redeemed_code_can_be_given_back_once() {
+        let mut p = Pairing::default();
+        let (code, expires) = p.issue(0).expect("issue");
+        assert_eq!(p.redeem("WRONGCDE", 1).unwrap_err(), PairRefused::Wrong);
+        let redeemed = p.redeem(&code, 2).expect("right");
+        // Used up while the device is being stored: nobody else can use it.
+        assert_eq!(p.redeem(&code, 3).unwrap_err(), PairRefused::NoCode);
+        assert_eq!(p.expires_at_ms(3), None);
+        p.restore(redeemed, 4);
+        assert_eq!(p.expires_at_ms(4), Some(expires));
+        // The tries are as they were (1 wrong so far), and it works again once.
+        for _ in 0..MAX_FAILURES - 2 {
+            assert_eq!(p.redeem("WRONGCDE", 5).unwrap_err(), PairRefused::Wrong);
+        }
+        assert!(p.redeem(&code, 6).is_ok());
+        assert_eq!(p.redeem(&code, 7).unwrap_err(), PairRefused::NoCode);
+    }
+
+    #[test]
+    fn a_redeemed_code_is_not_given_back_over_a_newer_one_or_after_it_expired() {
+        let mut p = Pairing::default();
+        let (code, _) = p.issue(0).expect("issue");
+        let redeemed = p.redeem(&code, 1).expect("right");
+        let (newer, _) = p.issue(2).expect("issue");
+        p.restore(redeemed, 3);
+        assert!(p.redeem(&newer, 4).is_ok(), "the newer code is kept");
+
+        let (code, _) = p.issue(0).expect("issue");
+        let redeemed = p.redeem(&code, 1).expect("right");
+        p.restore(redeemed, CODE_TTL_MS);
+        assert_eq!(p.expires_at_ms(CODE_TTL_MS), None, "expired meanwhile");
     }
 
     #[test]
