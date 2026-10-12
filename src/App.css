@@ -248,6 +248,14 @@ button:disabled { cursor: default; }
   font: 400 11px/1.5 var(--font-mono); color: var(--text-faint);
 }
 .notice .notice-body { flex: 1 1 100%; color: var(--text-muted); }
+/* The orchestrator's message to a task's agent: the accent marks it as the orchestrator's (design §3.4),
+   the bar and inset ground keep it apart from the agent's own plain text. */
+.orch-msg { border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-inset); padding: 7px 12px 8px; min-width: 0; }
+.orch-msg-head { display: flex; align-items: center; gap: 6px; font: 500 11px/1.4 var(--font-text); color: var(--accent); }
+.orch-msg-interrupted { font: 400 10.5px/1.4 var(--font-mono); color: var(--text-faint); }
+.orch-msg-head .msg-time { margin-left: auto; padding: 0; }
+.orch-msg:hover .msg-time { opacity: 1; }
+.orch-msg-body { margin-top: 4px; font-size: 13px; line-height: 1.75; color: var(--text-body); overflow-wrap: anywhere; }
 .tool { display: flex; align-items: center; gap: 6px; min-width: 0; font: 400 10.5px/1.6 var(--font-mono); color: var(--text-quaternary); }
 .tool-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 details.tool { display: block; }
