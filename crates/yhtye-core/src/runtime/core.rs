@@ -21,7 +21,7 @@ use futures::future::join_all;
 use tokio::sync::broadcast;
 
 use super::chats::ChatTarget;
-use super::host::host_name;
+use super::host::{APP_VERSION, host_name};
 use super::orchestration::{OrchError, Orchestration, OrchestrationConfig, UserActionError};
 use crate::acp::HarnessConfig;
 use crate::agents::{AgentCatalog, AgentChoice, HarnessPreset, ModelEfforts, ModelService};
@@ -200,7 +200,10 @@ impl Core {
 
     pub async fn command(&self, cmd: ApiCommand) -> Result<ApiResponse, ApiError> {
         match cmd {
-            ApiCommand::Ping => Ok(ApiResponse::Pong { host: host_name() }),
+            ApiCommand::Ping => Ok(ApiResponse::Pong {
+                host: host_name(),
+                version: APP_VERSION.to_string(),
+            }),
             ApiCommand::ListProjects => Ok(ApiResponse::Projects {
                 projects: self.list_projects().await?,
             }),

@@ -672,3 +672,37 @@ Android の画面側の対応は後続タスク):
 
 保留: チャット単位の「操作権」ロック (片方が操作中ならもう片方は閲覧のみ、取得で奪う)。データの整合はコアの直列化で守られるので、
 上の追従の修正を入れたうえで、食い違う指示が実際に問題になるなら足す。
+
+## リリースと更新 (T-84)
+
+ユーザーと決めたこと。手順と鍵の扱いは [`../DEVELOPMENT.md`](../DEVELOPMENT.md) の「リリース (GitHub Releases に署名済み APK を出す)」、利用者向けの説明は [`../../README.md`](../../README.md) の「Android 版」。
+
+| 項目 | 決定 |
+|---|---|
+| 配布先 | **GitHub Releases に署名済み APK を添付**。Play / F-Droid は使わない |
+| 署名 | GitHub Actions で署名する。鍵は Secrets (`ANDROID_KEYSTORE_BASE64` ほか 3 つ)。リポジトリには入れない。Gradle は環境変数 (`YHTYE_KEYSTORE_FILE` ほか 3 つ) が揃っているときだけ release を署名し、無ければ未署名 |
+| タグ | `android-v<major>.<minor>.<patch>`。デスクトップ版とは別。`0.` で始まる間は GitHub のプレリリース |
+| 版 | `versionName` = タグの版 (`-Pyhtye.versionName`、既定は `gradle.properties`)。`versionCode` = `major*10000 + minor*100 + patch` (マイナーとパッチは 0〜99、外れたらビルド失敗) |
+| 互換性 | 0.x の間は `0.<minor>` が PC とスマホで同じなら互換。1.0 以降は厳密な SemVer (メジャーが同じで PC のマイナー ≥ スマホのマイナー)。パッチは独立 |
+| 更新の届け方 | **アプリ内で確認する** (Obtainium 頼みにしない)。入れるのはブラウザ経由で、アプリはダウンロードもインストールもしない |
+
+### 互換性チェック
+
+- コア: `ping` の応答を `pong{host, version}` にした。`version` は PC のデスクトップアプリの版 (`runtime::APP_VERSION` = ワークスペースの版)。版を返す前の古い PC は返さないので、
+  Kotlin の型では省略でき (既定の空文字)、アプリは「不明」として扱う (警告しない)。
+- アプリ (`shared/version/`): `AppVersion` (SemVer の解析と順序)、`compatibility(pcVersion, deviceVersion)` (`Compatible` / `Incompatible` / `Unknown`)。
+  `AppStore` が ping の `version` を `HostView.version` に持つ。
+- 表示: 互換でなければ会話画面の上部 (接続のバナーと同じ場所) に「PC の Yhtye と版が合いません (PC 0.2.0 / この端末 0.1.0)。どちらかを更新してください」。
+  設定の「この端末」の「接続先」に PC の版とこの端末の版 (不明なら「不明」。互換でなければ同じ警告)。
+
+### 更新の確認
+
+- `shared/update/`: GitHub の `releases` API を読み (`GithubReleaseSource`。HTTPS だけ。アプリが付けるヘッダーは `Accept` だけで、認証も端末・PC を表す値も付けない)、`android-v*` のタグのうち下書きでなく
+  自分より新しい版の最新 (`newestAndroidUpdate`。プレリリースも対象) を選ぶ。`UpdateChecker` が状態 (`UpdateState`) と記録 (`UpdateStore`) を持つ。
+- 契機: アプリが前面に来たとき (`ProcessLifecycleOwner` の `onStart`)、**最後に成功した確認から 24 時間以上**たっていれば。失敗の後は自動では 1 時間あけてやり直す
+  (API は認証なしで 1 時間 60 回までなので、前面に来るたびに叩かない)。設定の「今すぐ確認」はこの間隔に縛られない。
+- 表示: 新しい版があれば設定の「この端末」に「新しい版 0.1.1 があります」と「ダウンロード」(= ブラウザでリリースのページを開く。URL はタグから作り、API の応答の URL は使わない)、
+  左パネルの設定のボタン (レールの一番下) の右上に小さな点。通知は出さない。失敗 (オフライン・回数制限) は静かに捨て、理由は設定の「この端末」にだけ出す。
+- 「更新を確認する」(既定オン) を切ると、自動の確認も「今すぐ確認」もしない (GitHub には何も送らない)。切り替えと最後に確認した時刻・見つけた版は端末に残す
+  (`yhtye.updates`。ペアリングを解除しても残る)。
+- 通信の制限: PC との平文の接続先を Tailscale のアドレスに限る歯止め (`TailscaleHosts`) はそのまま。GitHub は HTTPS 固定の別経路で、`network_security_config.xml` のコメントに書いた。

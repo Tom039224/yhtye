@@ -76,7 +76,8 @@ private var SemanticsPropertyReceiver.dimmed by Dimmed
 
 private val DATE_TIME: DateTimeFormatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT)
 
-private fun formatDateTime(ms: Long): String = DATE_TIME.format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
+/** 日時を端末のロケールの短い形で (設定の「最後に確認」と共有)。 */
+internal fun formatDateTime(ms: Long): String = DATE_TIME.format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
 
 /** サーバーの行と端末の行。[selfId] はペアリングで保存したこの端末の ID (その行に「この端末」を付ける)。 */
 @Composable

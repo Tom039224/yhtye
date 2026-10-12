@@ -585,7 +585,13 @@ fn responses() -> Vec<Sample> {
         text: "hello".into(),
     };
     let cases = [
-        ("pong", ApiResponse::Pong { host: "pc".into() }),
+        (
+            "pong",
+            ApiResponse::Pong {
+                host: "pc".into(),
+                version: "0.2.1".into(),
+            },
+        ),
         (
             "projects",
             ApiResponse::Projects {
@@ -1283,7 +1289,10 @@ fn server_messages() -> Vec<Sample> {
             "reply/ok",
             WsServerMessage::Reply(WsReply::Ok {
                 id: 1,
-                ok: ApiResponse::Pong { host: "pc".into() },
+                ok: ApiResponse::Pong {
+                    host: "pc".into(),
+                    version: "0.2.1".into(),
+                },
             }),
         ),
         (

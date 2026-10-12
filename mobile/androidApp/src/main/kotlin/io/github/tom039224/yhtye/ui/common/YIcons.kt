@@ -87,6 +87,7 @@ object YIcons {
     val At = lineIcon("at", circle(12f, 12f, 4f), "M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8")
     val Thought = lineIcon("thought", "M9 18h6", "M10 22h4", "M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z")
     val Refresh = lineIcon("refresh", "M21 12a9 9 0 1 1-3-6.7L21 8", "M21 3v5h-5")
+    val Download = lineIcon("download", "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M7 10l5 5 5-5", "M12 15V3")
     val Bot = lineIcon("bot", rect(4f, 8f, 16f, 12f, 2f), "M12 8V4H8", "M2 14h2", "M20 14h2", "M15 13v2", "M9 13v2")
     val User = lineIcon("user", circle(12f, 8f, 4f), "M20 21a8 8 0 0 0-16 0")
     val Bell = lineIcon("bell", "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.94 1.94 0 0 0 3.4 0")

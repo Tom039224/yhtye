@@ -35,21 +35,30 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.R
+import io.github.tom039224.yhtye.ThisApp
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.credentials.Credentials
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.BackgroundMode
+import io.github.tom039224.yhtye.shared.version.AppVersion
+import io.github.tom039224.yhtye.shared.version.Compatibility
+import io.github.tom039224.yhtye.shared.version.compatibility
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.YIcons
 import kotlinx.coroutines.flow.StateFlow
 
-/** 設定の「この端末」に要るもの: 接続先、常駐方式 (保存先)、OS の許可の操作。 */
+/**
+ * 設定の「この端末」に要るもの: 接続先、常駐方式 (保存先)、OS の許可の操作、このアプリの版 ([appVersion]。PC の版との互換性の判定に使う)、
+ * アプリの更新の確認 ([updates]。null なら更新の節を出さない)。
+ */
 class DevicePane(
     val credentials: Credentials?,
     val mode: StateFlow<BackgroundMode>,
     val onMode: (BackgroundMode) -> Unit,
     val system: SystemAccess,
+    val appVersion: AppVersion = ThisApp.version,
+    val updates: UpdatePane? = null,
 )
 
 /** ペアリング情報も OS の操作も無い設定 (テストの既定)。 */
@@ -74,12 +83,22 @@ fun DeviceTab(app: AppState, device: DevicePane, onUnpair: () -> Unit) {
     SettingsPane("device-section") {
         Section(stringResource(R.string.device_connection_title), YIcons.Unplug, "device-connection") {
             InfoRow(stringResource(R.string.device_pc), app.host.name ?: "—", "device-pc")
+            InfoRow(stringResource(R.string.device_pc_version), app.host.version ?: stringResource(R.string.device_version_unknown), "device-pc-version")
+            InfoRow(stringResource(R.string.device_app_version), device.appVersion.toString(), "device-app-version")
+            (compatibility(app.host.version, device.appVersion) as? Compatibility.Incompatible)?.let {
+                WarningLine(
+                    stringResource(R.string.version_mismatch, it.pc.toString(), it.device.toString()),
+                    Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    tag = "device-version-mismatch",
+                )
+            }
             device.credentials?.let {
                 InfoRow(stringResource(R.string.device_address), "${it.hosts.first()}:${it.port}", "device-address")
                 InfoRow(stringResource(R.string.device_name), it.deviceName, "device-name")
             }
             InfoRow(stringResource(R.string.device_state), connectionText(app.connection), "device-state")
         }
+        device.updates?.let { UpdateSection(it, device.system) }
         Section(stringResource(R.string.device_background_title), YIcons.Activity, "device-background") {
             NoteText(stringResource(R.string.device_background_intro), Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
             ModeRow(BackgroundMode.Always, stringResource(R.string.device_background_always), stringResource(R.string.device_background_always_desc), mode, device.onMode)
@@ -165,7 +184,7 @@ fun DeviceTab(app: AppState, device: DevicePane, onUnpair: () -> Unit) {
 }
 
 @Composable
-private fun Section(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, content: @Composable () -> Unit) {
+internal fun Section(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, content: @Composable () -> Unit) {
     val c = Yhtye.colors
     SettingsCard(Modifier.testTag(tag)) {
         Row(

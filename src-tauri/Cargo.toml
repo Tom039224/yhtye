@@ -1,6 +1,6 @@
 [package]
 name = "yhtye"
-version = "0.1.0"
+version.workspace = true
 description = "Yhtye desktop app (Tauri shell around yhtye-core)"
 authors = ["Kirsikka (GitHub: Tom039224)"]
 edition = "2021"
