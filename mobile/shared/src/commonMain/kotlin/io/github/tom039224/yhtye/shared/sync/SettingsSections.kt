@@ -50,7 +50,8 @@ class SettingsChangeGate(
 ) {
     private val _stale = MutableStateFlow(false)
     val stale: StateFlow<Boolean> = _stale.asStateFlow()
-    private var pending: SettingsChange? = null
+    /** 保存中に届いた変更すべて (自分の保存の知らせで他の端末の変更を隠さない)。 */
+    private val pending = mutableListOf<SettingsChange>()
 
     init {
         // すぐ購読する (始める前に届いた知らせは取りこぼさないが、始めた後のものは落とさない)
@@ -62,17 +63,22 @@ class SettingsChangeGate(
     private fun consider(change: SettingsChange) {
         when {
             isShown(change) -> Unit
-            isBusy() -> pending = change
+            isBusy() -> pending += change
             isEditing() -> _stale.value = true
-            else -> reload()
+            else -> {
+                _stale.value = false // いま読み直すのでバナーは要らない
+                reload()
+            }
         }
     }
 
     /** 保存が終わった: 待たせた変更を見る。 */
     fun resume() {
-        val change = pending ?: return
-        pending = null
-        consider(change)
+        if (pending.isEmpty()) return
+        val queued = pending.toList()
+        pending.clear()
+        // 1 回の読み直しで足りる。まだ画面に出ていない変更があるときだけ
+        queued.firstOrNull { !isShown(it) }?.let(::consider)
     }
 
     /** 「再読込」: 今すぐ読み直す。 */

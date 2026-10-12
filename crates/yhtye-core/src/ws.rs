@@ -114,6 +114,9 @@ pub async fn run_session(
     }
     forwarder.abort();
     drop(out_tx);
+    // The client is gone: the writer stops now rather than when the last
+    // request still running drops its sender (their replies are dropped).
+    session.cancel();
     let _ = writer.await;
 }
 

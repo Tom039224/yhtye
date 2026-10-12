@@ -149,6 +149,9 @@ struct ServerState {
     settings: RemoteSettings,
     running: Option<Running>,
     error: Option<String>,
+    /// Set by [`RemoteService::shutdown`] (under the lock, so a start racing
+    /// with the shutdown cannot slip in after it): nothing starts any more.
+    closed: bool,
 }
 
 #[derive(Debug)]
@@ -216,7 +219,7 @@ impl RemoteService {
     /// failure is kept in the status, not returned.
     pub(crate) async fn start_if_enabled(&self, core: &Core) {
         let mut state = self.state.lock().await;
-        if state.settings.enabled && state.running.is_none() {
+        if !state.closed && state.settings.enabled && state.running.is_none() {
             self.start(&mut state, core).await;
             self.shared.emit_status(&state);
         }
@@ -231,6 +234,9 @@ impl RemoteService {
         port: Option<u16>,
     ) -> Result<RemoteStatus, ApiError> {
         let mut state = self.state.lock().await;
+        if enabled && state.closed {
+            return Err(ApiError::unavailable("Yhtye is shutting down"));
+        }
         let port = port.unwrap_or(state.settings.port);
         if port == 0 {
             return Err(ApiError::invalid_argument("the port must be 1-65535"));
@@ -254,9 +260,10 @@ impl RemoteService {
         Ok(self.shared.status_of(&state))
     }
 
-    /// Stops the server (the core is shutting down). The settings stay.
+    /// Stops the server for good (the core is shutting down). The settings stay.
     pub(crate) async fn shutdown(&self) {
         let mut state = self.state.lock().await;
+        state.closed = true;
         if state.running.is_some() {
             self.stop_server(&mut state).await;
             self.shared.emit_status(&state);

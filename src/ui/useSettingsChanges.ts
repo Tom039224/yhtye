@@ -27,17 +27,19 @@ export function useSettingsChanges(kinds: SettingsKind[], options: Options): { s
   const [stale, setStale] = useState(false);
   const opts = useRef(options);
   opts.current = options;
-  const pending = useRef<SettingsChange | null>(null);
+  /** Every change that came during a save (the save's own notice must not hide another client's). */
+  const pending = useRef<SettingsChange[]>([]);
   const kindKey = kinds.join(",");
 
   const consider = useCallback((change: SettingsChange) => {
     const o = opts.current;
     if (o.isShown?.(change)) return;
     if (o.busy) {
-      pending.current = change;
+      pending.current.push(change);
     } else if (o.isEditing()) {
       setStale(true);
     } else {
+      setStale(false); // read again now: the banner would be wrong
       o.reload();
     }
   }, []);
@@ -51,10 +53,12 @@ export function useSettingsChanges(kinds: SettingsKind[], options: Options): { s
   );
 
   useEffect(() => {
-    if (options.busy || !pending.current) return;
-    const change = pending.current;
-    pending.current = null;
-    consider(change);
+    if (options.busy || pending.current.length === 0) return;
+    const queued = pending.current;
+    pending.current = [];
+    // One reload covers them all; only changes not on screen yet need it.
+    const next = queued.find((c) => !opts.current.isShown?.(c));
+    if (next) consider(next);
   }, [options.busy, consider]);
 
   const reloadNow = useCallback(() => {

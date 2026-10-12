@@ -3,7 +3,9 @@
 //! Every request is first checked with `tailscale whois` (answers kept for a
 //! minute per address, a few lookups at once: [`super::whois`]): the peer must
 //! belong to the same Tailscale user as this PC (else 403), so other users'
-//! devices cannot even use up a pairing code's tries. `/ws` then needs
+//! devices cannot even use up a pairing code's tries. A lookup that fails
+//! (Tailscale briefly unreachable, a timeout) is 503, so clients retry instead
+//! of taking it for a refusal. `/ws` then needs
 //! `Authorization: Bearer <device token>` (else 401).
 
 use std::net::SocketAddr;
@@ -94,18 +96,25 @@ fn refuse(status: StatusCode, why: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
-/// `Err`: why a peer that is not this PC's Tailscale user is refused.
-async fn check_peer(ctx: &ServerCtx, peer: SocketAddr) -> Result<(), &'static str> {
+/// `Err`: the refusal of a peer that is not this PC's Tailscale user (403),
+/// or 503 when it could not be looked up (a passing failure: retried).
+async fn check_peer(ctx: &ServerCtx, peer: SocketAddr) -> Result<(), (StatusCode, &'static str)> {
     let ip = peer.ip().to_canonical();
     match ctx.shared.whois.user_of(&*ctx.shared.tailscale, ip).await {
         Ok(user) if user == ctx.self_user => Ok(()),
         Ok(user) => {
             tracing::warn!("remote access: refused {ip} (Tailscale user {user})");
-            Err("this device belongs to another Tailscale user")
+            Err((
+                StatusCode::FORBIDDEN,
+                "this device belongs to another Tailscale user",
+            ))
         }
         Err(e) => {
-            tracing::warn!("remote access: refused {ip}: {e}");
-            Err("this device could not be identified on Tailscale")
+            tracing::warn!("remote access: could not identify {ip}: {e}");
+            Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "this device could not be identified on Tailscale; try again",
+            ))
         }
     }
 }
@@ -115,8 +124,8 @@ async fn pair(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     body: Result<Json<PairRequest>, JsonRejection>,
 ) -> Response {
-    if let Err(why) = check_peer(&ctx, peer).await {
-        return refuse(StatusCode::FORBIDDEN, why);
+    if let Err((status, why)) = check_peer(&ctx, peer).await {
+        return refuse(status, why);
     }
     let Json(req) = match body {
         Ok(b) => b,
@@ -172,8 +181,8 @@ async fn ws(
     headers: HeaderMap,
     upgrade: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
-    if let Err(why) = check_peer(&ctx, peer).await {
-        return refuse(StatusCode::FORBIDDEN, why);
+    if let Err((status, why)) = check_peer(&ctx, peer).await {
+        return refuse(status, why);
     }
     let device = match bearer(&headers) {
         Some(token) => match ctx.shared.device_by_token(token).await {

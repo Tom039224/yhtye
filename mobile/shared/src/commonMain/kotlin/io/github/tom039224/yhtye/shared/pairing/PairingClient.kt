@@ -26,7 +26,7 @@ sealed interface PairingFailure {
     /** 401: コードが違う、または有効なコードが無い (期限切れ・使用済み・誤り 5 回)。 */
     data class CodeRejected(val message: String?) : PairingFailure
 
-    /** 403: この端末は PC と同じ Tailscale ユーザーのものではない (か、Tailscale で識別できない)。 */
+    /** 403: この端末は PC と同じ Tailscale ユーザーのものではない (識別できなかっただけなら 503 で [ServerError])。 */
     data class OtherUser(val message: String?) : PairingFailure
 
     /** 400: 端末名などが受け付けられない。 */
