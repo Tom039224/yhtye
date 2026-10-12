@@ -282,7 +282,7 @@ export class AppStore extends SettingsCommands {
     const r = await this.run({ type: "create_chat", project, ...target }, "chat");
     if (!r) return false;
     // A branch may have got a new worktree: list it before showing the chat.
-    if ("branch" in target) await this.refreshGit();
+    if ("branch" in target) await this.readGitFor(r.chat);
     this.adoptChat(project, r.chat);
     return true;
   }
@@ -297,7 +297,7 @@ export class AppStore extends SettingsCommands {
     if (!project) return;
     const r = await this.invoke({ type: "create_branch", project, name, from }, "chat");
     // Git first: a chat shown before the overview lists its worktree reads as "not found".
-    await this.refreshGit();
+    await this.readGitFor(r.chat);
     this.adoptChat(project, r.chat);
   }
 
@@ -506,8 +506,7 @@ export class AppStore extends SettingsCommands {
     if (view.phase === "error") return;
     if (!ev.live && ev.body.type === "domain" && ev.body.event.type === "chat_created") {
       // Its worktree may be new: not "not found" while git is read again, at once.
-      this.awaitGitFor(ev.body.event.chat.id);
-      this.refreshGitNow();
+      void this.readGitFor(ev.body.event.chat);
     } else if ((!ev.live && changesGit(ev)) || endsOrchestratorTurn(ev)) {
       this.scheduleGitRefresh();
     }
@@ -684,11 +683,27 @@ export class AppStore extends SettingsCommands {
     this.set({ git: { ...git, awaiting: [...git.awaiting, chat] } });
   }
 
-  /** Re-reads git at once (a pending delayed read is dropped). */
-  private refreshGitNow(): void {
+  /**
+   * Reads git at once because `chat` was made (a pending delayed read is
+   * dropped), unless it needs no read: its worktree is in the overview already,
+   * or a read waiting for it is in flight. That is the case for this client's
+   * own `create_chat` / `create_branch` (it reads git before adopting the chat)
+   * and for an event seen again (replayed from the buffer after a catch-up).
+   */
+  private readGitFor(chat: Pick<ChatInfo, "id" | "worktree">): Promise<void> {
+    if (this.gitCovers(chat)) return Promise.resolve();
+    this.awaitGitFor(chat.id);
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
-    void this.refreshGit();
+    return this.refreshGit();
+  }
+
+  /** Git has been read since `chat` was made, or is being read for it. */
+  private gitCovers(chat: Pick<ChatInfo, "id" | "worktree">): boolean {
+    const git = this.state.git;
+    if (!git || git.project !== this.state.project?.info.id) return false;
+    if (git.overview?.worktrees.some((w) => w.path === chat.worktree)) return true;
+    return git.loading && git.awaiting.includes(chat.id);
   }
 
   private scheduleGitRefresh(): void {
