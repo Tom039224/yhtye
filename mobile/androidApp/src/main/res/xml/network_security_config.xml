@@ -8,7 +8,8 @@
   QR に MagicDNS 名が無い tailnet では 100.x の IP でつなぐので、IP を許さないわけにはいかない。
   そこで平文はアプリ全体で許し、接続先を Tailscale のアドレスに限るのはアプリのコード
   (shared の TailscaleHosts。ペアリングの入力を読むときに検査し、保存した接続先もそこから来る) で行う。
-  このアプリは PC 以外と通信しない (ML Kit も端末内のモデルを使う)。
+  PC 以外との通信は、アプリ内の更新の確認 (GitHub の API。shared の GithubReleaseSource) だけで、HTTPS で行う
+  (その URL はコードの定数で、平文の URL は受け付けない)。ML Kit は端末内のモデルを使う。
 -->
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
     <base-config

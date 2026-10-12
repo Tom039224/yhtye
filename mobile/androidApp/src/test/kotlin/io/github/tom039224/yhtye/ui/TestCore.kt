@@ -74,6 +74,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
     val calls = CopyOnWriteArrayList<ApiCommand>()
     val failures = HashMap<KClass<out ApiCommand>, ApiError>()
 
+    /** `ping` が返す PC の版 (空 = この項目を返す前の古い PC)。 */
+    var hostVersion = ""
+
     /** `list_projects` の答え (`open_project` はパスが合うものを返す)。 */
     var projects: List<ProjectInfo> = listOf(PROJECT)
 
@@ -130,7 +133,7 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         calls += command
         failures[command::class]?.let { throw ApiException(it) }
         return when (command) {
-            ApiCommand.Ping -> ApiResponse.Pong("test-host")
+            ApiCommand.Ping -> ApiResponse.Pong("test-host", hostVersion)
             ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer("test-host"), devices))
             ApiCommand.ListProjects -> ApiResponse.Projects(projects)
             is ApiCommand.OpenProject -> ApiResponse.Project(projects.find { it.path == command.path } ?: PROJECT)

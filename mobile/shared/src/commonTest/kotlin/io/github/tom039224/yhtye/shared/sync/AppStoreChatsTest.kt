@@ -418,6 +418,21 @@ class AppStoreChatsTest {
     }
 
     @Test
+    fun keepsTheVersionOfThePcThatThePingReports() = runTest {
+        core.hostVersion = "0.2.1"
+        val s = newStore(core, prefs, foreground = true)
+        assertEquals(HostView("test-host", currentTime, "0.2.1"), s.state.value.host)
+    }
+
+    @Test
+    fun theVersionIsUnknownWhenAnOldPcLeavesItOut() = runTest {
+        // 古い PC は version を返さない (生成した型の既定の空文字になる)
+        val s = newStore(core, prefs, foreground = true)
+        assertNull(s.state.value.host.version)
+        assertEquals("test-host", s.state.value.host.name)
+    }
+
+    @Test
     fun pingsEveryFewSecondsAndStopsWhileTheConnectionIsClosed() = runTest {
         val s = newStore(core, prefs, foreground = true)
         advanceTimeBy(6_001)
