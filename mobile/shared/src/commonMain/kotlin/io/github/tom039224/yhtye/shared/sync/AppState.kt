@@ -59,6 +59,8 @@ data class HostView(
     val name: String? = null,
     /** 最後に ping に答えた時刻 (エポックからのミリ秒)。 */
     val lastPingAt: Long? = null,
+    /** PC の Yhtye の版 (`0.1.0`)。ping が版を返さない古い PC では null (互換性の判定は「不明」)。 */
+    val version: String? = null,
 )
 
 const val MAX_ERRORS: Int = 5

@@ -65,6 +65,9 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     var usage: UsageReport? = null
     var host = "test-host"
 
+    /** `ping` が返す PC の版 (空 = この項目を返す前の古い PC)。 */
+    var hostVersion = ""
+
     /** ペアリング済みの端末 (`list_clients`)。 */
     var devices: List<ClientDevice> = emptyList()
 
@@ -131,7 +134,7 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     private fun refuse(code: ApiErrorCode, message: String): Nothing = throw ApiException(ApiError(code, message))
 
     private fun handle(command: ApiCommand): ApiResponse = when (command) {
-        ApiCommand.Ping -> ApiResponse.Pong(host)
+        ApiCommand.Ping -> ApiResponse.Pong(host, hostVersion)
         ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer(host), devices))
         ApiCommand.ListProjects -> ApiResponse.Projects(listOf(info) + others)
         is ApiCommand.OpenProject -> ApiResponse.Project((others.find { it.path == command.path } ?: info).copy(open = true))
