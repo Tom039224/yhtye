@@ -48,11 +48,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.R
+import io.github.tom039224.yhtye.ThisApp
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.Place
+import io.github.tom039224.yhtye.shared.version.AppVersion
+import io.github.tom039224.yhtye.shared.version.Compatibility
+import io.github.tom039224.yhtye.shared.version.compatibility
 import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.YIcons
@@ -70,6 +74,7 @@ private const val MILLIS_PER_SECOND = 1_000L
  *
  * @param onOpenLeft ☰ (左パネル)。[showPanelButtons] が false (左右のパネルを常時表示) のときは出さない。
  * @param onOpenRight グループ (右パネル) の入口と、待機バナーのタップ。
+ * @param appVersion このアプリの版 (PC の版と合わなければ接続のバナーと同じ場所に知らせる)。
  */
 @Composable
 fun ConversationScreen(
@@ -81,6 +86,7 @@ fun ConversationScreen(
     onOpenRight: () -> Unit,
     onReconnect: () -> Unit,
     modifier: Modifier = Modifier,
+    appVersion: AppVersion = ThisApp.version,
 ) {
     val model = conversationModel(app)
     val scope = rememberCoroutineScope()
@@ -88,7 +94,7 @@ fun ConversationScreen(
     val project = model.project
     Column(modifier.fillMaxSize().background(Yhtye.colors.bgCenter)) {
         TopBar(model, showPanelButtons, onOpenLeft, onOpenRight, sync)
-        ConnectionBanner(app, onReconnect, onDismissError = sync::dismissError)
+        ConnectionBanner(app, appVersion, onReconnect, onDismissError = sync::dismissError)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
                 project == null ->
@@ -269,10 +275,10 @@ private fun WaitBannerView(wait: WaitBanner, onClick: () -> Unit) {
 
 /**
  * 接続が切れているとき・画面に出す失敗 (PC の ConnectionBanner。黙って失敗しない)。再接続を待っている間は
- * 「今すぐ再接続」(T-61 のホームと同じ)。
+ * 「今すぐ再接続」(T-61 のホームと同じ)。PC の版とこの端末の版が合わないときも (PC の版が分からない古い PC には出さない)。
  */
 @Composable
-private fun ConnectionBanner(app: AppState, onReconnect: () -> Unit, onDismissError: (Long) -> Unit) {
+private fun ConnectionBanner(app: AppState, appVersion: AppVersion, onReconnect: () -> Unit, onDismissError: (Long) -> Unit) {
     val c = Yhtye.colors
     val connection = app.connection
     val lost: Pair<String, String?>? = when (connection) {
@@ -285,8 +291,12 @@ private fun ConnectionBanner(app: AppState, onReconnect: () -> Unit, onDismissEr
         is ConnectionState.Rejected -> stringResource(R.string.state_rejected) to stringResource(R.string.retry)
         else -> null
     }
-    if (lost == null && app.errors.isEmpty()) return
+    val mismatch = compatibility(app.host.version, appVersion) as? Compatibility.Incompatible
+    if (lost == null && mismatch == null && app.errors.isEmpty()) return
     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        mismatch?.let {
+            Alert(YIcons.Alert, stringResource(R.string.version_mismatch, it.pc.toString(), it.device.toString()), testTag = "version-mismatch") {}
+        }
         lost?.let { (text, action) ->
             Alert(YIcons.Unplug, text, testTag = "connection-lost") {
                 if (action != null) {

@@ -166,7 +166,7 @@ export class FakeCore {
     if (failure) throw failure;
     switch (cmd.type) {
       case "ping":
-        return { type: "pong", host: this.host };
+        return { type: "pong", host: this.host, version: "0.1.0" };
       case "list_projects":
         return { type: "projects", projects: [this.info, ...this.others] };
       case "open_project":

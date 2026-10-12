@@ -14,11 +14,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -46,6 +50,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -73,6 +78,7 @@ private val ROW_PADDING = 16.dp
 private val BUBBLE_SHAPE = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomEnd = 6.dp, bottomStart = 18.dp)
 private val FOLD_SHAPE = RoundedCornerShape(8.dp)
 private val CARD_SHAPE = RoundedCornerShape(10.dp)
+private val MESSAGE_SHAPE = RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp)
 private const val BUBBLE_MAX_SHARE = 0.86f
 private const val CARET_BLINK_MS = 1_000
 
@@ -106,7 +112,51 @@ fun TranscriptRow(item: TranscriptItem, queued: Set<Long>, state: State?) {
         is TranscriptItem.Lifecycle -> Box(pad) {
             MonoLine(if (item.error) YIcons.Alert else YIcons.Info, item.text, if (item.error) Yhtye.colors.handFg else Yhtye.colors.tx4)
         }
+        is TranscriptItem.OrchestratorMessage -> Box(pad) { OrchestratorMessageCard(item) }
         is TranscriptItem.Prompt -> Box(pad) { Fold(YIcons.FileText, "prompt ${formatTime(item.ts)}", item.text, prose = false) }
+    }
+}
+
+/**
+ * オーケストレータからタスクのエージェントへのメッセージ (`message_task`)。琥珀の縦線と沈んだ地で、オーケストレータの言葉と
+ * エージェント自身の文を分ける (PC の `.orch-msg`)。エージェント向けの末尾の注記は出さない。
+ */
+@Composable
+private fun OrchestratorMessageCard(item: TranscriptItem.OrchestratorMessage) {
+    val c = Yhtye.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min)
+            .clip(MESSAGE_SHAPE)
+            .background(c.bgInset)
+            .testTag("orchestrator-message"),
+    ) {
+        Box(Modifier.width(2.dp).fillMaxHeight().background(c.accent))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                YIcon(YIcons.Message, c.accent, 14.dp)
+                Text(
+                    "オーケストレータから",
+                    color = c.accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+                if (item.interrupted) {
+                    Text(
+                        "割り込みで再送",
+                        color = c.tx4,
+                        fontFamily = MonoFont,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(start = 8.dp).testTag("orchestrator-message-interrupted"),
+                    )
+                }
+                Box(Modifier.weight(1f))
+                Text(formatTime(item.ts), color = c.tx5, fontFamily = MonoFont, fontSize = 11.sp)
+            }
+            SelectionContainer(Modifier.padding(top = 4.dp)) { Markdown(item.text) }
+        }
     }
 }
 

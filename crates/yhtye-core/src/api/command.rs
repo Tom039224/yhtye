@@ -368,9 +368,14 @@ impl LoggedEvent {
 #[derive(Debug, Clone, Serialize, JsonSchema, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ApiResponse {
-    /// The core is alive; `host` is the name of the machine it runs on.
+    /// The core is alive; `host` is the name of the machine it runs on and
+    /// `version` the version of the Yhtye desktop app (`0.1.0`).
     Pong {
         host: String,
+        /// A core that predates the field leaves it out, which a reader takes
+        /// as "unknown" (the Android client checks it against its own version).
+        #[serde(default)]
+        version: String,
     },
     Projects {
         projects: Vec<ProjectInfo>,

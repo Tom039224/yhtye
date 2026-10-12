@@ -5,6 +5,7 @@
 import { chunkText, toolCallInfo } from "../api/acp";
 import type { ApiEvent, InboxKind, State, TextKind } from "../api/generated";
 import { chatOfUserCall, isOrchestratorKey, orchestratorKey } from "./chats";
+import { parseOrchestratorMessage } from "./orchestratorMessage";
 
 /** Session key of tool calls the user made through the UI (runtime::USER_SESSION). */
 export const USER = "user";
@@ -21,6 +22,8 @@ export type TranscriptItem =
   | (Base & { kind: "user"; inboxId: number; text: string })
   | (Base & { kind: "notice"; inboxId: number; inboxKind: InboxKind; attrs: [string, string][]; body: string })
   | (Base & { kind: "prompt"; text: string })
+  /** The orchestrator's `message_task` message to a task's agent (a prompt, read for its text). */
+  | (Base & { kind: "orchestrator_message"; text: string; interrupted: boolean })
   /** The user had the orchestrator compact its context (`/compact`). */
   | (Base & { kind: "compact" })
   | (Base & { kind: "text"; textKind: TextKind; text: string })
@@ -114,7 +117,10 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
     case "prompted":
       // The orchestrator's prompts are its inbox batches, shown as user / notice
       // items, or the user's `/compact` (sent as is, not through the inbox).
-      if (!isOrchestratorKey(body.session)) return push(t, body.session, { ...base, kind: "prompt", text: body.text });
+      if (!isOrchestratorKey(body.session)) {
+        const message = parseOrchestratorMessage(body.text);
+        return push(t, body.session, message ? { ...base, kind: "orchestrator_message", ...message } : { ...base, kind: "prompt", text: body.text });
+      }
       return body.text === COMPACT_PROMPT ? push(t, body.session, { ...base, kind: "compact" }) : t;
     case "agent_text":
       return push(t, body.session, { ...base, kind: "text", textKind: body.kind, text: body.text });
