@@ -116,6 +116,17 @@ describe("constructed domain events", () => {
     expect(s.tasks[0]).toMatchObject({ instruction: "do it", workdir: "/w" });
   });
 
+  it("keeps the state when a message_task message is logged and settled", () => {
+    let s = applyDomainEvent(base, { type: "task_message_sent", task: "T-1", step: 1, text: "use tabs" });
+    s = applyDomainEvent(s, {
+      type: "task_message_resolved", task: "T-1", step: 1, outcome: "delivered", via: "steering", detail: "ok",
+    });
+    s = applyDomainEvent(s, {
+      type: "task_message_resolved", task: "T-1", step: 1, outcome: "returned", via: null, detail: "late",
+    });
+    expect(s).toEqual(base);
+  });
+
   it("marks a failed group merge as merge_blocked", () => {
     const group = {
       id: "G-1", chat: "C-1", title: "g", summary: null, base_branch: "main", group_branch: "yhtye/G-1",

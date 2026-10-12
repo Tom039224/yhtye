@@ -196,6 +196,10 @@ impl AgentHandle {
     pub fn prompt(&self, blocks: Vec<ContentBlock>) -> Result<(), AgentError>; // 応答は AgentEvent::TurnEnded。ターン中は Busy
     pub fn prompt_text(&self, text: impl Into<String>) -> Result<(), AgentError>;
     pub fn cancel(&self) -> Result<(), AgentError>;                    // session/cancel 通知。ターン中でも即送る
+    pub fn supports_steering(&self) -> bool;                           // initialize の最上位 _meta.steering.supported
+    pub fn steer(&self, blocks: Vec<ContentBlock>)                      // _session/steering (T-80)。handle を借りない 'static な future
+        -> impl Future<Output = Result<SteerOutcome, AgentError>> + Send + 'static;
+    pub fn steer_text(&self, text: impl Into<String>) -> /* steer と同じ */;
     pub fn is_turn_running(&self) -> bool;
     pub async fn set_mode(&self, mode) -> Result<(), AgentError>;
     pub async fn set_config_option(&self, id, value) -> Result<Vec<SessionConfigOption>, AgentError>;
@@ -208,6 +212,12 @@ impl AgentHandle {
   ([`acp-harnesses.md`](acp-harnesses.md) §4.4)。`Prompt` は `cx.spawn` に切り出し、
   **コマンドループは prompt の応答を待たない**。これで `Cancel` がターン中に届く。
   `set_mode` / `set_config_option` も `cx.spawn` で送り、結果を oneshot で返す。
+- **steer** (T-80、[`acp-harnesses.md`](acp-harnesses.md) §4.5): 能力が無ければハンドルで即
+  `AgentError::SteeringUnsupported` (送らない)。ループはターンが実行中でなければ送らずに
+  `SteerOutcome::PromptRequired`、実行中なら `_session/steering` を積んで応答待ちを `cx.spawn` に
+  逃がし、結果を oneshot で返す (`Injected` / `PromptRequired` / `StartedNewTurn`)。`Injected` の
+  ターンは元の `TurnEnded` 1 回で終わる。`Prompt` もループで要求を積んでから応答待ちを
+  spawn するので、prompt 直後の steer が prompt を追い越さない。
 - 同時に実行中のターンは 1 つまで。ターン中の `prompt` は `AgentError::Busy` を返す。
   判定はハンドル側で同期的に行う (`watch` の check-and-set。アクターへの往復なし)。
   受信箱のまとめ送りは runtime の責務。
@@ -247,7 +257,7 @@ impl AgentHandle {
 
 ```rust
 pub enum AgentEvent {
-    Ready(Box<AgentInfo>),             // { acp_session_id, resumed, modes, config_options, capabilities, agent }
+    Ready(Box<AgentInfo>),             // { acp_session_id, resumed, modes, config_options, capabilities, agent, supports_steering }
     Output(AgentOutput),               // SessionUpdate を 1:1 で型付け。未知は Unknown(serde_json::Value)
     PermissionAutoAnswered { tool_call, options, chosen: Option<PermissionOptionKind> },
     TurnEnded(Result<StopReason, AgentError>),
@@ -599,6 +609,41 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 ループはプロジェクトに 1 つのまま、オーケストレータのセッションだけがチャットごとになる。詳細は §17.3。
 
+### 8.3 `message_task` の配達 (T-81)
+
+[`orchestration-model.md`](orchestration-model.md) §2.5 の実装。判定はドメイン、ACP 操作は runtime (`runtime/messages.rs`)。
+
+- **ドメイン** (`domain/message_rules.rs`): `DomainCommand::MessageTask { binding, args, pending }`
+  (`pending` = 同じタスクに配達待ちがある、という runtime だけが知る事実)。`forbidden` / `invalid_argument` /
+  `not_found` / `invalid_state` / `conflict` をここで返す。Step が実行中なら `TaskMessageSent` を残して
+  `Effect::DeliverMessage { agent, text }` を出す (応答は保留)。Step が報告済み / 未開始ならその場で `returned`
+  (`TaskMessageSent` + `TaskMessageResolved` と応答)。runtime の結果は `DomainCommand::MessageResolved` で戻り、
+  `TaskMessageResolved` を残して**これが tool の応答になる**。2 つのイベントは状態を変えない (ログと会話表示用)。
+- **runtime**: `message_task` はループをブロックしない。`on_tool` が `ToolCall::MessageTask` を別の経路に振り、
+  配達待ちのメッセージは応答用の `oneshot` を持って `Deliveries` (タスクごとに 1 つ) に残る。応答は
+  steering の返答 / ターンの終わり / タイムアウト / タスクの状態変化のどれかで確定する。
+  本文は `prompts::orchestrator_message_prompt`。
+- **経路** (`Sessions::route` でセッションの状態を見る。`Sessions` は「ループがまだ処理していないターン終了」も数える `open_turns`
+  を持つ — エージェント側のターン中フラグはループが `TurnEnded` を見る前に下りるため):
+  1. ターン中 + ステアリング対応 → `AgentHandle::steer_text` を別タスクで待つ (`JoinSet`)。`Injected` →
+     `delivered`/`steering` (steering で届けた本文は `Prompted` として会話に出す)。`StartedNewTurn` → `delivered`
+     (detail に警告、`tracing::warn`)。`PromptRequired` (送る直前にターンが終わった) → Step が未報告なら次の
+     ターン終了で通常のプロンプトとして送る (ターン終了がまだ処理待ちなら待つ、処理済みで合間なら即送る) /
+     報告済みなら `returned`。`SteeringUnsupported` → 2 へ。それ以外のエラー (`Request`、30 秒のタイムアウトなど) →
+     `returned`: **注入されたかもしれない**ので別の経路で再送はしない (二重配達を避ける。detail に会話を確かめるよう書く)。
+     `Closed` → `returned`。
+  2. ターン中 + 非対応 → `cancel_turn` (`session/cancel`) して配達待ちの印を付ける。`TurnEnded` が来たら、
+     `message_at_turn_end` が**ドメインにターン終了を渡す前に**判定する: Step が未報告で `EndTurn` / `Cancelled` →
+     メッセージ (割り込みの前置き付き) をセッションの送信キューに積み `delivered`/`interrupt`。キューが空でないので
+     ドメインは `prompt_queued = true` として扱い、催促も `agent_stopped` もしない。Step が報告済み → `returned`
+     (ドメインの `Done` 分岐が `Cancelled` でも次の Step へ進める)。`Stopped` / `Error` / `Closed` → `returned` (ターン終了は
+     そのままドメインへ)。`INTERRUPT_TIMEOUT` (60 秒) 以内にターンが終わらなければ `returned` にし、印は `Abandoned` として残す:
+     そのあと `Cancelled` で未報告のままターンが終わったときは `EndTurn` として渡す (催促で Step が止まったままにならないように)。
+  3. 合間 (live でターン中でない) → 通常のプロンプトとしてキューに入れ `delivered`/`prompt`。
+  4. 起動中 / セッション無し → `returned` (起動中のキューには入れない: 最初のターンの後に届いてしまうため)。
+- **状態変化**: ループの 1 回ごとの最後に `settle_messages` が配達待ちを見直し、タスクが `running` でなくなった /
+  Step が替わった / (steering 要求中以外で) Step が報告済みになったものを `returned` にする。シャットダウンでは全て `returned`。
+
 ## 9. Tauri アプリ層 (`src-tauri`)
 
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
@@ -720,6 +765,11 @@ Stage 4 の構成 (`src/`):
 - `initialize` で `load_session` (シナリオで切替可) と `mcp_capabilities.http: true` を広告する。
   `session/load` では履歴として `user_message_chunk` を 1 つ再生する。
   `set_mode` / `set_config_option` を記録し、未知の値はエラーにする。
+  `steering: true` で `_session/steering` を広告・処理する (T-80、[`acp-harnesses.md`](acp-harnesses.md) §4.5)。
+  既定では steer を受けたターンは `steered:<text>` を報告して `end_turn` で終わるが、`steer_continues: true` なら
+  実アダプタのようにターンが続く (`sleep` は中断され、次の動作の前に `steered:<text>` を報告して残りを実行する)。
+  動作 `busy(ms)` は `session/cancel` にも steer にも反応せず待つ (止まらないエージェント。`message_task` のタイムアウトと
+  タスク取り消しのテスト用)。
   `modes_as_option: true` で OpenCode のように `modes` を応答に載せず、現在のモードを config option `mode` (category `mode`) としてだけ返す。
 - テストは `tests/common` のヘルパが `cargo build -p yhtye-fake-agent` を 1 回実行して
   `target/debug/yhtye-fake-agent` を使う (`CARGO_TARGET_DIR` 対応)。

@@ -38,6 +38,9 @@ impl Tx {
             ToolCall::ResolveCheckpoint(a) => self.resolve_checkpoint(a),
             ToolCall::AnswerHelp(a) => self.answer_help(a),
             ToolCall::CancelTask(a) => self.cancel_task_tool(&a),
+            ToolCall::MessageTask(_) => Err(ToolError::internal(
+                "message_task must be sent as DomainCommand::MessageTask",
+            )),
             ToolCall::FinishGroup(a) => self.finish_group(a),
             ToolCall::CancelGroup(a) => self.cancel_group(&a),
             ToolCall::GetStatus(a) => self.get_status(binding, &a),
@@ -413,9 +416,6 @@ impl Tx {
     /// An orchestrator bound to a chat only reaches that chat's groups and
     /// tasks (`forbidden` otherwise). Unknown ids pass: the tool reports them.
     fn check_owner(&self, binding: &SessionBinding, call: &ToolCall) -> Result<(), ToolError> {
-        let Some(chat) = binding.chat.as_deref() else {
-            return Ok(());
-        };
         let owner = match call {
             ToolCall::CreateTask(a) => self.state.chat_of_group(&a.group_id),
             ToolCall::FinishGroup(a) => self.state.chat_of_group(&a.group_id),
@@ -428,6 +428,7 @@ impl Tx {
             ToolCall::ModifySteps(a) => self.state.chat_of_task(&a.task_id),
             ToolCall::ResolveCheckpoint(a) => self.state.chat_of_task(&a.task_id),
             ToolCall::CancelTask(a) => self.state.chat_of_task(&a.task_id),
+            ToolCall::MessageTask(a) => self.state.chat_of_task(&a.task_id),
             ToolCall::GetTask(a) => self.state.chat_of_task(&a.task_id),
             ToolCall::AnswerHelp(a) => self
                 .state
@@ -435,8 +436,18 @@ impl Tx {
                 .and_then(|h| self.state.chat_of_task(&h.task)),
             _ => None,
         };
-        match owner {
-            Some(o) if o != chat => Err(ToolError::forbidden(format!(
+        self.forbid_foreign(binding, owner)
+    }
+
+    /// `forbidden` when `owner` (the chat of what a call names; `None`: unknown
+    /// id, which the tool reports itself) is not the chat of `binding`.
+    pub(super) fn forbid_foreign(
+        &self,
+        binding: &SessionBinding,
+        owner: Option<&str>,
+    ) -> Result<(), ToolError> {
+        match (binding.chat.as_deref(), owner) {
+            (Some(chat), Some(o)) if o != chat => Err(ToolError::forbidden(format!(
                 "that belongs to another chat ({o}); this chat is {chat}"
             ))),
             _ => Ok(()),

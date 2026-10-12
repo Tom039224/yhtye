@@ -1,5 +1,6 @@
 //! Public entry point: [`spawn_agent`] and the [`AgentHandle`] it returns.
 
+use std::future::Future;
 use std::path::Path;
 
 use agent_client_protocol::schema::v1::{
@@ -13,6 +14,7 @@ use super::events::{AgentError, AgentEvent, AgentInfo};
 use super::process::spawn_process;
 use super::session::{AgentCmd, ReadySlot, TurnState, run_actor};
 use super::startup::StartupParams;
+use super::steering::SteerOutcome;
 use crate::secrets::SecretEnv;
 
 /// Options for [`spawn_agent`] besides the harness and working directory.
@@ -117,6 +119,46 @@ impl AgentHandle {
     /// `StopReason::Cancelled`. Never waits for the turn.
     pub fn cancel(&self) -> Result<(), AgentError> {
         self.send(AgentCmd::Cancel)
+    }
+
+    /// Whether the agent supports [`AgentHandle::steer`] (it advertises
+    /// `_session/steering` in `initialize`).
+    #[must_use]
+    pub fn supports_steering(&self) -> bool {
+        self.info.supports_steering
+    }
+
+    /// Injects `blocks` into the running turn (`_session/steering`). Like
+    /// [`AgentHandle::prompt`] and [`AgentHandle::cancel`] it never waits for the
+    /// turn: the request is queued behind earlier commands now, and the returned
+    /// future (not borrowing the handle) resolves to the agent's answer:
+    /// - [`SteerOutcome::Injected`]: the turn goes on and ends with one `TurnEnded`.
+    /// - [`SteerOutcome::PromptRequired`]: no turn was running (checked before
+    ///   sending, and by the agent); nothing happened, so prompt instead.
+    /// - [`SteerOutcome::StartedNewTurn`]: the agent ran it as an untracked turn.
+    ///
+    /// Fails with [`AgentError::SteeringUnsupported`] (without sending) when
+    /// the agent does not advertise steering, and with `Request` / `Closed`
+    /// when the request fails.
+    pub fn steer(
+        &self,
+        blocks: Vec<ContentBlock>,
+    ) -> impl Future<Output = Result<SteerOutcome, AgentError>> + Send + 'static {
+        let pending = if self.supports_steering() {
+            let (reply, rx) = oneshot::channel();
+            self.send(AgentCmd::Steer { blocks, reply }).map(|()| rx)
+        } else {
+            Err(AgentError::SteeringUnsupported)
+        };
+        async move { pending?.await.map_err(|_| AgentError::Closed)? }
+    }
+
+    /// [`AgentHandle::steer`] with a single text block.
+    pub fn steer_text(
+        &self,
+        text: impl Into<String>,
+    ) -> impl Future<Output = Result<SteerOutcome, AgentError>> + Send + 'static {
+        self.steer(vec![ContentBlock::Text(TextContent::new(text.into()))])
     }
 
     /// Whether a turn is currently running.

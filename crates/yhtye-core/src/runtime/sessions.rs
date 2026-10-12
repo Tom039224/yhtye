@@ -2,6 +2,7 @@
 //! queueing prompts until a session is idle, rebinding MCP tokens and stopping.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::OrchestrationConfig;
-use crate::acp::{AgentError, AgentEvent, AgentHandle};
+use crate::acp::{AgentError, AgentEvent, AgentHandle, SteerOutcome};
 use crate::agents::StartScope;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
@@ -59,6 +60,32 @@ struct Live {
     binding: SessionBinding,
     /// Prompts waiting for the current turn to end.
     queued: VecDeque<String>,
+    /// Turns whose end the loop has not processed yet. The agent's own turn flag
+    /// clears before the loop sees `TurnEnded`, so this is what tells that a
+    /// turn end is still to come.
+    open_turns: u32,
+}
+
+impl Live {
+    /// Starts a turn with `text`.
+    fn start_turn(&mut self, text: impl Into<String>) -> Result<(), AgentError> {
+        self.handle.prompt_text(text)?;
+        self.open_turns += 1;
+        Ok(())
+    }
+}
+
+/// Where a session stands when something is to be sent to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Route {
+    /// No process, and none being started.
+    Absent,
+    /// Being started: the first prompt is still to be sent.
+    Starting,
+    /// Live, between turns.
+    Idle,
+    /// Live, in a turn (or the end of one is still to be processed).
+    InTurn { steering: bool },
 }
 
 /// A session being started in the background.
@@ -290,6 +317,7 @@ impl Sessions {
             token: s.token,
             binding,
             queued,
+            open_turns: 0,
         };
         self.live.insert(key.clone(), live);
         self.deliver(&key);
@@ -329,7 +357,7 @@ impl Sessions {
         let Some(text) = live.queued.pop_front() else {
             return;
         };
-        match live.handle.prompt_text(text.clone()) {
+        match live.start_turn(text.clone()) {
             Ok(()) => self.emit.send(ApiEventBody::Prompted {
                 session: key.to_string(),
                 text,
@@ -351,8 +379,8 @@ impl Sessions {
         if !self.is_idle(key) {
             return Err(AgentError::Busy);
         }
-        let live = self.live.get(key).ok_or(AgentError::Closed)?;
-        live.handle.prompt_text(text)?;
+        let live = self.live.get_mut(key).ok_or(AgentError::Closed)?;
+        live.start_turn(text)?;
         self.emit.send(ApiEventBody::Prompted {
             session: key.to_string(),
             text: text.to_string(),
@@ -367,6 +395,56 @@ impl Sessions {
             None => return tracing::warn!("no session {key}; prompt dropped"),
         }
         self.deliver(key);
+    }
+
+    /// Puts `text` last in the queue of the live session `key` without sending
+    /// it (the caller sends it after the turn end it has to go through the
+    /// state machine first). `false`: no such session.
+    pub(super) fn queue_text(&mut self, key: &str, text: String) -> bool {
+        let Some(live) = self.live.get_mut(key) else {
+            return false;
+        };
+        live.queued.push_back(text);
+        true
+    }
+
+    /// The loop processed the end of a turn of `key`.
+    pub(super) fn turn_ended(&mut self, key: &str) {
+        if let Some(live) = self.live.get_mut(key) {
+            live.open_turns = live.open_turns.saturating_sub(1);
+        }
+    }
+
+    /// Where `key` stands (see [`Route`]).
+    pub(super) fn route(&self, key: &str) -> Route {
+        match self.live.get(key) {
+            Some(l) if l.open_turns > 0 || l.handle.is_turn_running() => Route::InTurn {
+                steering: l.handle.supports_steering(),
+            },
+            Some(_) => Route::Idle,
+            None if self.starting.contains_key(key) => Route::Starting,
+            None => Route::Absent,
+        }
+    }
+
+    /// Steers `text` into the running turn of `key` (`_session/steering`); the
+    /// request is sent now, the future yields the agent's answer. `None`: no
+    /// such session.
+    pub(super) fn steer_text(
+        &self,
+        key: &str,
+        text: &str,
+    ) -> Option<impl Future<Output = Result<SteerOutcome, AgentError>> + Send + 'static> {
+        self.live.get(key).map(|l| l.handle.steer_text(text))
+    }
+
+    /// Shows `text` as a prompt to `key` (one that was delivered without
+    /// [`Sessions::deliver`], by steering).
+    pub(super) fn announce_prompt(&self, key: &str, text: &str) {
+        self.emit.send(ApiEventBody::Prompted {
+            session: key.to_string(),
+            text: text.to_string(),
+        });
     }
 
     /// Whether `key` is being started in the background.
