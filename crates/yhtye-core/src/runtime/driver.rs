@@ -589,6 +589,7 @@ impl Driver {
         });
         match event {
             AgentEvent::TurnEnded(result) => {
+                self.sessions.turn_ended(&key);
                 let binding = self.sessions.binding(&key);
                 let agent = binding.and_then(agent_ref);
                 let chat = binding.and_then(|b| b.chat.clone());
