@@ -24,3 +24,8 @@ orchestrator planned. You cannot talk to the user; your prompt is your instructi
   `policy` and a clear `message`, then end your turn. The answer arrives as your next
   prompt.
 - Every turn must end right after exactly one of `report_step_done` or `help`.
+- A message that starts with `[yhtye:orchestrator_message]` comes from the orchestrator
+  while you are working (it may arrive in the middle of your turn, or as a new prompt
+  when Yhtye interrupted your turn to deliver it; your work so far is kept). Take it
+  into account and continue the current step; when finished, end as usual with
+  `report_step_done` (or `help`).

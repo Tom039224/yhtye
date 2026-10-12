@@ -20,6 +20,7 @@
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
 //!   "steering": false,          // true: advertise and serve `_session/steering`
+//!   "steer_continues": false,   // true (with "steering"): a steered turn goes on
 //!   "turns": [
 //!     { "match": "hello", "actions": [ {"message": "hi"}, {"end": "end_turn"} ] },
 //!     { "actions": [ {"sleep": 50}, "wait_cancel" ] }
@@ -55,6 +56,9 @@
 //! steer during a turn answers `injected` and interrupts the turn at its next
 //! action or wait: the turn reports `steered:<text>` and ends with `end_turn`
 //! (one prompt response, like the real adapters; `session/cancel` still wins).
+//! With `steer_continues` the turn goes on instead, as it does with a real
+//! adapter: a `sleep` is cut short, the steer is reported as `steered:<text>`
+//! before the next action, and the remaining actions run.
 //! With no turn running it answers `promptRequired` when asked to by
 //! `_meta.steering.idleBehavior`, else `startedNewTurn` and runs the text as a
 //! turn of its own (whose result goes nowhere).
@@ -127,6 +131,9 @@ pub struct Scenario {
     /// Advertise and serve `_session/steering`.
     #[serde(default)]
     pub steering: bool,
+    /// A steer does not end the turn: it is reported and the actions go on.
+    #[serde(default)]
+    pub steer_continues: bool,
     #[serde(default)]
     pub turns: Vec<Turn>,
 }
@@ -174,6 +181,9 @@ pub enum Action {
     /// [`Action::RequestPermission`] with the scenario's `permission_options`.
     AskPermission,
     Sleep(u64),
+    /// Waits this many ms deaf to `session/cancel` and steering (a stuck agent);
+    /// a cancel that came meanwhile ends the turn afterwards.
+    Busy(u64),
     /// Waits until `session/cancel` arrives.
     WaitCancel,
     /// Ends the turn with this stop reason (`end_turn`, `max_tokens`, `refusal`, ...).

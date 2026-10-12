@@ -83,6 +83,51 @@ fn cancelled_and_closed_turns_change_nothing() {
     }
 }
 
+/// A turn cancelled to deliver a `message_task` message can end after the agent
+/// reported the step done: the task goes on with its next step all the same.
+#[test]
+fn a_cancelled_turn_of_a_reported_step_still_advances_the_task() {
+    let mut sim = Sim::new();
+    sim.group();
+    sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
+    sim.deliver_inbox();
+    sim.sub_ok(
+        sub("T-1", Role::Implementer, 0),
+        ToolName::ReportStepDone,
+        json!({"result": "done"}),
+    );
+    let chain = sim.turn_ended(agent("T-1", Role::Implementer, 0), TurnOutcome::Cancelled);
+    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 1)]);
+    assert_eq!(sim.t("T-1").current, 1);
+    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+
+    // The same for the last agent step: the merge starts.
+    sim.sub_ok(
+        sub("T-1", Role::Reviewer, 1),
+        ToolName::ReportStepDone,
+        json!({"result": "fine", "verdict": "approve"}),
+    );
+    sim.turn_ended(agent("T-1", Role::Reviewer, 1), TurnOutcome::Cancelled);
+    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+}
+
+/// With the message queued as the next prompt (the runtime does that before it
+/// reports the cancelled turn end) an unreported step goes on without a reminder.
+#[test]
+fn a_cancelled_turn_with_the_message_queued_is_not_a_silent_turn() {
+    let mut sim = running();
+    let chain = sim
+        .run(DomainCommand::TurnEnded {
+            agent: agent("T-1", Role::Implementer, 0),
+            outcome: TurnOutcome::Cancelled,
+            prompt_queued: true,
+        })
+        .expect("ok");
+    assert!(chain.events.is_empty() && chain.effects.is_empty());
+    assert_eq!(sim.t("T-1").steps[0].nudges, 0);
+    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+}
+
 #[test]
 fn crash_mid_step_raises_agent_crashed_and_resume_restarts_the_step() {
     let mut sim = running();

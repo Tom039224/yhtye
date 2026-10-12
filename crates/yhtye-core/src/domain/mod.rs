@@ -13,6 +13,7 @@ mod flow;
 mod git_rules;
 mod inbox;
 mod machine;
+mod message_rules;
 mod orch_rules;
 mod restart;
 mod state;
@@ -33,6 +34,7 @@ pub use command::{
 pub use event::DomainEvent;
 pub use inbox::{InboxItem, InboxKind, render_batch};
 pub use machine::{Machine, decide};
+pub use message_rules::{reported_detail, unavailable_hint};
 pub use orch_rules::MAX_GROUP_FINISH_NUDGES;
 pub use restart::lost_session_note;
 pub use state::{
@@ -41,7 +43,8 @@ pub use state::{
 };
 pub use steps::{normalize_steps, normalize_tail};
 pub use types::{
-    AgentHelpKind, ErrorCode, HelpKind, Role, StepKind, StepSpec, TaskKind, ToolError, Verdict,
+    AgentHelpKind, ErrorCode, HelpKind, MessageOutcome, MessageVia, Role, StepKind, StepSpec,
+    TaskKind, ToolError, Verdict,
 };
 
 #[cfg(test)]

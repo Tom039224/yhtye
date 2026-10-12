@@ -118,7 +118,22 @@ async fn tool_list_depends_on_role() {
         .map(|t| t.name.to_string())
         .collect();
     assert!(names.contains(&"create_task".to_string()), "{names:?}");
+    assert!(names.contains(&"message_task".to_string()), "{names:?}");
     assert!(!names.contains(&"report_step_done".to_string()));
+    let tools = client.list_all_tools().await.expect("list");
+    let message_task = tools
+        .iter()
+        .find(|t| t.name == "message_task")
+        .expect("message_task is listed");
+    let required = message_task.input_schema.get("required").expect("required");
+    for field in ["task_id", "text"] {
+        assert!(
+            required
+                .as_array()
+                .is_some_and(|r| r.contains(&json!(field))),
+            "{field} is required: {required}"
+        );
+    }
     client.cancel().await.expect("close");
 
     let client = connect(f.host.url(&sub)).await;
@@ -177,6 +192,9 @@ async fn wrong_role_is_forbidden_and_bad_args_are_invalid_argument() {
     let res = call(&client, "report_step_done", json!({"result": "x"})).await;
     assert_eq!(error_code(&res).as_deref(), Some("forbidden"));
 
+    let res = call(&client, "message_task", json!({"task_id": "T-1"})).await;
+    assert_eq!(error_code(&res).as_deref(), Some("invalid_argument"));
+
     let res = call(&client, "create_task", json!({"group_id": "G-1"})).await;
     assert_eq!(error_code(&res).as_deref(), Some("invalid_argument"));
 
@@ -188,6 +206,19 @@ async fn wrong_role_is_forbidden_and_bad_args_are_invalid_argument() {
         .await;
     assert!(unknown.is_err(), "unknown tool is a protocol error");
 
+    assert!(f.port.calls.lock().expect("lock").is_empty());
+    client.cancel().await.expect("close");
+
+    // The orchestrator's tools are not for the task agents.
+    let sub = f.host.registry().issue(sub_binding(Role::Implementer));
+    let client = connect(f.host.url(&sub)).await;
+    let res = call(
+        &client,
+        "message_task",
+        json!({"task_id": "T-1", "text": "hi"}),
+    )
+    .await;
+    assert_eq!(error_code(&res).as_deref(), Some("forbidden"));
     assert!(f.port.calls.lock().expect("lock").is_empty());
     client.cancel().await.expect("close");
     f.host.shutdown().await;

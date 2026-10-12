@@ -128,6 +128,14 @@ pub struct CancelTaskArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct MessageTaskArgs {
+    pub task_id: String,
+    /// What to tell the agent working on the task's current step (must not be empty).
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FinishGroupArgs {
     pub group_id: String,
     /// Summary of the finished work for the user.
@@ -256,6 +264,8 @@ tool_catalog! {
         "Answer a help request: resume the task (reply is sent to the agent) or cancel it.";
     CancelTask => "cancel_task", CancelTaskArgs, ORCH,
         "Cancel a task and stop its agent.";
+    MessageTask => "message_task", MessageTaskArgs, ORCH,
+        "Send a message to the agent working on the current implement / review step of a running task (a correction, an addition, a review point). Waits until the message is delivered or handed back (seconds, at most about a minute) and returns { task_id, step, outcome: delivered | returned, via, detail }; on `returned` the detail says why and what to do instead.";
     FinishGroup => "finish_group", FinishGroupArgs, ORCH,
         "Finish a group whose tasks are all done or cancelled (or retry the merge of a merge_blocked group); merges its work into the base branch after checking that your working tree is on it. `into`: merge into the branch checked out now instead.";
     CancelGroup => "cancel_group", CancelGroupArgs, ORCH,
@@ -324,7 +334,7 @@ mod tests {
             .into_iter()
             .map(|t| t.name)
             .collect();
-        assert_eq!(orch.len(), 11);
+        assert_eq!(orch.len(), 12);
         assert!(orch.iter().any(|n| n == "create_task"));
         assert!(!orch.iter().any(|n| n == "report_step_done"));
         for role in [Role::Implementer, Role::Reviewer] {

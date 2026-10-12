@@ -367,7 +367,7 @@ fn earlier_results(t: &Task, index: usize) -> String {
         .join("\n")
 }
 
-fn step_kind_label(kind: StepKind) -> &'static str {
+pub(super) fn step_kind_label(kind: StepKind) -> &'static str {
     match kind {
         StepKind::Implement => "implement",
         StepKind::Review => "review",

@@ -341,9 +341,20 @@ impl Fake {
         self.steered.send_replace(None);
     }
 
-    /// Whether the running turn was cancelled or steered.
+    /// Whether the running turn must end: it was cancelled, or steered (unless
+    /// a steer lets the turn go on, see `steer_continues`).
     fn interrupted(&self) -> bool {
-        *self.cancelled.borrow() || self.steered.borrow().is_some()
+        *self.cancelled.borrow()
+            || (self.steered.borrow().is_some() && !self.scenario.steer_continues)
+    }
+
+    /// The text of a steer that the turn goes on after (`steer_continues`).
+    fn take_continued_steer(&self) -> Option<String> {
+        if self.scenario.steer_continues && !*self.cancelled.borrow() {
+            self.steered.send_replace(None)
+        } else {
+            None
+        }
     }
 
     /// The stop reason of an interrupted turn (a cancel wins over a steer).
@@ -594,6 +605,14 @@ async fn run_turn_actions(
         if fake.interrupted() {
             return fake.interrupted_stop();
         }
+        if let Some(steer) = fake.take_continued_steer() {
+            let report = format!("steered:{steer}");
+            let update = json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)});
+            if let Err(e) = send_update(cx, &session, update) {
+                eprintln!("fake: action failed: {e}");
+                return StopReason::Refusal;
+            }
+        }
         match run_action(fake, cx, &session, &prompt, action).await {
             Ok(Some(stop)) => return stop,
             Ok(None) => {}
@@ -650,10 +669,12 @@ async fn run_action(
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
         Action::Sleep(ms) => {
-            if wait_or_interrupt(fake, Some(Duration::from_millis(ms))).await {
+            if wait_or_interrupt(fake, Some(Duration::from_millis(ms))).await && fake.interrupted()
+            {
                 return Ok(Some(fake.interrupted_stop()));
             }
         }
+        Action::Busy(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
         Action::WaitCancel => {
             wait_or_interrupt(fake, None).await;
             return Ok(Some(fake.interrupted_stop()));

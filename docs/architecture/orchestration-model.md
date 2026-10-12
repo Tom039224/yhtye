@@ -145,6 +145,29 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
 - オーケストレータは `answer_help` で返答する (担当エージェントへ返答を送って再開 /
   工程の変更後に再開 / タスク中止)。
 
+### 2.5 オーケストレータからのメッセージ (`message_task`)
+
+help の逆向き: オーケストレータが、**実行中**のタスクの担当エージェント (implement / review Step) へ
+作業中に補足・訂正・方針の追加を渡す。ツールは [`mcp-tools.md`](mcp-tools.md) §3 `message_task`、
+配達の実装は [`core-design.md`](core-design.md) §8.3。
+
+- 送れるのはタスクが `running` で、現在の Step が `implement` / `review` のとき。それ以外の状態では
+  `invalid_state` で代わりの手段を示す (`handling` → `answer_help` の `reply`、`checkpoint` →
+  `resolve_checkpoint` の `note`、`pending` / `awaiting_instruction` → `set_instruction` / `modify_steps`)。
+- `review` 担当へはレビュー観点の補足を送る。レビュー後に実装を直したいなら、review の**後ろに** implement
+  Step を `modify_steps` で足すのが筋 (レビュアーに実装の変更を頼まない)。
+- 呼び出しは**届けたか差し戻したかが確定するまで**応答を返さない。結果は `delivered` (`via` = `steering` /
+  `interrupt` / `prompt`) か `returned` (届けていない。理由と次の手が `detail` に入る)。
+- エージェントに届く本文は `[yhtye:orchestrator_message]` で始まる。エージェントは内容を踏まえて今の Step を続け、
+  通常どおり `report_step_done` / `help` で終える (システムプロンプトに書く)。
+- 行き違い: Step が既に `report_step_done` 済みなら**配達せず** `returned` (Step は通常どおり次へ進む)。
+  ステアリング非対応のハーネスでメッセージのためにターンを止めたとき、そのターン終了は「報告せずにターンを終えた」
+  (§7) と**数えない** (催促もしない・回数も増やさない)。止めたターンの終わりに Step が未報告ならメッセージが次のプロンプトに
+  なり、報告済みなら差し戻す。
+- 待っている間にタスクが `cancel_task` / `cancel_group` / help などで `running` でなくなったら、その時点で `returned`。
+- 同じタスクへのメッセージは 1 つずつ (配達待ちの間の 2 通目は `conflict`)。Yhtye の再起動で配達待ちは失われる
+  (呼び出しも切れる。ログには `task_message_sent` だけが残る)。
+
 ## 3. タスク kind
 
 | kind | 作業場所 | 書き込み | 完了時 |
@@ -333,7 +356,9 @@ Stage 3a で明確化した細部:
 
 - 「呼ばれたか」はドメイン状態で判定する (Step が `done` なら報告済み、タスクが `handling` なら
   help 済み)。催促の回数は Step ごとに数え、help への返答 (新しいプロンプト) で 0 に戻る。
-- `cancelled` で終わったターン (Yhtye がタスクを止めた) は何もしない。
+- `cancelled` で終わったターン (Yhtye がタスクを止めた) は何もしない。`message_task` のためにターンを止めた
+  場合は、メッセージが次のプロンプトとして積まれるので「プロンプトが積まれたターン」として扱われ、
+  これも何もしない (§2.5)。報告済みの Step なら `cancelled` でも次の Step へ進む。
 - サブエージェントの**起動失敗**も `agent_crashed`。
 - 返答待ち (`help` 後) の間にそのエージェントのプロセスが死んだ場合は新しい help を上げず、
   既存の help に「エージェント喪失」を記録する。`answer_help(resume)` は返答をプロンプトで送る

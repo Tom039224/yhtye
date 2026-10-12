@@ -41,6 +41,8 @@ export type * from "./InboxEntry";
 export type * from "./InboxItem";
 export type * from "./InboxKind";
 export type * from "./LoggedEvent";
+export type * from "./MessageOutcome";
+export type * from "./MessageVia";
 export type * from "./ModelEfforts";
 export type * from "./ModelOption";
 export type * from "./ProjectInfo";

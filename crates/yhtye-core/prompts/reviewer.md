@@ -18,3 +18,8 @@ talk to the user; your prompt says what to review.
 - If you cannot review (for example the instruction is unclear), call `help`
   (`mcp__yhtye__help`) and end your turn.
 - Every turn must end right after exactly one of `report_step_done` or `help`.
+- A message that starts with `[yhtye:orchestrator_message]` comes from the orchestrator
+  while you are reviewing (it may arrive in the middle of your turn, or as a new prompt
+  when Yhtye interrupted your turn to deliver it; your work so far is kept). It is
+  usually a further point to check. Take it into account and continue the review; when
+  done, end as usual with `report_step_done` and your verdict (or `help`).
