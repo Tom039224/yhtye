@@ -10,6 +10,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiError
 import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.ClientServer
@@ -64,6 +65,8 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     )
     var usage: UsageReport? = null
     var host = "test-host"
+    /** `get_branch_statuses` の答え。 */
+    var branchStatuses: BranchStatuses = BranchStatuses("main", emptyList())
 
     /** `ping` が返す PC の版 (空 = この項目を返す前の古い PC)。 */
     var hostVersion = ""
@@ -146,6 +149,7 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
             ApiResponse.Events(events, more = after.size > limit)
         }
         is ApiCommand.GetGitOverview -> ApiResponse.GitOverview(git)
+        is ApiCommand.GetBranchStatuses -> ApiResponse.BranchStatuses(branchStatuses)
         is ApiCommand.OpenChat ->
             if (snapshot.chats.none { it.id == command.chat }) {
                 refuse(ApiErrorCode.NotFound, "no chat ${command.chat}")

@@ -12,6 +12,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.Candidate
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
@@ -90,6 +91,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         truncated = false,
     )
 
+    /** `get_branch_statuses` の答え。 */
+    var branchStatuses = BranchStatuses("main", emptyList())
+
     /** ペアリング済みの端末 (`list_clients`)。 */
     var devices: List<ClientDevice> = emptyList()
 
@@ -144,6 +148,7 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
                 ApiResponse.Events(page.map { LoggedEvent(it.seq, it.tsMs, it.project, false, it.body) }, more = after.size > page.size)
             }
             is ApiCommand.GetGitOverview -> ApiResponse.GitOverview(git)
+            is ApiCommand.GetBranchStatuses -> ApiResponse.BranchStatuses(branchStatuses)
             is ApiCommand.OpenChat -> ApiResponse.ChatOpened(false)
             is ApiCommand.RenameChat -> {
                 val chat = snapshot.chats.first { it.id == command.chat }

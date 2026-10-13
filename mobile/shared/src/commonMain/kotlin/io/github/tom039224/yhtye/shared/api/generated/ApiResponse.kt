@@ -82,6 +82,11 @@ sealed interface ApiResponse {
     ) : ApiResponse
 
     @Serializable
+    data class BranchStatuses(
+        val statuses: io.github.tom039224.yhtye.shared.api.generated.BranchStatuses,
+    ) : ApiResponse
+
+    @Serializable
     data class Usage(
         val usage: UsageReport,
     ) : ApiResponse
@@ -171,6 +176,7 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("chat", Chat.serializer()) { it is Chat },
             TaggedVariant<ApiResponse>("chat_opened", ChatOpened.serializer()) { it is ChatOpened },
             TaggedVariant<ApiResponse>("git_overview", GitOverview.serializer()) { it is GitOverview },
+            TaggedVariant<ApiResponse>("branch_statuses", BranchStatuses.serializer()) { it is BranchStatuses },
             TaggedVariant<ApiResponse>("usage", Usage.serializer()) { it is Usage },
             TaggedVariant<ApiResponse>("agent_settings", AgentSettings.serializer()) { it is AgentSettings },
             TaggedVariant<ApiResponse>("harness_models", HarnessModels.serializer()) { it is HarnessModels },

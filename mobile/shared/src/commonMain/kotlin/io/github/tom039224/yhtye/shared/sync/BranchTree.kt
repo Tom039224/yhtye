@@ -1,6 +1,8 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.GroupStatus
@@ -105,6 +107,25 @@ fun chatRing(view: ProjectView, chat: String): Ring {
     val s = view.sessions.find { it.sessionKey == orchestratorKey(chat) }
     if (s?.status != SessionStatus.Live) return Ring.Stopped
     return if (s.turnRunning) Ring.Running else Ring.Ready
+}
+
+/** ブランチの点の日本語ラベル (PR 番号があるときは付ける。PC の `statusLabel` と同じ文言)。 */
+fun statusLabel(state: BranchState, pr: Long?): String = when (state) {
+    BranchState.Unmerged -> "まだ取り込まれていません"
+    BranchState.PrOpen -> if (pr == null) "PR 作成済み" else "PR 作成済み (#$pr)"
+    BranchState.Merged -> if (pr == null) "取り込み済み" else "PR でマージ済み (#$pr)"
+    BranchState.MergedWithChanges -> if (pr == null) "取り込み済み・未マージの変更あり" else "PR でマージ済み・未マージの変更あり (#$pr)"
+    BranchState.Unknown, BranchState.Unrecognized -> "状態不明"
+}
+
+/**
+ * ブランチの点の状態と PR 番号 (`statuses` に載っていないブランチは `Unknown`。既定のブランチ自
+ * 身は点に状態を持たないので null: 呼び出し側は無地の点にする)。
+ */
+fun statusOf(branch: String?, statuses: BranchStatuses?): Pair<BranchState, Long?>? {
+    if (branch == null || branch == statuses?.defaultBranch) return null
+    val found = statuses?.statuses?.find { it.branch == branch }
+    return (found?.state ?: BranchState.Unknown) to found?.prNumber
 }
 
 /** [ms] からの経過 `3m` / `2h` / `4d` (1 分未満と未来は `now`)。 */

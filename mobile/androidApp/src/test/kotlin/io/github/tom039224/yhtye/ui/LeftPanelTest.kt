@@ -18,12 +18,16 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatus
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.ClientKind
 import io.github.tom039224.yhtye.shared.api.generated.ClientServer
 import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
+import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
@@ -174,6 +178,45 @@ class LeftPanelTest {
         rule.onNodeWithTag("other-branch-feat/x").performClick()
         h.settle { h.core.callsOf<ApiCommand.CreateChat>().isNotEmpty() }
         assertEquals("feat/x", h.core.callsOf<ApiCommand.CreateChat>().single().branch)
+    }
+
+    @Test
+    fun `branch rows show the PR merge status with its Japanese label`() {
+        h.open {
+            git = git.copy(
+                branches = git.branches + GitBranch("feat/x", "f".repeat(40)) + GitBranch("old", "o".repeat(40)),
+                worktrees = git.worktrees + GitWorktree("/tmp/feat", "feat/x", "f".repeat(40), isMain = false, missing = false),
+            )
+            branchStatuses = BranchStatuses(
+                "main",
+                listOf(
+                    BranchStatus("feat/x", BranchState.PrOpen, 7, "https://example.test/u/repo/pull/7"),
+                    BranchStatus("old", BranchState.Unmerged, null, null),
+                ),
+            )
+        }
+        h.openLeft()
+        h.settle { h.sync.state.value.git?.statuses != null }
+        // 既定のブランチは無地の点のまま
+        rule.onNodeWithTag("main-clone", useUnmergedTree = true).assertExists()
+        // 開いた PR のあるブランチはその旨の点
+        rule.onNode(hasContentDescription("PR 作成済み (#7)")).assertExists()
+        // 作業ツリーの無いブランチにも点が出る
+        rule.onNodeWithTag("other-branches").performClick()
+        rule.onNode(hasContentDescription("まだ取り込まれていません"), useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a branch without an entry reads unknown and the statuses are reused`() {
+        h.open {
+            git = git.copy(
+                worktrees = git.worktrees + GitWorktree("/tmp/mystery", "mystery", "m".repeat(40), isMain = false, missing = false),
+            )
+        }
+        h.openLeft()
+        h.settle { h.sync.state.value.git?.statuses != null }
+        rule.onNode(hasContentDescription("状態不明")).assertExists()
+        assertEquals(1, h.core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 
     @Test

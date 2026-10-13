@@ -334,8 +334,7 @@ class AppStoreTest {
     }
 
     @Test
-    fun keepsTheFlagOfTheProjectItLeavesAsItsViewShowedItAndFollowsItAfterwards() = runTest {
-        core.others = listOf(beta)
+    fun keepsTheFlagOfTheProjectItLeavesAsItsViewShowedItAndFollowsItAfterwards() = runTest {        core.others = listOf(beta)
         val busy = FULL_RUN.end.sessions[0].copy(status = SessionStatus.Live, turnRunning = true)
         core.snapshot = FULL_RUN.start.copy(sessions = listOf(busy))
         core.info = PROJECT.copy(running = true) // コアもそう言う
@@ -357,5 +356,21 @@ class AppStoreTest {
         advanceTimeBy(250)
         runCurrent()
         assertEquals(false, store.running("repo"))
+    }
+
+    @Test
+    fun readsBranchStatusesWithGitAndReusesThemUntilStale() = runTest {
+        val store = newStore(core)
+        openAndSettle(store)
+        runCurrent()
+        assertEquals(1, core.callsOf<ApiCommand.GetBranchStatuses>().size)
+        assertEquals(core.branchStatuses, store.state.value.git?.statuses)
+        // 概要の読み直しでは `gh` を聞き直さない
+        store.refreshGit()
+        runCurrent()
+        assertEquals(1, core.callsOf<ApiCommand.GetBranchStatuses>().size)
+        store.refreshBranchStatuses(force = true)
+        runCurrent()
+        assertEquals(2, core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 }

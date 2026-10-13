@@ -142,6 +142,12 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "get_branch_statuses",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_branch_statuses\",\"project\":\"repo\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "get_usage",
         ApiCommand.Serializer,
         "{\"type\":\"get_usage\",\"refresh\":true}",
@@ -355,6 +361,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "git_overview",
         ApiResponse.Serializer,
         "{\"type\":\"git_overview\",\"git\":{\"head\":\"main\",\"head_sha\":\"a1b2c3d\",\"branches\":[{\"name\":\"main\",\"sha\":\"a1b2c3d\"}],\"worktrees\":[{\"path\":\"/home/u/repo\",\"branch\":\"main\",\"head_sha\":\"a1b2c3d\",\"is_main\":true,\"missing\":false},{\"path\":\"/home/u/gone\",\"branch\":null,\"head_sha\":null,\"is_main\":false,\"missing\":true}],\"commits\":[{\"sha\":\"a1b2c3d\",\"parents\":[\"0f0f0f0\",\"1e1e1e1\"],\"branches\":[\"main\"],\"subject\":\"Merge yhtye/G-1\",\"ts_ms\":1790766538000}],\"truncated\":false}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "branch_statuses",
+        ApiResponse.Serializer,
+        "{\"type\":\"branch_statuses\",\"statuses\":{\"default_branch\":\"main\",\"statuses\":[{\"branch\":\"feature/a\",\"state\":\"unmerged\",\"pr_number\":null,\"pr_url\":null},{\"branch\":\"feature/b\",\"state\":\"pr_open\",\"pr_number\":123,\"pr_url\":\"https://github.com/u/repo/pull/123\"},{\"branch\":\"feature/c\",\"state\":\"merged\",\"pr_number\":122,\"pr_url\":\"https://github.com/u/repo/pull/122\"},{\"branch\":\"feature/d\",\"state\":\"merged_with_changes\",\"pr_number\":121,\"pr_url\":\"https://github.com/u/repo/pull/121\"},{\"branch\":\"feature/e\",\"state\":\"unknown\",\"pr_number\":null,\"pr_url\":null}]}}",
     ),
     ContractSample(
         "ApiResponse",

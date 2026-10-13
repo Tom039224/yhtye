@@ -1,17 +1,21 @@
 import { type FormEvent, type KeyboardEvent, useState } from "react";
 
-import type { GitOverview } from "../api/generated";
+import type { BranchState, BranchStatuses, GitOverview } from "../api/generated";
 import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
-import { buildTree, chatRing, type WorktreeNode } from "./branchTree";
+import { buildTree, type WorktreeNode } from "./branchTree";
 import { ChatRow } from "./ChatRow";
 import { Icon, IconButton } from "./Icon";
 import { useNow } from "./useNow";
 
 function selectOverview(s: AppState): GitOverview | null {
   return s.git && s.project && s.git.project === s.project.info.id ? s.git.overview : null;
+}
+
+function selectStatuses(s: AppState): BranchStatuses | null {
+  return s.git && s.project && s.git.project === s.project.info.id ? s.git.statuses : null;
 }
 
 const NONE: string[] = [];
@@ -97,16 +101,53 @@ interface WorktreeRowProps {
   onNewChat: () => void;
 }
 
+const STATUS_DOT: Record<BranchState, string> = {
+  unmerged: "dot-pr-unmerged",
+  pr_open: "dot-pr-open",
+  merged: "dot-pr-merged",
+  merged_with_changes: "dot-pr-changes",
+  unknown: "dot-pr-unknown",
+};
+
+/** Japanese label of a branch's dot, with the PR number when there is one. */
+export function statusLabel(state: BranchState, pr: number | null): string {
+  switch (state) {
+    case "unmerged":
+      return "まだ取り込まれていません";
+    case "pr_open":
+      return pr == null ? "PR 作成済み" : `PR 作成済み (#${pr})`;
+    case "merged":
+      return pr == null ? "取り込み済み" : `PR でマージ済み (#${pr})`;
+    case "merged_with_changes":
+      return pr == null ? "取り込み済み・未マージの変更あり" : `PR でマージ済み・未マージの変更あり (#${pr})`;
+    case "unknown":
+      return "状態不明";
+  }
+}
+
+/**
+ * The dot left of a branch: its PR / merge status. The default branch itself
+ * and a detached worktree get the neutral dot (no state).
+ */
+function StatusDot({ branch, statuses }: { branch: string | null; statuses: BranchStatuses | null }) {
+  if (branch == null || branch === statuses?.default_branch) return <span className="dot" />;
+  const found = statuses?.statuses.find((s) => s.branch === branch);
+  const state = found?.state ?? "unknown";
+  const label = statusLabel(state, found?.pr_number ?? null);
+  return <span className={`dot ${STATUS_DOT[state]}`} role="img" aria-label={label} title={label} />;
+}
+
 function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps) {
-  const view = useAppState((s) => s.project);
-  const running = Boolean(view && node.chats.some((c) => chatRing(view, c.id) === "running"));
+  const overview = useAppState(selectOverview);
+  const statuses = useAppState(selectStatuses);
+  const branch = overview?.worktrees.find((w) => w.path === node.path)?.branch ?? null;
   const where = node.isMain ? `${node.path} · メインクローン` : node.path;
   return (
     <li>
       <div className="wt-head">
         <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
           <Icon name="chevron-down" size={12} className={`caret ${open ? "" : "collapsed"}`} />
-          {running ? <span className="ring ring-running" role="img" aria-label="実行中" /> : <span className={`dot ${node.isMain ? "dot-ok" : ""}`} />}
+          <StatusDot branch={branch} statuses={statuses} />
           <span className="name">{node.label}</span>
           {node.missing ? (
             <span className="age" title="作業ツリーが見つかりません">
@@ -133,6 +174,7 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
 /** Local branches no worktree has checked out; a chat there gets a Yhtye worktree. */
 function OtherBranches({ names }: { names: string[] }) {
   const store = useStore();
+  const statuses = useAppState(selectStatuses);
   const [open, setOpen] = useState(false);
   return (
     <li>
@@ -153,6 +195,7 @@ function OtherBranches({ names }: { names: string[] }) {
           {names.map((n) => (
             <li key={n}>
               <button type="button" className="side-row new-chat" title={`${n} の作業ツリーを作ってチャットを始める`} onClick={() => void store.createChat({ branch: n })} aria-label={`${n} の新しいチャット`}>
+                <StatusDot branch={n} statuses={statuses} />
                 <Icon name="message-plus" size={13} />
                 <span className="name">{n}</span>
               </button>
