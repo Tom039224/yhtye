@@ -235,7 +235,7 @@ describe("BRANCHES tree", () => {
     await open(store);
     expect(transport.callsOf("get_branch_statuses")).toHaveLength(1);
     const mystery = within(tree()).getByRole("button", { name: /mystery$/ });
-    expectStatus(within(mystery).getByRole("img", { name: "状態不明" }), "branch-status-unknown", "git-branch");
+    expectStatus(within(mystery).getByRole("img", { name: "状態不明" }), "branch-status-unknown", "help");
     // A re-read of the overview (an orchestrator's turn ended) does not ask `gh` again.
     const reads = transport.callsOf("get_git_overview").length;
     act(() => transport.emit({ ...turnEnded(4, orchestratorKey("C-2")), live: true }));

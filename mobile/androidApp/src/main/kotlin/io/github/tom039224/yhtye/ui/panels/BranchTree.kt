@@ -208,7 +208,7 @@ private fun StatusIcon(branch: String?, statuses: BranchStatuses?, testTag: Stri
         BranchState.Unmerged -> YIcons.Branch to c.tx4
         BranchState.PrOpen -> YIcons.PullRequest to c.doneBar
         BranchState.Merged, BranchState.MergedWithChanges -> YIcons.Merge to c.revBar
-        BranchState.Unknown, BranchState.Unrecognized -> YIcons.Branch to c.tx5
+        BranchState.Unknown, BranchState.Unrecognized -> YIcons.Help to c.tx5
     }
     Box(Modifier.semantics { contentDescription = statusLabel(state, pr) }.then(tag)) {
         YIcon(icon, tint, STATUS_ICON_SIZE, Modifier.testTag("branch-icon-${icon.name}"))

@@ -104,14 +104,15 @@ interface WorktreeRowProps {
 /**
  * The icon and tone of each PR / merge state, after Orca's sidebar: a plain
  * branch until there is a PR, the PR glyph in green while it is open, the merge
- * glyph in purple once merged (with a badge when new work came after the merge).
+ * glyph in purple once merged (with a badge when new work came after the merge),
+ * and a question mark when the state could not be read.
  */
 const STATUS_ICON: Record<BranchState, { icon: IconName; tone: string }> = {
   unmerged: { icon: "git-branch", tone: "branch-status-unmerged" },
   pr_open: { icon: "git-pull-request", tone: "branch-status-open" },
   merged: { icon: "git-merge", tone: "branch-status-merged" },
   merged_with_changes: { icon: "git-merge", tone: "branch-status-changes" },
-  unknown: { icon: "git-branch", tone: "branch-status-unknown" },
+  unknown: { icon: "help", tone: "branch-status-unknown" },
 };
 
 const STATUS_ICON_SIZE = 13;
