@@ -335,6 +335,17 @@ export class AppStore extends SettingsCommands {
     this.updateChats((v) => removeChatNow(v, chat));
   }
 
+  /**
+   * Puts a chat to sleep: stops its orchestrator process (its stored session
+   * is kept, so the next message brings it back). Refusals (a turn is running)
+   * are shown as errors.
+   */
+  async sleepChat(chat: string): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (!project) return;
+    await this.run({ type: "sleep_chat", project, chat }, "accepted");
+  }
+
   async cancelTask(task: string): Promise<void> {
     const project = this.state.project?.info.id;
     if (project) await this.run({ type: "cancel_task", project, task }, "accepted");

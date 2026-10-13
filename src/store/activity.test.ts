@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { ApiEvent, ProjectInfo, SessionRecord, Task, TaskStatus } from "../api/generated";
 import { agentText, chunk, ev, ORCHESTRATOR, prompted, turnEnded } from "../test/events";
 import { FULL_RUN } from "../test/fixtures";
-import { changesActivity, hasRunningWork, mergeActivity, rememberRunning } from "./activity";
+import { changesActivity, hasLiveOrchestrator, hasRunningWork, mergeActivity, rememberRunning } from "./activity";
 import { emptyState } from "./domain";
 import { newProjectView, type ProjectView } from "./project";
 
-const info = (id: string, open = true, running = false): ProjectInfo => ({ id, name: id, path: `/work/${id}`, open, running });
+const info = (id: string, open = true, running = false, awake = false): ProjectInfo => ({ id, name: id, path: `/work/${id}`, open, running, awake });
 
 const session = (over: Partial<SessionRecord> = {}): SessionRecord => ({
-  session_key: "orchestrator/C-1",
+  session_key: "orchestrator:C-1",
   role: "orchestrator",
   task: null,
   acp_session_id: "acp-1",
@@ -52,6 +52,18 @@ describe("hasRunningWork", () => {
   });
 });
 
+describe("hasLiveOrchestrator", () => {
+  it("is true while one of the chats has an orchestrator session up", () => {
+    expect(hasLiveOrchestrator(viewOf(info("a"), { sessions: [session()] }))).toBe(true);
+    expect(hasLiveOrchestrator(viewOf(info("a"), { sessions: [session({ status: "stopped" })] }))).toBe(false);
+    expect(hasLiveOrchestrator(viewOf(info("a")))).toBe(false);
+  });
+
+  it("ignores the sessions of tasks", () => {
+    expect(hasLiveOrchestrator(viewOf(info("a"), { sessions: [session({ session_key: "T-1/implementer" })] }))).toBe(false);
+  });
+});
+
 describe("changesActivity", () => {
   const domain = (type: string): ApiEvent => ev(1, { type: "domain", event: { type, task: "T-1", status: "running" } as never });
 
@@ -78,10 +90,15 @@ describe("changesActivity", () => {
 });
 
 describe("mergeActivity", () => {
-  it("takes open and running of the projects it knows, keeping the rest", () => {
+  it("takes open, running and awake of the projects it knows, keeping the rest", () => {
     const known = [{ ...info("a"), name: "A" }, info("b", false)];
-    const merged = mergeActivity(known, [info("a", true, true), info("b", true, false), info("c", true, true)]);
-    expect(merged).toEqual([{ ...info("a", true, true), name: "A" }, info("b", true, false)]);
+    const merged = mergeActivity(known, [info("a", true, true, true), info("b", true, false), info("c", true, true)]);
+    expect(merged).toEqual([{ ...info("a", true, true, true), name: "A" }, info("b", true, false)]);
+  });
+
+  it("notices only awake changing too", () => {
+    const known = [info("a", true, false, false)];
+    expect(mergeActivity(known, [info("a", true, false, true)])).toEqual([info("a", true, false, true)]);
   });
 
   it("is the same array when nothing changed, and never drops a project the answer lacks", () => {
@@ -92,13 +109,19 @@ describe("mergeActivity", () => {
 });
 
 describe("rememberRunning", () => {
-  it("sets the flag of the project left from what its view showed", () => {
+  it("sets the flags of the project left from what its view showed", () => {
     const a = info("a");
     const projects = [a, info("b")];
     const busy = viewOf(a, { tasks: [task("running")] });
     expect(rememberRunning(projects, busy)).toEqual([{ ...a, running: true }, info("b")]);
     const idle = viewOf(info("a", true, true));
     expect(rememberRunning([info("a", true, true)], idle)).toEqual([info("a", true, false)]);
+  });
+
+  it("remembers an awake project left while its orchestrator is up", () => {
+    const projects = [info("a", true, false, false)];
+    const left = viewOf(info("a"), { sessions: [session()] });
+    expect(rememberRunning(projects, left)).toEqual([info("a", true, false, true)]);
   });
 
   it("leaves the list alone when there is no view, or it has not loaded", () => {

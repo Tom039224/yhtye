@@ -46,7 +46,7 @@ const USAGE_PROBE_DIR: &str = "usage-probe";
 /// Working directory of the model-listing sessions, under the data directory.
 const MODEL_PROBE_DIR: &str = "model-probe";
 
-/// How long a project may take to tell whether work is on in it (see `is_running`).
+/// How long a project may take to tell whether work is on in it (see `activity`).
 const RUNNING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Reason recorded when the user cancels without giving one.
@@ -250,6 +250,13 @@ impl Core {
             ApiCommand::CompactChat { project, chat } => {
                 self.orchestration(&project)?
                     .compact_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::SleepChat { project, chat } => {
+                self.orchestration(&project)?
+                    .sleep_chat(chat)
                     .await
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
@@ -537,7 +544,7 @@ impl Core {
         let records = self.inner.store.projects().await?;
         let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
         Ok(project_infos(&records, |r| {
-            open.get(&r.id).map(|orch| is_running(&r.id, orch))
+            open.get(&r.id).map(|orch| activity(&r.id, orch))
         })
         .await)
     }
@@ -559,8 +566,8 @@ impl Core {
         };
         let already = self.lock_open().get(&record.id).cloned();
         if let Some(orch) = already {
-            let running = is_running(&record.id, &orch).await;
-            return Ok(project_info(&record, true, running));
+            let (running, awake) = activity(&record.id, &orch).await;
+            return Ok(project_info(&record, true, running, awake));
         }
         let (orch, mut rx) = Orchestration::start(self.orchestration_config(&record))
             .await
@@ -583,8 +590,8 @@ impl Core {
                 project: record.id.clone(),
             }));
         // Work that was interrupted may already be resuming.
-        let running = is_running(&record.id, &orch).await;
-        Ok(project_info(&record, true, running))
+        let (running, awake) = activity(&record.id, &orch).await;
+        Ok(project_info(&record, true, running, awake))
     }
 
     async fn list_events(
@@ -667,37 +674,39 @@ impl Core {
     }
 }
 
-fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {
+fn project_info(r: &ProjectRecord, open: bool, running: bool, awake: bool) -> ProjectInfo {
     ProjectInfo {
         id: r.id.clone(),
         name: dir_name(&r.path),
         path: r.path.display().to_string(),
         open,
         running,
+        awake,
     }
 }
 
-/// Whether work is on in an open project. A project busy handling a request
-/// for longer than `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as
-/// running, so a listing never waits for it; one that cannot tell (it is
-/// shutting down, or its store failed) counts as idle, and the failure is logged.
-async fn is_running(project: &str, orch: &Orchestration) -> bool {
-    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.is_running()).await {
-        Ok(Ok(running)) => running,
+/// Whether work is on in an open project and whether one of its chats has an
+/// orchestrator session up. A project busy handling a request for longer than
+/// `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as running and awake, so
+/// a listing never waits for it; one that cannot tell (it is shutting down, or
+/// its store failed) counts as idle and asleep, and the failure is logged.
+async fn activity(project: &str, orch: &Orchestration) -> (bool, bool) {
+    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.activity()).await {
+        Ok(Ok(activity)) => activity,
         Ok(Err(e)) => {
             tracing::warn!("could not tell whether {project} is running: {e}");
-            false
+            (false, false)
         }
-        Err(_) => true,
+        Err(_) => (true, true),
     }
 }
 
-/// The listing of `records`, in order. `running` asks whether work is on in a
-/// project that is open (`None`: it is not open). The projects are asked all at
-/// once: a busy one costs up to `RUNNING_QUERY_TIMEOUT`, and N busy ones must
-/// not cost N times that (the UI waits for the listing before it reopens the
-/// last project).
-async fn project_infos<'a, Q: Future<Output = bool>>(
+/// The listing of `records`, in order. `activity` asks whether work is on in a
+/// project that is open and whether one of its chats is awake (`None`: it is
+/// not open). The projects are asked all at once: a busy one costs up to
+/// `RUNNING_QUERY_TIMEOUT`, and N busy ones must not cost N times that (the UI
+/// waits for the listing before it reopens the last project).
+async fn project_infos<'a, Q: Future<Output = (bool, bool)>>(
     records: &'a [ProjectRecord],
     running: impl Fn(&'a ProjectRecord) -> Option<Q>,
 ) -> Vec<ProjectInfo> {
@@ -705,8 +714,11 @@ async fn project_infos<'a, Q: Future<Output = bool>>(
         let query = running(r);
         async move {
             match query {
-                Some(query) => project_info(r, true, query.await),
-                None => project_info(r, false, false),
+                Some(query) => {
+                    let (running, awake) = query.await;
+                    project_info(r, true, running, awake)
+                }
+                None => project_info(r, false, false, false),
             }
         }
     }))
@@ -817,16 +829,16 @@ mod tests {
     async fn busy_projects_cost_one_timeout_together_not_one_each() {
         let records: Vec<ProjectRecord> = (0..5).map(|i| record(&format!("p{i}"))).collect();
         let started = tokio::time::Instant::now();
-        // Every open project is busy until the timeout (which then counts it as running).
+        // Every open project is busy until the timeout (which then counts it as running and awake).
         let infos = project_infos(&records, |_| {
             Some(async {
                 tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
-                true
+                (true, true)
             })
         })
         .await;
         assert_eq!(started.elapsed(), RUNNING_QUERY_TIMEOUT);
-        assert!(infos.iter().all(|p| p.open && p.running));
+        assert!(infos.iter().all(|p| p.open && p.running && p.awake));
     }
 
     #[tokio::test(start_paused = true)]
@@ -836,10 +848,10 @@ mod tests {
             // `a` answers late, `b` at once: the order is still the records'.
             "a" => Some(Box::pin(async {
                 tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
-                true
+                (true, true)
             })
-                as std::pin::Pin<Box<dyn Future<Output = bool>>>),
-            "b" => Some(Box::pin(async { false })),
+                as std::pin::Pin<Box<dyn Future<Output = (bool, bool)>>>),
+            "b" => Some(Box::pin(async { (false, false) })),
             _ => None,
         })
         .await;

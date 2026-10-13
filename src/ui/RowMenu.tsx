@@ -8,6 +8,8 @@ export interface RowMenuAction {
   icon: IconName;
   /** `danger` marks a destructive action. */
   tone?: "default" | "danger";
+  /** Shown but not choosable (the action does not apply right now). */
+  disabled?: boolean;
   onSelect: () => void;
 }
 
@@ -112,6 +114,8 @@ export function RowMenu({ id, label, anchor, actions, onClose }: RowMenuProps) {
           role="menuitem"
           tabIndex={-1}
           className={`row-menu-item ${a.tone === "danger" ? "danger" : ""}`}
+          disabled={a.disabled}
+          aria-disabled={a.disabled || undefined}
           onClick={() => {
             onClose(false);
             a.onSelect();

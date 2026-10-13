@@ -61,7 +61,7 @@ fun readRecording(name: String = "fake-run.json"): Recording {
 /** アプリ全体のイベント (コアが送る形: プロジェクトなし・seq 0・live)。 */
 fun appWide(body: ApiEventBody): ApiEvent = ApiEvent(0, 0, "", true, body)
 
-val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false)
+val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false, awake = false)
 
 /**
  * 画面のテスト用のコア (共通モジュールのテストの `FakeCore` の小さい版)。記録のスナップショットとログに答え、

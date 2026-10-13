@@ -87,6 +87,17 @@ pub enum ApiCommand {
         project: String,
         chat: String,
     },
+    /// Stops the chat's orchestrator session (its process ends and its token is
+    /// revoked), so the chat rests until it is used again: the next message to
+    /// it starts the orchestrator again, restoring the stored session. Sessions
+    /// start lazily, so one that was never started is already asleep.
+    /// `not_found` for an unknown chat, `invalid_state` while its orchestrator
+    /// is working (starting or in a turn); stop or wait for the turn first.
+    /// Stopping an idle session reports `session_stopped`, like any other stop.
+    SleepChat {
+        project: String,
+        chat: String,
+    },
     /// The project's chats, most recently used first. Works for projects that
     /// are not open.
     ListChats {
@@ -336,6 +347,10 @@ pub struct ProjectInfo {
     /// running or merging (what the sidebar's turning ring shows). Always
     /// `false` while it is not open.
     pub running: bool,
+    /// One of its chats has an orchestrator session up (live): the project is
+    /// awake, so its ring is green (`ready`) even while no work is on. Always
+    /// `false` while it is not open.
+    pub awake: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].

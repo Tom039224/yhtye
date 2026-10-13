@@ -106,6 +106,10 @@ fn commands() -> Vec<Sample> {
             json!({"type": "compact_chat", "project": "repo", "chat": "C-1"}),
         ),
         (
+            "sleep_chat",
+            json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
+        ),
+        (
             "list_chats",
             json!({"type": "list_chats", "project": "repo"}),
         ),
@@ -277,6 +281,7 @@ fn project_info(open: bool) -> ProjectInfo {
         path: "/home/u/repo".into(),
         open,
         running: open,
+        awake: open,
     }
 }
 

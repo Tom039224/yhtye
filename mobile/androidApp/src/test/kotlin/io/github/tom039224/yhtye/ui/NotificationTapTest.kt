@@ -30,7 +30,7 @@ class NotificationTapTest {
     @After
     fun tearDown() = h.close()
 
-    private val other = ProjectInfo(id = "beta", name = "beta-repo", path = "/tmp/beta", open = true, running = false)
+    private val other = ProjectInfo(id = "beta", name = "beta-repo", path = "/tmp/beta", open = true, running = false, awake = false)
 
     private fun openTwoChats() {
         val first = h.recording.end.chats.first()

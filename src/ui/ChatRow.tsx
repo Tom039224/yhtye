@@ -108,6 +108,19 @@ export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
           anchor={moreRef}
           actions={[
             { id: "rename", label: "名前を変更", icon: "edit", onSelect: () => setMode("rename") },
+            // An orchestrator that was never started is already asleep; one in
+            // a turn sleeps once the turn is stopped.
+            ...(ring === "stopped"
+              ? []
+              : [
+                  {
+                    id: "sleep",
+                    label: "スリープ",
+                    icon: "moon" as const,
+                    disabled: ring === "running",
+                    onSelect: () => void store.sleepChat(chat.id),
+                  },
+                ]),
             { id: "delete", label: "削除", icon: "trash", tone: "danger", onSelect: () => setMode("delete") },
           ]}
           onClose={(refocus) => {

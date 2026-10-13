@@ -53,8 +53,8 @@ class LeftPanelTest {
     @After
     fun tearDown() = h.close()
 
-    private val other = ProjectInfo(id = "other", name = "other-repo", path = "/tmp/other", open = false, running = false)
-    private val busy = ProjectInfo(id = "busy", name = "busy-repo", path = "/tmp/busy", open = true, running = true)
+    private val other = ProjectInfo(id = "other", name = "other-repo", path = "/tmp/other", open = false, running = false, awake = false)
+    private val busy = ProjectInfo(id = "busy", name = "busy-repo", path = "/tmp/busy", open = true, running = true, awake = true)
 
     @Test
     fun `the picker lists the projects and a tap opens the chosen one`() {

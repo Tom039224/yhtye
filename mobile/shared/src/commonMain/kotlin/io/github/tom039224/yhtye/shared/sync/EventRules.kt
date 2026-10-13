@@ -70,6 +70,10 @@ fun hasRunningWork(view: ProjectView): Boolean {
     return view.state?.tasks?.any { it.status in WORKING_TASK } ?: false
 }
 
+/** 表示中のプロジェクトのチャットにオーケストレータのセッションが上がっている (live)。 */
+fun hasLiveOrchestrator(view: ProjectView): Boolean =
+    view.sessions.any { it.status == SessionStatus.Live && isOrchestratorKey(it.sessionKey) }
+
 /**
  * 保存されたイベントがそのプロジェクトの作業を始めた・終えたかもしれない: ターンの開始・終了、
  * セッションの起動・停止、タスクの状態の変化。動いているターンの出力 (本文・ツール呼び出し) は違う。
@@ -97,32 +101,33 @@ fun changesActivity(ev: ApiEvent): Boolean {
 }
 
 /**
- * [projects] に [fresh] (コアの一覧) の動作中の情報を取り込む: 知っているプロジェクトの `open` と `running`
- * だけ (要求の後に開いたプロジェクトを消さない)。何も変わらなければ同じリスト。
+ * [projects] に [fresh] (コアの一覧) の動作中の情報を取り込む: 知っているプロジェクトの `open` と `running` と
+ * `awake` だけ (要求の後に開いたプロジェクトを消さない)。何も変わらなければ同じリスト。
  */
 fun mergeActivity(projects: List<ProjectInfo>, fresh: List<ProjectInfo>): List<ProjectInfo> {
     var changed = false
     val merged = projects.map { p ->
         val f = fresh.find { it.id == p.id }
-        if (f == null || (f.open == p.open && f.running == p.running)) {
+        if (f == null || (f.open == p.open && f.running == p.running && f.awake == p.awake)) {
             p
         } else {
             changed = true
-            p.copy(open = f.open, running = f.running)
+            p.copy(open = f.open, running = f.running, awake = f.awake)
         }
     }
     return if (changed) merged else projects
 }
 
 /**
- * [left] (表示していたプロジェクト) の動作中をそのビューから一覧に書いておく (以後は一覧の値で判断するので)。
+ * [left] (表示していたプロジェクト) の動作中と起動中をそのビューから一覧に書いておく (以後は一覧の値で判断するので)。
  * 読み込み終わっていないビューは何も言わない (コアの値のまま)。
  */
 fun rememberRunning(projects: List<ProjectInfo>, left: ProjectView?): List<ProjectInfo> {
     if (left == null || left.phase != LoadPhase.Ready) return projects
     val running = hasRunningWork(left)
-    if (projects.none { it.id == left.info.id && it.running != running }) return projects
-    return projects.map { if (it.id == left.info.id) it.copy(running = running) else it }
+    val awake = hasLiveOrchestrator(left)
+    if (projects.none { it.id == left.info.id && (it.running != running || it.awake != awake) }) return projects
+    return projects.map { if (it.id == left.info.id) it.copy(running = running, awake = awake) else it }
 }
 
 /** プロジェクトやチャットのリング。 */
@@ -133,17 +138,23 @@ enum class Ring {
     /** 動いていない (中を抜いた緑)。 */
     Ready,
 
-    /** チャットのオーケストレータが起動していない (グレー。チャットの行だけ)。 */
+    /** どのチャットのオーケストレータも上がっていない (グレー)。 */
     Stopped,
 }
 
 /**
- * プロジェクトのリング: 表示中のプロジェクトはビュー、それ以外はコアの最後の値 (`open && running`) で決める。
- * チャットと違って止まったプロジェクトは無い。
+ * プロジェクトのリング: 作業が動いていれば回る、動いていなければオーケストレータのセッションが上がっていれば
+ * 待機、どちらも無ければ停止 (チャットはみな眠っている)。表示中のプロジェクトはビュー、それ以外はコアの最後の値
+ * (`running` と `awake`。開いていないプロジェクトにはどちらも立たない) で決める。チャットのリングも同じ眠り方:
+ * オーケストレータのプロセスが落ちていて、チャットを使うと戻ってくる。
  */
 fun projectRing(p: ProjectInfo, view: ProjectView?): Ring {
-    val running = if (view?.info?.id == p.id) hasRunningWork(view) else p.open && p.running
-    return if (running) Ring.Running else Ring.Ready
+    if (view?.info?.id == p.id) {
+        if (hasRunningWork(view)) return Ring.Running
+        return if (hasLiveOrchestrator(view)) Ring.Ready else Ring.Stopped
+    }
+    if (p.open && p.running) return Ring.Running
+    return if (p.open && p.awake) Ring.Ready else Ring.Stopped
 }
 
 /** バックグラウンドで動いているプロジェクト: 開いているが表示していないもの。 */
