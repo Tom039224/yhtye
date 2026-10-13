@@ -234,7 +234,7 @@ class LeftPanelTest {
         }
         h.openLeft()
         h.settle { h.sync.state.value.git?.statuses != null }
-        assertStatusIcon("状態不明", "branch")
+        assertStatusIcon("状態不明", "help")
         assertEquals(1, h.core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 
