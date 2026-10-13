@@ -40,6 +40,8 @@ import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.client.RpcException
 import io.github.tom039224.yhtye.shared.sync.AppStore
+import io.github.tom039224.yhtye.shared.sync.Ring
+import io.github.tom039224.yhtye.shared.sync.chatRing
 import io.github.tom039224.yhtye.shared.sync.deleteBlocker
 import io.github.tom039224.yhtye.shared.sync.describe
 import io.github.tom039224.yhtye.ui.common.YIcon
@@ -47,7 +49,7 @@ import io.github.tom039224.yhtye.ui.common.YIcons
 import kotlinx.coroutines.launch
 
 // 会話の上部バーのメニュー (PC のチャットの行の「⋯」と、コンポーザの下の ContextBar をスマホではここに集めた):
-// 文脈の使用量と圧縮 (`/compact`)、チャットの名前の変更 (タイトルがその場で入力欄になる)、削除 (確認あり)。
+// 文脈の使用量と圧縮 (`/compact`)、オーケストレータのスリープ、チャットの名前の変更 (タイトルがその場で入力欄になる)、削除 (確認あり)。
 
 /** この割合以上でメーターを警告・危険の色にする (PC の ContextBar)。 */
 private const val WARN_PERCENT = 70
@@ -105,6 +107,21 @@ fun ChatMenu(model: ConversationModel, sync: AppStore, onRename: () -> Unit) {
                 },
                 modifier = Modifier.testTag("menu-rename"),
             )
+            // 起きているオーケストレータだけ眠らせる (回っている間は止めてから。上がっていないものは眠っている)。
+            val sleepTarget = chat
+            val sleepRing = model.project?.let { p -> sleepTarget?.let { c -> chatRing(p, c.id) } }
+            if (sleepTarget != null && sleepRing != null && sleepRing != Ring.Stopped) {
+                DropdownMenuItem(
+                    text = { Text("スリープ") },
+                    leadingIcon = { YIcon(YIcons.Moon, c.tx3, 18.dp) },
+                    enabled = sleepRing == Ring.Ready,
+                    onClick = {
+                        open = false
+                        scope.launch { sync.sleepChat(sleepTarget.id) }
+                    },
+                    modifier = Modifier.testTag("menu-sleep"),
+                )
+            }
             DropdownMenuItem(
                 text = { Text("削除", color = c.handFg) },
                 leadingIcon = { YIcon(YIcons.Trash, c.handBar, 18.dp) },

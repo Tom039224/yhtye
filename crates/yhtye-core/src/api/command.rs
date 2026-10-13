@@ -15,7 +15,7 @@ use crate::agents::{
     HarnessModels, ModelEfforts, RoleSettings,
 };
 use crate::domain::{ErrorCode, ToolError};
-use crate::git::GitOverview;
+use crate::git::{BranchStatuses, GitOverview};
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
@@ -84,6 +84,17 @@ pub enum ApiCommand {
     /// `not_found` for an unknown chat, `invalid_state` unless the orchestrator
     /// is running and idle (not started, starting, or in a turn).
     CompactChat {
+        project: String,
+        chat: String,
+    },
+    /// Stops the chat's orchestrator session (its process ends and its token is
+    /// revoked), so the chat rests until it is used again: the next message to
+    /// it starts the orchestrator again, restoring the stored session. Sessions
+    /// start lazily, so one that was never started is already asleep.
+    /// `not_found` for an unknown chat, `invalid_state` while its orchestrator
+    /// is working (starting or in a turn); stop or wait for the turn first.
+    /// Stopping an idle session reports `session_stopped`, like any other stop.
+    SleepChat {
         project: String,
         chat: String,
     },
@@ -169,6 +180,12 @@ pub enum ApiCommand {
         #[serde(default)]
         #[ts(optional)]
         limit: Option<u32>,
+    },
+    /// The PR / merge status of every local branch (the dots of the BRANCHES
+    /// tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+    /// for every branch). Works for projects that are not open.
+    GetBranchStatuses {
+        project: String,
     },
     /// Subscription usage / quota of the harness (5-hour and weekly windows,
     /// plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
@@ -336,6 +353,10 @@ pub struct ProjectInfo {
     /// running or merging (what the sidebar's turning ring shows). Always
     /// `false` while it is not open.
     pub running: bool,
+    /// One of its chats has an orchestrator session up (live): the project is
+    /// awake, so its ring is green (`ready`) even while no work is on. Always
+    /// `false` while it is not open.
+    pub awake: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
@@ -406,6 +427,9 @@ pub enum ApiResponse {
     },
     GitOverview {
         git: GitOverview,
+    },
+    BranchStatuses {
+        statuses: BranchStatuses,
     },
     Usage {
         usage: UsageReport,

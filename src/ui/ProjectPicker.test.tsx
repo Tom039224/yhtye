@@ -13,8 +13,8 @@ import { FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 import { Sidebar } from "./Sidebar";
 
-const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false };
-const GAMMA: ProjectInfo = { id: "gamma", name: "gamma", path: "/tmp/gamma", open: false, running: false };
+const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false, awake: true };
+const GAMMA: ProjectInfo = { id: "gamma", name: "gamma", path: "/tmp/gamma", open: false, running: false, awake: false };
 
 function setup(opts: { others?: ProjectInfo[]; snapshot?: Snapshot; noProjects?: boolean } = {}) {
   const transport = new MemoryTransport();
@@ -144,7 +144,7 @@ describe("project pull-down", () => {
 
   it("shows the state of the open project on the trigger", async () => {
     const running: SessionRecord = {
-      session_key: "orchestrator/C-1",
+      session_key: "orchestrator:C-1",
       role: "orchestrator",
       task: null,
       acp_session_id: "acp",
@@ -161,7 +161,7 @@ describe("project pull-down", () => {
 
 describe("project status rings", () => {
   const running: SessionRecord = {
-    session_key: "orchestrator/C-1",
+    session_key: "orchestrator:C-1",
     role: "orchestrator",
     task: null,
     acp_session_id: "acp",
@@ -171,23 +171,40 @@ describe("project status rings", () => {
     cwd: null,
   };
 
-  it("shows a hollow green ring on the trigger while no chat of the project is working", async () => {
+  it("shows a stopped ring on the trigger while every chat of the project sleeps", async () => {
     const { store } = setup();
+    await openRepo(store);
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-stopped");
+    expect(screen.getByTestId("current-ring")).not.toHaveClass("ring-running");
+  });
+
+  it("shows a hollow green ring on the trigger while a chat is awake but idle", async () => {
+    const idle: SessionRecord = {
+      session_key: "orchestrator:C-1",
+      role: "orchestrator",
+      task: null,
+      acp_session_id: "acp",
+      status: "live",
+      turn_running: false,
+      agent: null,
+      cwd: null,
+    };
+    const { store } = setup({ snapshot: { ...FULL_RUN.start, sessions: [idle] } });
     await openRepo(store);
     expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-ready");
     expect(screen.getByTestId("current-ring")).not.toHaveClass("ring-running");
   });
 
-  it("gives each option a ring: turning only for the project with work on, hollow green for the others, open or not", async () => {
+  it("gives each option a ring: turning for the project with work on, hollow green for an awake one, gray for a sleeping one", async () => {
     const { store, user } = setup({ snapshot: { ...FULL_RUN.start, sessions: [running] } });
     await openRepo(store);
     await user.click(trigger());
     expect(screen.getByTestId("ring-repo")).toHaveClass("ring", "ring-running");
     expect(screen.getByTestId("ring-beta")).toHaveClass("ring", "ring-ready");
     expect(screen.getByTestId("ring-beta")).not.toHaveClass("ring-running");
-    expect(screen.getByTestId("ring-gamma")).toHaveClass("ring", "ring-ready");
-    expect(screen.getByTestId("ring-gamma")).not.toHaveClass("ring-stopped");
-    expect(screen.getByRole("option", { name: "gamma" })).toHaveAttribute("title", "/tmp/gamma · 待機中");
+    expect(screen.getByTestId("ring-gamma")).toHaveClass("ring", "ring-stopped");
+    expect(screen.getByTestId("ring-gamma")).not.toHaveClass("ring-ready");
+    expect(screen.getByRole("option", { name: "gamma" })).toHaveAttribute("title", "/tmp/gamma · 停止");
   });
 
   it("gives an idle background project the hollow ring instead of a lit dot, even while the shown one works", async () => {
@@ -212,7 +229,7 @@ describe("project status rings", () => {
     expect(screen.getByRole("button", { name: "beta に切り替え (実行中)" })).toBeInTheDocument();
     await user.click(trigger());
     expect(screen.getByTestId("ring-beta")).toHaveClass("ring-running");
-    expect(screen.getByTestId("ring-repo")).toHaveClass("ring-ready");
+    expect(screen.getByTestId("ring-repo")).toHaveClass("ring-stopped");
 
     core.others = [{ ...BETA, running: false }, GAMMA];
     transport.emit({ ...turnEnded(2, ORCHESTRATOR), project: "beta" });
@@ -238,7 +255,7 @@ describe("project status rings", () => {
     await waitFor(() => expect(store.getState().project?.info.id).toBe("beta"));
     expect(screen.getByTestId("bg-ring-repo")).toHaveClass("ring", "ring-running");
     await waitFor(() => expect(store.getState().project?.phase).toBe("ready"));
-    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-ready");
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-stopped");
     expect(screen.getByTestId("bg-ring-repo")).toHaveClass("ring-running");
   });
 });

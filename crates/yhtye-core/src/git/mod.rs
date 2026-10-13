@@ -4,6 +4,7 @@
 mod branches;
 mod cli;
 mod graph;
+mod pr_status;
 mod repo;
 mod run;
 mod worktree;
@@ -16,6 +17,7 @@ pub use cli::{GitCli, worktree_root};
 pub use graph::{
     GitBranch, GitCommit, GitOverview, GitWorktree, MAX_GRAPH_COMMITS, list_branches, overview,
 };
+pub use pr_status::{BranchState, BranchStatus, BranchStatuses, branch_statuses, default_branch};
 
 use crate::domain::{GitOp, GitResult};
 

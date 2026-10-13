@@ -53,7 +53,7 @@ describe("app-wide events", () => {
   it("re-reads the project list when another client opens a project", async () => {
     const s = newStore();
     await open(s);
-    const other = { id: "other", name: "other", path: "/tmp/other", open: true, running: false };
+    const other = { id: "other", name: "other", path: "/tmp/other", open: true, running: false, awake: false };
     core.others = [other];
     const before = transport.callsOf("list_projects").length;
     transport.emit(appWide({ type: "projects_changed", project: "other" }));

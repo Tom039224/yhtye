@@ -51,19 +51,22 @@ import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.client.RpcException
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
 import io.github.tom039224.yhtye.shared.sync.ProjectView
-import io.github.tom039224.yhtye.shared.sync.Ring
 import io.github.tom039224.yhtye.shared.sync.WorktreeNode
 import io.github.tom039224.yhtye.shared.sync.buildTree
 import io.github.tom039224.yhtye.shared.sync.chatRing
 import io.github.tom039224.yhtye.shared.sync.describe
 import io.github.tom039224.yhtye.shared.sync.isInternalBranch
 import io.github.tom039224.yhtye.shared.sync.shortAge
+import io.github.tom039224.yhtye.shared.sync.statusLabel
+import io.github.tom039224.yhtye.shared.sync.statusOf
 import io.github.tom039224.yhtye.ui.common.RingMark
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
@@ -72,7 +75,7 @@ import io.github.tom039224.yhtye.ui.conversation.NEW_CHAT_TITLE
 import kotlinx.coroutines.launch
 
 // ブランチ (作業ツリー) とチャットの木 (PC の BranchTree / ChatRow、orchestrator-desktop §9、モックの「Branch」):
-// 作業ツリーを今のブランチの名前で (メインクローンは緑の点、チャットが動いていれば回るリング)、折りたためて、
+// 作業ツリーを今のブランチの名前で (左の点は PR / マージの状態、PC と同じ色・文言)、折りたためて、
 // それぞれに新しいチャット。見つからない作業ツリーのチャット、作業ツリーの無い他のブランチ、「+」で新しいブランチ。
 // チャットの名前の変更・削除はスマホでは会話の上部のメニュー (決定事項)。
 
@@ -146,9 +149,11 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
         }
         if (view == null) return@Column
         val project = view.info.id
+        val statuses = git?.statuses
         tree.worktrees.forEach { w ->
             val open = memory.isOpen(project, w)
-            WorktreeRow(view, w, open, onToggle = { memory.toggle(project, w) }, onNewChat = { newChat(w.path, null) })
+            val branch = overview?.worktrees?.find { it.path == w.path }?.branch
+            WorktreeRow(w, open, branch, statuses, onToggle = { memory.toggle(project, w) }, onNewChat = { newChat(w.path, null) })
             if (open) w.chats.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.lost.isNotEmpty()) {
@@ -165,7 +170,7 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
             tree.lost.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.otherBranches.isNotEmpty()) {
-            OtherBranches(tree.otherBranches, memory.othersOpen(project), onToggle = { memory.toggleOthers(project) }) { newChat(null, it) }
+            OtherBranches(tree.otherBranches, statuses, memory.othersOpen(project), onToggle = { memory.toggleOthers(project) }) { newChat(null, it) }
         }
     }
 }
@@ -182,10 +187,43 @@ private fun SideNote(text: String, error: Boolean = false) {
     )
 }
 
+/**
+ * ブランチの左の点: PR / マージの状態 (PC の点と同じ色・同じ日本語ラベル)。既定のブランチ自身と
+ * detached の作業ツリーは無地の点。
+ */
 @Composable
-private fun WorktreeRow(view: ProjectView, node: WorktreeNode, open: Boolean, onToggle: () -> Unit, onNewChat: () -> Unit) {
+private fun StatusDot(branch: String?, statuses: BranchStatuses?, testTag: String? = null) {
     val c = Yhtye.colors
-    val running = node.chats.any { chatRing(view, it.id) == Ring.Running }
+    val tag = if (testTag == null) Modifier else Modifier.testTag(testTag)
+    val found = statusOf(branch, statuses)
+    if (found == null) {
+        Box(Modifier.size(7.dp).background(c.ringStop, CircleShape).then(tag))
+        return
+    }
+    val (state, pr) = found
+    val color = when (state) {
+        BranchState.Unmerged -> c.ringStop
+        BranchState.PrOpen -> c.doneBar
+        BranchState.Merged -> c.revBar
+        BranchState.MergedWithChanges -> c.handBar
+        BranchState.Unknown, BranchState.Unrecognized -> c.tx4
+    }
+    Box(
+        Modifier.size(7.dp).background(color, CircleShape).then(tag)
+            .semantics { contentDescription = statusLabel(state, pr) },
+    )
+}
+
+@Composable
+private fun WorktreeRow(
+    node: WorktreeNode,
+    open: Boolean,
+    branch: String?,
+    statuses: BranchStatuses?,
+    onToggle: () -> Unit,
+    onNewChat: () -> Unit,
+) {
+    val c = Yhtye.colors
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier
@@ -202,11 +240,7 @@ private fun WorktreeRow(view: ProjectView, node: WorktreeNode, open: Boolean, on
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             YIcon(YIcons.ChevronDown, c.tx4, 14.dp, Modifier.rotate(if (open) 0f else -90f))
-            if (running) {
-                RingMark(Ring.Running)
-            } else {
-                Box(Modifier.size(7.dp).background(if (node.isMain) c.doneBar else c.ringStop, CircleShape).testTag(if (node.isMain) "main-clone" else "worktree-dot"))
-            }
+            StatusDot(branch, statuses, testTag = if (node.isMain) "main-clone" else null)
             Text(
                 node.label,
                 color = c.tx2,
@@ -269,7 +303,7 @@ private fun ChatRow(view: ProjectView, chat: ChatInfo, now: Long, onChosen: () -
 
 /** 作業ツリーにチェックアウトされていない他のブランチ (そこへの新しいチャットは Yhtye が作業ツリーを作る)。 */
 @Composable
-private fun OtherBranches(names: List<String>, open: Boolean, onToggle: () -> Unit, onNewChat: (String) -> Unit) {
+private fun OtherBranches(names: List<String>, statuses: BranchStatuses?, open: Boolean, onToggle: () -> Unit, onNewChat: (String) -> Unit) {
     val c = Yhtye.colors
     Row(
         Modifier
@@ -304,6 +338,7 @@ private fun OtherBranches(names: List<String>, open: Boolean, onToggle: () -> Un
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            StatusDot(n, statuses)
             YIcon(YIcons.MessagePlus, c.tx3, 16.dp)
             Text(n, color = c.tx2, fontFamily = MonoFont, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

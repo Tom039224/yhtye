@@ -190,6 +190,19 @@ class AppStoreTest {
     }
 
     @Test
+    fun sleepsTheChatAndShowsARefusal() = runTest {
+        core.log = log
+        val store = newStore(core)
+        openAndSettle(store)
+        store.sleepChat("C-1")
+        assertEquals(listOf(ApiCommand.SleepChat("repo", "C-1")), core.calls.takeLast(1))
+        core.fail(ApiCommand.SleepChat::class, ApiErrorCode.InvalidState, "the orchestrator of chat C-1 is working")
+        store.sleepChat("C-1")
+        assertTrue(store.state.value.errors.last().message.startsWith("sleep_chat failed: "))
+        assertTrue(store.state.value.errors.last().message.contains("is working"))
+    }
+
+    @Test
     fun ignoresEventsOfOtherProjectsAndTracksTheOrchestratorsTurn() = runTest {
         core.log = log
         val store = newStore(core)
@@ -262,7 +275,7 @@ class AppStoreTest {
 
     // ---- バックグラウンドの動作中 ----
 
-    private val beta = ProjectInfo("beta", "beta", "/tmp/beta", open = true, running = false)
+    private val beta = ProjectInfo("beta", "beta", "/tmp/beta", open = true, running = false, awake = false)
 
     private fun beta(seq: Long, e: ApiEvent): ApiEvent = e.copy(seq = seq, project = "beta")
 
@@ -334,8 +347,7 @@ class AppStoreTest {
     }
 
     @Test
-    fun keepsTheFlagOfTheProjectItLeavesAsItsViewShowedItAndFollowsItAfterwards() = runTest {
-        core.others = listOf(beta)
+    fun keepsTheFlagOfTheProjectItLeavesAsItsViewShowedItAndFollowsItAfterwards() = runTest {        core.others = listOf(beta)
         val busy = FULL_RUN.end.sessions[0].copy(status = SessionStatus.Live, turnRunning = true)
         core.snapshot = FULL_RUN.start.copy(sessions = listOf(busy))
         core.info = PROJECT.copy(running = true) // コアもそう言う
@@ -357,5 +369,21 @@ class AppStoreTest {
         advanceTimeBy(250)
         runCurrent()
         assertEquals(false, store.running("repo"))
+    }
+
+    @Test
+    fun readsBranchStatusesWithGitAndReusesThemUntilStale() = runTest {
+        val store = newStore(core)
+        openAndSettle(store)
+        runCurrent()
+        assertEquals(1, core.callsOf<ApiCommand.GetBranchStatuses>().size)
+        assertEquals(core.branchStatuses, store.state.value.git?.statuses)
+        // 概要の読み直しでは `gh` を聞き直さない
+        store.refreshGit()
+        runCurrent()
+        assertEquals(1, core.callsOf<ApiCommand.GetBranchStatuses>().size)
+        store.refreshBranchStatuses(force = true)
+        runCurrent()
+        assertEquals(2, core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 }

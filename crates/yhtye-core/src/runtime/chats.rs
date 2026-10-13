@@ -158,6 +158,30 @@ impl Driver {
         }
     }
 
+    /// Stops the orchestrator session of `chat`: its process ends and its token
+    /// is revoked, but its stored session is kept, so the next message to the
+    /// chat starts it again with `session/load`. Refused while the orchestrator
+    /// is starting or in a turn (stop the turn first; a sleep never cuts one
+    /// off). A session that was never started is already asleep: accepted.
+    pub(super) fn sleep_chat(&mut self, chat: &str) -> Result<(), ToolError> {
+        if self.state.chat(chat).is_none() {
+            return Err(ToolError::not_found(format!("no chat {chat}")));
+        }
+        let key = orchestrator_session(chat);
+        if self.sessions.is_starting(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is starting; sleep it once it is idle"
+            )));
+        }
+        if self.sessions.is_live(&key) && !self.sessions.is_idle(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is working; stop its turn before sleeping the chat"
+            )));
+        }
+        self.sessions.stop(&key);
+        Ok(())
+    }
+
     /// The worktree of `chat` if its directory still exists: `not_found` for
     /// an unknown chat, `invalid_state` for one whose worktree is gone.
     pub(super) fn chat_worktree(&self, chat: &str) -> Result<PathBuf, ToolError> {

@@ -191,7 +191,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
     }));
-    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false }));
+    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false, awake: false }));
     return { core, open: true };
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);

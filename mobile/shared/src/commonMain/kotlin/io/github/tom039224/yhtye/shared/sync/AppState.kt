@@ -1,6 +1,7 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
@@ -43,6 +44,10 @@ data class GitView(
      * 読み直すまでは作業ツリーが一覧に無くても「見つからない」にしない ([placeOf] の `awaiting`)。
      */
     val awaiting: List<String> = emptyList(),
+    /** ブランチごとの PR / マージの状態 (BRANCHES の木の点)。 */
+    val statuses: BranchStatuses? = null,
+    /** [statuses] を最後に読んだ時刻 (エポックからのミリ秒)。 */
+    val statusesAt: Long = 0,
 )
 
 /** サブスクリプションの使用量 (コアがハーネスから読む)。 */

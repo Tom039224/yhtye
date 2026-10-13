@@ -26,4 +26,10 @@ data class ProjectInfo(
      * `false` while it is not open.
      */
     val running: Boolean,
+    /**
+     * One of its chats has an orchestrator session up (live): the project is
+     * awake, so its ring is green (`ready`) even while no work is on. Always
+     * `false` while it is not open.
+     */
+    val awake: Boolean,
 )

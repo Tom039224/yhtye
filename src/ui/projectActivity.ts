@@ -4,20 +4,25 @@
 // `running`: work is on in it, kept current by the store from the core).
 
 import type { ProjectInfo } from "../api/generated";
-import { hasRunningWork } from "../store/activity";
+import { hasLiveOrchestrator, hasRunningWork } from "../store/activity";
 import type { ProjectView } from "../store/project";
 import type { Ring } from "./branchTree";
 
 /**
- * Running: work is on in the project (a turn or a task); ready: it is not, whether
- * its orchestration is up in the core or starts when the project is opened. The
- * project on screen is judged by its live view, any other one by what the core
- * last said (`running`, which is never set for a project that is not open).
- * Unlike a chat's ring there is no stopped project.
+ * Running: work is on in the project (a turn or a task); ready: it is not,
+ * but one of its chats has an orchestrator session up; stopped: neither (its
+ * chats all sleep). The project on screen is judged by its live view, any
+ * other one by what the core last said (`running` and `awake`, both never set
+ * for a project that is not open). A chat's ring sleeps the same way: its
+ * orchestrator process is down until the chat is used again.
  */
 export function projectRing(p: ProjectInfo, view: ProjectView | null): Ring {
-  const running = view?.info.id === p.id ? hasRunningWork(view) : p.open && p.running;
-  return running ? "running" : "ready";
+  if (view?.info.id === p.id) {
+    if (hasRunningWork(view)) return "running";
+    return hasLiveOrchestrator(view) ? "ready" : "stopped";
+  }
+  if (p.open && p.running) return "running";
+  return p.open && p.awake ? "ready" : "stopped";
 }
 
 /** The projects running in the core in the background: open, but not the one shown. */

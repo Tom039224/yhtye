@@ -78,6 +78,8 @@ class AppStore(
         val gitCommits: Long = 120,
         /** ドメインの変化の後に git を読み直すまでの間 (変化はまとまって来る)。 */
         val gitRefreshMs: Long = 400,
+        /** ブランチの PR / マージの状態を使い回す間 (`gh` はネットワークを使う)。 */
+        val branchStatusTtlMs: Long = 60_000,
         /** 表示していないプロジェクトで作業が始まった・終わった後にプロジェクト一覧を読み直すまでの間。 */
         val activityRefreshMs: Long = 200,
         /** 使用量を読み直す間隔 (つながっていて前面の間。コアは 1 分キャッシュする)。 */
@@ -314,6 +316,17 @@ class AppStore(
         }
     }
 
+    /**
+     * チャットを眠らせる: オーケストレータのプロセスを止める (保存したセッションは残るので、次の文で戻ってくる)。
+     * 断られたら (ターンが動いている) エラーに出す。
+     */
+    suspend fun sleepChat(chat: String) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            report<ApiResponse.Accepted>(ApiCommand.SleepChat(project, chat))
+        }
+    }
+
     /** タスクを中止する (そのエージェントを止める)。 */
     suspend fun cancelTask(task: String) {
         onConfined {
@@ -373,18 +386,42 @@ class AppStore(
             val project = _state.value.project?.info?.id ?: return@onConfined
             val token = ++gitToken
             val prev = _state.value.git?.takeIf { it.project == project }
-            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty())) }
+            val statuses = prev?.statuses
+            val statusesAt = prev?.statusesAt ?: 0
+            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty(), statuses = statuses, statusesAt = statusesAt)) }
             try {
                 val r = core.expect<ApiResponse.GitOverview>(ApiCommand.GetGitOverview(project, options.gitCommits))
                 if (token != gitToken) return@onConfined
                 // 待っていたチャットは全部作られた後に読んだ: その作業ツリーは載っている
-                set { it.copy(git = GitView(project, r.git)) }
+                set { it.copy(git = GitView(project, r.git, statuses = statuses, statusesAt = statusesAt)) }
+                refreshBranchStatuses()
             } catch (e: RpcException) {
                 if (token != gitToken) return@onConfined
                 set {
                     val git = it.git?.takeIf { g -> g.project == project } ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
                     it.copy(git = git.copy(error = describe(e), loading = false))
                 }
+            }
+        }
+    }
+
+    /**
+     * ブランチの PR / マージの状態を読み直す (BRANCHES の木の点)。最近読んだものは使い回す (`gh` はネット
+     * ワークを使う)。失敗したら前のまま (点は次の読み直しまで「不明」)。
+     */
+    suspend fun refreshBranchStatuses(force: Boolean = false) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val prev = _state.value.git?.takeIf { it.project == project }
+            if (!force && prev?.statuses != null && now() - prev.statusesAt < options.branchStatusTtlMs) return@onConfined
+            try {
+                val r = core.expect<ApiResponse.BranchStatuses>(ApiCommand.GetBranchStatuses(project))
+                if (_state.value.project?.info?.id != project) return@onConfined
+                val git = _state.value.git?.takeIf { it.project == project }
+                    ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
+                set { it.copy(git = git.copy(project = project, statuses = r.statuses, statusesAt = now())) }
+            } catch (_: RpcException) {
+                // 前のまま (上を見よ)。
             }
         }
     }
