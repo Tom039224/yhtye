@@ -42,6 +42,7 @@ async function open(store: AppStore) {
   await waitFor(() => expect(store.getState().project?.phase).toBe("ready"));
   await screen.findByRole("list", { name: "branches" });
   await waitFor(() => expect(store.getState().git?.overview).not.toBeNull());
+  await waitFor(() => expect(store.getState().git?.statuses).not.toBeNull());
 }
 
 const tree = () => screen.getByRole("list", { name: "branches" });
@@ -136,13 +137,23 @@ describe("BRANCHES tree", () => {
     expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", branch: "old" }]);
   });
 
-  it("marks the main worktree's branch and a running chat", async () => {
-    const { store, transport } = setup();
+  it("marks the branches with their PR/merge status while a running chat spins in its own row", async () => {
+    const { store, transport, core } = setup();
+    core.branchStatuses = {
+      default_branch: "main",
+      statuses: [{ branch: "feat/x", state: "pr_open", pr_number: 7, pr_url: "https://example.test/u/repo/pull/7" }],
+    };
     await open(store);
+    // The default branch gets the neutral dot (no state).
     const main = within(tree()).getByRole("button", { name: "main" });
-    expect(main.querySelector(".dot-ok")).not.toBeNull();
+    expect(main.querySelector(".dot")).not.toBeNull();
+    expect(main.querySelector(".dot-pr-open, .dot-pr-unknown, .dot-pr-merged, .dot-pr-changes, .dot-pr-unmerged")).toBeNull();
+    // The branch with an open PR shows its status, not a ring.
+    const feat = within(tree()).getByRole("button", { name: /feat\/x$/ });
+    expect(within(feat).getByRole("img", { name: "PR 作成済み (#7)" })).toHaveClass("dot-pr-open");
+    expect(feat.querySelector(".ring-running")).toBeNull();
     expect(screen.getByTestId("chat-ring-C-2")).toHaveClass("ring-stopped");
-    // The orchestrator of C-2 starts (ready), then works (running); its branch spins too.
+    // The orchestrator of C-2 starts (ready), then works (running); its branch row keeps the status.
     act(() => {
       transport.emit(
         ev(5, {
@@ -154,7 +165,70 @@ describe("BRANCHES tree", () => {
     expect(screen.getByTestId("chat-ring-C-2")).toHaveClass("ring-ready");
     act(() => transport.emit(prompted(6, orchestratorKey("C-2"))));
     expect(screen.getByTestId("chat-ring-C-2")).toHaveClass("ring-running");
-    expect(within(tree()).getByRole("button", { name: /feat\/x$/ }).querySelector(".ring-running")).not.toBeNull();
+    const again = within(tree()).getByRole("button", { name: /feat\/x$/ });
+    expect(again.querySelector(".ring-running")).toBeNull();
+    expect(within(again).getByRole("img", { name: "PR 作成済み (#7)" })).toBeInTheDocument();
+  });
+
+  it("shows every PR/merge state with its Japanese label", async () => {
+    const { store, core, user } = setup();
+    const sha = (c: string) => c.repeat(40);
+    core.git = {
+      ...CHAT_GIT,
+      branches: [
+        ...CHAT_GIT.branches,
+        { name: "old", sha: sha("o") },
+        { name: "ship", sha: sha("s") },
+        { name: "redo", sha: sha("r") },
+        { name: "stale", sha: sha("t") },
+      ],
+      worktrees: [
+        ...CHAT_GIT.worktrees,
+        { path: "/wt/old", branch: "old", head_sha: sha("o"), is_main: false, missing: false },
+        { path: "/wt/ship", branch: "ship", head_sha: sha("s"), is_main: false, missing: false },
+        { path: "/wt/redo", branch: "redo", head_sha: sha("r"), is_main: false, missing: false },
+      ],
+    };
+    core.branchStatuses = {
+      default_branch: "main",
+      statuses: [
+        { branch: "feat/x", state: "pr_open", pr_number: 7, pr_url: "https://example.test/u/repo/pull/7" },
+        { branch: "old", state: "unmerged", pr_number: null, pr_url: null },
+        { branch: "ship", state: "merged", pr_number: 9, pr_url: "https://example.test/u/repo/pull/9" },
+        { branch: "redo", state: "merged_with_changes", pr_number: 8, pr_url: "https://example.test/u/repo/pull/8" },
+        { branch: "stale", state: "unmerged", pr_number: null, pr_url: null },
+      ],
+    };
+    await open(store);
+    expect(within(tree()).getByRole("img", { name: "PR 作成済み (#7)" })).toHaveClass("dot-pr-open");
+    expect(within(tree()).getByRole("img", { name: "PR でマージ済み (#9)" })).toHaveClass("dot-pr-merged");
+    expect(within(tree()).getByRole("img", { name: "PR でマージ済み・未マージの変更あり (#8)" })).toHaveClass("dot-pr-changes");
+    // No entry for `main`'s default branch is neutral; a branch with no entry is unknown.
+    const main = within(tree()).getByRole("button", { name: "main" });
+    expect(within(main).queryByRole("img")).not.toBeInTheDocument();
+    // The other branches show their status too.
+    await user.click(within(tree()).getByRole("button", { name: /他のブランチ \(1\)/ }));
+    const other = within(tree()).getByRole("list", { name: "other branches" });
+    expect(within(other).getByRole("img", { name: "まだ取り込まれていません" })).toHaveClass("dot-pr-unmerged");
+  });
+
+  it("reads an unknown branch as 状態不明 and reuses the statuses until they are stale", async () => {
+    const { store, core, transport } = setup();
+    const sha = (c: string) => c.repeat(40);
+    core.git = {
+      ...CHAT_GIT,
+      worktrees: [...CHAT_GIT.worktrees, { path: "/wt/mystery", branch: "mystery", head_sha: sha("m"), is_main: false, missing: false }],
+    };
+    await open(store);
+    expect(transport.callsOf("get_branch_statuses")).toHaveLength(1);
+    const mystery = within(tree()).getByRole("button", { name: /mystery$/ });
+    expect(within(mystery).getByRole("img", { name: "状態不明" })).toHaveClass("dot-pr-unknown");
+    // A re-read of the overview (an orchestrator's turn ended) does not ask `gh` again.
+    const reads = transport.callsOf("get_git_overview").length;
+    act(() => transport.emit({ ...turnEnded(4, orchestratorKey("C-2")), live: true }));
+    await waitFor(() => expect(transport.callsOf("get_git_overview").length).toBeGreaterThan(reads));
+    await waitFor(() => expect(store.getState().git?.overview).not.toBeNull());
+    expect(transport.callsOf("get_branch_statuses")).toHaveLength(1);
   });
 });
 
@@ -321,7 +395,7 @@ describe("a project without chats", () => {
     const { store, user, transport } = setup({ empty: true });
     await open(store);
     expect(within(tree()).getByRole("button", { name: "main" })).toHaveAttribute("aria-expanded", "true");
-    expect(within(tree()).getByRole("button", { name: "feat/x" })).toHaveAttribute("aria-expanded", "false");
+    expect(within(tree()).getByRole("button", { name: /feat\/x$/ })).toHaveAttribute("aria-expanded", "false");
     await user.click(within(tree()).getByRole("button", { name: "main の新しいチャット" }));
     expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", worktree: MAIN_WT }]);
   });
@@ -329,7 +403,7 @@ describe("a project without chats", () => {
   it("offers + 新しいチャット under each worktree", async () => {
     const { store, user, transport } = setup({ empty: true });
     await open(store);
-    await user.click(within(tree()).getByRole("button", { name: "feat/x" }));
+    await user.click(within(tree()).getByRole("button", { name: /feat\/x$/ }));
     await user.click(within(tree()).getByRole("button", { name: "feat/x の新しいチャット" }));
     expect(transport.callsOf("create_chat")).toEqual([{ type: "create_chat", project: "repo", worktree: FEAT_WT }]);
     await waitFor(() => expect(screen.getByTestId("chat-title")).toHaveTextContent("新しいチャット"));

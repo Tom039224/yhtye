@@ -1,6 +1,9 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatus
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GroupStatus
 import io.github.tom039224.yhtye.shared.api.generated.SessionRecord
@@ -127,5 +130,31 @@ class BranchTreeTest {
             s.copy(groups = s.groups.map { if (it.id == "G-1") it.copy(status = GroupStatus.MergeBlocked) else it })
         }
         assertTrue(deleteBlocker(v.copy(state = state), "C-1").orEmpty().contains("G-1"))
+    }
+
+    // ---- statusLabel / statusOf ----
+
+    @Test
+    fun labelsEveryBranchStateInJapanese() {
+        assertEquals("まだ取り込まれていません", statusLabel(BranchState.Unmerged, null))
+        assertEquals("PR 作成済み (#7)", statusLabel(BranchState.PrOpen, 7))
+        assertEquals("PR でマージ済み (#9)", statusLabel(BranchState.Merged, 9))
+        assertEquals("取り込み済み", statusLabel(BranchState.Merged, null))
+        assertEquals("PR でマージ済み・未マージの変更あり (#8)", statusLabel(BranchState.MergedWithChanges, 8))
+        assertEquals("状態不明", statusLabel(BranchState.Unknown, null))
+        assertEquals("状態不明", statusLabel(BranchState.Unrecognized, null))
+    }
+
+    @Test
+    fun statusOfIsNullForTheDefaultBranchAndUnknownWithoutAnEntry() {
+        val statuses = BranchStatuses(
+            "main",
+            listOf(BranchStatus("feat/x", BranchState.PrOpen, 7, "https://example.test/pull/7")),
+        )
+        assertNull(statusOf("main", statuses))
+        assertNull(statusOf(null, statuses))
+        assertEquals(BranchState.PrOpen to 7L, statusOf("feat/x", statuses))
+        assertEquals(BranchState.Unknown to null, statusOf("other", statuses))
+        assertEquals(BranchState.Unknown to null, statusOf("feat/x", null))
     }
 }

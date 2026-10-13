@@ -31,7 +31,7 @@ use crate::api::{
 };
 use crate::clock::now_ms;
 use crate::domain::DomainConfig;
-use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
+use crate::git::{self, BranchStatuses, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
 use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
 use crate::store::{ProjectRecord, Store, db_path};
@@ -48,6 +48,10 @@ const MODEL_PROBE_DIR: &str = "model-probe";
 
 /// How long a project may take to tell whether work is on in it (see `is_running`).
 const RUNNING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long [`Core::branch_statuses`] remembers one `gh` listing per project
+/// (`gh` uses the network; the UI re-reads it with the git overview).
+const BRANCH_STATUS_TTL: Duration = Duration::from_secs(60);
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -135,6 +139,9 @@ struct Inner {
     models: ModelService,
     secrets: Arc<Secrets>,
     remote: RemoteService,
+    /// The PR / merge statuses by project id with when they were read (see
+    /// [`Core::branch_statuses`]).
+    status_cache: tokio::sync::Mutex<HashMap<String, (std::time::Instant, BranchStatuses)>>,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -187,6 +194,7 @@ impl Core {
                 models,
                 secrets,
                 remote,
+                status_cache: tokio::sync::Mutex::new(HashMap::new()),
                 closed: AtomicBool::new(false),
             }),
         })
@@ -337,6 +345,9 @@ impl Core {
             }
             ApiCommand::GetGitOverview { project, limit } => Ok(ApiResponse::GitOverview {
                 git: self.git_overview(&project, limit).await?,
+            }),
+            ApiCommand::GetBranchStatuses { project } => Ok(ApiResponse::BranchStatuses {
+                statuses: self.branch_statuses(&project).await?,
             }),
             ApiCommand::GetUsage { refresh } => {
                 let usage = self
@@ -625,6 +636,33 @@ impl Core {
         git::overview(&record.path, limit.min(MAX_GRAPH_COMMITS))
             .await
             .map_err(|e| ApiError::unavailable(format!("could not read the repository: {e}")))
+    }
+
+    /// The PR / merge status of every local branch of `project`. Cached for
+    /// [`BRANCH_STATUS_TTL`]: `gh` uses the network and the UI re-reads it
+    /// with the git overview. Never fails for a known project (a `gh` failure
+    /// reads `unknown` for every branch).
+    async fn branch_statuses(&self, project: &str) -> Result<BranchStatuses, ApiError> {
+        let known = self.inner.store.projects().await?;
+        let record = known
+            .iter()
+            .find(|r| r.id == project)
+            .ok_or_else(|| ApiError::not_found(format!("unknown project {project}")))?;
+        {
+            let cache = self.inner.status_cache.lock().await;
+            if let Some((at, statuses)) = cache.get(project)
+                && at.elapsed() < BRANCH_STATUS_TTL
+            {
+                return Ok(statuses.clone());
+            }
+        }
+        let statuses = git::branch_statuses(&record.path).await;
+        self.inner
+            .status_cache
+            .lock()
+            .await
+            .insert(project.to_string(), (std::time::Instant::now(), statuses.clone()));
+        Ok(statuses)
     }
 
     /// Like [`Core::orchestration`], but a known project that is not open is

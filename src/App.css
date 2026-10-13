@@ -81,6 +81,12 @@ button:disabled { cursor: default; }
 .dot-ok { background: var(--status-done-bar); }
 .dot-busy { background: var(--status-implementing-bar); }
 .dot-bad { background: var(--status-handling-bar); }
+/* PR / merge status of a branch (the BRANCHES tree's dots). */
+.dot-pr-unmerged { background: var(--branch-dot); }
+.dot-pr-open { background: var(--status-done-bar); }
+.dot-pr-merged { background: var(--status-reviewing-bar); }
+.dot-pr-changes { background: var(--status-handling-bar); }
+.dot-pr-unknown { background: var(--text-faint); }
 
 .body { flex: 1; min-width: 0; min-height: 0; display: flex; }
 

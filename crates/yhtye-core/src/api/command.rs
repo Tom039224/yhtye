@@ -15,7 +15,7 @@ use crate::agents::{
     HarnessModels, ModelEfforts, RoleSettings,
 };
 use crate::domain::{ErrorCode, ToolError};
-use crate::git::GitOverview;
+use crate::git::{BranchStatuses, GitOverview};
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
@@ -169,6 +169,12 @@ pub enum ApiCommand {
         #[serde(default)]
         #[ts(optional)]
         limit: Option<u32>,
+    },
+    /// The PR / merge status of every local branch (the dots of the BRANCHES
+    /// tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+    /// for every branch). Works for projects that are not open.
+    GetBranchStatuses {
+        project: String,
     },
     /// Subscription usage / quota of the harness (5-hour and weekly windows,
     /// plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
@@ -406,6 +412,9 @@ pub enum ApiResponse {
     },
     GitOverview {
         git: GitOverview,
+    },
+    BranchStatuses {
+        statuses: BranchStatuses,
     },
     Usage {
         usage: UsageReport,

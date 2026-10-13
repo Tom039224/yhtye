@@ -213,6 +213,16 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * The PR / merge status of every local branch (the dots of the BRANCHES
+     * tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+     * for every branch). Works for projects that are not open.
+     */
+    @Serializable
+    data class GetBranchStatuses(
+        val project: String,
+    ) : ApiCommand
+
+    /**
      * Subscription usage / quota of the harness (5-hour and weekly windows,
      * plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
      * the cached report is only seconds old. `unavailable` when the harness
@@ -409,6 +419,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("cancel_group", CancelGroup.serializer()) { it is CancelGroup },
             TaggedVariant<ApiCommand>("retry_group_merge", RetryGroupMerge.serializer()) { it is RetryGroupMerge },
             TaggedVariant<ApiCommand>("get_git_overview", GetGitOverview.serializer()) { it is GetGitOverview },
+            TaggedVariant<ApiCommand>("get_branch_statuses", GetBranchStatuses.serializer()) { it is GetBranchStatuses },
             TaggedVariant<ApiCommand>("get_usage", GetUsage.serializer()) { it is GetUsage },
             TaggedVariant<ApiCommand>("get_agent_settings", GetAgentSettings.serializer()) { it is GetAgentSettings },
             TaggedVariant<ApiCommand>("set_agent_settings", SetAgentSettings.serializer()) { it is SetAgentSettings },

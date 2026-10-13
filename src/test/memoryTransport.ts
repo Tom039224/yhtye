@@ -10,6 +10,7 @@ import type {
   ApiCommand,
   ApiEvent,
   ApiResponse,
+  BranchStatuses,
   ChatInfo,
   ClientDevice,
   Clients,
@@ -99,6 +100,8 @@ export class FakeCore {
     commits: [],
     truncated: false,
   };
+  /** Served for `get_branch_statuses`. */
+  branchStatuses: BranchStatuses = { default_branch: "main", statuses: [] };
   /** Served for `get_usage` (`null`: the core reports it unavailable). */
   usage: UsageReport | null = null;
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
@@ -181,6 +184,8 @@ export class FakeCore {
       }
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
+      case "get_branch_statuses":
+        return { type: "branch_statuses", statuses: this.branchStatuses };
       case "open_chat":
         if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
         return { type: "chat_opened", starting: this.starting.has(cmd.chat) };

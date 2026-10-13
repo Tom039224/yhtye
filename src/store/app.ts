@@ -14,7 +14,7 @@
 // - clients (T-73): the PC and the paired devices for the host footer, read on
 //   every (re)connect and resync and replaced by each `clients_changed`.
 
-import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
 import { upsertChat } from "./chats";
@@ -47,6 +47,8 @@ export const HISTORY_PAGE = 400;
 export const GIT_COMMITS = 120;
 /** Delay before re-reading git after a domain change (changes come in bursts). */
 export const GIT_REFRESH_MS = 400;
+/** How long the branch PR / merge statuses are reused before `gh` is asked again. */
+export const BRANCH_STATUS_TTL_MS = 60_000;
 /** Delay before the project list is re-read after work started or ended in a project not on screen. */
 export const ACTIVITY_REFRESH_MS = 200;
 /** Preference key: path of the project opened last (reopened after a reload). */
@@ -73,6 +75,10 @@ export interface GitView {
    * in a new worktree): not shown as "not found" until git is read again.
    */
   awaiting: string[];
+  /** PR / merge status per branch (the dots of the BRANCHES tree). */
+  statuses: BranchStatuses | null;
+  /** When `statuses` was last read (ms since the epoch). */
+  statusesAt: number;
 }
 
 /** Subscription usage for the status bar (read from the harness by the core). */
@@ -392,16 +398,42 @@ export class AppStore extends SettingsCommands {
     const token = ++this.gitToken;
     const prev = this.state.git?.project === project ? this.state.git : null;
     const awaiting = prev?.awaiting ?? [];
-    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true, awaiting } });
+    const statuses = prev?.statuses ?? null;
+    const statusesAt = prev?.statusesAt ?? 0;
+    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true, awaiting, statuses, statusesAt } });
     try {
       const r = await this.invoke({ type: "get_git_overview", project, limit: GIT_COMMITS }, "git_overview");
       if (token !== this.gitToken) return;
       // Read after every chat it was waiting for was made: their worktrees are in it.
-      this.set({ git: { project, overview: r.git, error: null, loading: false, awaiting: [] } });
+      this.set({ git: { project, overview: r.git, error: null, loading: false, awaiting: [], statuses, statusesAt } });
+      void this.refreshBranchStatuses();
     } catch (e) {
       if (token !== this.gitToken) return;
       const error = toCommandError(e).message;
-      this.set({ git: { ...(this.state.git ?? { project, overview: null, awaiting }), project, error, loading: false } });
+      this.set({ git: { ...(this.state.git ?? { project, overview: null, awaiting, statuses, statusesAt }), project, error, loading: false } });
+    }
+  }
+
+  /**
+   * Re-reads the branches' PR / merge statuses (the dots of the BRANCHES
+   * tree), unless they were read recently: `gh` uses the network. A failure
+   * keeps the last ones (the dots then read "unknown" until the next read).
+   */
+  async refreshBranchStatuses(force = false): Promise<void> {
+    const view = this.state.project;
+    if (!view) return;
+    const project = view.info.id;
+    const prev = this.state.git?.project === project ? this.state.git : null;
+    if (!force && prev?.statuses && Date.now() - prev.statusesAt < BRANCH_STATUS_TTL_MS) return;
+    try {
+      const r = await this.invoke({ type: "get_branch_statuses", project }, "branch_statuses");
+      if (this.state.project?.info.id !== project) return;
+      const git = this.state.git?.project === project
+        ? this.state.git
+        : { project, overview: null, error: null, loading: false, awaiting: [] as string[], statuses: null as BranchStatuses | null, statusesAt: 0 };
+      this.set({ git: { ...git, project, statuses: r.statuses, statusesAt: Date.now() } });
+    } catch {
+      // Kept as they were (see above).
     }
   }
 
