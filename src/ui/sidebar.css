@@ -69,6 +69,18 @@
 .branch-row .name, .chat-row .name { flex: 1; min-width: 0; white-space: nowrap; }
 .icon.caret { flex: none; color: var(--text-dim); transition: transform 0.12s; }
 .icon.caret.collapsed { transform: rotate(-90deg); }
+/* A branch's PR / merge status (BranchTree's StatusIcon, after Orca's sidebar): the glyph tells the state,
+   the tone repeats it. Neutral and unmerged branches keep the base tone. */
+.branch-status { position: relative; display: inline-flex; flex: none; color: var(--text-dim); }
+.branch-status-open { color: var(--status-done-bar); }
+.branch-status-merged, .branch-status-changes { color: var(--status-reviewing-bar); }
+.branch-status-unknown { color: var(--text-faintest); }
+/* Merged, then more commits: a small dot on the merge glyph, cut out from it by the panel's colour. */
+.branch-status-badge {
+  position: absolute; top: -1px; right: -2px; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--status-handling-bar); box-shadow: 0 0 0 1.5px var(--surface-panel);
+}
+.side-row:hover .branch-status-badge { box-shadow: 0 0 0 1.5px var(--surface-hover); }
 .wt-head { display: flex; align-items: center; gap: 2px; }
 .wt-head > .side-row { flex: 1; min-width: 0; }
 .row-action { opacity: 0.5; }

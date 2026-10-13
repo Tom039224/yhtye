@@ -58,6 +58,8 @@ object YIcons {
     val Message = lineIcon("message", "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z")
     val Branch = lineIcon("branch", "M6 3v12", "M18 9a9 9 0 0 1-9 9", circle(18f, 6f, 3f), circle(6f, 18f, 3f))
     val Merge = lineIcon("merge", circle(18f, 18f, 3f), circle(6f, 6f, 3f), "M6 21V9a9 9 0 0 0 9 9")
+    /** 開いた PR (lucide の git-pull-request-arrow。PC の git-pull-request と同じく矢印で戻る形)。 */
+    val PullRequest = lineIcon("pullRequest", circle(5f, 6f, 3f), "M5 9v12", circle(19f, 18f, 3f), "m15 9-3-3 3-3", "M12 6h5a2 2 0 0 1 2 2v7")
     val Check = lineIcon("check", "M20 6 9 17l-5-5")
     val X = lineIcon("x", "M18 6 6 18", "M6 6l12 12")
     val Loader = lineIcon("loader", "M21 12a9 9 0 1 1-6.2-8.56")

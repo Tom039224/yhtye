@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -75,13 +76,14 @@ import io.github.tom039224.yhtye.ui.conversation.NEW_CHAT_TITLE
 import kotlinx.coroutines.launch
 
 // ブランチ (作業ツリー) とチャットの木 (PC の BranchTree / ChatRow、orchestrator-desktop §9、モックの「Branch」):
-// 作業ツリーを今のブランチの名前で (左の点は PR / マージの状態、PC と同じ色・文言)、折りたためて、
+// 作業ツリーを今のブランチの名前で (左のアイコンは PR / マージの状態、PC と同じアイコン・色・文言)、折りたためて、
 // それぞれに新しいチャット。見つからない作業ツリーのチャット、作業ツリーの無い他のブランチ、「+」で新しいブランチ。
 // チャットの名前の変更・削除はスマホでは会話の上部のメニュー (決定事項)。
 
 private val ROW_SHAPE = RoundedCornerShape(10.dp)
 private val FORM_SHAPE = RoundedCornerShape(12.dp)
 private val FIELD_SHAPE = RoundedCornerShape(8.dp)
+private val STATUS_ICON_SIZE = 14.dp
 
 /** 開始点の「HEAD」(PC の HEAD_OPTION)。 */
 private const val HEAD_OPTION = ""
@@ -188,30 +190,37 @@ private fun SideNote(text: String, error: Boolean = false) {
 }
 
 /**
- * ブランチの左の点: PR / マージの状態 (PC の点と同じ色・同じ日本語ラベル)。既定のブランチ自身と
- * detached の作業ツリーは無地の点。
+ * ブランチの左のアイコン: PR / マージの状態 (PC の StatusIcon と同じアイコン・色・日本語ラベル、Orca のサイドバーに倣う)。
+ * PR が無ければブランチ、開いた PR は緑の PR、マージ済みは紫のマージ (その後に変更があれば小さな点)。
+ * 既定のブランチ自身と detached の作業ツリーはラベルの無いブランチ。
  */
 @Composable
-private fun StatusDot(branch: String?, statuses: BranchStatuses?, testTag: String? = null) {
+private fun StatusIcon(branch: String?, statuses: BranchStatuses?, testTag: String? = null) {
     val c = Yhtye.colors
     val tag = if (testTag == null) Modifier else Modifier.testTag(testTag)
     val found = statusOf(branch, statuses)
     if (found == null) {
-        Box(Modifier.size(7.dp).background(c.ringStop, CircleShape).then(tag))
+        YIcon(YIcons.Branch, c.tx4, STATUS_ICON_SIZE, tag)
         return
     }
     val (state, pr) = found
-    val color = when (state) {
-        BranchState.Unmerged -> c.ringStop
-        BranchState.PrOpen -> c.doneBar
-        BranchState.Merged -> c.revBar
-        BranchState.MergedWithChanges -> c.handBar
-        BranchState.Unknown, BranchState.Unrecognized -> c.tx4
+    val (icon, tint) = when (state) {
+        BranchState.Unmerged -> YIcons.Branch to c.tx4
+        BranchState.PrOpen -> YIcons.PullRequest to c.doneBar
+        BranchState.Merged, BranchState.MergedWithChanges -> YIcons.Merge to c.revBar
+        BranchState.Unknown, BranchState.Unrecognized -> YIcons.Branch to c.tx5
     }
-    Box(
-        Modifier.size(7.dp).background(color, CircleShape).then(tag)
-            .semantics { contentDescription = statusLabel(state, pr) },
-    )
+    Box(Modifier.semantics { contentDescription = statusLabel(state, pr) }.then(tag)) {
+        YIcon(icon, tint, STATUS_ICON_SIZE, Modifier.testTag("branch-icon-${icon.name}"))
+        if (state == BranchState.MergedWithChanges) {
+            // パネルの地の縁で、マージのアイコンから切り抜いて見せる
+            Box(
+                Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(7.dp)
+                    .background(c.bgPanel, CircleShape).padding(1.dp).background(c.handBar, CircleShape)
+                    .testTag("branch-status-badge"),
+            )
+        }
+    }
 }
 
 @Composable
@@ -240,7 +249,7 @@ private fun WorktreeRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             YIcon(YIcons.ChevronDown, c.tx4, 14.dp, Modifier.rotate(if (open) 0f else -90f))
-            StatusDot(branch, statuses, testTag = if (node.isMain) "main-clone" else null)
+            StatusIcon(branch, statuses, testTag = if (node.isMain) "main-clone" else null)
             Text(
                 node.label,
                 color = c.tx2,
@@ -338,7 +347,7 @@ private fun OtherBranches(names: List<String>, statuses: BranchStatuses?, open: 
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            StatusDot(n, statuses)
+            StatusIcon(n, statuses)
             YIcon(YIcons.MessagePlus, c.tx3, 16.dp)
             Text(n, color = c.tx2, fontFamily = MonoFont, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

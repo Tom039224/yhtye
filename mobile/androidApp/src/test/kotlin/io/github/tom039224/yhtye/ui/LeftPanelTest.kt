@@ -12,6 +12,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
@@ -181,29 +182,47 @@ class LeftPanelTest {
     }
 
     @Test
-    fun `branch rows show the PR merge status with its Japanese label`() {
+    fun `branch rows show the PR merge status as an icon with its Japanese label`() {
         h.open {
             git = git.copy(
-                branches = git.branches + GitBranch("feat/x", "f".repeat(40)) + GitBranch("old", "o".repeat(40)),
-                worktrees = git.worktrees + GitWorktree("/tmp/feat", "feat/x", "f".repeat(40), isMain = false, missing = false),
+                branches = git.branches + listOf("feat/x", "ship", "redo", "old").map { GitBranch(it, it.first().toString().repeat(40)) },
+                worktrees = git.worktrees + listOf("feat/x", "ship", "redo").map {
+                    GitWorktree("/tmp/$it", it, it.first().toString().repeat(40), isMain = false, missing = false)
+                },
             )
             branchStatuses = BranchStatuses(
                 "main",
                 listOf(
                     BranchStatus("feat/x", BranchState.PrOpen, 7, "https://example.test/u/repo/pull/7"),
+                    BranchStatus("ship", BranchState.Merged, 9, "https://example.test/u/repo/pull/9"),
+                    BranchStatus("redo", BranchState.MergedWithChanges, 8, "https://example.test/u/repo/pull/8"),
                     BranchStatus("old", BranchState.Unmerged, null, null),
                 ),
             )
         }
         h.openLeft()
         h.settle { h.sync.state.value.git?.statuses != null }
-        // 既定のブランチは無地の点のまま
-        rule.onNodeWithTag("main-clone", useUnmergedTree = true).assertExists()
-        // 開いた PR のあるブランチはその旨の点
-        rule.onNode(hasContentDescription("PR 作成済み (#7)")).assertExists()
-        // 作業ツリーの無いブランチにも点が出る
+        // 既定のブランチはラベルの無いブランチのアイコンのまま
+        rule.onNodeWithTag("main-clone", useUnmergedTree = true)
+            .assertExists()
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
+        // 開いた PR は PR のアイコン、マージ済みはマージのアイコン (その後の変更があれば点も)
+        assertStatusIcon("PR 作成済み (#7)", "pullRequest")
+        assertStatusIcon("PR でマージ済み (#9)", "merge")
+        assertStatusIcon("PR でマージ済み・未マージの変更あり (#8)", "merge")
+        rule.onAllNodesWithTag("branch-status-badge", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNode(
+            hasTestTag("branch-status-badge") and hasAnyAncestor(hasContentDescription("PR でマージ済み・未マージの変更あり (#8)")),
+            useUnmergedTree = true,
+        ).assertExists()
+        // 作業ツリーの無いブランチにもアイコンが出る
         rule.onNodeWithTag("other-branches").performClick()
-        rule.onNode(hasContentDescription("まだ取り込まれていません"), useUnmergedTree = true).assertExists()
+        assertStatusIcon("まだ取り込まれていません", "branch")
+    }
+
+    /** [label] の付いた状態のアイコンが [icon] (YIcons の名前) の形で出ている。 */
+    private fun assertStatusIcon(label: String, icon: String) {
+        rule.onNode(hasTestTag("branch-icon-$icon") and hasAnyAncestor(hasContentDescription(label)), useUnmergedTree = true).assertExists()
     }
 
     @Test
@@ -215,7 +234,7 @@ class LeftPanelTest {
         }
         h.openLeft()
         h.settle { h.sync.state.value.git?.statuses != null }
-        rule.onNode(hasContentDescription("状態不明")).assertExists()
+        assertStatusIcon("状態不明", "branch")
         assertEquals(1, h.core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 
