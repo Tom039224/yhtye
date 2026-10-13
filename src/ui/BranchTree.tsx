@@ -7,7 +7,7 @@ import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
 import { buildTree, type WorktreeNode } from "./branchTree";
 import { ChatRow } from "./ChatRow";
-import { Icon, IconButton } from "./Icon";
+import { Icon, IconButton, type IconName } from "./Icon";
 import { useNow } from "./useNow";
 
 function selectOverview(s: AppState): GitOverview | null {
@@ -101,15 +101,22 @@ interface WorktreeRowProps {
   onNewChat: () => void;
 }
 
-const STATUS_DOT: Record<BranchState, string> = {
-  unmerged: "dot-pr-unmerged",
-  pr_open: "dot-pr-open",
-  merged: "dot-pr-merged",
-  merged_with_changes: "dot-pr-changes",
-  unknown: "dot-pr-unknown",
+/**
+ * The icon and tone of each PR / merge state, after Orca's sidebar: a plain
+ * branch until there is a PR, the PR glyph in green while it is open, the merge
+ * glyph in purple once merged (with a badge when new work came after the merge).
+ */
+const STATUS_ICON: Record<BranchState, { icon: IconName; tone: string }> = {
+  unmerged: { icon: "git-branch", tone: "branch-status-unmerged" },
+  pr_open: { icon: "git-pull-request", tone: "branch-status-open" },
+  merged: { icon: "git-merge", tone: "branch-status-merged" },
+  merged_with_changes: { icon: "git-merge", tone: "branch-status-changes" },
+  unknown: { icon: "git-branch", tone: "branch-status-unknown" },
 };
 
-/** Japanese label of a branch's dot, with the PR number when there is one. */
+const STATUS_ICON_SIZE = 13;
+
+/** Japanese label of a branch's status icon, with the PR number when there is one. */
 export function statusLabel(state: BranchState, pr: number | null): string {
   switch (state) {
     case "unmerged":
@@ -126,15 +133,27 @@ export function statusLabel(state: BranchState, pr: number | null): string {
 }
 
 /**
- * The dot left of a branch: its PR / merge status. The default branch itself
- * and a detached worktree get the neutral dot (no state).
+ * The icon left of a branch: its PR / merge status. The default branch itself
+ * and a detached worktree get the neutral branch icon (no state, no label).
  */
-function StatusDot({ branch, statuses }: { branch: string | null; statuses: BranchStatuses | null }) {
-  if (branch == null || branch === statuses?.default_branch) return <span className="dot" />;
+function StatusIcon({ branch, statuses }: { branch: string | null; statuses: BranchStatuses | null }) {
+  if (branch == null || branch === statuses?.default_branch) {
+    return (
+      <span className="branch-status">
+        <Icon name="git-branch" size={STATUS_ICON_SIZE} />
+      </span>
+    );
+  }
   const found = statuses?.statuses.find((s) => s.branch === branch);
   const state = found?.state ?? "unknown";
   const label = statusLabel(state, found?.pr_number ?? null);
-  return <span className={`dot ${STATUS_DOT[state]}`} role="img" aria-label={label} title={label} />;
+  const { icon, tone } = STATUS_ICON[state];
+  return (
+    <span className={`branch-status ${tone}`} role="img" aria-label={label} title={label}>
+      <Icon name={icon} size={STATUS_ICON_SIZE} />
+      {state === "merged_with_changes" ? <span className="branch-status-badge" /> : null}
+    </span>
+  );
 }
 
 function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps) {
@@ -147,7 +166,7 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
       <div className="wt-head">
         <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
           <Icon name="chevron-down" size={12} className={`caret ${open ? "" : "collapsed"}`} />
-          <StatusDot branch={branch} statuses={statuses} />
+          <StatusIcon branch={branch} statuses={statuses} />
           <span className="name">{node.label}</span>
           {node.missing ? (
             <span className="age" title="作業ツリーが見つかりません">
@@ -195,7 +214,7 @@ function OtherBranches({ names }: { names: string[] }) {
           {names.map((n) => (
             <li key={n}>
               <button type="button" className="side-row new-chat" title={`${n} の作業ツリーを作ってチャットを始める`} onClick={() => void store.createChat({ branch: n })} aria-label={`${n} の新しいチャット`}>
-                <StatusDot branch={n} statuses={statuses} />
+                <StatusIcon branch={n} statuses={statuses} />
                 <Icon name="message-plus" size={13} />
                 <span className="name">{n}</span>
               </button>

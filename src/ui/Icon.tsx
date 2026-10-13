@@ -147,6 +147,15 @@ const GLYPHS = {
       <path d="M6 8v8M8 6c6 0 10 2.5 10 4.5" />
     </>
   ),
+  // An open pull request (after Orca's / octicons' PR glyph: the head's line comes back into the base with an arrow).
+  "git-pull-request": (
+    <>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <path d="M6 8v8M18 16V9.5A2.5 2.5 0 0 0 15.5 7h-5M13 4.5L10.5 7 13 9.5" />
+    </>
+  ),
   folder: <path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H10l2 2.5h6.5A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,
   globe: (
     <>

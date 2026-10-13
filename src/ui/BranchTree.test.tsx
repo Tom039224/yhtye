@@ -52,6 +52,12 @@ const chatButton = (title: RegExp) =>
 const conversation = () => screen.getByRole("region", { name: "orchestrator" });
 const tasks = () => screen.getByRole("region", { name: "tasks" });
 
+/** A branch's status: its tone class and the glyph inside it. */
+function expectStatus(status: HTMLElement, tone: string, icon: string) {
+  expect(status).toHaveClass("branch-status", tone);
+  expect(status.querySelector(`svg[data-icon="${icon}"]`)).not.toBeNull();
+}
+
 describe("BRANCHES tree", () => {
   it("lists the worktrees by their branch with their chats newest first and hides Yhtye's internal ones", async () => {
     const { store } = setup();
@@ -144,13 +150,13 @@ describe("BRANCHES tree", () => {
       statuses: [{ branch: "feat/x", state: "pr_open", pr_number: 7, pr_url: "https://example.test/u/repo/pull/7" }],
     };
     await open(store);
-    // The default branch gets the neutral dot (no state).
+    // The default branch gets the neutral branch icon (no state).
     const main = within(tree()).getByRole("button", { name: "main" });
-    expect(main.querySelector(".dot")).not.toBeNull();
-    expect(main.querySelector(".dot-pr-open, .dot-pr-unknown, .dot-pr-merged, .dot-pr-changes, .dot-pr-unmerged")).toBeNull();
+    expect(main.querySelector('.branch-status [data-icon="git-branch"]')).not.toBeNull();
+    expect(main.querySelector('.branch-status[class*="branch-status-"]')).toBeNull();
     // The branch with an open PR shows its status, not a ring.
     const feat = within(tree()).getByRole("button", { name: /feat\/x$/ });
-    expect(within(feat).getByRole("img", { name: "PR 作成済み (#7)" })).toHaveClass("dot-pr-open");
+    expectStatus(within(feat).getByRole("img", { name: "PR 作成済み (#7)" }), "branch-status-open", "git-pull-request");
     expect(feat.querySelector(".ring-running")).toBeNull();
     expect(screen.getByTestId("chat-ring-C-2")).toHaveClass("ring-stopped");
     // The orchestrator of C-2 starts (ready), then works (running); its branch row keeps the status.
@@ -200,16 +206,23 @@ describe("BRANCHES tree", () => {
       ],
     };
     await open(store);
-    expect(within(tree()).getByRole("img", { name: "PR 作成済み (#7)" })).toHaveClass("dot-pr-open");
-    expect(within(tree()).getByRole("img", { name: "PR でマージ済み (#9)" })).toHaveClass("dot-pr-merged");
-    expect(within(tree()).getByRole("img", { name: "PR でマージ済み・未マージの変更あり (#8)" })).toHaveClass("dot-pr-changes");
+    expectStatus(within(tree()).getByRole("img", { name: "PR 作成済み (#7)" }), "branch-status-open", "git-pull-request");
+    const merged = within(tree()).getByRole("img", { name: "PR でマージ済み (#9)" });
+    expectStatus(merged, "branch-status-merged", "git-merge");
+    expect(merged.querySelector(".branch-status-badge")).toBeNull();
+    // Merged and then changed: the merge icon with a badge.
+    const changed = within(tree()).getByRole("img", { name: "PR でマージ済み・未マージの変更あり (#8)" });
+    expectStatus(changed, "branch-status-changes", "git-merge");
+    expect(changed.querySelector(".branch-status-badge")).not.toBeNull();
+    expect(changed).toHaveAttribute("title", "PR でマージ済み・未マージの変更あり (#8)");
+    expectStatus(within(tree()).getByRole("img", { name: "まだ取り込まれていません" }), "branch-status-unmerged", "git-branch");
     // No entry for `main`'s default branch is neutral; a branch with no entry is unknown.
     const main = within(tree()).getByRole("button", { name: "main" });
     expect(within(main).queryByRole("img")).not.toBeInTheDocument();
     // The other branches show their status too.
     await user.click(within(tree()).getByRole("button", { name: /他のブランチ \(1\)/ }));
     const other = within(tree()).getByRole("list", { name: "other branches" });
-    expect(within(other).getByRole("img", { name: "まだ取り込まれていません" })).toHaveClass("dot-pr-unmerged");
+    expectStatus(within(other).getByRole("img", { name: "まだ取り込まれていません" }), "branch-status-unmerged", "git-branch");
   });
 
   it("reads an unknown branch as 状態不明 and reuses the statuses until they are stale", async () => {
@@ -222,7 +235,7 @@ describe("BRANCHES tree", () => {
     await open(store);
     expect(transport.callsOf("get_branch_statuses")).toHaveLength(1);
     const mystery = within(tree()).getByRole("button", { name: /mystery$/ });
-    expect(within(mystery).getByRole("img", { name: "状態不明" })).toHaveClass("dot-pr-unknown");
+    expectStatus(within(mystery).getByRole("img", { name: "状態不明" }), "branch-status-unknown", "git-branch");
     // A re-read of the overview (an orchestrator's turn ended) does not ask `gh` again.
     const reads = transport.callsOf("get_git_overview").length;
     act(() => transport.emit({ ...turnEnded(4, orchestratorKey("C-2")), live: true }));
