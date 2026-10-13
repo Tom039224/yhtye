@@ -26,8 +26,8 @@ use crate::acp::{AgentError, AgentEvent};
 use crate::agents::AgentRole;
 use crate::api::{ApiEventBody, Snapshot};
 use crate::domain::{
-    AgentRef, Chat, DomainCommand, Effect, Role, State, TaskStatus, ToolError, TurnOutcome, decide,
-    orchestrator_session,
+    AgentRef, Chat, DomainCommand, Effect, Role, State, TaskStatus, ToolError, TurnOutcome,
+    chat_of_session, decide, orchestrator_session,
 };
 use crate::git::GitService;
 use crate::mcp::{SessionBinding, ToolCall, ToolCallRecord};
@@ -48,6 +48,9 @@ pub(super) enum Cmd {
     OpenChat(String, oneshot::Sender<Result<bool, ToolError>>),
     /// Sends `/compact` to a chat's idle orchestrator.
     CompactChat(String, oneshot::Sender<Result<(), ToolError>>),
+    /// Stops a chat's orchestrator session (`not_found`: no such chat;
+    /// `invalid_state`: it is starting or in a turn).
+    SleepChat(String, oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// The user renames a chat (chat, title).
@@ -65,8 +68,9 @@ pub(super) enum Cmd {
     /// The user retries the base merge of a `merge_blocked` group.
     RetryGroupMerge(String, oneshot::Sender<Reply>),
     Snapshot(oneshot::Sender<Result<Snapshot, StoreError>>),
-    /// Whether work is on in the project (see [`Driver::has_running_work`]).
-    Running(oneshot::Sender<Result<bool, StoreError>>),
+    /// Whether work is on in the project and whether one of its chats has an
+    /// orchestrator session up (see [`Driver::activity`]).
+    Activity(oneshot::Sender<Result<(bool, bool), StoreError>>),
     Shutdown(oneshot::Sender<()>),
 }
 
@@ -253,6 +257,9 @@ impl Driver {
             Some(Cmd::CompactChat(chat, tx)) => {
                 let _ = tx.send(self.compact_chat(&chat));
             }
+            Some(Cmd::SleepChat(chat, tx)) => {
+                let _ = tx.send(self.sleep_chat(&chat));
+            }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);
             }
@@ -282,8 +289,8 @@ impl Driver {
             Some(Cmd::Snapshot(tx)) => {
                 let _ = tx.send(self.snapshot().await);
             }
-            Some(Cmd::Running(tx)) => {
-                let _ = tx.send(self.has_running_work().await);
+            Some(Cmd::Activity(tx)) => {
+                let _ = tx.send(self.activity().await);
             }
             Some(Cmd::Shutdown(done)) => {
                 self.shutdown().await;
@@ -316,16 +323,21 @@ impl Driver {
         })
     }
 
-    /// Whether a live agent session is in a turn (an orchestrator's or a task's
-    /// agent) or a task is running or merging: the project is "running" in the
-    /// sidebar. Read like [`Driver::snapshot`], so it matches the same `seq`.
-    async fn has_running_work(&mut self) -> Result<bool, StoreError> {
+    /// Whether work is on (a live agent session is in a turn, or a task is
+    /// running or merging: the project is "running" in the sidebar) and whether
+    /// one of its chats has an orchestrator session up (the project is "awake").
+    /// Read like [`Driver::snapshot`], so both match the same `seq`.
+    async fn activity(&mut self) -> Result<(bool, bool), StoreError> {
         self.publisher.flush().await;
         let sessions = self.publisher.store().sessions(&self.cfg.project).await?;
-        Ok(self.state.has_working_task()
+        let running = self.state.has_working_task()
             || sessions
                 .iter()
-                .any(|s| s.status == SessionStatus::Live && s.turn_running))
+                .any(|s| s.status == SessionStatus::Live && s.turn_running);
+        let awake = sessions
+            .iter()
+            .any(|s| s.status == SessionStatus::Live && chat_of_session(&s.session_key).is_some());
+        Ok((running, awake))
     }
 
     /// Runs an orchestrator tool for the user, records it like an agent's tool

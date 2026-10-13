@@ -702,3 +702,89 @@ async fn compact_chat_sends_the_command_through_the_api_once_the_orchestrator_is
     until(&mut rx, said("orchestrator:C-1", "compacted")).await;
     core.shutdown().await;
 }
+
+async fn activity_of(core: &Core, project: &str) -> (bool, bool) {
+    let ApiResponse::Projects { projects } = run(core, ApiCommand::ListProjects).await else {
+        panic!("a project list");
+    };
+    let p = projects
+        .iter()
+        .find(|p| p.id == project)
+        .expect("the project is listed");
+    (p.running, p.awake)
+}
+
+#[tokio::test]
+async fn sleep_chat_stops_the_chat_and_the_project_rests_until_it_is_used_again() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    let chat = create_chat(&core, &project, "main").await.id;
+    let sleep = |chat: &str| ApiCommand::SleepChat {
+        project: project.clone(),
+        chat: chat.into(),
+    };
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, false),
+        "a project just opened is idle and asleep"
+    );
+    assert_eq!(code(&core, sleep("C-9")).await, ApiErrorCode::NotFound);
+
+    run(&core, send(&project, &chat, "hello")).await;
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, true),
+        "the chat is up but idle"
+    );
+
+    assert!(matches!(
+        run(&core, sleep(&chat)).await,
+        ApiResponse::Accepted
+    ));
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::SessionStopped { session, suspended: false }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, false),
+        "the chat sleeps"
+    );
+    // Sleeping again changes nothing.
+    assert!(matches!(
+        run(&core, sleep(&chat)).await,
+        ApiResponse::Accepted
+    ));
+
+    // The next message starts the orchestrator again with its stored session.
+    run(&core, send(&project, &chat, "hello")).await;
+    let mut resumed = None;
+    while resumed.is_none() {
+        let ev = tokio::time::timeout(TIMEOUT, rx.recv())
+            .await
+            .expect("timed out waiting for the restart")
+            .expect("event stream open");
+        if let ApiEventBody::SessionStarted {
+            session, resumed: r, ..
+        } = &ev.body
+            && session == "orchestrator:C-1"
+        {
+            resumed = Some(*r);
+        }
+    }
+    assert_eq!(resumed, Some(true), "the stored session was loaded again");
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
+    assert_eq!(activity_of(&core, &project).await.1, true);
+    core.shutdown().await;
+}

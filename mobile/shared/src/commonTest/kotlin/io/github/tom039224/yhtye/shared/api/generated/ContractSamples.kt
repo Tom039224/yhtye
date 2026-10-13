@@ -76,6 +76,12 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "sleep_chat",
+        ApiCommand.Serializer,
+        "{\"type\":\"sleep_chat\",\"project\":\"repo\",\"chat\":\"C-1\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "list_chats",
         ApiCommand.Serializer,
         "{\"type\":\"list_chats\",\"project\":\"repo\"}",
@@ -312,13 +318,13 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "projects",
         ApiResponse.Serializer,
-        "{\"type\":\"projects\",\"projects\":[{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true},{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":false,\"running\":false}]}",
+        "{\"type\":\"projects\",\"projects\":[{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true,\"awake\":true},{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":false,\"running\":false,\"awake\":false}]}",
     ),
     ContractSample(
         "ApiResponse",
         "project",
         ApiResponse.Serializer,
-        "{\"type\":\"project\",\"project\":{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true}}",
+        "{\"type\":\"project\",\"project\":{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true,\"awake\":true}}",
     ),
     ContractSample(
         "ApiResponse",

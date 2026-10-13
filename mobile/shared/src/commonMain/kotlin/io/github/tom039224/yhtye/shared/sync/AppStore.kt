@@ -316,6 +316,17 @@ class AppStore(
         }
     }
 
+    /**
+     * チャットを眠らせる: オーケストレータのプロセスを止める (保存したセッションは残るので、次の文で戻ってくる)。
+     * 断られたら (ターンが動いている) エラーに出す。
+     */
+    suspend fun sleepChat(chat: String) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            report<ApiResponse.Accepted>(ApiCommand.SleepChat(project, chat))
+        }
+    }
+
     /** タスクを中止する (そのエージェントを止める)。 */
     suspend fun cancelTask(task: String) {
         onConfined {

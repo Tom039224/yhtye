@@ -80,6 +80,7 @@ object YIcons {
         "M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22",
         "M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2",
     )
+    val Moon = lineIcon("moon", "M19 14.5A7.5 7.5 0 0 1 9.5 5A7.5 7.5 0 1 0 19 14.5Z")
     val Code = lineIcon("code", "M16 18l6-6-6-6", "M8 6l-6 6 6 6")
     val Eye = lineIcon("eye", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", circle(12f, 12f, 3f))
     val Search = lineIcon("search", circle(11f, 11f, 7f), "M21 21l-4.3-4.3")

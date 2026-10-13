@@ -104,6 +104,21 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * Stops the chat's orchestrator session (its process ends and its token is
+     * revoked), so the chat rests until it is used again: the next message to
+     * it starts the orchestrator again, restoring the stored session. Sessions
+     * start lazily, so one that was never started is already asleep.
+     * `not_found` for an unknown chat, `invalid_state` while its orchestrator
+     * is working (starting or in a turn); stop or wait for the turn first.
+     * Stopping an idle session reports `session_stopped`, like any other stop.
+     */
+    @Serializable
+    data class SleepChat(
+        val project: String,
+        val chat: String,
+    ) : ApiCommand
+
+    /**
      * The project's chats, most recently used first. Works for projects that
      * are not open.
      */
@@ -410,6 +425,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("open_chat", OpenChat.serializer()) { it is OpenChat },
             TaggedVariant<ApiCommand>("cancel_orchestrator_turn", CancelOrchestratorTurn.serializer()) { it is CancelOrchestratorTurn },
             TaggedVariant<ApiCommand>("compact_chat", CompactChat.serializer()) { it is CompactChat },
+            TaggedVariant<ApiCommand>("sleep_chat", SleepChat.serializer()) { it is SleepChat },
             TaggedVariant<ApiCommand>("list_chats", ListChats.serializer()) { it is ListChats },
             TaggedVariant<ApiCommand>("create_chat", CreateChat.serializer()) { it is CreateChat },
             TaggedVariant<ApiCommand>("rename_chat", RenameChat.serializer()) { it is RenameChat },

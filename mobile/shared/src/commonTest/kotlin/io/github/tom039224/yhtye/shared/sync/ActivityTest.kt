@@ -17,7 +17,8 @@ import kotlin.test.assertTrue
 
 /** PC の `src/store/activity.test.ts` と `src/ui/projectActivity.test.ts` の移植。 */
 class ActivityTest {
-    private fun info(id: String, open: Boolean = true, running: Boolean = false) = ProjectInfo(id, id, "/work/$id", open, running)
+    private fun info(id: String, open: Boolean = true, running: Boolean = false, awake: Boolean = false) =
+        ProjectInfo(id, id, "/work/$id", open, running, awake)
 
     private fun session(status: SessionStatus = SessionStatus.Live, turnRunning: Boolean = false): SessionRecord =
         sessionRecord("orchestrator:C-1", status, turnRunning)
@@ -60,6 +61,20 @@ class ActivityTest {
         assertFalse(hasRunningWork(viewOf(info("a"), tasks = settled)))
     }
 
+    // ---- hasLiveOrchestrator ----
+
+    @Test
+    fun isTrueWhileOneOfTheChatsHasAnOrchestratorSessionUp() {
+        assertTrue(hasLiveOrchestrator(viewOf(info("a"), sessions = listOf(session()))))
+        assertFalse(hasLiveOrchestrator(viewOf(info("a"), sessions = listOf(session(SessionStatus.Stopped)))))
+        assertFalse(hasLiveOrchestrator(viewOf(info("a"))))
+    }
+
+    @Test
+    fun ignoresTheSessionsOfTasks() {
+        assertFalse(hasLiveOrchestrator(viewOf(info("a"), sessions = listOf(sessionRecord("T-1/implementer")))))
+    }
+
     // ---- changesActivity ----
 
     @Test
@@ -94,10 +109,16 @@ class ActivityTest {
     // ---- mergeActivity ----
 
     @Test
-    fun takesOpenAndRunningOfTheProjectsItKnowsKeepingTheRest() {
+    fun takesOpenRunningAndAwakeOfTheProjectsItKnowsKeepingTheRest() {
         val known = listOf(info("a").copy(name = "A"), info("b", open = false))
-        val merged = mergeActivity(known, listOf(info("a", true, true), info("b", true, false), info("c", true, true)))
-        assertEquals(listOf(info("a", true, true).copy(name = "A"), info("b", true, false)), merged)
+        val merged = mergeActivity(known, listOf(info("a", true, true, true), info("b", true, false), info("c", true, true)))
+        assertEquals(listOf(info("a", true, true, true).copy(name = "A"), info("b", true, false)), merged)
+    }
+
+    @Test
+    fun noticesOnlyAwakeChangingToo() {
+        val known = listOf(info("a", true, false, false))
+        assertEquals(listOf(info("a", true, false, true)), mergeActivity(known, listOf(info("a", true, false, true))))
     }
 
     @Test
@@ -110,12 +131,19 @@ class ActivityTest {
     // ---- rememberRunning ----
 
     @Test
-    fun setsTheFlagOfTheProjectLeftFromWhatItsViewShowed() {
+    fun setsTheFlagsOfTheProjectLeftFromWhatItsViewShowed() {
         val a = info("a")
         val busy = viewOf(a, tasks = listOf(task(TaskStatus.Running)))
         assertEquals(listOf(a.copy(running = true), info("b")), rememberRunning(listOf(a, info("b")), busy))
         val idle = viewOf(info("a", true, true))
         assertEquals(listOf(info("a", true, false)), rememberRunning(listOf(info("a", true, true)), idle))
+    }
+
+    @Test
+    fun remembersAnAwakeProjectLeftWhileItsOrchestratorIsUp() {
+        val projects = listOf(info("a", true, false, false))
+        val left = viewOf(info("a"), sessions = listOf(session()))
+        assertEquals(listOf(info("a", true, false, true)), rememberRunning(projects, left))
     }
 
     @Test
@@ -129,16 +157,30 @@ class ActivityTest {
     // ---- projectRing (projectActivity.test.ts) ----
 
     @Test
-    fun isReadyNotStoppedForAProjectThatIsNotOpen() {
-        assertEquals(Ring.Ready, projectRing(info("a", open = false), null))
-        assertEquals(Ring.Ready, projectRing(info("a", open = false), viewOf(info("b"))))
+    fun isStoppedForAProjectThatIsNotOpen() {
+        assertEquals(Ring.Stopped, projectRing(info("a", open = false), null))
+        assertEquals(Ring.Stopped, projectRing(info("a", open = false), viewOf(info("b"))))
+        assertEquals(Ring.Stopped, projectRing(info("a", open = false, running = true), null))
     }
 
     @Test
-    fun isReadyForAnOpenProjectThatIsIdle() {
-        assertEquals(Ring.Ready, projectRing(info("a"), null))
-        assertEquals(Ring.Ready, projectRing(info("a"), viewOf(info("a"))))
-        assertEquals(Ring.Ready, projectRing(info("a"), viewOf(info("b"))))
+    fun isStoppedForAnOpenProjectWhoseChatsAllSleep() {
+        assertEquals(Ring.Stopped, projectRing(info("a"), null))
+        assertEquals(Ring.Stopped, projectRing(info("a"), viewOf(info("a"))))
+        assertEquals(Ring.Stopped, projectRing(info("a"), viewOf(info("b"))))
+    }
+
+    @Test
+    fun isReadyForAnOpenProjectWithAnOrchestratorUpButIdle() {
+        assertEquals(Ring.Ready, projectRing(info("a", true, false, true), null))
+        assertEquals(Ring.Ready, projectRing(info("a", true, false, true), viewOf(info("b"))))
+        assertEquals(Ring.Ready, projectRing(info("a"), viewOf(info("a"), sessions = listOf(session()))))
+    }
+
+    @Test
+    fun isStoppedWithoutALiveOrchestratorSessionEvenWithATaskAgentUp() {
+        val view = viewOf(info("a"), sessions = listOf(sessionRecord("T-1/implementer")))
+        assertEquals(Ring.Stopped, projectRing(info("a"), view))
     }
 
     @Test
@@ -149,11 +191,13 @@ class ActivityTest {
     }
 
     @Test
-    fun goesByTheViewNotTheFlagForTheProjectOnScreen() {
-        val flagged = info("a", true, true)
-        assertEquals(Ring.Ready, projectRing(flagged, viewOf(flagged)))
+    fun goesByTheViewNotTheFlagsForTheProjectOnScreen() {
+        val flagged = info("a", true, true, true)
+        assertEquals(Ring.Stopped, projectRing(flagged, viewOf(flagged)))
         val idle = info("a")
         assertEquals(Ring.Running, projectRing(idle, viewOf(idle, tasks = listOf(task(TaskStatus.Merging)))))
+        val sleeping = info("a", true, false, true)
+        assertEquals(Ring.Stopped, projectRing(sleeping, viewOf(sleeping)))
     }
 
     @Test
@@ -161,18 +205,15 @@ class ActivityTest {
         val shown = viewOf(info("b"))
         assertEquals(Ring.Running, projectRing(info("a", true, true), shown))
         assertEquals(Ring.Running, projectRing(info("a", true, true), null))
-        assertEquals(Ring.Ready, projectRing(info("a", true, false), shown))
-    }
-
-    @Test
-    fun neverRunsAProjectThatIsNotOpen() {
-        assertEquals(Ring.Ready, projectRing(info("a", open = false, running = true), null))
+        assertEquals(Ring.Ready, projectRing(info("a", true, false, true), shown))
+        assertEquals(Ring.Stopped, projectRing(info("a", true, false, false), shown))
     }
 
     @Test
     fun doesNotTakeAnotherProjectsWorkForThisOnes() {
         val shown = viewOf(info("b"), sessions = listOf(session(turnRunning = true)))
-        assertEquals(Ring.Ready, projectRing(info("a"), shown))
+        assertEquals(Ring.Stopped, projectRing(info("a"), shown))
+        assertEquals(Ring.Ready, projectRing(info("a", true, false, true), shown))
     }
 
     // ---- backgroundProjects ----

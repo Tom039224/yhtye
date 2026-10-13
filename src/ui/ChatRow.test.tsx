@@ -8,9 +8,10 @@ import { describe, expect, it } from "vitest";
 import App from "../App";
 import { CommandError } from "../api/transport";
 import { AppStore } from "../store/app";
+import { orchestratorKey } from "../store/chats";
 import { StoreContext } from "../store/useStore";
 import { CHAT_GIT, CHAT_LOG, chatSnapshot } from "../test/chats";
-import { ev } from "../test/events";
+import { ev, prompted } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 
@@ -257,5 +258,56 @@ describe("deleting with a confirmation", () => {
     expect(await within(confirm).findByRole("alert")).toHaveTextContent("is working");
     expect(chatIds(store)).toEqual(["C-2", "C-1"]);
     expect(within(confirm).getByRole("button", { name: "削除する" })).toBeEnabled();
+  });
+});
+
+describe("sleeping", () => {
+  const started = (chat: string, seq = 5) =>
+    ev(seq, {
+      type: "session_started",
+      session: orchestratorKey(chat),
+      role: "orchestrator",
+      task: null,
+      pid: null,
+      acp_session_id: "acp",
+      resumed: false,
+      agent: null,
+    });
+
+  it("offers sleep between rename and delete for a chat whose orchestrator is up, and sleeps it on click", async () => {
+    const { transport, user } = await setup();
+    act(() => transport.emit(started("C-1")));
+    await user.click(more("Refactor checkout"));
+    const items = within(menu("Refactor checkout")).getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["名前を変更", "スリープ", "削除"]);
+    await user.click(screen.getByRole("menuitem", { name: "スリープ" }));
+    expect(transport.callsOf("sleep_chat")).toEqual([{ type: "sleep_chat", project: "repo", chat: "C-1" }]);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("hides sleep for a chat whose orchestrator was never started", async () => {
+    const { user } = await setup();
+    await user.click(more("Refactor checkout"));
+    const items = within(menu("Refactor checkout")).getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent)).toEqual(["名前を変更", "削除"]);
+  });
+
+  it("disables sleep while the chat is working", async () => {
+    const { transport, user } = await setup();
+    act(() => {
+      transport.emit(started("C-1"));
+      transport.emit(prompted(6, orchestratorKey("C-1")));
+    });
+    await user.click(more("Refactor checkout"));
+    expect(screen.getByRole("menuitem", { name: "スリープ" })).toBeDisabled();
+  });
+
+  it("shows the core's refusal as an error", async () => {
+    const { core, store } = await setup();
+    core.failures.set("sleep_chat", new CommandError("invalid_state", "the orchestrator of chat C-1 is working"));
+    await act(() => store.sleepChat("C-1"));
+    expect(store.getState().errors.map((e) => e.message)).toEqual([
+      "sleep_chat failed: the orchestrator of chat C-1 is working",
+    ]);
   });
 });
