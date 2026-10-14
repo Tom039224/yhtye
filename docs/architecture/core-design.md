@@ -776,7 +776,7 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
     ログに出して接続せず、状態は未接続のまま)。**終了時は `Core::shutdown` が全接続を閉じる** (`RemoteHosts::shutdown`)。
   - **ディープリンク `yhtye://pair?…`** (`src-tauri/src/deep_link.rs`): QR コードやリンクのクリックでペアリングを始める。**確認なしでは
     ペアリングしない**: ペアリングはホストの 1 回限りのコードを使い、そのホストにこの端末を登録するので、WebView が接続先と端末名を見せて
-    (`src/ui/PairLinkDialog.tsx`) 答えを得てから `yhtye_remote_add` を呼ぶ。リンクは `yhtye://pair?…` だけ通す (`looks_like_pairing_uri`)。
+    (設定の「接続先」。`src/ui/HostsSettingsSection.tsx`、T-98) 「接続」の押下を得てから `yhtye_remote_add` を呼ぶ。リンクは `yhtye://pair?…` だけ通す (`looks_like_pairing_uri`)。
     ログにはリンクの中身 (コードを含む) を出さない。
     - 来かた: (1) 起動時の引数 (`DeepLink::get_current`)。(2) 動作中に来るもの: Linux・Windows ではクリックのたびに OS が `yhtye <リンク>` を
       **もう 1 つ起動する** (`.desktop` の `Exec=yhtye %u` + `MimeType=x-scheme-handler/yhtye;`、`packaging/arch/PKGBUILD`) ので、
@@ -925,9 +925,17 @@ Stage 4 の構成 (`src/`):
     読ませると、そのホストが使用量の取得のためにハーネスを起動してしまう)。`ping` (ホストの表示) と接続状態はどのホストでも続ける。
   - **`HostView`** に `version` (ping の `pong.version`) と `compatibility` (リモートのみ。シェルが接続のたびに判定した `Compatibility`。`incompatible` のとき UI が警告を出せる。
     ローカルは `null`) を足した。
-  - ペアリングのリンク (`pairLinks`) は登録簿が持ち、`PairLinkDialog` が先頭の 1 件ずつ確認する (接続先・ポート・端末名)。
-  - 最小限の画面: プロジェクトの選択 (`ProjectPicker`) が全ホストの一覧を出し (別ホストのものはホスト名を添える)、ホストが切れていればその項目は選べない。
-    リモートのアイコンや接続先の設定画面は後続のタスク。
+  - ペアリングのリンク (`pairLinks`) は登録簿が持つ待ち行列で、`App` が届くたびに `takePairLink()` で取り出し、設定モーダルを「接続先」で開いてリンクを入れた状態にする
+    (T-98。ペアリングはしない。接続先・ポートの確認と端末名の確認は同じ節の中で、人が「接続」を押すまで `yhtye_remote_add` は呼ばない)。設定が開いていれば「接続先」に切り替える。
+    続けて届いたリンクは後のものが入る (入力欄は 1 つ)。
+  - 画面 (T-98): プロジェクトの選択 (`ProjectPicker`) が全ホストの一覧を出し (この PC のものが先、リモートは接続先ごとにその後ろ)、別ホストのプロジェクトには
+    名前の右に**リモートのアイコン** (`remote`。`RemoteMark`) を付ける。ホバーでホスト名と接続状態、接続していないホストのアイコンは灰色で、その項目は選べない。
+    ホスト名の併記は、同じ名前のプロジェクトが複数のホストにあるときだけ。「リポジトリを開く」欄は画面に出ているホストのパスを開く (リモートなら「<ホスト名> 上のパス」)。
+    設定の「接続先」でホストを足す・状態を見る・削除する (`HostsSettingsSection`)。リモートのホストが画面にあるときは、設定の「リモート接続」(そのホスト自身のサーバー・
+    ペアリングコード・端末) は描かずに説明を出し (`RemoteSettingsElsewhere`。ホストが `forbidden` を返したときも同じ)、他の設定の見出しの横にそのホストの名前を出す。
+    `ConnectionBanner` はリモートの切断・バージョン非互換をホスト名付きで出す。表示の仕様は [`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §3.3 (T-98)。
+  - ペアリングの失敗の文言は `src/ui/hostLabels.ts` の `describePairError` が、コアとシェルの英語のメッセージの**先頭**と `code` で選ぶ
+    (`src-tauri/src/remote_hosts/tests.rs` の `the_messages_the_screen_tells_apart_start_as_it_expects` が先頭を固定する。変えるなら両方)。
 - Stage 6a: `ui/` を Claude Design のレイアウトに置き換えた (対応表は
   [`docs/design/orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。ストアに `git` (GitOverview と
   エラー)・`lastEventAt`・履歴の遅延読み込み (`historyStart` / `loadOlderHistory`)・前回のプロジェクトの記憶

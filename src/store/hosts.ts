@@ -12,8 +12,8 @@
 //   connection does, and goes when the host is forgotten;
 // - tells each remote host's transport how the shell's connection to it is
 //   doing (`HostLink`), and its store what the shell made of its version;
-// - keeps the pairing links (`yhtye://pair?…`) that wait for the person to
-//   agree — nothing pairs by itself.
+// - keeps the pairing links (`yhtye://pair?…`) that wait to be shown to the
+//   person — nothing pairs by itself, the person's "connect" does.
 //
 // Project ids repeat across hosts (they come from directory names): what is
 // kept or keyed by a project is keyed by the host as well, see {@link scopedKey}.
@@ -97,7 +97,7 @@ export interface HostsState {
   readonly hosts: readonly HostEntry[];
   /** The projects of every host, mixed: the local core's first. */
   readonly projects: readonly HostProject[];
-  /** Pairing links waiting for the person's answer, the first one is being asked. */
+  /** Pairing links that arrived (a click on a `yhtye://pair?…` link) and wait to be shown to the person; the first goes first. */
   readonly pairLinks: readonly string[];
   /** Remote hosts can be managed (not in a browser on the dev bridge). */
   readonly remoteAvailable: boolean;
@@ -255,11 +255,17 @@ export class HostsRegistry {
     this.publish();
   }
 
-  /** The person answered the first waiting link (paired, or declined). */
-  dismissPairLink(): void {
-    if (this.pairLinks.length === 0) return;
-    this.pairLinks = this.pairLinks.slice(1);
+  /**
+   * Takes the first waiting link off the line (`null` if none): the screen
+   * shows it for the person to read and answer — the link pairs nothing by
+   * itself, the person's "connect" does.
+   */
+  takePairLink(): string | null {
+    const [first, ...rest] = this.pairLinks;
+    if (first === undefined) return null;
+    this.pairLinks = rest;
     this.publish();
+    return first;
   }
 
   // ---- shell reports ------------------------------------------------------------

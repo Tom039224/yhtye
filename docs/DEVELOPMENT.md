@@ -109,8 +109,9 @@ yhtye --headless --data-dir /tmp/yhtye-host && yhtye remote pair --data-dir /tmp
 yhtye 'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'    # 動いている GUI があればそこへ渡る
 ```
 
-- 確認のダイアログに接続先と端末名が出て、「接続する」でペアリングする (確認なしには何もしない)。済むとプロジェクトの一覧にホストのプロジェクトが
-  ホスト名付きで混ざる。ホスト側の `yhtye remote devices` に `desktop` として載る。
+- リンクを開くと設定が「接続先」で開き、リンクが入った状態になる (行き先のホストとポート・端末名が出る)。「接続」を押すまでペアリングしない (T-98。T-97 の確認ダイアログは
+  この節に置き換えた)。ペアリングを済ませると、プロジェクトの一覧にホストのプロジェクトがこの PC のものの後ろに並び、名前の右にリモートのアイコンが付く
+  (同じ名前があるときだけホスト名も添える)。ホスト側の `yhtye remote devices` に `desktop` として載る。手入力 (ホスト・ポート・コード) も同じ節。
 - **試すときは環境を分ける**: `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_RUNTIME_DIR` / `HOME` を一時ディレクトリにして `dbus-run-session` の中で動かすと、
   普段のアプリのデータ・キーリング・単一インスタンスの D-Bus 名・`yhtye://` の既定のハンドラ (debug ビルドは `register_all()` が `xdg-mime default` を実行する) に触れない。
   画面が無ければ Xvfb (`Xvfb :98 -screen 0 1440x900x24`、`DISPLAY=:98`、`WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1`)。
@@ -118,7 +119,9 @@ yhtye 'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'  
   1 台でホストを用意するなら `cargo run -p yhtye-core --example remote_server -- --port 14231` (§18.6。標準入力の `open <path>` / `code` / `devices`)。
 - テスト: Tauri 層 (`src-tauri/src/remote_hosts/tests.rs`: エラーの対応・イベントと通知の JSON・ペアリングの入力・起動時の自動接続、`deep_link.rs`: リンクの待ち行列と
   設定ファイル、`cli.rs`: リンクの引数)、WebView の `src/api/tauri.test.ts` (ホストごとの送信とイベントの振り分け・接続状態)、`src/api/remoteHosts.test.ts`、
-  `src/store/hosts.test.ts` (登録簿)、`src/store/appHosts.test.ts` (キーの前置・ホストの版)、`src/ui/Hosts.test.tsx` (プロジェクトの選択・確認ダイアログ)。
+  `src/store/hosts.test.ts` (登録簿)、`src/store/appHosts.test.ts` (キーの前置・ホストの版)、`src/ui/Hosts.test.tsx` (プロジェクトの選択とリモートのアイコン・
+  接続の帯・フッタ)、`src/ui/HostsSettings.test.tsx` (設定の「接続先」・リンクで開く流れ・リモートのホストが出ているときの「リモート接続」)、`src/ui/hostLabels.test.ts` (文言)。
+  Rust の `the_messages_the_screen_tells_apart_start_as_it_expects` は、UI がペアリングの失敗の文言を選ぶ手がかり (英語のメッセージの先頭) を固定する。
 
 ### ブラウザで動かす (開発・E2E 用)
 
@@ -208,7 +211,8 @@ html / body / `#root` は `height: 100%` + `overflow: hidden` で固定してあ
   `scrollX / scrollY == 0`、枠 (`.app` `.body` `.sidebar` `.conversation` `.right` など) の中身がはみ出していないこと、
   ポップアップ (⋯ メニュー・プロジェクトのプルダウン・モデル一覧) がウィンドウ内に収まっていることを確かめる。
   状態は、プロジェクト無し・記録した実行・大量の会話/タスク/ブランチ・ホイール操作・各ポップアップ・設定・
-  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・下部パネルに 8 個のタスクタブを開いた状態
+  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・別のホストを持つ状態 (`hosts`: 長い名前・失効・再接続待ちのホスト。
+  プルダウン・リモートのプロジェクトを開いた画面・設定の「接続先」・リンクを受けた画面)・下部パネルに 8 個のタスクタブを開いた状態
   (タブ列が横スクロールして全部に届くこと、git の見出しやセッションの選択が潰れないこと) を 1060x600 から 1920x1080 まで。
   Rust のコアは要らない (Vite だけを空いているポートで起動する)。画面を足す・直すときは実行しておく。
 

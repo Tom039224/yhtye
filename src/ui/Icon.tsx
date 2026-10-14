@@ -182,6 +182,8 @@ const GLYPHS = {
       <path d="M8 7.75h.01M8 16.25h.01M12 7.75h4M12 16.25h4" />
     </>
   ),
+  // Another machine's Yhtye (a project that lives on a remote host): two ends reaching for each other.
+  remote: <path d="M4.5 7.5L9 12l-4.5 4.5M19.5 7.5L15 12l4.5 4.5M10.5 12h3" />,
   // A server (the box) that has a terminal and no screen: `>_` under the status light.
   "server-headless": (
     <>

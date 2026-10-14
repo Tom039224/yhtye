@@ -326,7 +326,7 @@ describe("pairing", () => {
     await registry.start();
   });
 
-  it("waits for the person: a link is queued, once, and answered one at a time", () => {
+  it("waits for the person: a link is queued, once, and taken one at a time", () => {
     const a = "yhtye://pair?v=1&ip=100.64.0.1";
     const b = "yhtye://pair?v=1&ip=100.64.0.2";
     api.link(a);
@@ -334,10 +334,10 @@ describe("pairing", () => {
     api.link(b);
     expect(registry.getState().pairLinks).toEqual([a, b]);
     expect(api.calls).not.toContain("add uri");
-    registry.dismissPairLink();
+    expect(registry.takePairLink()).toBe(a);
     expect(registry.getState().pairLinks).toEqual([b]);
-    registry.dismissPairLink();
-    registry.dismissPairLink();
+    expect(registry.takePairLink()).toBe(b);
+    expect(registry.takePairLink()).toBeNull();
     expect(registry.getState().pairLinks).toEqual([]);
   });
 

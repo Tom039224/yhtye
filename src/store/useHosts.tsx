@@ -1,6 +1,6 @@
 import { createContext, type ReactNode, useContext, useSyncExternalStore } from "react";
 
-import { type HostKey, type HostProject, type HostsRegistry, LOCAL_HOST } from "./hosts";
+import { type HostEntry, type HostKey, type HostProject, type HostsRegistry, LOCAL_HOST } from "./hosts";
 import { StoreContext } from "./useStore";
 
 /** The registry of the hosts; absent where only one store is given (tests, the layout harness). */
@@ -43,4 +43,9 @@ export function useAllProjects(): readonly HostProject[] | null {
 /** The host whose store is on screen. */
 export function useActiveHost(): HostKey {
   return useHostsState((s) => s.active) ?? LOCAL_HOST;
+}
+
+/** The entry of the host whose store is on screen (`null` without a registry). */
+export function useActiveHostEntry(): HostEntry | null {
+  return useHostsState((s) => s.hosts.find((h) => h.key === s.active) ?? null);
 }

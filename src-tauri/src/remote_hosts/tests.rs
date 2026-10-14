@@ -107,6 +107,61 @@ fn a_refused_pairing_says_why() {
     assert!(rejected.message.contains("expired"), "{rejected}");
 }
 
+/// The screen words a failure by the start of its English message (`describePairError` in
+/// `src/ui/hostLabels.ts`): a change of these starts has to change that function too.
+#[test]
+fn the_messages_the_screen_tells_apart_start_as_it_expects() {
+    let message = |f: PairingFailure| api_error(HostsError::Pairing(f)).message;
+    assert!(
+        message(PairingFailure::CodeRejected(Some("expired".into())))
+            .starts_with("the pairing code was refused: expired")
+    );
+    assert!(message(PairingFailure::OtherUser(None))
+        .starts_with("the host does not take devices of other Tailscale users"));
+    assert!(message(PairingFailure::BadRequest(None))
+        .starts_with("the host did not accept the request"));
+    assert!(message(PairingFailure::WrongServer {
+        expected: "a".into(),
+        actual: "b".into()
+    })
+    .starts_with("another Yhtye answered"));
+    assert!(message(PairingFailure::Unreachable {
+        hosts: vec!["100.64.0.7".into()],
+        port: 1423,
+        cause: None
+    })
+    .starts_with("could not reach"));
+    assert!(message(PairingFailure::ServerError {
+        status: 500,
+        message: None
+    })
+    .starts_with("the host answered with an error"));
+
+    let invalid = |input: Value| {
+        let input: PairingInput = serde_json::from_value(input).unwrap();
+        input.target(HostPolicy::TailscaleOnly).unwrap_err().message
+    };
+    let manual = |host: &str, port: &str, code: &str| {
+        invalid(json!({"kind": "manual", "host": host, "port": port, "code": code}))
+    };
+    assert_eq!(
+        manual("192.168.1.5", "1423", "ABCD2345"),
+        "192.168.1.5 is not a Tailscale address"
+    );
+    assert!(manual("", "1423", "ABCD2345").starts_with("no host was given"));
+    assert!(manual("100.64.0.7", "x", "ABCD2345").starts_with("the port must be a number"));
+    assert!(manual("100.64.0.7", "1423", "").starts_with("no pairing code was given"));
+    assert!(manual("100.64.0.7", "1423", "0000").starts_with("the pairing code must be"));
+    assert!(
+        invalid(json!({"kind": "uri", "uri": "https://example.com"}))
+            .starts_with("this is not a Yhtye pairing code")
+    );
+    assert!(
+        invalid(json!({"kind": "uri", "uri": "yhtye://pair?v=9&ip=100.64.0.7"}))
+            .starts_with("this pairing code is of a newer format")
+    );
+}
+
 // ---- events ----------------------------------------------------------------
 
 #[test]
