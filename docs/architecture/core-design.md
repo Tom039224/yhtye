@@ -699,11 +699,59 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   ログと stderr に理由を出して終了コード 1 で終わる (コアを 2 つにしない)。`YHTYE_DATA_DIR` が違えば別に動く。開発用ブリッジは
   ロックしない (既定で別のデータ)。プロセスが落ちても OS がロックを外す。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
-- Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
-  app data dir (Linux: `~/.local/share/io.github.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
+- Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `--data-dir`、`YHTYE_DATA_DIR`、なければ Tauri の
+  app data dir と同じ規則の既定 (Linux: `$XDG_DATA_HOME` (無ければ `~/.local/share`) + `io.github.tom039224.yhtye`。
+  `AppHandle` を要らない形で `src-tauri/src/data_dir.rs` に切り出し、GUI とヘッドレスの両方が使う。識別子は `tauri.conf.json` の
+  `identifier` と一致することをテストで確かめる)。モデルは `--model`、`YHTYE_MODEL` (既定 `haiku`。
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- **ヘッドレス起動 (`yhtye --headless`、T-95)**: GUI の無いマシンでコアとリモート接続だけを動かす。cargo feature ではなく**実行時オプション**で、
+  `pnpm tauri build --no-bundle` で作る 1 つのバイナリがそのまま動く。GTK の初期化は `tauri::Builder::build` の中 (tao の `gtk::init()`) まで
+  遅延されるので、ライブラリがリンクされているだけなら DISPLAY が無くても落ちない。したがって `main()` が**最初に**引数を見て分岐する
+  (`webkit_env::apply()` も `tauri::Builder` もそれより後)。
+  - 入口: `src-tauri/src/main.rs` が `cli::parse` (`src-tauri/src/cli.rs`) で `Invocation` を決める。`--headless` → `headless::run`、
+    `yhtye remote …` → `headless::run_remote` (どちらも GUI を起動しない)、フラグ無し → 窓を開く (`run_app`)。フラグは `--headless`、`-d` / `--daemon`
+    (ヘッドレスのみ。下記)、`--port N` (ヘッドレスのみ)、`--data-dir DIR`、`--model NAME`、`--help` (内部用に `--daemon-child`)。知らない引数は終了コード 2 (`--headles` の打ち間違いで窓が開かないように)。
+    フラグ無しで `DISPLAY` も `WAYLAND_DISPLAY` も無いとき (Linux) は、panic せず「GUI を表示できません。`yhtye --headless` を使ってください」と
+    stderr に出して終了コード 1。
+  - 起動の流れ (`src-tauri/src/headless/mod.rs`): データディレクトリ (`DataDir::resolve` → 既定のとき `legacy_data::migrate` → 作成) →
+    `data_lock::acquire` (取れなければ**終了コード 3**。GUI は従来どおり 1) → 自前の tokio ランタイム → シグナルの待ち受けを先に登録 →
+    `Core::start(CoreConfig::installed(..))` (`headless: true`) → `resume_unfinished` を spawn → 制御口 → リモート接続を有効化して保つ。
+    ログ (tracing) は **stderr** (端末でなければ色コードなし)、stdout は人間向けの「起動した」表示だけ。
+  - **デーモン (`yhtye --headless -d`)**: systemd 無しで、端末を閉じても動き続ける (`headless/daemon.rs`)。fork ではなく**自分自身の再実行**: 起動した側 (`launch`) が
+    データディレクトリを決めて移行・作成し、`headless.log` (`<データディレクトリ>/headless.log`、追記、0600) を開いて、`current_exe() --headless --daemon-child --data-dir <絶対パス> [--port N] [--model M]`
+    を stdin = `/dev/null`、stdout・stderr = ログファイルで spawn する。子 (`--daemon-child`) は最初に `setsid` で端末のセッションを抜け (制御端末が無いので端末を閉じても SIGHUP が来ない)、
+    SIGHUP を**無視**する (`Signals { hangup_stops: false }`。前面のヘッドレスでは SIGHUP は停止)。**ロックは子が取る**: 取れなければ子が終了コード 3 で終わり、起動した側がそれを見て
+    「another Yhtye is already running」(+ `remote status` / `remote stop` の案内) を出して終了コード 3。起動した側は 100 ms ごとに、子が終了していないか (終了なら終了コードとログの新しい末尾を添えて失敗、終了コード 1)、
+    制御ソケットが**その子**として答えるか (`SO_PEERCRED` の pid が子の pid、かつ `GetRemoteStatus` が通る) を見て、答えたら戻る (60 秒で諦めて子を kill)。戻る前に PID・ログのパス・`yhtye remote pair` /
+    `yhtye remote stop` のしかたを stdout に出す。デーモンでは起動時のペアリング表示を出さない (stdout はログファイル)。制御ソケットが開けなければデーモンは起動に失敗する
+    (前面では警告だけ。ソケット無しでは `remote stop` もできないため)。`-d` は `--headless` が要る。systemd のユニットの中では `-d` を使わない (前面で動かして見張らせる)。
+  - **リモート接続を保つ**: `SetRemoteSettings { enabled: true, port }` で有効にする (DB に保存される。`--port` が無ければ保存済みのポート)。
+    Tailscale がまだ上がっていない等で起動に失敗したら、**30 秒ごとに**状態を見て、running でなければ同じ命令で再試行する (ユーザーユニットは
+    システムの `tailscaled` に順序付けできないので、これが前提)。同じ失敗理由は繰り返しログに出さない。
+  - **ペアリングの案内は TTY のときだけ**: stdout が端末のときに限り、リモートが running になった最初の 1 回、コードを発行して URI・QR・ホスト/ポート/コードを出す。
+    端末でないとき (systemd のログなど) は有効なコードをどこにも出さない (Orca の方針)。コードが欲しいときは `yhtye remote pair`。
+  - **制御口 (`headless/control.rs`)**: ペアリングコードはプロセスのメモリ内にあり、失効は WS 接続の cancel を伴うので、動いているプロセスに頼む必要がある。
+    ヘッドレスは `<データディレクトリ>/yhtye.sock` (Unix ドメインソケット、0600。パスが 100 バイトを超えるときは `$XDG_RUNTIME_DIR/yhtye-<SHA-256 の先頭 8 バイトの hex>.sock`、
+    それも無ければ `<temp>/yhtye-<uid>-<hash>.sock`) で待ち受ける。起動時、ロックを取った後に残っている古いソケットファイルは消す (ソケットでないファイルは消さずエラー)。
+    1 行 JSON の `ApiCommand` を受け、`{"ok": ApiResponse}` または `{"err": ApiError}` を 1 行で返す (接続ごとに順番、接続は並行。1 行は 1 MiB まで、5 分無言で切る)。`ApiCommand` ではない唯一の要求として、ちょうど `{"type":"shutdown"}` の 1 行は
+    プロセスの停止を頼み (`{"ok":{"type":"stopping"}}` を返してから停止の経路に入る)、他の形は `invalid_argument`。クライアントは `SO_PEERCRED` で接続先のプロセスの pid を知れる (Linux。PID ファイルは作らない)。
+    **ファイルの権限が認証**で、念のため接続元の uid (`SO_PEERCRED`) が自分か root かも見る。ローカル専用コマンド (`ApiCommand::is_local_only()`) も許す
+    (`SessionPolicy::LOCAL` 相当)。コマンドの中身 (秘密の値を含みうる) はログに出さない。ソケットが作れなくてもヘッドレスは動く (エラーをログに出し、`yhtye remote` だけが使えない)。
+  - **サブコマンド** (`headless/remote_cli.rs`、薄いクライアント。ブロッキングの std の `UnixStream`): `remote pair` (`CreatePairingCode` + `GetRemoteStatus`。
+    URI の QR を `qrcode` crate の `Dense1x2` (半角ブロック。暗い背景の端末向けの極性) で描き、ホスト/ポート/コード/URI と残り時間を出す)、`remote devices`、
+    `remote revoke <id>`、`remote status` (動いているか・PID・データディレクトリ + リモートの状態)、`remote stop` (停止を頼み、**プロセスが消えるまで**最大 120 秒待つ。
+    消えるのは `Core::shutdown` がエージェントを止めた後)。動いていなければ、ヘッドレスを起動するよう書いたエラーで終了コード 1。リモートが running でなければ `pair` は理由 (`RemoteStatus.error`) を添えて失敗する。
+    出力の文面は `headless/report.rs` (純粋関数。日時は UTC)。
+  - **終了**: SIGINT / SIGTERM / SIGHUP (デーモンでは SIGHUP は除く) か、制御口の停止要求で、制御口を閉じてソケットファイルを消し、`Core::shutdown().await` (リモート → エージェントの順) を待ってから終了コード 0。
+    停止中にもう一度シグナルが来たら待たずに終了コード 1 (エージェントの残りは次の起動のプロセス登録簿が片付ける)。
+  - **ホストがヘッドレスかをクライアントへ**: `CoreConfig.headless` → `ApiResponse::Pong { host, version, headless }` (`#[serde(default)]`: 古いコアは省き、読み手は `false` =
+    GUI のあるホストとみなす)。クライアントは左下のサーバーの行 (PC は `src/ui/HostFooter.tsx`、Android は `HostFooter.kt`) を、ヘッドレスなら別のアイコン (`server-headless`: 箱に `>_`) にする。
+    PC の GUI のホストと端末のアイコンは変えない。
+  - キーリング (Secret Service) が使えないとき (`SecretBackend::get` が失敗) は、起動時に警告を出すだけ (代わりの保存先は作らない。§16)。
+  - systemd: `packaging/arch/yhtye-headless.service` (ユーザーユニット。`Restart=on-failure`、`RestartSec=10`、`RestartPreventExitStatus=3`、`KillMode=mixed`、`TimeoutStopSec=120`)。
+    PKGBUILD が `/usr/lib/systemd/user/` に入れる (有効化は利用者)。
 - リモート接続 (§18): 起動後に `Core::start_remote()` をバックグラウンドで呼ぶ (設定が有効なら Tailscale の
   アドレスで待ち受ける)。終了時は `Core::shutdown` がリモートサーバーを最初に止める。
 - **CSP (Stage 6b)**: `tauri.conf.json` の `app.security.csp` を `null` から
@@ -1332,7 +1380,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.9 チャットの改名・削除とホストの ping (左パネルの改善)
 
-- **`ping`** → `pong{host, version}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) と、デスクトップアプリの版 (`APP_VERSION` = ワークスペースの版。`src-tauri`・`tauri.conf.json`・`package.json` と一致することは `tests/app_version.rs` が見る) を返す軽い疎通確認。プロジェクトは要らない。
+- **`ping`** → `pong{host, version, headless}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) と、デスクトップアプリの版 (`APP_VERSION` = ワークスペースの版。`src-tauri`・`tauri.conf.json`・`package.json` と一致することは `tests/app_version.rs` が見る) と、`--headless` (GUI 無し) で動いているか (`headless`。古いコアは省き、読み手は false = GUI のあるホストと読む。T-95、§9) を返す軽い疎通確認。プロジェクトは要らない。
   `version` は Android クライアントが自分の版と突き合わせて互換性を判定するのに使う (T-84)。この項目が増える前のコアは返さないので、読む側は欠けていたら「不明」として扱う (Kotlin では空文字の既定値)。
   UI (`AppStore`) は接続が開いている間 3 秒おきに送り (`PING_INTERVAL_MS`)、5 秒で応答が無ければ失敗として数える。左パネルのフッタは「ホスト名 + 最後の ping 応答からの経過時間
   (5 秒以下は `now`)」と接続状態のドット (緑 = 応答あり / 琥珀 = 接続中・初回応答待ち / 赤 = 切断か 12 秒以上応答なし) を出す。Tauri でも WS ブリッジでも同じ `ApiCommand` なので transport は変えない。
@@ -1436,6 +1484,9 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   (`TailscaleSelf.tagged`)、サーバーを起動せず `RemoteStatus.error` に「タグ付きの Tailscale ノードでは使えない (自分のユーザーに属する
   ノードで使う)」と出す。タグを外して有効のまま `set_remote_settings {enabled: true}` をもう一度送ると再試行する。
 
+- **GUI 無しの運用 (T-95、§9)**: `yhtye --headless` はこのサーバーを自分で有効にして保ち (Tailscale が上がるまで 30 秒ごとに再試行)、ペアリングと端末の管理は
+  制御口 (Unix ドメインソケット) 越しの `yhtye remote pair | devices | revoke | status` で行う (ローカル専用 API をそのまま使う)。PC の GUI の設定画面は、GUI のあるホストだけが使う。
+
 ### 18.2 保存 (マイグレーション `0010_remote.sql`)
 
 - `remote_devices (id, name, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
@@ -1514,6 +1565,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 18.6 試し方とテスト
 
+- 本番の GUI 無し起動は `yhtye --headless` (§9)。以下の例 `remote_server` は、アプリとは別の開発用 (クライアントを試す・結合テスト用)。
 - `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
   (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
   `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。

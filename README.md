@@ -80,6 +80,22 @@ English: [README-EN.md](README-EN.md)
 
 前提のインストールから初回の使い方までは [`SETUP.md`](SETUP.md) (日本語)。
 
+## ヘッドレス起動 (GUI なし)
+
+ディスプレイの無いサーバーでも、`yhtye --headless` でコアとリモート接続だけを動かせる (ウィンドウは開かない。同じバイナリの実行時オプション)。
+Android 端末からそのサーバーを操作する使い方のためのもの。
+
+```sh
+yhtye --headless -d [--port N] [--data-dir DIR] [--model NAME]   # バックグラウンドのデーモンとして起動 (端末を閉じても動き続ける。ログは <データディレクトリ>/headless.log)
+yhtye --headless [...]                                           # 前面で動かす (Ctrl+C で止める)
+yhtye remote pair | devices | revoke <id> | status | stop        # 動いているヘッドレスに頼む (Unix ドメインソケット経由)
+```
+
+サービスとして管理したいときは、Arch のパッケージが入れる systemd ユーザーサービスも使える (任意。`systemctl --user enable --now yhtye-headless`)。
+
+前提: Tailscale にログイン済みで**タグ付きノードでない**こと。GUI の無いサーバーでは Secret Service のキーリングが無いことが多く、その場合は秘密の環境変数が使えない
+(起動時に警告)。systemd の下では `PATH` にエージェントの CLI が見えるようにする。手順と詳細は [`SETUP.md`](SETUP.md#gui-の無いマシンで動かす-ヘッドレス)。
+
 ## Android 版
 
 Tailscale でつながった Android 端末から、PC で動いている Yhtye を操作するクライアント (Kotlin + Jetpack Compose、[`mobile/`](mobile/))。
@@ -89,7 +105,7 @@ Tailscale でつながった Android 端末から、PC で動いている Yhtye 
 ### 前提
 
 - PC と端末が**同じ Tailscale アカウント**でつながっていること。PC の Yhtye は Tailscale のアドレスだけで待ち受け、同じユーザーの端末しか受け付けない。
-- PC の Yhtye (デスクトップアプリ) が動いていること。アプリが動いている間だけつながる。
+- PC の Yhtye (デスクトップアプリ、または GUI なしの `yhtye --headless`) が動いていること。動いている間だけつながる。
 - Android 8.0 (API 26) 以上。
 
 ### インストール
@@ -97,6 +113,7 @@ Tailscale でつながった Android 端末から、PC で動いている Yhtye 
 1. 端末のブラウザで [GitHub Releases](https://github.com/Tom039224/yhtye/releases) を開き、`android-v…` のリリースから `yhtye-android-<版>.apk` をダウンロードする。
 2. ダウンロードした APK を開く。「提供元不明のアプリ」のインストールを、使ったブラウザ (またはファイルマネージャ) に許可するよう求められるので、許可してインストールする。
 3. 初回は PC の Yhtye で「設定 → リモート接続」をオンにして QR コードを出し、アプリの「QR コードを読む」で読み取ってペアリングする (読めないときは「手入力する」)。
+   GUI なしのサーバーなら、`yhtye remote pair` が端末に QR コードを出す。
 
 APK は作者の鍵で署名してある。更新は同じ鍵で署名した APK の上書きで、ペアリングなどのデータは残る。
 
