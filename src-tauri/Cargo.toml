@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+# `yhtye://pair?…` links. The 2.4 line of this and of single-instance fits the tauri the lock holds (2.5+ need tauri 2.12).
+tauri-plugin-deep-link = "~2.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 yhtye-core = { path = "../crates/yhtye-core" }
@@ -37,6 +39,10 @@ sha2.workspace = true
 # The control socket accepts only this user (and root).
 rustix = { workspace = true, features = ["net"] }
 
+# A second `yhtye` (a click on a `yhtye://pair?…` link starts one) hands its arguments to the running app
+# instead of dying on the data directory lock; `deep-link` passes those links on to the deep-link plugin.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "~2.4", features = ["deep-link"] }
 
 [dev-dependencies]
 tempfile.workspace = true

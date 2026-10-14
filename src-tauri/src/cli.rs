@@ -31,6 +31,11 @@ pub struct Options {
     pub data_dir: Option<PathBuf>,
     /// `--model NAME` (else `YHTYE_MODEL`).
     pub model: Option<String>,
+    /// A `yhtye://…` link given as the one plain argument (what the OS passes
+    /// when a link is clicked, `Exec=yhtye %u`). The desktop app only: the
+    /// deep-link plugin reads it from the arguments itself, and a running app
+    /// gets it from the second one (`deep_link`); parsing must just not refuse it.
+    pub open_url: Option<String>,
 }
 
 /// `yhtye remote <action>`.
@@ -64,13 +69,16 @@ pub enum Invocation {
     Help,
 }
 
+/// What a link the OS opens the app with starts with (`tauri.conf.json`: `plugins.deep-link.desktop.schemes`).
+const LINK_PREFIX: &str = "yhtye://";
+
 /// What `--help` prints.
 pub const USAGE: &str = "\
-usage: yhtye [--data-dir DIR] [--model NAME]
+usage: yhtye [--data-dir DIR] [--model NAME] [yhtye://pair?…]
        yhtye --headless [-d] [--port N] [--data-dir DIR] [--model NAME]
        yhtye remote <pair | devices | revoke <id> | status | stop> [--data-dir DIR]
 
-  (none)          open the desktop app
+  (none)          open the desktop app (given a yhtye://pair?… link: ask to pair with that host)
   --headless      run the core and remote access without a GUI (for a server;
                   stop it with SIGINT / SIGTERM)
   -d, --daemon    with --headless: detach from the terminal and keep running after it
@@ -120,6 +128,10 @@ where
     let mut opts = Options::default();
     while let Some(arg) = args.next() {
         let Some(flag) = arg.name() else {
+            if arg.is_yhtye_link() && opts.open_url.is_none() {
+                opts.open_url = Some(arg.display());
+                continue;
+            }
             return error(format!("unknown argument {}", arg.display()));
         };
         match flag {
@@ -146,6 +158,9 @@ where
         }
     }
     if headless {
+        if opts.open_url.is_some() {
+            return error("a yhtye:// link is opened by the desktop app, not by --headless");
+        }
         return Ok(Invocation::Headless(opts));
     }
     if opts.port.is_some() {
@@ -257,6 +272,14 @@ impl Arg {
         self.raw.to_string_lossy().into_owned()
     }
 
+    /// A `yhtye://…` link (the scheme the OS hands to the app).
+    fn is_yhtye_link(&self) -> bool {
+        self.raw.to_str().is_some_and(|t| {
+            t.get(..LINK_PREFIX.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(LINK_PREFIX))
+        })
+    }
+
     /// The flag takes no value.
     fn no_value(&self) -> Result<(), UsageError> {
         match &self.inline_value {
@@ -331,6 +354,7 @@ mod tests {
             port,
             data_dir: data_dir.map(PathBuf::from),
             model: model.map(str::to_string),
+            open_url: None,
         }
     }
 
@@ -433,6 +457,32 @@ mod tests {
         ] {
             assert!(parse_strs(args).is_err(), "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_yhtye_link_opens_the_desktop_app_with_it() {
+        let link = "yhtye://pair?v=1&ip=100.64.0.1&port=1423&code=ABCD2345";
+        let Ok(Invocation::Gui(o)) = parse_strs(&[link]) else {
+            panic!("gui");
+        };
+        assert_eq!(o.open_url.as_deref(), Some(link));
+        // Together with the flags of the app, and in any case.
+        let Ok(Invocation::Gui(o)) = parse_strs(&["--data-dir", "/tmp/y", "YHTYE://pair?v=1"])
+        else {
+            panic!("gui");
+        };
+        assert_eq!(o.open_url.as_deref(), Some("YHTYE://pair?v=1"));
+        assert_eq!(o.data_dir, Some(PathBuf::from("/tmp/y")));
+    }
+
+    #[test]
+    fn a_yhtye_link_is_not_for_headless_and_only_one_is_taken() {
+        let err = parse_strs(&["--headless", "yhtye://pair?v=1"]).unwrap_err();
+        assert!(err.0.contains("desktop app"), "{err}");
+        assert!(parse_strs(&["yhtye://pair?v=1", "yhtye://pair?v=2"]).is_err());
+        assert!(parse_strs(&["remote", "yhtye://pair?v=1"]).is_err());
+        // Another scheme is as unknown as any word.
+        assert!(parse_strs(&["https://example.com"]).is_err());
     }
 
     #[test]
