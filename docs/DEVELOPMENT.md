@@ -72,6 +72,9 @@ cargo run -p yhtye -- --headless --data-dir /tmp/yhtye-headless   # GUI 無し (
   Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
 - 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する。
   終了コードは GUI が 1、ヘッドレスが 3)。並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+  **例外 (T-97)**: 既定のデータディレクトリの GUI がもう動いていて、同じく既定のディレクトリで GUI を起動したときは、ロックの前に
+  `tauri-plugin-single-instance` が引数を動いている方へ渡し (ウィンドウが前に出る)、2 つ目は終了コード 0 で終わる (`yhtye://pair?…` のリンクを開く OS の
+  起動がこの経路。`--data-dir` / `YHTYE_DATA_DIR` を指定した GUI には働かない。ヘッドレスが既定のディレクトリを持っているときの GUI は従来どおりロックで終了コード 1)。
 - アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
   次の起動時に自動で開き、中断したタスクを再開する。
 
@@ -93,6 +96,29 @@ env -u DISPLAY -u WAYLAND_DISPLAY target/release/yhtye --headless --data-dir /tm
 - ログは stderr、stdout は人間向けの表示 (端末のときだけペアリングの案内)。`RUST_LOG` で調整する。デーモンではどちらもログファイルへ行く。
 - テスト: 引数 (`cli.rs`)、データディレクトリの規則 (`data_dir.rs`)、制御口のプロトコルとクライアント (`headless/control.rs`)、デーモンの起動 (`headless/daemon.rs`)、
   表示 (`headless/report.rs`)、リモートの再試行 (`headless/mod.rs`)、本物のバイナリでのデーモン (`tests/headless_daemon.rs`) は `cargo test -p yhtye`。コアの `Ping` が `headless` を返すことは `crates/yhtye-core/tests/core_facade.rs`。
+
+### 別のホストへの接続 (PC の GUI、T-97)
+
+PC の GUI が別の Yhtye (別の PC、`--headless` のホスト) に接続する。設計は [`core-design.md`](architecture/core-design.md) §9「PC のクライアント」・§11・§18.10。
+ブラウザ (`pnpm dev:browser`) では使えない (Tauri のシェルが WS を張る)。
+
+```sh
+# ホスト (1 台目): ウィンドウ無しで起動し、ペアリングコードを出す (Tailscale が要る)
+yhtye --headless --data-dir /tmp/yhtye-host && yhtye remote pair --data-dir /tmp/yhtye-host    # → yhtye://pair?… と QR
+# クライアント (2 台目): GUI を起動して、出た URI を引数に別のプロセスとして開く (OS がリンクのクリックでする起動と同じ)
+yhtye 'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'    # 動いている GUI があればそこへ渡る
+```
+
+- 確認のダイアログに接続先と端末名が出て、「接続する」でペアリングする (確認なしには何もしない)。済むとプロジェクトの一覧にホストのプロジェクトが
+  ホスト名付きで混ざる。ホスト側の `yhtye remote devices` に `desktop` として載る。
+- **試すときは環境を分ける**: `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_RUNTIME_DIR` / `HOME` を一時ディレクトリにして `dbus-run-session` の中で動かすと、
+  普段のアプリのデータ・キーリング・単一インスタンスの D-Bus 名・`yhtye://` の既定のハンドラ (debug ビルドは `register_all()` が `xdg-mime default` を実行する) に触れない。
+  画面が無ければ Xvfb (`Xvfb :98 -screen 0 1440x900x24`、`DISPLAY=:98`、`WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1`)。
+  キーリングを試すなら同じバスの中で `echo -n pw | gnome-keyring-daemon --login` (無ければトークンはそのプロセスの間だけで、再起動後は自動接続しない)。
+  1 台でホストを用意するなら `cargo run -p yhtye-core --example remote_server -- --port 14231` (§18.6。標準入力の `open <path>` / `code` / `devices`)。
+- テスト: Tauri 層 (`src-tauri/src/remote_hosts/tests.rs`: エラーの対応・イベントと通知の JSON・ペアリングの入力・起動時の自動接続、`deep_link.rs`: リンクの待ち行列と
+  設定ファイル、`cli.rs`: リンクの引数)、WebView の `src/api/tauri.test.ts` (ホストごとの送信とイベントの振り分け・接続状態)、`src/api/remoteHosts.test.ts`、
+  `src/store/hosts.test.ts` (登録簿)、`src/store/appHosts.test.ts` (キーの前置・ホストの版)、`src/ui/Hosts.test.tsx` (プロジェクトの選択・確認ダイアログ)。
 
 ### ブラウザで動かす (開発・E2E 用)
 

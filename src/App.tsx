@@ -3,11 +3,13 @@ import "./App.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useHostsRegistry } from "./store/useHosts";
 import { useAppState, useStore } from "./store/useStore";
 import { ConnectionBanner } from "./ui/ConnectionBanner";
 import { EmptyState } from "./ui/EmptyState";
 import { IconRail, type View } from "./ui/IconRail";
 import { sidebarBounds } from "./ui/layout";
+import { PairLinkDialog } from "./ui/PairLinkDialog";
 import { Resizer } from "./ui/Resizer";
 import { RunsView } from "./ui/RunsView";
 import { SettingsModal } from "./ui/SettingsModal";
@@ -34,6 +36,8 @@ function useGitOnFocus(): void {
 
 /** The Claude Design layout (docs/design/orchestrator-desktop.md §2), driven by the store. */
 function App() {
+  const store = useStore();
+  const hosts = useHostsRegistry();
   const project = useAppState((s) => s.project);
   useGitOnFocus();
   const [view, setView] = useState<View>("work");
@@ -62,7 +66,7 @@ function App() {
               onCommit={(px) => setSize("sidebar", px)}
             />
             {project ? (
-              <Workspace key={project.info.id} view={project} />
+              <Workspace key={store.scopedKey(project.info.id)} view={project} />
             ) : (
               <div className="main-empty">
                 <EmptyState icon="folder" text="プロジェクト (git リポジトリ) を開いてください。" />
@@ -72,6 +76,7 @@ function App() {
         )}
       </div>
       <StatusBar />
+      {hosts ? <PairLinkDialog registry={hosts} /> : null}
       {settingsOpen ? (
         <SettingsModal project={project ? { id: project.info.id, name: project.info.name } : null} onClose={closeSettings} />
       ) : null}

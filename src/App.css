@@ -368,6 +368,15 @@ details.tool { display: block; }
   border: 1px solid var(--border-card); border-radius: 10px; background: var(--surface-panel);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
 }
+.pair-dialog {
+  width: min(460px, 90vw); display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; outline: none;
+  border: 1px solid var(--border-card); border-radius: 10px; background: var(--surface-panel);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+.pair-title { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+.pair-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.pair-name { display: flex; flex-direction: column; gap: 6px; font: 400 12px/1.4 var(--font-text); color: var(--text-muted); }
+.pair-actions { justify-content: flex-end; }
 .settings-nav {
   width: 200px; flex: none; padding: 16px 10px; display: flex; flex-direction: column; gap: 2px;
   background: var(--surface-chrome); border-right: 1px solid var(--border);
