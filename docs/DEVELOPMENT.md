@@ -58,20 +58,41 @@ Debian / Ubuntu 系のビルド依存は [`.github/workflows/ci.yml`](../.github
 pnpm install
 pnpm tauri dev      # デスクトップアプリとして起動 (本物のコア + Claude Code)
 pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に起動 → http://localhost:1420
+cargo run -p yhtye -- --headless --data-dir /tmp/yhtye-headless   # GUI 無し (DISPLAY 不要) で本物のコア + リモート接続
 ```
 
 - 既定のエージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
   モデルは `YHTYE_MODEL` (既定 `haiku`)。ハーネス (Claude Code / OpenCode / Codex / Devin / MiniMax Code / Google Antigravity / Grok Build) は、必要なコマンド (`npx` / `opencode` / `codex` + `npx` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) が
   `PATH` か既知の場所 (`~/.local/bin` など。`mcode` は `~/.minimax-code/bin` と `$MCODE_INSTALL_ROOT/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` と `$GROK_HOME/bin` も) にあるときだけ選べる。設定を開いたときと「再検出」で見つけ直し、パスは手動でも指定できる
   ([`core-design.md`](architecture/core-design.md) §15.2)。
-- アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`。
+- アプリのデータ (SQLite と worktree) は `--data-dir` / `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`
+  (`src-tauri/src/data_dir.rs`。GUI とヘッドレスで共通)。
   以前の識別子 `com.tom039224.yhtye` のディレクトリが残っていれば、初回起動時に新しい名前へ自動で移す
   (両方あるときは触らない。`src-tauri/src/legacy_data.rs`)。
   Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
-- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する)。
-  並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する。
+  終了コードは GUI が 1、ヘッドレスが 3)。並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
 - アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
   次の起動時に自動で開き、中断したタスクを再開する。
+
+### ヘッドレス起動 (`yhtye --headless`)
+
+ウィンドウを開かずコアとリモート接続だけを動かす実行時オプション (cargo feature ではない。`main()` が引数を最初に見るので、`DISPLAY` の無い環境でも落ちない。
+設計は [`core-design.md`](architecture/core-design.md) §9、使い方は [`SETUP.md`](../SETUP.md))。
+
+```sh
+yhtye --headless [-d] [--port N] [--data-dir DIR] [--model NAME]   # -d: デーモン (切り離して戻る。ログは <データディレクトリ>/headless.log)
+yhtye remote pair | devices | revoke <id> | status | stop [--data-dir DIR]   # 動いているヘッドレスへ (<データディレクトリ>/yhtye.sock)
+env -u DISPLAY -u WAYLAND_DISPLAY target/release/yhtye --headless --data-dir /tmp/yhtye-headless   # 実機での確認の例
+```
+
+- 確認のしかた: 上のように DISPLAY を外して起動し、別の端末で `yhtye remote status` / `pair` が答え、SIGTERM で「all agents stopped」を出して終了コード 0 になること。
+  フラグ無しで DISPLAY を外すと案内を出して終了コード 1。Tailscale の無い環境では、起動時に「remote access is not running: … (trying again every 30 s)」が出る (これが再試行の確認になる)。
+- `-d` の確認: 起動した側が戻り (終了コード 0)、デーモンが新しいセッションのリーダーとして残り、`remote status` が PID を答え、2 つ目の `-d` が終了コード 3、
+  `remote stop` で終わって制御ソケットが消えること (`src-tauri/tests/headless_daemon.rs` が本物のバイナリで確かめる)。端末を閉じる確認は、`script` などの疑似端末から `-d` を起動して端末側を落とす。
+- ログは stderr、stdout は人間向けの表示 (端末のときだけペアリングの案内)。`RUST_LOG` で調整する。デーモンではどちらもログファイルへ行く。
+- テスト: 引数 (`cli.rs`)、データディレクトリの規則 (`data_dir.rs`)、制御口のプロトコルとクライアント (`headless/control.rs`)、デーモンの起動 (`headless/daemon.rs`)、
+  表示 (`headless/report.rs`)、リモートの再試行 (`headless/mod.rs`)、本物のバイナリでのデーモン (`tests/headless_daemon.rs`) は `cargo test -p yhtye`。コアの `Ping` が `headless` を返すことは `crates/yhtye-core/tests/core_facade.rs`。
 
 ### ブラウザで動かす (開発・E2E 用)
 

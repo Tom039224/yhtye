@@ -903,12 +903,34 @@ async fn ping_answers_with_the_name_of_this_machine_and_the_app_version() {
         .expect("core");
     // No project is needed, and every call gets the same answer.
     for _ in 0..2 {
-        let ApiResponse::Pong { host, version } = run(&core, ApiCommand::Ping).await else {
+        let ApiResponse::Pong {
+            host,
+            version,
+            headless,
+        } = run(&core, ApiCommand::Ping).await
+        else {
             panic!("a pong");
         };
         assert!(!host.trim().is_empty());
         assert_eq!(host, yhtye_core::runtime::host_name());
         assert_eq!(version, yhtye_core::runtime::APP_VERSION);
+        assert!(
+            !headless,
+            "the app has a GUI unless the config says it has not"
+        );
     }
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn ping_tells_whether_the_core_runs_headless() {
+    let r = TempRepo::new();
+    let mut cfg = core_config(&r, json!({}), json!({}), json!({}));
+    cfg.headless = true;
+    let core = Core::start(cfg).await.expect("core");
+    let ApiResponse::Pong { headless, .. } = run(&core, ApiCommand::Ping).await else {
+        panic!("a pong");
+    };
+    assert!(headless);
     core.shutdown().await;
 }

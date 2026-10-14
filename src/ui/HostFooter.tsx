@@ -6,6 +6,9 @@ import { CLIENTS_SHOWN, clientKindLabel, clientState, formatPingAge, hostTone, h
 import { Icon } from "./Icon";
 import { useNow } from "./useNow";
 
+/** What the footer's tooltip calls a host without a GUI. */
+const HEADLESS_LABEL = "ヘッドレス";
+
 /**
  * The bottom of the sidebar (design §3.3): the machine the core runs on, then
  * the paired devices. The icons tell the server from the devices.
@@ -21,7 +24,8 @@ export function HostFooter() {
 
 /**
  * The core's host (its host name, read by the core), a dot for the connection
- * to it, and how long ago the core last answered a ping ("now" up to 5 s).
+ * to it, and how long ago the core last answered a ping ("now" up to 5 s). A
+ * host without a GUI (`yhtye --headless`) has an icon of its own.
  */
 function ServerRow() {
   const connection = useAppState((s) => s.connection.state);
@@ -31,9 +35,10 @@ function ServerRow() {
   const tone = hostTone(connection, age);
   const state = hostToneLabel(tone, connection);
   const name = host.name ?? "—";
+  const title = host.headless ? `${name} · ${HEADLESS_LABEL} · ${state}` : `${name} · ${state}`;
   return (
-    <div className="host-row" data-testid="host" title={`${name} · ${state}`}>
-      <Icon name="server" size={12} className="client-kind" />
+    <div className="host-row" data-testid="host" title={title}>
+      <Icon name={host.headless ? "server-headless" : "server"} size={12} className="client-kind" />
       <span className={`dot dot-${tone}`} role="img" aria-label={state} />
       <span className="host">{name}</span>
       <span className="spacer" />

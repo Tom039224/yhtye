@@ -59,5 +59,7 @@ Terminal=false
 Categories=Development;
 StartupWMClass=yhtye
 DESKTOP
+  # `yhtye --headless` as a user service; enabling it is up to the user (`systemctl --user enable --now yhtye-headless`).
+  install -Dm644 packaging/arch/yhtye-headless.service "$pkgdir/usr/lib/systemd/user/yhtye-headless.service"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

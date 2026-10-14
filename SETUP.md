@@ -212,7 +212,7 @@ pnpm tauri build
 ### Arch / CachyOS (PKGBUILD)
 
 `packaging/arch/PKGBUILD` は GitHub の `main` をビルドする `yhtye-git` パッケージ。
-実行ファイル・`.desktop`・アイコンが入る。
+実行ファイル・`.desktop`・アイコン・ヘッドレス用の systemd ユーザーサービス (`yhtye-headless.service`。有効にはしない。[ヘッドレス](#gui-の無いマシンで動かす-ヘッドレス)) が入る。
 
 ```sh
 cd packaging/arch
@@ -248,10 +248,96 @@ makepkg -si
 | 項目 | 内容 |
 |---|---|
 | データディレクトリ | `~/.local/share/io.github.tom039224.yhtye` (SQLite と `worktrees/`)。旧 `com.tom039224.yhtye` が残っていれば初回起動時に自動で移す |
-| `YHTYE_DATA_DIR` | データディレクトリを変える |
-| `YHTYE_MODEL` | Claude Code の組み込み既定モデル (既定 `haiku`) |
+| `YHTYE_DATA_DIR` / `--data-dir DIR` | データディレクトリを変える (フラグが環境変数に勝つ) |
+| `YHTYE_MODEL` / `--model NAME` | Claude Code の組み込み既定モデル (既定 `haiku`。フラグが環境変数に勝つ) |
 
 Yhtye はあなたのリポジトリにはマージ以外では何も書かない。
+
+## GUI の無いマシンで動かす (ヘッドレス)
+
+ウィンドウを開かず、コアとリモート接続 (Android クライアント) だけを動かすモード。ディスプレイの無いサーバーに Yhtye を置き、
+Android 端末から使うときのためのもの。ビルドは同じ (`pnpm tauri build --no-bundle` のバイナリがそのまま動く) で、`yhtye --headless` と起動する。
+WebKitGTK などのライブラリは、ウィンドウを開かなくても実行ファイルがリンクしているので、サーバーにも入れておく。
+
+```sh
+yhtye --headless                  # コアとリモート接続を起動 (前面)。Ctrl+C / SIGTERM / SIGHUP で全エージェントを止めて終了
+yhtye --headless -d               # バックグラウンドのデーモンとして起動 (--daemon も可)。端末を閉じても動き続ける。下記
+yhtye --headless --port 1500      # リモート接続のポート (省略: 保存された値、初回は 1423)
+yhtye --headless --data-dir DIR   # データディレクトリ (YHTYE_DATA_DIR と同じ)
+yhtye --headless --model sonnet   # 組み込みの既定モデル (YHTYE_MODEL と同じ)
+```
+
+- ディスプレイ (`DISPLAY` / `WAYLAND_DISPLAY`) の無いマシンで `--headless` なしに起動すると、「GUI を表示できません」と出して終了する (終了コード 1)。
+- 同じデータディレクトリで動くのは 1 つだけ。すでにアプリ (GUI でもヘッドレスでも) が動いていれば、理由を出して終了する (ヘッドレスは終了コード 3)。
+- 起動すると、中断していた作業を再開し、リモート接続をオンにする (この設定はデータベースに保存され、GUI の設定画面と共通)。
+  Tailscale がまだ上がっていないなどで待ち受けられないときは、**30 秒ごとに再試行**する。
+- ログは stderr (`RUST_LOG` で調整)。stdout には「起動した」の表示だけが出る。端末 (TTY) で起動したときに限り、続けてペアリングの案内
+  (QR コードと、手入力用のホスト・ポート・コード) を出す。systemd のログなど端末でないときと、デーモン (`-d`) のときは、有効なコードを出力しない。
+
+### バックグラウンドで動かす (`-d` / `--daemon`)
+
+サービスマネージャ無しで、端末を閉じても動き続けるようにする。いちばん手軽な使い方で、基本はこれ。
+
+```sh
+yhtye --headless -d        # 起動して戻る。PID・ログのパス・ペアリングと停止のしかたを表示する
+yhtye remote pair          # ペアリング (QR コード)
+yhtye remote status        # 動いているか、PID、待ち受けのアドレス
+yhtye remote stop          # 止める (エージェントを止めてから終わるまで待つ)
+```
+
+- 自分自身を切り離した子プロセスとして起動する (新しいセッション。制御端末が無く、SIGHUP も無視するので、端末や SSH のセッションを閉じても落ちない)。
+  標準入力は `/dev/null`、標準出力と標準エラーは**データディレクトリの `headless.log`** (追記。権限 0600。自動では回さないので、大きくなったら消すか移す)。
+- 起動した端末の環境変数 (`PATH` など) をそのまま引き継ぐので、エージェントの CLI が `PATH` に見えていればよい。
+- データディレクトリのロックは子プロセスが取る。すでに動いていれば、起動した側が「another Yhtye is already running」と出して終了コード 3 で終わる (動いているものには触らない)。
+  起動に失敗したときは、ログの末尾を添えて終了コード 1。起動した側は、子が制御ソケットに答えるのを確かめてから戻る。
+- 止めるのは `yhtye remote stop` (ソケット経由。エージェントを止めて終わるまで待つ。最大 120 秒) か、PID への `kill` (SIGTERM / SIGINT。SIGHUP は無視される)。
+- ログインしたときに自動で起動する、落ちたら再起動する、といったことは `-d` ではしない。そのときは下の systemd を使う。
+
+### ペアリングと端末の管理 (`yhtye remote`)
+
+動いているヘッドレスの Yhtye に頼むサブコマンド。ウィンドウは開かない。データディレクトリの `yhtye.sock` (Unix ドメインソケット、パーミッション 0600。
+パスが長すぎるときは `$XDG_RUNTIME_DIR/yhtye-<ハッシュ>.sock`) を通して話すので、同じユーザーで、同じデータディレクトリ (`--data-dir` / `YHTYE_DATA_DIR`) を指して実行する。
+
+```sh
+yhtye remote pair          # ペアリングコードを発行し、QR コード・手入力用のホスト/ポート/コード・URI を表示 (5 分、1 回限り)
+yhtye remote devices       # ペアリング済みの端末の一覧
+yhtye remote revoke <id>   # 端末を忘れ、その接続を切る (id は devices の ID)
+yhtye remote status        # 動いているか (PID)、待ち受けているか、どのアドレスか、待ち受けられない理由
+yhtye remote stop          # ヘッドレスの Yhtye を止める (エージェントが止まって終わるまで待つ)
+```
+
+- QR コードの中身は `yhtye://pair?…` の URI そのもの。端末の背景が暗い前提の色で描くので、明るい背景の端末では反転して見えることがある (読み取りは通常できる)。読めなければ手入力する。
+- ヘッドレスが動いていなければ、そう書いたエラーで終了する。
+
+### systemd のユーザーサービス (任意)
+
+ログインのたびの自動起動や、異常終了時の再起動がほしいときの選択肢 (ふつうは上の `-d` で足りる)。ユニットの中では `-d` を使わない (systemd がプロセスを見張るため、前面で動かす)。
+Arch のパッケージ (`packaging/arch/PKGBUILD`) は `/usr/lib/systemd/user/yhtye-headless.service` を入れる (有効にはしない)。
+
+```sh
+systemctl --user enable --now yhtye-headless   # 起動し、ログインのたびに自動で起動する
+loginctl enable-linger "$USER"                 # ログインしていなくても動かし続ける (サーバーでは必須)
+journalctl --user -u yhtye-headless -f         # ログ
+yhtye remote pair                              # ペアリング (サービスの stdout は端末ではないので、コードは出ない)
+```
+
+- 異常終了すると 10 秒後に再起動する。データディレクトリを他のアプリが使っているとき (終了コード 3) は再起動しない。
+- 停止はエージェントを止めてから終わるので時間がかかることがある (最大 120 秒)。
+- ユーザーサービスはシステムの `tailscaled` の後に順序付けできないため、起動直後は Tailscale が無くても起動し、上の再試行で待ち受けを始める。
+- データディレクトリを変えるなら、`systemctl --user edit yhtye-headless` で `[Service]` に `Environment=YHTYE_DATA_DIR=/path` を足す
+  (`yhtye remote …` を実行するシェルにも同じ `YHTYE_DATA_DIR` か `--data-dir` が要る)。
+
+### ヘッドレスの前提と制約
+
+- **Tailscale** にログイン済みで (`tailscale status` が `Running`)、その PC が**タグ付きノードでない**こと。`--advertise-tags` で動かしたノードは、
+  同じ tailnet の他人のタグ付き端末と区別できないため、リモート接続を起動しない (`yhtye remote status` の `error` に理由が出る)。
+- **キーリング (Secret Service)**: GUI の無いサーバーには、gnome-keyring などの Secret Service が動いていないことが多い。無いと、秘密の環境変数は登録も
+  エージェントへの受け渡しもできない (上の「秘密の環境変数とキーリング」)。起動時に警告を出すだけで、代わりの保存先は無い。秘密の環境変数を使わないなら問題ない。
+- **`PATH` にエージェントの CLI が見えること**: `-d` は起動した端末の環境を引き継ぐので、そこで見えていればよい。systemd のユーザーサービスの `PATH` は短く、`~/.local/bin` などが入らない。Yhtye は検出では `~/.local/bin` なども見るが、
+  エージェントが起動する子プロセスは `PATH` を使う。systemd で見えないときは `systemctl --user edit yhtye-headless` で `[Service]` に
+  `Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin` のように足す (サービスファイルの先頭のコメントにも同じ例がある)。
+- エージェントのログイン (`~/.claude` など) は、サービスを動かすユーザーで済ませておく。
+- プロジェクトは Android アプリの「プロジェクトを開く」で、サーバー上のパスを入力して開く。
 
 ## トラブルシューティング
 
@@ -270,4 +356,10 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 | Grok Build が起動しない / 認証エラーになる | `grok login` を済ませる (`grok models` でログイン状態とモデルが出るか確認)。設定 › ハーネス で `grok` のパスが `~/.grok/bin/grok` (別の `grok` ではない) か確認する。それでも動かないときは `docs/architecture/acp-harnesses.md` §12 を参照して報告してほしい (一部未検証) |
 | Codex が空のトークンで失敗する | 「秘密の環境変数」に `config.toml` が参照している変数を登録する |
 | 秘密の登録やエージェント起動が「キーリングが使えない」で失敗する | Secret Service (gnome-keyring / KeePassXC など) を起動してロックを解除する |
+| `yhtye --headless -d` が終了コード 3 で終わる / 「another Yhtye is already running」 | 同じデータディレクトリで別の Yhtye が動いている。ヘッドレスなら `yhtye remote status` で確認し、`yhtye remote stop` で止める (GUI なら閉じる)。別のデータで動かすなら `--data-dir` を変える |
+| `yhtye --headless -d` が「the daemon stopped while starting」で失敗する | 添えられたログの末尾が理由。全文はデータディレクトリの `headless.log` |
+| `yhtye remote stop` が終わらない | エージェントが止まるのを待っている (最大 120 秒)。それでも終わらなければ、表示された PID に `kill -9` する (残ったエージェントは次の起動のときに片付けられる) |
+| `yhtye remote …` が「no headless Yhtye answers」で失敗する | `yhtye --headless` が動いているか、同じデータディレクトリ (`--data-dir` / `YHTYE_DATA_DIR`) を指しているか確認する。GUI のアプリにはこのソケットが無い (設定画面を使う) |
+| `yhtye remote pair` が「remote access is not running」で失敗する | 括弧の中の理由 (Tailscale が止まっている・ポート使用中・タグ付きノード) を直す。ヘッドレスは 30 秒ごとに再試行するので、直せば待ち受けを始める |
+| ヘッドレスがすぐ終了コード 3 で終わる | 同じデータディレクトリで別の Yhtye (GUI でもヘッドレスでも) が動いている。どちらかを止めるか、`--data-dir` を変える |
 | グループが「マージ待ち」で止まる | base ブランチをチェックアウトし、作業ツリーを clean にして再試行する |

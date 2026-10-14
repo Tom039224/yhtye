@@ -89,7 +89,7 @@ internal fun HostAndClients(app: AppState, selfId: String?) {
 
 /**
  * コアのホスト (ホスト名は ping の答え)、接続の点、最後の ping からの経過。このアプリが PC につながっていなければ
- * アイコンと名前をグレーにする (点は切断・確認中の色のまま)。
+ * アイコンと名前をグレーにする (点は切断・確認中の色のまま)。GUI 無しのホスト (`yhtye --headless`) は別のアイコン。
  */
 @Composable
 private fun ServerRow(app: AppState, connected: Boolean) {
@@ -114,7 +114,16 @@ private fun ServerRow(app: AppState, connected: Boolean) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        YIcon(YIcons.Server, if (connected) c.tx3 else c.tx5, 12.dp, Modifier.semantics { contentDescription = "サーバー" }.testTag("server-icon"))
+        if (app.host.headless) {
+            YIcon(
+                YIcons.ServerHeadless,
+                if (connected) c.tx3 else c.tx5,
+                12.dp,
+                Modifier.semantics { contentDescription = "ヘッドレスのサーバー" }.testTag("headless-server-icon"),
+            )
+        } else {
+            YIcon(YIcons.Server, if (connected) c.tx3 else c.tx5, 12.dp, Modifier.semantics { contentDescription = "サーバー" }.testTag("server-icon"))
+        }
         Box(Modifier.size(7.dp).background(dot, CircleShape).semantics { contentDescription = state }.testTag("host-dot"))
         Text(
             app.host.name ?: "—",
