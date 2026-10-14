@@ -61,6 +61,8 @@ data class HostView(
     val lastPingAt: Long? = null,
     /** PC の Yhtye の版 (`0.1.0`)。ping が版を返さない古い PC では null (互換性の判定は「不明」)。 */
     val version: String? = null,
+    /** PC の Yhtye が GUI 無しで動いている (`yhtye --headless`)。ping が答えない古い PC では false (GUI のあるホスト扱い)。 */
+    val headless: Boolean = false,
 )
 
 const val MAX_ERRORS: Int = 5

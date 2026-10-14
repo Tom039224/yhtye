@@ -1,14 +1,23 @@
 import { useState } from "react";
 
 import type { ClientDevice } from "../api/generated";
+import { useActiveHostEntry } from "../store/useHosts";
 import { useAppState } from "../store/useStore";
-import { CLIENTS_SHOWN, clientKindLabel, clientState, formatPingAge, hostTone, hostToneLabel, orderClients, pingAgeSeconds } from "./hostStatus";
+import { CLIENTS_SHOWN, clientKindIcon, clientKindLabel, clientState, formatPingAge, hostTone, hostToneLabel, orderClients, pingAgeSeconds } from "./hostStatus";
 import { Icon } from "./Icon";
+import { RemoteMark } from "./RemoteMark";
 import { useNow } from "./useNow";
+
+/** What the footer's tooltip calls a host without a GUI. */
+const HEADLESS_LABEL = "ヘッドレス";
+/** What it calls another host's Yhtye (not this PC's own). */
+const REMOTE_LABEL = "リモート";
 
 /**
  * The bottom of the sidebar (design §3.3): the machine the core runs on, then
- * the paired devices. The icons tell the server from the devices.
+ * the paired devices. The icons tell the server from the devices. It is the
+ * host on screen: with a remote host's project open, that host and the devices
+ * paired with it.
  */
 export function HostFooter() {
   return (
@@ -21,21 +30,27 @@ export function HostFooter() {
 
 /**
  * The core's host (its host name, read by the core), a dot for the connection
- * to it, and how long ago the core last answered a ping ("now" up to 5 s).
+ * to it, and how long ago the core last answered a ping ("now" up to 5 s). A
+ * host without a GUI (`yhtye --headless`) has an icon of its own, and another
+ * host's Yhtye carries the remote mark.
  */
 function ServerRow() {
   const connection = useAppState((s) => s.connection.state);
   const host = useAppState((s) => s.host);
+  const entry = useActiveHostEntry();
   const now = useNow(1000);
   const age = pingAgeSeconds(now, host.lastPingAt);
   const tone = hostTone(connection, age);
   const state = hostToneLabel(tone, connection);
-  const name = host.name ?? "—";
+  const name = host.name ?? entry?.name ?? "—";
+  const kinds = [entry?.remote ? REMOTE_LABEL : null, host.headless ? HEADLESS_LABEL : null].filter((k) => k !== null);
+  const title = [name, ...kinds, state].join(" · ");
   return (
-    <div className="host-row" data-testid="host" title={`${name} · ${state}`}>
-      <Icon name="server" size={12} className="client-kind" />
+    <div className="host-row" data-testid="host" title={title}>
+      <Icon name={host.headless ? "server-headless" : "server"} size={12} className="client-kind" />
       <span className={`dot dot-${tone}`} role="img" aria-label={state} />
       <span className="host">{name}</span>
+      <RemoteMark entry={entry ?? undefined} size={11} />
       <span className="spacer" />
       <span className="host-sync" title={age === null ? "まだ応答がありません" : "最後の ping からの経過"}>
         <Icon name="clock" size={11} />
@@ -82,7 +97,7 @@ function ClientRow({ device }: { device: ClientDevice }) {
       aria-label={`${device.name} · ${state}`}
       title={`${device.name} · ${clientKindLabel(device.kind)} · ${state}`}
     >
-      <Icon name="phone" size={12} className="client-kind" />
+      <Icon name={clientKindIcon(device.kind)} size={12} className="client-kind" />
       <span className={`dot${device.connected ? " dot-ok" : ""}`} aria-hidden="true" />
       <span className="client-name">{device.name}</span>
     </li>

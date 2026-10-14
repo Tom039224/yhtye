@@ -12,6 +12,7 @@ use crate::domain::{
     Chat, DomainEvent, Group, GroupStatus, Help, HelpKind, HelpSource, HelpState, InboxEntry,
     InboxItem, InboxKind, Role, Step, StepKind, StepStatus, Task, TaskKind, TaskStatus, Verdict,
 };
+use crate::remote::ClientKind;
 
 fn db(dir: &Path) -> PathBuf {
     db_path(&dir.join("data"))
@@ -159,7 +160,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 10);
+    assert_eq!(applied, 11);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -195,7 +196,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 10);
+    assert_eq!(applied, 11);
 }
 
 #[tokio::test]
@@ -920,12 +921,49 @@ async fn a_renamed_chat_is_stored_with_its_new_title() {
 }
 
 #[tokio::test]
+async fn a_device_keeps_its_kind_and_older_rows_are_android() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let desktop = DeviceRecord {
+        id: "dev-d".into(),
+        name: "Laptop".into(),
+        kind: ClientKind::Desktop,
+        token_hash: "cd".repeat(32),
+        created_ms: 6,
+        last_seen_ms: None,
+    };
+    store.add_remote_device(&desktop).await.expect("add");
+    // A row written before the `kind` column existed has no value for it.
+    sqlx::query(
+        "INSERT INTO remote_devices (id, name, token_hash, created_ms) VALUES ('dev-old', 'Old', 'ef', 1)",
+    )
+    .execute(&store.pool)
+    .await
+    .expect("legacy row");
+    let kinds: Vec<(String, ClientKind)> = store
+        .remote_devices()
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|d| (d.id, d.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            ("dev-old".to_string(), ClientKind::Android),
+            ("dev-d".to_string(), ClientKind::Desktop)
+        ]
+    );
+}
+
+#[tokio::test]
 async fn remote_devices_and_app_settings_are_stored() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = Store::open(&db(dir.path())).await.expect("open");
     let device = DeviceRecord {
         id: "dev-1".into(),
         name: "Pixel".into(),
+        kind: ClientKind::Android,
         token_hash: "ab".repeat(32),
         created_ms: 5,
         last_seen_ms: None,
@@ -941,6 +979,7 @@ async fn remote_devices_and_app_settings_are_stored() {
     let listed = store.remote_devices().await.expect("list");
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].last_seen_ms, Some(9));
+    assert_eq!(listed[0].kind, ClientKind::Android);
     assert!(store.remove_remote_device("dev-1").await.expect("remove"));
     assert!(!store.remove_remote_device("dev-1").await.expect("remove"));
 

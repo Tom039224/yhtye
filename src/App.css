@@ -384,7 +384,11 @@ details.tool { display: block; }
 .settings-head {
   flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border);
 }
-.settings-title { margin: 0; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+.settings-title { flex: none; margin: 0; white-space: nowrap; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+/* A remote host on screen: whose settings these are (a long name gives way, the heading does not). */
+.settings-host { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 400 11.5px/1.5 var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.settings-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-head .scope-toggle { flex: none; }
 .settings-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 32px; }
 .scope-toggle { display: flex; border: 1px solid var(--border-card); border-radius: 5px; overflow: hidden; }
 .scope-toggle button {
@@ -718,6 +722,23 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .remote-heading { margin: 4px 0 0; font: 600 12px/1.4 var(--font-text); color: var(--text-muted); }
 .remote-device { flex-wrap: wrap; }
 .remote-device .secret-name { overflow-wrap: anywhere; min-width: 0; }
+
+/* Settings › 接続先 (HostsSettingsSection): the form that pairs with a host, and the hosts paired with. */
+.host-form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.host-form > * { max-width: 100%; }
+.host-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font: 400 11.5px/1.4 var(--font-text); color: var(--text-muted); }
+.host-form > .host-field { width: min(560px, 100%); }
+.host-form > .host-field .agent-search { width: 100%; box-sizing: border-box; }
+.host-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.host-fields .host-field { flex: 1 1 200px; }
+.host-fields .host-field-port { flex: 0 1 100px; }
+.host-fields .host-field-code { flex: 0 1 160px; }
+.host-fields .agent-search { width: 100%; box-sizing: border-box; }
+.host-problem { align-items: flex-start; }
+.host-problem > span { min-width: 0; overflow-wrap: anywhere; }
+.host-detail { display: block; margin-top: 2px; color: var(--text-dim); font: 400 10.5px/1.5 var(--font-mono); }
+.remote-host .client-kind { color: var(--text-dim); }
+.host-note { flex-basis: 100%; margin: 0; padding-left: 24px; font: 400 11px/1.6 var(--font-mono); color: var(--status-handling-fg); }
 
 /* ---- branches tree (Stage 8) ---------------------------------------------- */
 

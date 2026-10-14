@@ -24,7 +24,8 @@ use crate::domain::{DomainEvent, Role, ToolError};
 use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{
-    Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError, RemoteStatus,
+    ClientKind, Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError,
+    RemoteStatus,
 };
 use crate::store::{ChatInfo, SessionRecord, SessionStatus};
 use crate::usage::{UsageReport, UsageWindow, UsageWindowKind};
@@ -446,6 +447,7 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-0123456789abcdef".into(),
             name: "Pixel 9".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: Some(1_790_766_600_000),
             connected: true,
@@ -453,9 +455,18 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-fedcba9876543210".into(),
             name: "Tablet".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: None,
             connected: false,
+        },
+        RemoteDevice {
+            id: "dev-0f1e2d3c4b5a6978".into(),
+            name: "Workstation".into(),
+            kind: ClientKind::Desktop,
+            created_ms: 1_790_766_538_443,
+            last_seen_ms: Some(1_790_766_650_000),
+            connected: true,
         },
     ]
 }
@@ -590,6 +601,7 @@ fn responses() -> Vec<Sample> {
             ApiResponse::Pong {
                 host: "pc".into(),
                 version: "0.2.1".into(),
+                headless: true,
             },
         ),
         (
@@ -1310,6 +1322,7 @@ fn server_messages() -> Vec<Sample> {
                 ok: ApiResponse::Pong {
                     host: "pc".into(),
                     version: "0.2.1".into(),
+                    headless: false,
                 },
             }),
         ),
@@ -1330,8 +1343,14 @@ fn server_messages() -> Vec<Sample> {
 
 fn remote_http() -> Vec<Sample> {
     let request: PairRequest = de(json!({"code": "ABCD2345", "device_name": "Pixel 9"}));
+    let desktop: PairRequest = de(json!({
+        "code": "ABCD2345",
+        "device_name": "Workstation",
+        "kind": "desktop",
+    }));
     vec![
         sample("PairRequest", "pair", &request),
+        sample("PairRequest", "pair_desktop", &desktop),
         sample(
             "PairResponse",
             "pair",

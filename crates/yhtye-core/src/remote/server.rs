@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use super::pairing::PairRefused;
-use super::{Shared, device_name, now_ms};
+use super::{ClientKind, Shared, device_name, now_ms};
 use crate::runtime::Core;
 use crate::ws::{SessionPolicy, run_session};
 
@@ -70,6 +70,10 @@ pub struct PairRequest {
     /// The name the device is listed under (trimmed, at most
     /// [`super::MAX_DEVICE_NAME_CHARS`] characters).
     pub device_name: String,
+    /// What the device is; left out by the Android client (which is the
+    /// default), `desktop` for another Yhtye desktop app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ClientKind>,
 }
 
 /// Answer of a successful `POST /pair`.
@@ -161,7 +165,8 @@ async fn pair(
             return refuse(StatusCode::UNAUTHORIZED, msg);
         }
     };
-    let (device_id, token) = match ctx.shared.add_device(name.clone()).await {
+    let kind = req.kind.unwrap_or(ClientKind::Android);
+    let (device_id, token) = match ctx.shared.add_device(name.clone(), kind).await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!("remote access: could not store a paired device: {e}");
@@ -173,7 +178,7 @@ async fn pair(
             );
         }
     };
-    tracing::info!("remote access: paired device {device_id} ({name}) from {peer}");
+    tracing::info!("remote access: paired device {device_id} ({name}, {kind:?}) from {peer}");
     ctx.shared.emit_pairing_change();
     ctx.shared.emit_devices().await;
     Json(PairResponse {

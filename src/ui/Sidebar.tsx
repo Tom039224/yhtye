@@ -1,6 +1,6 @@
 import "./sidebar.css";
 
-import { useAppState } from "../store/useStore";
+import { useAppState, useStore } from "../store/useStore";
 import { BackgroundProjects } from "./BackgroundProjects";
 import { BranchTree } from "./BranchTree";
 import { HostFooter } from "./HostFooter";
@@ -9,6 +9,7 @@ import { ProjectPicker } from "./ProjectPicker";
 
 /** The open project as a pull-down, the ones running in the background, BRANCHES, and the core host with the paired devices (design §3.3), all from the core. */
 export function Sidebar() {
+  const store = useStore();
   const project = useAppState((s) => s.project?.info.id);
   return (
     <aside className="sidebar" aria-label="projects">
@@ -18,7 +19,7 @@ export function Sidebar() {
       </div>
       <ProjectPicker />
       <BackgroundProjects />
-      <BranchTree key={project ?? "none"} />
+      <BranchTree key={project ? store.scopedKey(project) : "none"} />
       <HostFooter />
     </aside>
   );

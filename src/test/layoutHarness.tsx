@@ -7,30 +7,41 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
 import { emptyState } from "../store/domain";
 import { CommandError } from "../api/transport";
 import { memoryPrefs } from "../store/prefs";
+import { LOCAL_HOST } from "../store/hosts";
+import { HostsProvider } from "../store/useHosts";
 import { StoreContext } from "../store/useStore";
 import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
+import { FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "./remoteHosts";
 
 /**
  * What a scenario opens: nothing, the recorded run, the recorded run with a few paired devices
- * under the host (one connected, one offline with a long name), or a project with far more
- * content than fits (12 devices among it: folded into "他 N 台").
+ * under the host (one connected, one offline with a long name), a project with far more
+ * content than fits (12 devices among it: folded into "他 N 台"), or the recorded run with other
+ * Yhtye hosts paired with (one connected with a long name, one revoked, one waiting to reconnect).
  */
-const SCENARIOS = ["empty", "run", "devices", "long"] as const;
+const SCENARIOS = ["empty", "run", "devices", "long", "hosts"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 declare global {
   interface Window {
     /** For the checking script: drive the in-memory core and the store from the page. */
-    __yhtye?: { store: AppStore; core: FakeCore; transport: MemoryTransport; failCommand: (type: string, message: string) => void };
+    __yhtye?: {
+      store: AppStore;
+      core: FakeCore;
+      transport: MemoryTransport;
+      failCommand: (type: string, message: string) => void;
+      /** The hosts scenario: the registry and the shell's fake (to push a pairing link, ...). */
+      hosts?: TestHosts;
+    };
   }
 }
 
@@ -184,9 +195,10 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     core.agents.models["claude-code"] = longModels();
     core.remote.dnsName = `${NO_SPACES}.tailnet.ts.net`;
     core.remote.set(true, undefined);
-    core.remote.devices = Array.from({ length: 12 }, (_, i) => ({
+    core.remote.devices = Array.from({ length: 12 }, (_, i): RemoteDevice => ({
       id: `dev-${i}`,
       name: i % 3 === 0 ? `${NO_SPACES}${i}` : `端末 ${i}`,
+      kind: i % 3 === 1 ? "desktop" : "android",
       created_ms: NOW - i * 86_400_000,
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
@@ -198,16 +210,51 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
   core.log = durable(FULL_RUN);
   if (scenario === "devices") {
     core.remote.devices = [
-      { id: "dev-1", name: "Pixel 9", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
-      { id: "dev-2", name: `Tablet ${NO_SPACES}`, created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
+      { id: "dev-1", name: "Pixel 9", kind: "android", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
+      { id: "dev-2", name: `Workstation ${NO_SPACES}`, kind: "desktop", created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
     ];
   }
   return { core, open: scenario !== "empty" };
 }
 
+/** The recorded run with three other hosts paired with, whose projects are listed after this PC's. */
+async function mountHosts(): Promise<TestHosts> {
+  const long = `${NO_SPACES}host`;
+  const t = newTestHosts({
+    configureFar: (far) => {
+      far.core.host = far.id === "sid-long" ? long : `host-${far.id}`;
+      far.core.headless = far.id === "sid-long";
+    },
+  });
+  t.localCore.log = durable(FULL_RUN);
+  const api = t.api as FakeHostsApi;
+  const named = (id: string, name: string) => ({ ...hostInfo(id), name });
+  api.hosts = [
+    named("sid-long", long),
+    { ...named("sid-gone", "build-server"), status: { connection: { state: "revoked" as const }, server: null } },
+    { ...named("sid-wait", "office-pc"), status: { connection: { state: "waiting_to_reconnect" as const, attempt: 2, delay_ms: 5000, reason: "refused" }, server: null } },
+  ];
+  window.__yhtye = { store: t.registry.activeStore, core: t.localCore, transport: t.localTransport, failCommand: () => {}, hosts: t };
+  void t.registry.start();
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <HostsProvider registry={t.registry}>
+        <App />
+      </HostsProvider>
+    </React.StrictMode>,
+  );
+  await t.registry.selectProject(LOCAL_HOST, PROJECT);
+  return t;
+}
+
 async function main(): Promise<void> {
   const requested = new URLSearchParams(window.location.search).get("scenario") ?? "run";
   const scenario = SCENARIOS.find((s) => s === requested) ?? "run";
+  if (scenario === "hosts") {
+    await mountHosts();
+    document.documentElement.dataset.ready = scenario;
+    return;
+  }
   const transport = new MemoryTransport({ state: "open" });
   const { core, open } = build(scenario);
   core.attach(transport);
