@@ -33,6 +33,7 @@ use crate::clock::now_ms;
 use crate::domain::DomainConfig;
 use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
+use crate::remote_client::{RemoteHosts, TokenVault};
 use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
@@ -139,6 +140,8 @@ struct Inner {
     models: ModelService,
     secrets: Arc<Secrets>,
     remote: RemoteService,
+    /// The other Yhtye hosts this one is a client of (`core-design.md` §18.9).
+    remote_hosts: RemoteHosts,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -176,6 +179,9 @@ impl Core {
         let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
         let remote =
             RemoteService::new(store.clone(), cfg.tailscale.clone(), events.clone()).await?;
+        // The device tokens of the hosts go where the secret environment variables do.
+        let remote_hosts =
+            RemoteHosts::new(store.clone(), TokenVault::new(cfg.secret_backend.clone()));
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -191,9 +197,17 @@ impl Core {
                 models,
                 secrets,
                 remote,
+                remote_hosts,
                 closed: AtomicBool::new(false),
             }),
         })
+    }
+
+    /// The Yhtye hosts this one uses as a client (`core-design.md` §18.9): pair,
+    /// connect, run commands there. Its connections are closed by [`Core::shutdown`].
+    #[must_use]
+    pub fn remote_hosts(&self) -> RemoteHosts {
+        self.inner.remote_hosts.clone()
     }
 
     /// Every project's events (durable and live), in order per project.
@@ -529,6 +543,7 @@ impl Core {
         self.inner.closed.store(true, Ordering::SeqCst);
         // First: remote clients must not start work while the projects stop.
         self.inner.remote.shutdown().await;
+        self.inner.remote_hosts.shutdown().await;
         self.inner.usage.close().await;
         self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;

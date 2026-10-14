@@ -17,6 +17,7 @@ mod tailscale;
 mod whois;
 
 pub use clients::{ClientDevice, ClientKind, ClientServer, Clients};
+pub(crate) use pairing::ALPHABET as CODE_ALPHABET;
 pub use pairing::{CODE_LEN, CODE_TTL_MS, MAX_FAILURES, constant_time_eq, token_hash};
 pub use server::{PairRequest, PairResponse, RemoteError};
 pub use tailscale::{
@@ -105,6 +106,7 @@ pub struct RemoteStatus {
 pub struct RemoteDevice {
     pub id: String,
     pub name: String,
+    pub kind: ClientKind,
     pub created_ms: u64,
     /// When it last connected (`null`: never since pairing).
     pub last_seen_ms: Option<u64>,
@@ -470,6 +472,7 @@ impl Shared {
                 connected: conns.contains_key(&r.id),
                 id: r.id,
                 name: r.name,
+                kind: r.kind,
                 created_ms: r.created_ms,
                 last_seen_ms: r.last_seen_ms,
             })
@@ -558,7 +561,11 @@ impl Shared {
 
     /// Pairs a new device: stores it (with the token's hash) and returns its
     /// id and token.
-    async fn add_device(&self, name: String) -> Result<(String, String), ApiError> {
+    async fn add_device(
+        &self,
+        name: String,
+        kind: ClientKind,
+    ) -> Result<(String, String), ApiError> {
         let random = |n| {
             pairing::random_hex(n).map_err(|e| ApiError::internal(format!("no randomness: {e}")))
         };
@@ -569,6 +576,7 @@ impl Shared {
             .add_remote_device(&DeviceRecord {
                 id: id.clone(),
                 name,
+                kind,
                 token_hash: token_hash(&token),
                 created_ms: now_ms(),
                 last_seen_ms: None,

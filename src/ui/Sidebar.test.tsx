@@ -130,9 +130,10 @@ describe("the host footer", () => {
   });
 });
 
-const PIXEL: RemoteDevice = { id: "dev-1", name: "Pixel 9", created_ms: 1, last_seen_ms: Date.UTC(2026, 9, 10, 3, 0), connected: true };
-const TABLET: RemoteDevice = { id: "dev-2", name: "Tablet", created_ms: 2, last_seen_ms: Date.UTC(2026, 9, 9, 3, 0), connected: false };
-const NEVER: RemoteDevice = { id: "dev-3", name: "Old phone", created_ms: 3, last_seen_ms: null, connected: false };
+const PIXEL: RemoteDevice = { id: "dev-1", name: "Pixel 9", kind: "android", created_ms: 1, last_seen_ms: Date.UTC(2026, 9, 10, 3, 0), connected: true };
+const TABLET: RemoteDevice = { id: "dev-2", name: "Tablet", kind: "android", created_ms: 2, last_seen_ms: Date.UTC(2026, 9, 9, 3, 0), connected: false };
+const NEVER: RemoteDevice = { id: "dev-3", name: "Old phone", kind: "android", created_ms: 3, last_seen_ms: null, connected: false };
+const LAPTOP: RemoteDevice = { id: "dev-4", name: "Laptop", kind: "desktop", created_ms: 4, last_seen_ms: Date.UTC(2026, 9, 11, 3, 0), connected: true };
 
 const clientList = () => screen.queryByRole("list", { name: "クライアント" });
 const clientRows = () => within(clientList() ?? document.createElement("ul")).queryAllByRole("listitem");
@@ -165,6 +166,16 @@ describe("the clients under the host", () => {
     expect(rows[1].getAttribute("title")).toMatch(/^Tablet · Android · オフライン · 最終接続 2026\/10\/09/);
     expect(rows[2]).toHaveClass("offline");
     expect(rows[2]).toHaveAttribute("title", "Old phone · Android · オフライン · 未接続");
+  });
+
+  it("draws another desktop app with the monitor icon and calls it a PC", async () => {
+    mountWith([PIXEL, LAPTOP]);
+    await advance(0);
+    const rows = clientRows();
+    // Both are connected, so the one seen last comes first.
+    expect(rows.map((r) => r.textContent)).toEqual(["Laptop", "Pixel 9"]);
+    expect(rows.map(iconOf)).toEqual(["monitor", "phone"]);
+    expect(rows[0].getAttribute("title")).toBe("Laptop · PC · 接続中");
   });
 
   it("follows clients_changed: a device connects, another is revoked, the last one goes", async () => {

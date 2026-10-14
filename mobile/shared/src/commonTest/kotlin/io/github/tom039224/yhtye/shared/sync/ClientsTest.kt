@@ -115,6 +115,8 @@ class ClientsTest {
         assertEquals("オフライン · 最終接続 at ${TABLET.lastSeenMs}", clientState(tablet, format))
         assertEquals("オフライン · 未接続", clientState(never, format))
         assertEquals("Android", clientKindLabel(ClientKind.Android))
+        assertEquals("PC", clientKindLabel(ClientKind.Desktop))
+        assertEquals("不明な端末", clientKindLabel(ClientKind.Unrecognized))
     }
 
     private companion object {

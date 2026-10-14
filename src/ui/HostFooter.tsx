@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import type { ClientDevice } from "../api/generated";
 import { useAppState } from "../store/useStore";
-import { CLIENTS_SHOWN, clientKindLabel, clientState, formatPingAge, hostTone, hostToneLabel, orderClients, pingAgeSeconds } from "./hostStatus";
+import { CLIENTS_SHOWN, clientKindIcon, clientKindLabel, clientState, formatPingAge, hostTone, hostToneLabel, orderClients, pingAgeSeconds } from "./hostStatus";
 import { Icon } from "./Icon";
 import { useNow } from "./useNow";
 
@@ -87,7 +87,7 @@ function ClientRow({ device }: { device: ClientDevice }) {
       aria-label={`${device.name} · ${state}`}
       title={`${device.name} · ${clientKindLabel(device.kind)} · ${state}`}
     >
-      <Icon name="phone" size={12} className="client-kind" />
+      <Icon name={clientKindIcon(device.kind)} size={12} className="client-kind" />
       <span className={`dot${device.connected ? " dot-ok" : ""}`} aria-hidden="true" />
       <span className="client-name">{device.name}</span>
     </li>

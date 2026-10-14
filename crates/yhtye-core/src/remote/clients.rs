@@ -4,16 +4,19 @@
 //! it is for managing devices, this view is for showing who is there.
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::RemoteDevice;
 
-/// What a paired device is (only the Android client exists so far).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema, TS)]
+/// What a paired device is: the Android client, or another Yhtye desktop app
+/// that uses this PC as its host. The device says which it is when it pairs
+/// (the `kind` of the pairing request; the Android client leaves it out).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ClientKind {
     Android,
+    Desktop,
 }
 
 /// The machine the core runs on.
@@ -55,8 +58,7 @@ impl Clients {
                 .map(|d| ClientDevice {
                     id: d.id.clone(),
                     name: d.name.clone(),
-                    // Every paired device is the Android client for now.
-                    kind: ClientKind::Android,
+                    kind: d.kind,
                     connected: d.connected,
                     last_seen_ms: d.last_seen_ms,
                 })
@@ -74,6 +76,7 @@ mod tests {
         let devices = [RemoteDevice {
             id: "dev-1".into(),
             name: "Pixel".into(),
+            kind: ClientKind::Android,
             created_ms: 5,
             last_seen_ms: Some(9),
             connected: true,
@@ -87,5 +90,21 @@ mod tests {
                 "devices": [{"id": "dev-1", "name": "Pixel", "kind": "android", "connected": true, "last_seen_ms": 9}],
             })
         );
+    }
+
+    #[test]
+    fn a_paired_desktop_is_listed_as_one() {
+        let devices = [RemoteDevice {
+            id: "dev-2".into(),
+            name: "Laptop".into(),
+            kind: ClientKind::Desktop,
+            created_ms: 5,
+            last_seen_ms: None,
+            connected: false,
+        }];
+        let clients = Clients::new("pc".into(), &devices);
+        assert_eq!(clients.devices[0].kind, ClientKind::Desktop);
+        let json = serde_json::to_value(&clients).expect("json");
+        assert_eq!(json["devices"][0]["kind"], "desktop");
     }
 }

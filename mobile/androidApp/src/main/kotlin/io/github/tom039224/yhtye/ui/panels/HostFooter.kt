@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.shared.api.generated.ClientKind
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
@@ -183,7 +184,9 @@ private fun ClientLine(row: ClientRow) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        YIcon(YIcons.Phone, if (row.connected) c.tx3 else c.tx5, 12.dp, Modifier.testTag("phone-icon"))
+        // 別の PC のアプリはモニター、Android と未知の種類は携帯
+        val (icon, iconTag) = if (d.kind == ClientKind.Desktop) YIcons.Monitor to "monitor-icon" else YIcons.Phone to "phone-icon"
+        YIcon(icon, if (row.connected) c.tx3 else c.tx5, 12.dp, Modifier.testTag(iconTag))
         Box(Modifier.size(7.dp).background(if (row.connected) c.doneBar else c.ringStop, CircleShape))
         Text(
             d.name,

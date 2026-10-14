@@ -188,6 +188,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yhtye_core::remote::ClientKind;
 
     const URI: &str = "yhtye://pair?v=1&host=pc.tail1234.ts.net&ip=100.64.0.7&port=1423&code=ABCD2345&sid=0123456789abcdef0123456789abcdef";
 
@@ -305,6 +306,7 @@ mod tests {
             RemoteDevice {
                 id: "d1".into(),
                 name: "Pixel 8".into(),
+                kind: ClientKind::Android,
                 created_ms: 0,
                 last_seen_ms: Some(1_700_000_000_000),
                 connected: true,
@@ -312,6 +314,7 @@ mod tests {
             RemoteDevice {
                 id: "device-2".into(),
                 name: "Tablet".into(),
+                kind: ClientKind::Desktop,
                 created_ms: 1_700_000_000_000,
                 last_seen_ms: None,
                 connected: false,

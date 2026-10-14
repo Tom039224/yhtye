@@ -144,6 +144,7 @@ object YIcons {
     val Key = lineIcon("key", circle(8f, 15.5f, 3.5f), "M10.5 13L19 4.5", "M16.5 7l2.5 2.5", "M13.5 10l2 2")
     val Star = lineIcon("star", "M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.2l-4.8 2.7 1-5.4-4-3.8 5.4-.7z")
     val Phone = lineIcon("phone", rect(7f, 3.5f, 10f, 17f, 2f), "M11 17.5h2")
+    val Monitor = lineIcon("monitor", rect(3.5f, 4.5f, 17f, 11f, 1.5f), "M9 19.5h6", "M12 15.5v4")
     val Server = lineIcon(
         "server",
         rect(4.5f, 4.5f, 15f, 6.5f, 1.5f),

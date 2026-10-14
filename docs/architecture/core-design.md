@@ -1461,9 +1461,10 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
 - テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。
 
-## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)
+## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 
 設計の背景は [`docs/planned/android-client.md`](../planned/android-client.md)。段階 1 (PC 側のサーバーと認証) の実装。
+接続する側は Android のほかに、別の PC の Yhtye (デスクトップ版) もなれる (§18.9。同じペアリングと同じ WS)。
 コードは `crates/yhtye-core/src/remote/` (`mod.rs` = `RemoteService`、`server.rs` = ルート、`pairing.rs` = コードとトークン、
 `tailscale.rs` = Tailscale の trait と CLI 実装、`whois.rs` = whois の結果のキャッシュと同時数の上限) と `src/ws.rs` (共有の WS セッション、§10)。
 
@@ -1486,17 +1487,21 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **GUI 無しの運用 (T-95、§9)**: `yhtye --headless` はこのサーバーを自分で有効にして保ち (Tailscale が上がるまで 30 秒ごとに再試行)、ペアリングと端末の管理は
   制御口 (Unix ドメインソケット) 越しの `yhtye remote pair | devices | revoke | status` で行う (ローカル専用 API をそのまま使う)。PC の GUI の設定画面は、GUI のあるホストだけが使う。
+  このホストへは Android のほか、別の PC の Yhtye のクライアント (§18.9) もつなげる (`yhtye remote pair` のコードをそのまま使う)。
 
-### 18.2 保存 (マイグレーション `0010_remote.sql`)
+### 18.2 保存 (マイグレーション `0010_remote.sql`、`0011_remote_device_kind.sql`)
 
-- `remote_devices (id, name, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+- `remote_devices (id, name, kind, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+  `kind` (`ClientKind` の serde 名。`android` / `desktop`) は `0011` で足した列 (`NOT NULL DEFAULT 'android'`: それ以前に
+  ペアリングした端末は Android)。端末の種類は端末が自分で言う (§18.3 の `kind`)。
 - `app_settings (key, value JSON, updated_ms)`: `remote.settings` = `{enabled, port}` (既定 `false` / 1423)、
   `remote.server_id` = 128 bit のランダム (hex 32 文字。初回の `Core::start` で `INSERT OR IGNORE` して以後同じ)。
 - 端末 ID は `dev-` + 64 bit のランダム (hex)。端末トークンは 256 bit のランダム (hex 64 文字)。
 
 ### 18.3 ペアリング (`POST /pair`)
 
-- 要求 `{"code", "device_name"}` (JSON、4 KiB まで) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
+- 要求 `{"code", "device_name", "kind"?}` (JSON、4 KiB まで。`kind` は `"android"` | `"desktop"`、省略は `android` = Android クライアントは付けない。
+  知らない値は 400。`PairRequest` は未知のフィールドを拒否する) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
   400 (JSON や端末名が不正。端末名は前後の空白と制御文字を除いて 1〜64 文字)、401 (コードが違う / 有効なコードが無い)、403 (whois)。
   型は `remote::{PairRequest, PairResponse, RemoteError}` (`/ws` を拒否するときの本文も `RemoteError`)。TS には出さず、Kotlin には生成する (§2)。
 - コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
@@ -1555,7 +1560,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `set_remote_settings {enabled: true}` を送ると再試行する。設定が変わらず起動中なら何もしない。
 - `PairingCode { code, expires_at_ms, uri }`。`uri` = `yhtye://pair?v=1&host=<MagicDNS 名>&ip=<100.x>&port=<N>&code=<コード>&sid=<サーバー ID>`
   (MagicDNS が無ければ `host` を省く。値はパーセントエンコード)。
-- `RemoteDevice { id, name, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
+- `RemoteDevice { id, name, kind: ClientKind, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
 - **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
   `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
   `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
@@ -1571,7 +1576,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。
   `--fake-agent <yhtye-fake-agent>` で全役割を偽エージェントにし、`--fake-orchestrator` / `--fake-implementer` / `--fake-reviewer`
   にそのシナリオ (`YHTYE_FAKE_SCRIPT` の JSON。省略は何もしない) を渡す (Android の同期層の結合テスト `SyncRealServerTest`。T-66)。
-- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
+- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1。`tests/common/fake_tailscale.rs`。PC のクライアントのテスト `tests/remote_client.rs` と共有) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
   リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
   誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
   再起動で server_id・設定・端末が残る、Tailscale 停止とポート使用中のエラー、一連の要求で whois が 1 回、他ユーザーは何度でも 403 で
@@ -1616,8 +1621,9 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - `ClientServer { host: string }`: コアが動くマシンのホスト名 (`pong.host` と同じ `host_name()`)。
   - `ClientDevice { id: string, name: string, kind: ClientKind, connected: bool, last_seen_ms: number|null }`。並びは
     `list_remote_devices` と同じ (ペアリングの古い順)。`last_seen_ms` は最後に接続した時刻 (`null` = ペアリング後まだ接続していない)。
-  - `ClientKind` = `"android"` だけ (今のペアリング済み端末はすべて Android クライアント。DB に種類の列は無い)。Kotlin では知らない値は
-    `Unrecognized` になる。
+  - `ClientKind` = `"android"` | `"desktop"` (別の PC の Yhtye。§18.9)。端末の種類は DB の `remote_devices.kind` (§18.2) で、
+    ペアリングで端末が自己申告したもの。Kotlin では知らない値は `Unrecognized` になる (Android の左パネルは「不明な端末」と出す)。
+    PC の左パネル (`src/ui/HostFooter.tsx`) は種類でアイコンを変える (`android` = phone、`desktop` = monitor。ラベルは `Android` / `PC`)。
 - **イベント** `clients_changed { clients: Clients }`: アプリ全体 (project `""`・seq 0・live)。`remote_devices_changed` と同じ契機
   (ペアリング・失効・接続・切断) で、その直後に出す (`Shared::emit_device_changes`)。`is_app_wide()` は真、`is_local_only()` は**偽**で、
   **リモートの WS にも流す**。リモート接続が止まっていても `list_clients` は読める (端末はすべて未接続)。
@@ -1628,6 +1634,40 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `tests/remote_access.rs` の `every_client_sees_the_clients_and_their_changes` (ローカルとリモート端末の両方から読める、
   トークン・ハッシュを含まない、ペアリング・接続・切断・失効でローカルと接続中の別端末に `clients_changed` が届く)、
   vitest の `ui/Sidebar.test.tsx` (アイコン・オフラインのグレー・イベントでの更新・resync と再接続での読み直し・古い読みを捨てる・折りたたみ)。
+
+### 18.9 PC のクライアント (`crates/yhtye-core/src/remote_client/`、T-96)
+
+PC 版が**別のホスト** (別の PC の Yhtye、ウィンドウ無しで起動した Yhtye) に、Android と同じペアリングと WS で接続する。
+ホスト側 (§18.1〜18.8) は変えず、`kind: "desktop"` で自分が PC のクライアントだと言う (§18.3) ことだけが違う。
+Android の共通モジュール (`mobile/shared`) の `PairingTarget.kt` / `PairingClient.kt` / `Credentials.kt` / `KtorWsTransport.kt` /
+`YhtyeClient.kt` / `Compatibility.kt` を Rust に移植したもので、入力の規則・プロトコル・状態は同じ。Tauri への依存は無い
+(`Core::remote_hosts()` が `RemoteHosts` を返す。トークンは `CoreConfig.secret_backend` (= 秘密の環境変数と同じキーリング。テストはメモリ)
+に入り、接続は `Core::shutdown` で閉じる。Tauri 層が UI との橋渡しをするのは後続のタスク)。
+
+| ファイル | 役割 |
+|---|---|
+| `address.rs` | 接続先の判定。**Tailscale のアドレスだけ**許す (100.64.0.0/10、fd7a:115c:a1e0::/48、`*.ts.net`)。通信は平文の HTTP / WS (暗号化は WireGuard) なので、コードやトークンを他所へ送らないための歯止めはここ。全角→半角・括弧・末尾の `.`・小文字化の正規化。`HostPolicy::AnyHost` は loopback のホストを使うテスト専用 |
+| `target.rs` | ペアリング URI (`yhtye://pair?v=1&host=&ip=&port=&code=&sid=`、QR・ディープリンク) と手入力 (ホスト / IP・ポート・コード) の解析 → `PairingTarget`。コードの正規化 (全角→半角、空白と `-` の除去、大文字化、8 文字・許可文字のみ。文字種はサーバーと同じ定数)、端末名の正規化。誤りは `InvalidPairingInput` |
+| `pair.rs` | `POST /pair` (`kind: "desktop"`)。候補ホストを順に 10 秒ずつ試し、HTTP の応答が返った先で確定する (別の候補を試してもコードの試行回数を使うだけ)。失敗は `PairingFailure` (401 `CodeRejected` / 403 `OtherUser` / 400 `BadRequest` / 届かない `Unreachable` / QR の `sid` と応答の `server_id` が違う `WrongServer` (トークンは捨てる。ホストには端末が登録されてしまうので、その Yhtye で外してもらう) / `ServerError`)。プロキシとリダイレクトは使わない |
+| `transport.rs` | `WsTransport` / `WsLink` (テストでは偽物に差し替える) と、本物の `TungsteniteTransport` (`GET /ws` + `Authorization: Bearer`。前回つながった候補が先)。ハンドシェイクの HTTP 状態で 401 → `Refusal::Unauthorized` / 403 → `Forbidden` を区別し、それ以外は再試行する失敗 |
+| `connection.rs` | `RemoteConnection` = 1 つのホストへの接続。状態 `Idle` / `Connecting` / `Connected { session }` / `WaitingToReconnect` / `Revoked` (401。再接続しない) / `Rejected` (403。止まる。`start` でやり直す)。再接続は 1 秒から倍々で 30 秒まで (`Backoff`)。要求 `{id, cmd}` の id と応答 `{id, ok\|err}` の対応付け (応答は順不同)、180 秒のタイムアウト (`src/api/ws.ts` と同じ。接続を待つ時間を含む)、イベント `{event}` のブロードキャスト。WS の ping を 15 秒ごとに送り、60 秒何も届かない接続は死んだとして張り直す (サーバーは 20 秒ごとに ping する)。応答とイベントは **JSON の値**で扱う (API の応答型は Rust では書く側で `Deserialize` が無く、アプリはどのみち UI へ JSON のまま渡す) |
+| `credentials.rs` | `TokenVault`: 端末トークンを **OS のキーリング** (`secrets::KeyringBackend` と同じ keyring crate、サービス `yhtye`、アカウント `remote-host:<serverId>`) に入れる。キーリングが使えないときは**そのプロセスの間だけメモリに保持** (再起動でホストの記録は残るがトークンは消え、ペアリングし直し) し、`TokenPlace::MemoryOnly { reason }` で知らせる。平文のファイルには書かない |
+| `version.rs` | ホストの版 (`ping` の `version`) とこのアプリの版の互換性 (`Compatibility.kt` と同じ規則: 0.x の間は `0.<minor>` が同じなら互換、1.0 以降はメジャーが同じでホストのマイナーが以上。パッチとプレリリースは見ない。版が分からなければ `Unknown` で警告しない) |
+| `hosts.rs` | `RemoteHosts` (`RemoteHosts::new(store, vault)`、または `Core::remote_hosts()`): アプリが使う窓口。ホストの追加 (ペアリング → トークンを保管 → 記録) / 一覧 / 削除 (トークンを捨てる。ホスト側の端末の失効はそのホストでしかできない) / 接続の開始・停止 / 任意の `ApiCommand` の送信 / 全ホストの 1 本の通知 (`subscribe()` → `HostNotice::{Event, Status, HostsChanged}`)。ペアリングと接続のたびに接続先がまだ Tailscale のアドレスかを検査し直す (`HostPolicy`。`with_options` で緩めるのはテストだけ) |
+
+- **保存**: ホストの一覧 (秘密でない部分: `server_id`、表示名、候補ホスト、ポート、端末 ID、端末名、トークンをキーリングに入れたか) は
+  **ローカルコアの DB** の `app_settings` のキー `remote_client.hosts` (JSON の配列)。トークンは上の `TokenVault`。
+  表示名は、ペアリングの直後は最初のホストで、つながって `ping` の `host` (相手のマシン名) が分かったらそれに更新する。
+- **接続後の `ping`**: つながるたびに `ping` を 1 回送り (10 秒)、相手のマシン名・版・ヘッドレスか (`Pong.headless`。T-95、§9。無ければ `false`)・互換性 (`ServerInfo`) を `HostStatus` に入れる。
+  UI 用の定期的な ping (ホストの表示の「最後の ping からの経過」) は呼び出し側の仕事。
+- **再ペアリング**: 同じホスト (同じ `server_id`) にもう一度ペアリングすると記録を置き換える (古い端末はホストの一覧に残る)。
+- **イベントの取りこぼし**: 接続が切れている間のイベントは届かない。`Connected { session }` が変わったら読み手が状態を取り直す
+  (Android と同じ)。`subscribe()` の遅れ (`Lagged`) も同様。
+- テスト: `remote_client/*` の単体 (URI・手入力・コードの正規化、Tailscale 判定、互換性、キーリングの代替、`connection/tests.rs` は偽の
+  ホストで id の対応・エラー応答・イベント・タイムアウト・再接続と待ちの倍増・401/403・無音の切断を tokio の時間を止めて確かめる) と、
+  `tests/remote_client.rs` (§18.6 と同じ偽 Tailscale のサーバー。ペアリング → 接続 → コマンド → イベント受信 → 失効で `Revoked`、
+  ホストの端末一覧で `desktop`、リモートアクセスの再起動で張り直す、他ユーザーは 403 / `Rejected`、誤りのコードと別サーバーの QR、
+  最初の候補が応答しない、再起動後にホストとキーリングのトークンが残る、キーリングが無ければトークンは 1 回の起動の間だけ)。
 
 ## 19. 複数クライアントの同時操作 (T-65)
 
