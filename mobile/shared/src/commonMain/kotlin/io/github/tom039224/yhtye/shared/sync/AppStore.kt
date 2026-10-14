@@ -683,7 +683,7 @@ class AppStore(
             } catch (e: RpcException) {
                 null // 次の ping でまた試す
             } ?: return
-            set { it.copy(host = HostView(pong.host, now(), pong.version.trim().ifEmpty { null })) }
+            set { it.copy(host = HostView(pong.host, now(), pong.version.trim().ifEmpty { null }, pong.headless)) }
         } finally {
             pinging = false
         }

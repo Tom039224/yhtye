@@ -116,6 +116,8 @@ export class FakeCore {
   branchError: CommandError | null = null;
   /** The host name `ping` answers with. */
   host = "test-host";
+  /** Whether `ping` says the core runs without a GUI. */
+  headless = false;
   /** Chats `open_chat` reports as starting (their orchestrator had something to resume). */
   starting = new Set<string>();
   /** Called before answering a command (to interleave pushed events). */
@@ -166,7 +168,7 @@ export class FakeCore {
     if (failure) throw failure;
     switch (cmd.type) {
       case "ping":
-        return { type: "pong", host: this.host, version: "0.1.0" };
+        return { type: "pong", host: this.host, version: "0.1.0", headless: this.headless };
       case "list_projects":
         return { type: "projects", projects: [this.info, ...this.others] };
       case "open_project":
