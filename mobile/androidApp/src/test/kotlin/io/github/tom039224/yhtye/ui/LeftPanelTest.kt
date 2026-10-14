@@ -267,6 +267,17 @@ class LeftPanelTest {
     }
 
     @Test
+    fun `another desktop app has the monitor icon and is called a PC`() {
+        val laptop = ClientDevice("dev-3", "Laptop", ClientKind.Desktop, connected = true, lastSeenMs = 4_000)
+        h.open { devices = listOf(self, pixel, laptop) }
+        h.openLeft()
+        iconIn("client-dev-3", "monitor-icon").assertCountEquals(1)
+        iconIn("client-dev-3", "phone-icon").assertCountEquals(0)
+        iconIn("client-dev-1", "phone-icon").assertCountEquals(1)
+        rule.onNodeWithTag("client-dev-3").assert(hasContentDescription("Laptop · PC · 接続中"))
+    }
+
+    @Test
     fun `without the connection to the PC the server row and this device are greyed out`() {
         h.open { devices = listOf(self, pixel) }
         h.openLeft()

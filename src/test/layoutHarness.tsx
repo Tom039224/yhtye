@@ -7,7 +7,7 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
@@ -184,9 +184,10 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     core.agents.models["claude-code"] = longModels();
     core.remote.dnsName = `${NO_SPACES}.tailnet.ts.net`;
     core.remote.set(true, undefined);
-    core.remote.devices = Array.from({ length: 12 }, (_, i) => ({
+    core.remote.devices = Array.from({ length: 12 }, (_, i): RemoteDevice => ({
       id: `dev-${i}`,
       name: i % 3 === 0 ? `${NO_SPACES}${i}` : `端末 ${i}`,
+      kind: i % 3 === 1 ? "desktop" : "android",
       created_ms: NOW - i * 86_400_000,
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
@@ -198,8 +199,8 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
   core.log = durable(FULL_RUN);
   if (scenario === "devices") {
     core.remote.devices = [
-      { id: "dev-1", name: "Pixel 9", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
-      { id: "dev-2", name: `Tablet ${NO_SPACES}`, created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
+      { id: "dev-1", name: "Pixel 9", kind: "android", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
+      { id: "dev-2", name: `Workstation ${NO_SPACES}`, kind: "desktop", created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
     ];
   }
   return { core, open: scenario !== "empty" };

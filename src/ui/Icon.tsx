@@ -169,6 +169,12 @@ const GLYPHS = {
       <path d="M11 17.5h2" />
     </>
   ),
+  monitor: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="11" rx="1.5" />
+      <path d="M9 19.5h6M12 15.5v4" />
+    </>
+  ),
   server: (
     <>
       <rect x="4.5" y="4.5" width="15" height="6.5" rx="1.5" />

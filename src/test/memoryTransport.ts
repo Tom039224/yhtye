@@ -324,7 +324,7 @@ export class FakeRemote {
 
 /** A paired device as `list_clients` shows it. */
 export function clientOf(d: RemoteDevice): ClientDevice {
-  return { id: d.id, name: d.name, kind: "android", connected: d.connected, last_seen_ms: d.last_seen_ms };
+  return { id: d.id, name: d.name, kind: d.kind, connected: d.connected, last_seen_ms: d.last_seen_ms };
 }
 
 const ROLES: AgentRole[] = ["orchestrator", "implementer", "investigator", "reviewer"];

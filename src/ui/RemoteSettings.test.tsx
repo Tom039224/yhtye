@@ -15,8 +15,8 @@ import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 import { qrPath } from "./QrCode";
 import { formatPairingCode, formatRemaining, portError } from "./RemoteSettingsSection";
 
-const PIXEL: RemoteDevice = { id: "dev-0001", name: "Pixel 8", created_ms: Date.UTC(2026, 9, 1, 3, 0), last_seen_ms: Date.UTC(2026, 9, 10, 3, 0), connected: true };
-const TABLET: RemoteDevice = { id: "dev-0002", name: "Tablet", created_ms: Date.UTC(2026, 9, 2, 3, 0), last_seen_ms: null, connected: false };
+const PIXEL: RemoteDevice = { id: "dev-0001", name: "Pixel 8", kind: "android", created_ms: Date.UTC(2026, 9, 1, 3, 0), last_seen_ms: Date.UTC(2026, 9, 10, 3, 0), connected: true };
+const TABLET: RemoteDevice = { id: "dev-0002", name: "Tablet", kind: "android", created_ms: Date.UTC(2026, 9, 2, 3, 0), last_seen_ms: null, connected: false };
 
 async function setup(configure?: (core: FakeCore) => void, timers = false) {
   const transport = new MemoryTransport();
