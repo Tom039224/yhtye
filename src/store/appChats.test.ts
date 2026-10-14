@@ -403,10 +403,10 @@ describe("pinging the core", () => {
 
   it("pings when the connection opens and keeps the host name and the time of the answer", async () => {
     const s = newStore();
-    expect(s.getState().host).toEqual({ name: null, headless: false, lastPingAt: null });
+    expect(s.getState().host).toEqual({ name: null, version: null, compatibility: null, headless: false, lastPingAt: null });
     await vi.advanceTimersByTimeAsync(0);
     expect(transport.callsOf("ping")).toHaveLength(1);
-    expect(s.getState().host).toEqual({ name: "test-host", headless: false, lastPingAt: Date.now() });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: Date.now() });
     s.stop();
   });
 
@@ -440,7 +440,7 @@ describe("pinging the core", () => {
     transport.setStatus({ state: "closed", reason: "gone", retryInMs: null });
     await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3);
     expect(transport.callsOf("ping")).toHaveLength(3);
-    expect(s.getState().host).toEqual({ name: "test-host", headless: false, lastPingAt: answered });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: answered });
     // It picks up again on reconnecting.
     transport.setStatus({ state: "open" });
     await vi.advanceTimersByTimeAsync(0);

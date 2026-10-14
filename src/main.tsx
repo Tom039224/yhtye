@@ -1,19 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import { createTransport } from "./api/create";
 import App from "./App";
-import { AppStore } from "./store/app";
-import { browserPrefs } from "./store/prefs";
-import { StoreContext } from "./store/useStore";
+import { createHostsRegistry } from "./store/bootstrap";
+import { HostsProvider } from "./store/useHosts";
 
-const store = new AppStore(createTransport(), { prefs: browserPrefs() });
-store.start();
+const registry = createHostsRegistry();
+void registry.start();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <StoreContext.Provider value={store}>
+    <HostsProvider registry={registry}>
       <App />
-    </StoreContext.Provider>
+    </HostsProvider>
   </React.StrictMode>,
 );
