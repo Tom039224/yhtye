@@ -127,6 +127,24 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    to the orchestrator. Tasks work in worktrees outside your repository under the data directory
    (`~/.local/share/io.github.tom039224.yhtye`, or `YHTYE_DATA_DIR`).
 
+## Headless mode (no GUI)
+
+On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
+option of the same binary). It is for working with that machine from the Android app.
+
+```sh
+yhtye --headless -d [--port N] [--data-dir DIR] [--model NAME]   # run as a background daemon (it survives closing the terminal; log: <data dir>/headless.log)
+yhtye --headless [...]                                           # run in the foreground (stop with Ctrl+C)
+yhtye remote pair | devices | revoke <id> | status | stop        # ask the running headless instance (over a Unix domain socket)
+```
+
+To manage it as a service instead, the Arch package also installs a systemd user service (optional:
+`systemctl --user enable --now yhtye-headless`).
+
+Prerequisites: you are logged in to Tailscale and the node is **not a tagged node**. A server without a GUI often has no
+Secret Service keyring; then secret environment variables cannot be used (a warning is logged at start). Under systemd,
+make sure the agents' CLIs are on the service's `PATH`. Steps and details are in [`SETUP.md`](SETUP.md#gui-の無いマシンで動かす-ヘッドレス) (Japanese).
+
 ## Android app
 
 A client for operating the Yhtye running on your PC from an Android device over Tailscale (Kotlin + Jetpack Compose,
@@ -138,7 +156,7 @@ notifies you when the work is done and it is your turn. Design: [`docs/planned/a
 
 - The PC and the device are connected with the **same Tailscale account**. Yhtye on the PC listens only on Tailscale
   addresses and accepts only devices of the same user.
-- Yhtye (the desktop app) is running on the PC; the app connects only while it runs.
+- Yhtye (the desktop app, or `yhtye --headless` without a GUI) is running on the PC; the app connects only while it runs.
 - Android 8.0 (API 26) or later.
 
 ### Installing
@@ -147,7 +165,7 @@ notifies you when the work is done and it is your turn. Design: [`docs/planned/a
    `yhtye-android-<version>.apk` from an `android-v…` release.
 2. Open the APK. Android asks you to allow installing unknown apps for the browser (or file manager) you used; allow it and install.
 3. On first start, turn on "Settings → Remote access" in Yhtye on the PC to show a QR code, and scan it with the app's
-   "Scan QR code" (or use "Enter manually") to pair.
+   "Scan QR code" (or use "Enter manually") to pair. On a server without a GUI, `yhtye remote pair` draws the QR code in the terminal.
 
 The APK is signed with the author's key. An update is a new APK signed with the same key installed over the old one;
 your pairing and other data are kept.

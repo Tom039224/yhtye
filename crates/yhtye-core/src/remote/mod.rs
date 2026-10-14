@@ -77,7 +77,7 @@ impl Default for RemoteSettings {
 }
 
 /// What the settings panel shows of remote access.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RemoteStatus {
     /// The setting: remote access is wanted (it may still have failed to start).
     pub enabled: bool,
@@ -102,7 +102,7 @@ pub struct RemoteStatus {
 }
 
 /// A paired device as the settings panel lists it (never its token).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RemoteDevice {
     pub id: String,
     pub name: String,
@@ -115,7 +115,7 @@ pub struct RemoteDevice {
 }
 
 /// A newly issued pairing code.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PairingCode {
     pub code: String,
     pub expires_at_ms: u64,

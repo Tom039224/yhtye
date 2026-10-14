@@ -254,6 +254,10 @@ async fn pairs_connects_calls_hears_events_and_is_revoked() {
     let server = known.server.expect("server info");
     assert_eq!(server.host, host_name());
     assert_eq!(server.version.as_deref(), Some(APP_VERSION));
+    assert!(
+        !server.headless,
+        "this host has a GUI (a test core is not headless)"
+    );
     assert_eq!(server.compatibility, Compatibility::Compatible);
     // The host's name replaces the address it was paired by (and is kept).
     notice(&mut notices, |n| {

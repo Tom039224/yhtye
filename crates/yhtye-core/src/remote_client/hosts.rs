@@ -101,6 +101,9 @@ pub struct ServerInfo {
     pub host: String,
     /// The host's Yhtye version; none if it predates the field.
     pub version: Option<String>,
+    /// The host runs without a GUI (`yhtye --headless`, `core-design.md` §9);
+    /// a host that predates the field is taken for one with a GUI.
+    pub headless: bool,
     pub compatibility: Compatibility,
 }
 
@@ -635,7 +638,12 @@ async fn introduce(
             return;
         }
     };
-    let Some((host, version)) = pong(&reply) else {
+    let Some(Pong {
+        host,
+        version,
+        headless,
+    }) = pong(&reply)
+    else {
         tracing::warn!("host {server_id} answered the ping with something else: {reply}");
         return;
     };
@@ -646,14 +654,24 @@ async fn introduce(
     let info = ServerInfo {
         host: host.clone(),
         version,
+        headless,
         compatibility: compatible,
     };
     inner.update_status(&server_id, &status, |s| s.server = Some(info));
     inner.learn_name(&server_id, &host).await;
 }
 
-/// The machine name and version of a `pong` (a version that is empty is none).
-fn pong(reply: &Value) -> Option<(String, Option<String>)> {
+/// What a `pong` says.
+#[derive(Debug, PartialEq, Eq)]
+struct Pong {
+    host: String,
+    /// `None`: empty or missing (a host that predates the field).
+    version: Option<String>,
+    /// Missing means a host with a GUI.
+    headless: bool,
+}
+
+fn pong(reply: &Value) -> Option<Pong> {
     if reply.get("type")? != "pong" {
         return None;
     }
@@ -663,7 +681,15 @@ fn pong(reply: &Value) -> Option<(String, Option<String>)> {
         .and_then(Value::as_str)
         .filter(|v| !v.trim().is_empty())
         .map(str::to_string);
-    Some((host, version))
+    let headless = reply
+        .get("headless")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    Some(Pong {
+        host,
+        version,
+        headless,
+    })
 }
 
 #[cfg(test)]
@@ -671,19 +697,28 @@ mod tests {
     use super::*;
     use crate::api::ApiResponse;
 
+    fn pong_of(host: &str, version: Option<&str>, headless: bool) -> Option<Pong> {
+        Some(Pong {
+            host: host.into(),
+            version: version.map(str::to_string),
+            headless,
+        })
+    }
+
     #[test]
-    fn a_pong_is_read_with_or_without_a_version() {
+    fn a_pong_is_read_with_or_without_a_version_and_headless_flag() {
         let real = serde_json::to_value(ApiResponse::Pong {
             host: "pc".into(),
             version: "0.1.0".into(),
+            headless: true,
         })
         .unwrap();
-        assert_eq!(pong(&real), Some(("pc".into(), Some("0.1.0".into()))));
-        // A host that predates the field leaves it out; an empty one is the same.
+        assert_eq!(pong(&real), pong_of("pc", Some("0.1.0"), true));
+        // A host that predates a field leaves it out; an empty version is the same.
         let old = serde_json::json!({"type": "pong", "host": "old"});
-        assert_eq!(pong(&old), Some(("old".into(), None)));
+        assert_eq!(pong(&old), pong_of("old", None, false));
         let empty = serde_json::json!({"type": "pong", "host": "old", "version": ""});
-        assert_eq!(pong(&empty), Some(("old".into(), None)));
+        assert_eq!(pong(&empty), pong_of("old", None, false));
         assert_eq!(
             pong(&serde_json::json!({"type": "projects", "host": "x"})),
             None

@@ -152,6 +152,15 @@ object YIcons {
         "M8 7.75h.01M8 16.25h.01",
         "M12 7.75h4M12 16.25h4",
     )
+    /** GUI 無しのサーバー: 箱の中に状態灯と `>_` (PC の `server-headless`)。 */
+    val ServerHeadless = lineIcon(
+        "serverHeadless",
+        rect(4.5f, 4.5f, 15f, 15f, 1.5f),
+        "M4.5 9.25h15",
+        "M8 6.9h.01",
+        "M8.25 12.25l2.75 2.5-2.75 2.5",
+        "M13.25 17.25h3",
+    )
     val Activity = lineIcon("activity", "M22 12h-4l-3 9L9 3l-3 9H2")
     val Flag = lineIcon("flag", "M4 22V4", "M4 4h13l-2 4 2 4H4")
     val Help = lineIcon("help", circle(12f, 12f, 10f), "M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3", "M12 17h.01")

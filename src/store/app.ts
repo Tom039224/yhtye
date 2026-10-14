@@ -87,6 +87,8 @@ export interface UsageView {
 export interface HostView {
   /** Its host name (`null` until the first answer). */
   name: string | null;
+  /** It runs without a GUI (`yhtye --headless`); a core that does not say is taken as having one. */
+  headless: boolean;
   /** When the core last answered a ping (ms since the epoch). */
   lastPingAt: number | null;
 }
@@ -156,7 +158,7 @@ export class AppStore extends SettingsCommands {
       busy: { opening: false, sending: false, compacting: false },
       git: null,
       usage: { report: null, error: null, loading: false },
-      host: { name: null, lastPingAt: null },
+      host: { name: null, headless: false, lastPingAt: null },
       clients: [],
     };
   }
@@ -632,7 +634,7 @@ export class AppStore extends SettingsCommands {
     this.pinging = true;
     try {
       const r = await withTimeout(this.invoke({ type: "ping" }, "pong"), PING_TIMEOUT_MS);
-      this.set({ host: { name: r.host, lastPingAt: Date.now() } });
+      this.set({ host: { name: r.host, headless: r.headless === true, lastPingAt: Date.now() } });
     } catch {
       // Missed; the next ping tries again.
     } finally {

@@ -182,6 +182,13 @@ const GLYPHS = {
       <path d="M8 7.75h.01M8 16.25h.01M12 7.75h4M12 16.25h4" />
     </>
   ),
+  // A server (the box) that has a terminal and no screen: `>_` under the status light.
+  "server-headless": (
+    <>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="1.5" />
+      <path d="M4.5 9.25h15M8 6.9h.01M8.25 12.25l2.75 2.5-2.75 2.5M13.25 17.25h3" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof GLYPHS;

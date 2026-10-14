@@ -24,9 +24,10 @@ let store: AppStore;
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 const footer = () => screen.getByTestId("host");
 
-function mount() {
+function mount(setup?: (core: FakeCore) => void) {
   transport = new MemoryTransport();
   core = new FakeCore(PROJECT, chatSnapshot());
+  setup?.(core);
   core.attach(transport);
   store = new AppStore(transport);
   store.start();
@@ -63,6 +64,15 @@ describe("the host footer", () => {
     const dot = within(footer()).getByRole("img", { name: "接続中" });
     expect(dot).toHaveClass("dot-ok");
     expect(footer()).toHaveAttribute("title", "test-host · 接続中");
+  });
+
+  it("marks a host without a GUI with its own icon and says so in the tooltip", async () => {
+    mount((c) => {
+      c.headless = true;
+    });
+    await advance(0);
+    expect(iconOf(footer())).toBe("server-headless");
+    expect(footer()).toHaveAttribute("title", "test-host · ヘッドレス · 接続中");
   });
 
   it("waits with a dash and an amber dot until the first answer", async () => {
