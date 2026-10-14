@@ -590,6 +590,7 @@ fn responses() -> Vec<Sample> {
             ApiResponse::Pong {
                 host: "pc".into(),
                 version: "0.2.1".into(),
+                headless: true,
             },
         ),
         (
@@ -1310,6 +1311,7 @@ fn server_messages() -> Vec<Sample> {
                 ok: ApiResponse::Pong {
                     host: "pc".into(),
                     version: "0.2.1".into(),
+                    headless: false,
                 },
             }),
         ),

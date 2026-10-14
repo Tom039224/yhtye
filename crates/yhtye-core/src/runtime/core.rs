@@ -77,6 +77,9 @@ pub struct CoreConfig {
     /// This PC on Tailscale, for remote access (the `tailscale` command; tests
     /// use a fake).
     pub tailscale: Arc<dyn Tailscale>,
+    /// The host runs without a GUI (`yhtye --headless`); `Ping` tells the
+    /// clients, which show another icon for it.
+    pub headless: bool,
 }
 
 impl CoreConfig {
@@ -95,6 +98,7 @@ impl CoreConfig {
             usage: Some(HarnessConfig::claude_code_usage_probe()),
             secret_backend: Arc::new(KeyringBackend::new()),
             tailscale: Arc::new(TailscaleCli),
+            headless: false,
         }
     }
 
@@ -203,6 +207,7 @@ impl Core {
             ApiCommand::Ping => Ok(ApiResponse::Pong {
                 host: host_name(),
                 version: APP_VERSION.to_string(),
+                headless: self.inner.cfg.headless,
             }),
             ApiCommand::ListProjects => Ok(ApiResponse::Projects {
                 projects: self.list_projects().await?,

@@ -300,7 +300,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "pong",
         ApiResponse.Serializer,
-        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}",
+        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":true}",
     ),
     ContractSample(
         "ApiResponse",
@@ -1152,7 +1152,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "WsServerMessage",
         "reply/ok",
         WsServerMessage.Serializer,
-        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}}",
+        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":false}}",
     ),
     ContractSample(
         "WsServerMessage",
