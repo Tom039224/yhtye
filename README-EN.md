@@ -145,6 +145,26 @@ Prerequisites: you are logged in to Tailscale and the node is **not a tagged nod
 Secret Service keyring; then secret environment variables cannot be used (a warning is logged at start). Under systemd,
 make sure the agents' CLIs are on the service's `PATH`. Steps and details are in [`SETUP.md`](SETUP.md#gui-の無いマシンで動かす-ヘッドレス) (Japanese).
 
+## Connecting from the PC to another host
+
+The desktop app can also be a **client** of a Yhtye running on another PC or on a headless server. That host's projects are listed after this
+PC's own in the project pull-down (with a **remote icon** after the name); picking one makes the screen drive that host's orchestrator, tasks and git.
+As with the Android app, it goes over Tailscale and only reaches hosts of the same Tailscale user.
+
+1. On the host, run Yhtye, turn remote access on and show a pairing code: "Settings → Remote access → Add device" in the desktop app, or
+   `yhtye remote pair` on a headless host.
+2. In this PC's Yhtye open "Settings → Connections" (the "接続先" section), and paste the `yhtye://pair?…` link (clicking such a link opens the same screen),
+   or type the host, port and code. Check "this PC's name" (the name it is listed under on the host) and press "接続" (Connect). Nothing is sent until you press it.
+3. Once connected, the host's projects appear in the pull-down. The "open repository" box opens a path on the host that is on screen.
+
+- The list under the form shows each host's state, and lets you reconnect to one that is down, or delete it. A host that removed this device shows
+  "このホストから外されました" (removed by the host). Removing the device from the host's own list is done on that host.
+- While a remote host is on screen, settings such as "Agents" are that host's (its name is next to the heading); its "Remote access" (its own server,
+  adding and revoking devices) can only be managed on that host itself.
+- Without a usable OS keyring the device token cannot be stored, and you have to pair again after restarting Yhtye (the screen says so).
+
+Steps and troubleshooting are in [`SETUP.md`](SETUP.md#pc-から別のホストに接続する) (Japanese).
+
 ## Android app
 
 A client for operating the Yhtye running on your PC from an Android device over Tailscale (Kotlin + Jetpack Compose,

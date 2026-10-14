@@ -1,10 +1,11 @@
 //! `yhtye://pair?…` links (`core-design.md` §9, §18.9): a click on the PC's
 //! QR code / link (or a link pasted into the browser) starts `yhtye <link>` or
-//! reaches the running app; the app asks the person whether to pair with that
-//! host. **Nothing pairs by itself**: pairing spends the host's one-time code
-//! and registers this device there, so the webview shows the host and asks for
-//! a name first (`src/ui/PairLinkDialog.tsx`), and only then calls
-//! `yhtye_remote_add`.
+//! reaches the running app; the app shows the person that host. **Nothing
+//! pairs by itself**: pairing spends the host's one-time code and registers
+//! this device there, so the webview opens the settings' "接続先" with the
+//! link in the box, shows the host and asks for a name
+//! (`src/ui/HostsSettingsSection.tsx`), and only when the person presses
+//! "接続" calls `yhtye_remote_add`.
 //!
 //! Where links come from:
 //! - the one the app was started with (`DeepLink::get_current`, read at startup);

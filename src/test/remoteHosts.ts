@@ -7,6 +7,7 @@ import {
   type HostCompatibility,
   type HostNotice,
   type HostsApi,
+  type HostToken,
   linkStatus,
   type PairingInput,
   type PairingPreview,
@@ -59,6 +60,10 @@ export class FakeHostsApi implements HostsApi {
   stoppedLinks = 0;
   preview: PairingPreview = { hosts: ["100.64.0.7"], port: 1423, server_id: "sid-new", default_device_name: "this pc" };
   addError: Error | null = null;
+  /** What the shell says of the token it kept for a host just added. */
+  addedToken: HostToken = { place: "keyring" };
+  /** What was asked of `add`, in order. */
+  inputs: PairingInput[] = [];
 
   async list(): Promise<RemoteHostInfo[]> {
     this.calls.push("list");
@@ -73,8 +78,9 @@ export class FakeHostsApi implements HostsApi {
   }
   async add(input: PairingInput, deviceName: string): Promise<RemoteHostInfo> {
     this.calls.push(`add ${input.kind} ${deviceName}`);
+    this.inputs.push(input);
     if (this.addError) throw this.addError;
-    const added = hostInfo("sid-new", { state: "connecting", attempt: 0 });
+    const added = { ...hostInfo("sid-new", { state: "connecting", attempt: 0 }), token: this.addedToken, device_name: deviceName };
     this.hosts.push(added);
     return added;
   }
@@ -139,8 +145,11 @@ export interface TestHosts {
   drafts: ReturnType<typeof memoryDrafts>;
 }
 
-/** A registry whose local core knows `repo` and `beta`, and whose remote hosts know `repo` (another one) and `server-only`. */
-export function newTestHosts(options: { api?: FakeHostsApi | null } = {}): TestHosts {
+/**
+ * A registry whose local core knows `repo` and `beta`, and whose remote hosts know `repo` (another one) and `server-only`.
+ * `configureFar` shapes a remote host's core (what it answers, its devices) before its store first asks.
+ */
+export function newTestHosts(options: { api?: FakeHostsApi | null; configureFar?: (far: Far) => void } = {}): TestHosts {
   const prefs = memoryPrefs();
   const drafts = memoryDrafts();
   const localTransport = new MemoryTransport();
@@ -155,6 +164,7 @@ export function newTestHosts(options: { api?: FakeHostsApi | null } = {}): TestH
     api,
     createRemote: (host, scope) => {
       const far = new Far(host.server_id);
+      options.configureFar?.(far);
       far.store = new AppStore(far.transport, {
         prefs,
         drafts: scopedDrafts(drafts, scope),

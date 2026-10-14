@@ -1,15 +1,19 @@
+import { useActiveHostEntry } from "../store/useHosts";
 import { useAppState, useStore } from "../store/useStore";
 import { Icon } from "./Icon";
 import { backgroundProjects, projectRing, RING_LABEL } from "./projectActivity";
+import { RemoteMark } from "./RemoteMark";
 
 /**
  * Projects other than the one on screen whose orchestration keeps running in
  * the core, as compact chips under the picker; a click switches to one. Each
  * chip carries the same ring as the picker (a turning arc while a chat of the
- * project is working, a hollow one otherwise).
+ * project is working, a hollow one otherwise). They are the projects of the
+ * host on screen: of a remote host, each chip carries the remote mark.
  */
 export function BackgroundProjects() {
   const store = useStore();
+  const host = useActiveHostEntry();
   const projects = useAppState((s) => s.projects);
   const view = useAppState((s) => s.project);
   const currentId = view?.info.id ?? null;
@@ -37,6 +41,7 @@ export function BackgroundProjects() {
               >
                 <span className={`ring ring-${ring}`} data-testid={`bg-ring-${p.id}`} aria-hidden="true" />
                 <span className="name">{p.name}</span>
+                <RemoteMark entry={host ?? undefined} size={11} />
               </button>
             </li>
           );
