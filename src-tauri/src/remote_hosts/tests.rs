@@ -228,11 +228,11 @@ fn the_host_notices_have_the_shape_the_webview_reads() {
 
 #[test]
 fn a_reply_is_what_the_core_or_the_host_answered() {
-    let local = crate::CommandReply::Local(ApiResponse::Pong {
+    let local = crate::CommandReply::Local(Box::new(ApiResponse::Pong {
         host: "pc".into(),
         version: "0.1.0".into(),
         headless: false,
-    });
+    }));
     assert_eq!(json_of(&local)["type"], "pong");
     let remote =
         crate::CommandReply::Remote(json!({"type": "pong", "host": "far", "version": "0.1.0"}));
