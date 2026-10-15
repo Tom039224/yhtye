@@ -15,6 +15,7 @@ import io.github.tom039224.yhtye.shared.api.generated.TaskStatus
 /** プロジェクトではなくアプリ全体のイベント (コアの `ApiEvent::app_wide`)。 */
 fun isAppWide(ev: ApiEvent): Boolean = when (ev.body) {
     is ApiEventBody.ProjectsChanged,
+    is ApiEventBody.BranchOrderChanged,
     is ApiEventBody.SettingsChanged,
     ApiEventBody.Resync,
     is ApiEventBody.RemoteStatusChanged,

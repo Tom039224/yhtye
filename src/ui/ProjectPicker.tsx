@@ -5,6 +5,7 @@ import { useAppState, useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { projectRing, RING_LABEL } from "./projectActivity";
+import { reorderKey, useSortable } from "./useSortable";
 
 /**
  * Scrolls `list` just far enough to show its `index`th row. Only the list moves: `scrollIntoView`
@@ -50,6 +51,10 @@ export function ProjectPicker() {
   const currentId = view?.info.id ?? null;
   const current = projects.find((p) => p.id === currentId) ?? view?.info ?? null;
   const activeIndex = Math.max(0, Math.min(active, projects.length - 1));
+  const ids = projects.map((p) => p.id);
+  // The order is the core's: a drag or the menu asks it, and the listing comes back.
+  const move = (next: string[]) => void store.reorderProjects(next);
+  const sortable = useSortable(ids, move, connected);
   // The open menu's project as the list says now (not as it was when the menu opened).
   const menuProject = menuFor === null ? null : (projects.find((p) => p.id === menuFor) ?? (menuFor === currentId ? current : null));
 
@@ -101,6 +106,12 @@ export function ProjectPicker() {
   };
   const onListKeyDown = (e: KeyboardEvent) => {
     const last = projects.length - 1;
+    const activeProject = projects[activeIndex];
+    // Alt + ↑ / ↓ moves the project; the highlight follows it.
+    if (activeProject && connected && reorderKey(e, ids, activeProject.id, (next) => {
+      setActive(next.indexOf(activeProject.id));
+      move(next);
+    })) return;
     switch (e.key) {
       case "ArrowDown":
         setActive(Math.min(last, activeIndex + 1));
@@ -191,6 +202,7 @@ export function ProjectPicker() {
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(p)}
                     onContextMenu={onContextMenuOf(p)}
+                    {...sortable.rowProps(p.id)}
                   >
                     <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
                     <span className="name">{p.name}</span>
@@ -228,6 +240,7 @@ export function ProjectPicker() {
           anchor={menuAnchor}
           onClose={closeMenu}
           onChosen={() => close(true)}
+          order={{ keys: ids, onMove: move, onMoved: () => (open ? listRef : triggerRef).current?.focus() }}
         />
       ) : null}
     </div>

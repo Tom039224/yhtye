@@ -82,6 +82,24 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "reorder_projects",
+        ApiCommand.Serializer,
+        "{\"type\":\"reorder_projects\",\"ids\":[\"repo\",\"beta\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_branch_order",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_branch_order\",\"project\":\"repo\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "reorder_branches",
+        ApiCommand.Serializer,
+        "{\"type\":\"reorder_branches\",\"project\":\"repo\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "sleep_project",
         ApiCommand.Serializer,
         "{\"type\":\"sleep_project\",\"project\":\"repo\"}",
@@ -331,6 +349,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "project",
         ApiResponse.Serializer,
         "{\"type\":\"project\",\"project\":{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true,\"awake\":true}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "branch_order",
+        ApiResponse.Serializer,
+        "{\"type\":\"branch_order\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}",
     ),
     ContractSample(
         "ApiResponse",
@@ -919,6 +943,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "projects_changed",
         ApiEvent.serializer(),
         "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"projects_changed\",\"project\":\"repo\"}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "branch_order_changed",
+        ApiEvent.serializer(),
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"branch_order_changed\",\"project\":\"repo\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}}",
     ),
     ContractSample(
         "ApiEvent",

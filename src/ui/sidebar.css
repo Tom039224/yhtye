@@ -164,3 +164,11 @@
 .client-more:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .client-more .caret { transform: rotate(-90deg); }
 .client-more .caret.open { transform: none; }
+
+/* ---- reordering by drag ------------------------------------------------------ */
+
+[data-dragging] { opacity: 0.45; }
+[data-drop="above"] { box-shadow: 0 -2px 0 0 var(--accent); }
+[data-drop="below"] { box-shadow: 0 2px 0 0 var(--accent); }
+.bg-list [data-drop="above"] { box-shadow: -2px 0 0 0 var(--accent); }
+.bg-list [data-drop="below"] { box-shadow: 2px 0 0 0 var(--accent); }

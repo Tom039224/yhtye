@@ -110,6 +110,19 @@ fn commands() -> Vec<Sample> {
             json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
         ),
         (
+            "reorder_projects",
+            json!({"type": "reorder_projects", "ids": ["repo", "beta"]}),
+        ),
+        (
+            "get_branch_order",
+            json!({"type": "get_branch_order", "project": "repo"}),
+        ),
+        (
+            "reorder_branches",
+            json!({"type": "reorder_branches", "project": "repo",
+                "keys": ["/home/u/repo", "feat/x"]}),
+        ),
+        (
             "sleep_project",
             json!({"type": "sleep_project", "project": "repo"}),
         ),
@@ -615,6 +628,12 @@ fn responses() -> Vec<Sample> {
             "project",
             ApiResponse::Project {
                 project: project_info(true),
+            },
+        ),
+        (
+            "branch_order",
+            ApiResponse::BranchOrder {
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (
@@ -1271,6 +1290,13 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             "projects_changed".into(),
             ApiEventBody::ProjectsChanged {
                 project: "repo".into(),
+            },
+        ),
+        (
+            "branch_order_changed".into(),
+            ApiEventBody::BranchOrderChanged {
+                project: "repo".into(),
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (

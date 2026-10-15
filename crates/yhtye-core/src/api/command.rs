@@ -32,11 +32,15 @@ pub enum ApiCommand {
     /// A liveness check of the core: answers with the name of the machine it
     /// runs on (the host footer of the sidebar). The UI sends it periodically.
     Ping,
-    /// Every project known to the database, and whether it is open.
+    /// Every project known to the database, and whether it is open, most
+    /// recently used first (opening a project uses it; `reorder_projects` sets
+    /// the order by hand). Projects never used come last, in the order they were
+    /// registered.
     ListProjects,
     /// Opens (registering it on first use) the git repository at `path`: starts
     /// its orchestrator and resumes interrupted tasks. Opening an open project
-    /// returns it unchanged.
+    /// returns it unchanged. The project is used: it moves to the front of the
+    /// project order.
     OpenProject {
         path: String,
     },
@@ -97,6 +101,29 @@ pub enum ApiCommand {
     SleepChat {
         project: String,
         chat: String,
+    },
+    /// Puts the projects in the order the user made (a drag in the project list):
+    /// `ids` come first, in that order (unknown ones are ignored), then the
+    /// projects it does not name, in their order. Answers with the listing like
+    /// `list_projects`; every client re-reads it (`projects_changed`).
+    ReorderProjects {
+        ids: Vec<String>,
+    },
+    /// The order of the project's branches (BRANCHES tree), most recently used
+    /// first: the keys of its worktrees (the worktree's path) and of its local
+    /// branches that no worktree has checked out (the branch name). Items whose
+    /// key is not listed come after, in the tree's own order. Works for
+    /// projects that are not open.
+    GetBranchOrder {
+        project: String,
+    },
+    /// Puts the project's branches in the order the user made: `keys` come first
+    /// in that order, then the keys it does not name, as they were. Answers
+    /// with the order like `get_branch_order`; every client gets
+    /// `branch_order_changed`. Works for projects that are not open.
+    ReorderBranches {
+        project: String,
+        keys: Vec<String>,
     },
     /// Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
     /// each): all its orchestrator sessions stop, so the project is no longer
@@ -407,6 +434,7 @@ pub enum ApiResponse {
         #[serde(default)]
         version: String,
     },
+    /// Answer of `list_projects` and `reorder_projects`, in the project order.
     Projects {
         projects: Vec<ProjectInfo>,
     },
@@ -433,6 +461,10 @@ pub enum ApiResponse {
     ChatOpened {
         /// The chat's orchestrator is being started (now, or by an earlier call).
         starting: bool,
+    },
+    /// Answer of `get_branch_order` and `reorder_branches`.
+    BranchOrder {
+        keys: Vec<String>,
     },
     GitOverview {
         git: GitOverview,

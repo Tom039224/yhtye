@@ -86,17 +86,29 @@ private fun unreadNodes(chats: List<ChatInfo>): List<WorktreeNode> =
 /**
  * [awaiting]: git を最後に読んだ後に作られたチャット。その読み取りが作業ツリーを出していなければ、
  * 読み直すまでは失われたものではなくディレクトリ名の下に出す。
+ * [order]: ブランチの順 (コアのリスト)。作業ツリー (パスで) と他のブランチ (名前で) はこの順に、載っていないものはその後に git の順で。
  */
-fun buildTree(chats: List<ChatInfo>, overview: GitOverview?, awaiting: Collection<String> = emptyList()): BranchTree {
+fun buildTree(
+    chats: List<ChatInfo>,
+    overview: GitOverview?,
+    awaiting: Collection<String> = emptyList(),
+    order: List<String> = emptyList(),
+): BranchTree {
     val sorted = byRecency(chats)
     if (overview == null) return BranchTree(unreadNodes(sorted), lost = emptyList(), otherBranches = emptyList())
-    val worktrees = overview.worktrees
-        .map { w -> w to sorted.filter { it.worktree == w.path } }
-        .filter { (w, c) -> isShown(w, c) }
-        .map { (w, c) -> WorktreeNode(w.path, worktreeLabel(w), w.isMain, w.missing, c) }
+    val worktrees = sortByOrder(
+        overview.worktrees
+            .map { w -> w to sorted.filter { it.worktree == w.path } }
+            .filter { (w, c) -> isShown(w, c) }
+            .map { (w, c) -> WorktreeNode(w.path, worktreeLabel(w), w.isMain, w.missing, c) },
+        order,
+    ) { it.path }
     val listed = overview.worktrees.mapTo(HashSet()) { it.path }
     val checkedOut = overview.worktrees.mapNotNullTo(HashSet()) { it.branch }
-    val otherBranches = overview.branches.map { it.name }.filter { !isInternalBranch(it) && it !in checkedOut }
+    val otherBranches = sortByOrder(
+        overview.branches.map { it.name }.filter { !isInternalBranch(it) && it !in checkedOut },
+        order,
+    ) { it }
     val unlisted = sorted.filter { it.worktree !in listed }
     val (unread, lost) = unlisted.partition { it.id in awaiting }
     return BranchTree(worktrees + unreadNodes(unread), lost, otherBranches)

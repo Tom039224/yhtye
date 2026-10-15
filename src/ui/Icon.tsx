@@ -97,6 +97,8 @@ const GLYPHS = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   "chevron-down": <path d="M6.5 9.5l5.5 5.5 5.5-5.5" />,
   "chevrons-up": <path d="M7 11l5-5 5 5M7 18l5-5 5 5" />,
+  "arrow-up": <path d="M12 19V5M6 11l6-6 6 6" />,
+  "arrow-down": <path d="M12 5v14M6 13l6 6 6-6" />,
   "arrow-left": <path d="M19 12H5M11 6l-6 6 6 6" />,
   "arrow-right": <path d="M5 12h14M13 6l6 6-6 6" />,
   user: (

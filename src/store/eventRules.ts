@@ -12,6 +12,7 @@ export const EVERYTHING: SettingsChange = { kind: null, project: null, revision:
 export function isAppWide(ev: ApiEvent): boolean {
   switch (ev.body.type) {
     case "projects_changed":
+    case "branch_order_changed":
     case "settings_changed":
     case "resync":
     case "remote_status_changed":

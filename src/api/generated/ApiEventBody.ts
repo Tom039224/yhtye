@@ -43,7 +43,7 @@ retrying: boolean, } | { "type": "session_stopped", session: string,
 /**
  * Stopped because Yhtye shut down; it is restored on the next start.
  */
-suspended: boolean, } | { "type": "session_interrupted", session: string, } | { "type": "agent", session: string, event: AgentEvent, } | { "type": "agent_text", session: string, kind: TextKind, text: string, } | { "type": "tool_called", record: ToolCallRecord, } | { "type": "prompted", session: string, text: string, } | { "type": "session_starting", session: string, } | { "type": "projects_changed", project: string, } | { "type": "settings_changed", kind: SettingsKind, 
+suspended: boolean, } | { "type": "session_interrupted", session: string, } | { "type": "agent", session: string, event: AgentEvent, } | { "type": "agent_text", session: string, kind: TextKind, text: string, } | { "type": "tool_called", record: ToolCallRecord, } | { "type": "prompted", session: string, text: string, } | { "type": "session_starting", session: string, } | { "type": "projects_changed", project: string, } | { "type": "branch_order_changed", project: string, keys: Array<string>, } | { "type": "settings_changed", kind: SettingsKind, 
 /**
  * The project whose agent settings layer changed (`None`: the global
  * layer, or a kind without projects).

@@ -34,6 +34,7 @@ import io.github.tom039224.yhtye.shared.client.ApiException
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.CoreConnection
 import io.github.tom039224.yhtye.shared.sync.of
+import io.github.tom039224.yhtye.shared.sync.sortByOrder
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
 import java.io.File
@@ -80,6 +81,12 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
 
     /** `list_projects` の答え (`open_project` はパスが合うものを返す)。 */
     var projects: List<ProjectInfo> = listOf(PROJECT)
+
+    /** プロジェクトの順 (id。新しく使った順)。`open_project` は使ったことにする。 */
+    var projectOrder: List<String> = emptyList()
+
+    /** プロジェクトのブランチの順 (キー。新しく使った順)。 */
+    var branchOrder: List<String> = emptyList()
 
     val worktree = snapshot.chats.firstOrNull()?.worktree ?: "/tmp/repo"
     var git = GitOverview(
@@ -139,8 +146,23 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         return when (command) {
             ApiCommand.Ping -> ApiResponse.Pong("test-host", hostVersion)
             ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer("test-host"), devices))
-            ApiCommand.ListProjects -> ApiResponse.Projects(projects)
-            is ApiCommand.OpenProject -> ApiResponse.Project(projects.find { it.path == command.path } ?: PROJECT)
+            ApiCommand.ListProjects -> ApiResponse.Projects(sortByOrder(projects, projectOrder) { it.id })
+            is ApiCommand.OpenProject -> {
+                val project = projects.find { it.path == command.path } ?: PROJECT
+                projectOrder = listOf(project.id) + projectOrder.filter { it != project.id }
+                ApiResponse.Project(project)
+            }
+            is ApiCommand.ReorderProjects -> {
+                val ids = command.ids.filter { id -> projects.any { it.id == id } }.distinct()
+                projectOrder = ids + projectOrder.filter { it !in ids }
+                ApiResponse.Projects(sortByOrder(projects, projectOrder) { it.id })
+            }
+            is ApiCommand.GetBranchOrder -> ApiResponse.BranchOrder(branchOrder)
+            is ApiCommand.ReorderBranches -> {
+                val keys = command.keys.filter { it.isNotEmpty() }.distinct()
+                branchOrder = keys + branchOrder.filter { it !in keys }
+                ApiResponse.BranchOrder(branchOrder)
+            }
             is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)
             is ApiCommand.ListEvents -> {
                 val after = log.filter { !it.live && it.seq > command.afterSeq }

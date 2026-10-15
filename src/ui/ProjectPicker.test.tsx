@@ -3,7 +3,7 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectInfo, SessionRecord, Snapshot } from "../api/generated";
 import { CommandError } from "../api/transport";
@@ -304,6 +304,108 @@ describe("projects running in the background", () => {
   });
 });
 
+describe("project order", () => {
+  const DELTA: ProjectInfo = { id: "delta", name: "delta", path: "/tmp/delta", open: true, running: false, awake: true };
+  const names = () => within(screen.getByRole("listbox", { name: "プロジェクト" })).getAllByRole("option").map((o) => o.textContent);
+  const stubTransfer = () => ({ setData: vi.fn(), effectAllowed: "", dropEffect: "" });
+
+  it("puts the project it switches to first", async () => {
+    const { store, user } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.click(screen.getByRole("option", { name: "gamma" }));
+    await user.click(await screen.findByRole("button", { name: "gamma" }));
+    expect(names()).toEqual(["gamma", "repo", "beta"]);
+  });
+
+  it("moves a project up or down from its right-click menu, and offers neither past the ends", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "beta" }) });
+    const menu = screen.getByRole("menu", { name: "beta の操作" });
+    await user.click(within(menu).getByRole("menuitem", { name: "上へ移動" }));
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["beta", "repo", "gamma"]);
+    await waitFor(() => expect(names()).toEqual(["beta", "repo", "gamma"]));
+    // The pull-down stays open, with the focus back on the list.
+    expect(screen.getByRole("listbox")).toHaveFocus();
+
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "beta" }) });
+    const top = screen.getByRole("menu", { name: "beta の操作" });
+    expect(within(top).getByRole("menuitem", { name: "上へ移動" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "gamma" }) });
+    expect(within(screen.getByRole("menu")).getByRole("menuitem", { name: "下へ移動" })).toBeDisabled();
+  });
+
+  it("moves the highlighted project with Alt + arrow keys", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    trigger().focus();
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Alt>}{ArrowDown}{/Alt}");
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["beta", "repo", "gamma"]);
+    await waitFor(() => expect(names()).toEqual(["beta", "repo", "gamma"]));
+    // The highlight followed the project; nothing was opened.
+    const list = screen.getByRole("listbox");
+    const options = within(list).getAllByRole("option");
+    expect(list).toHaveAttribute("aria-activedescendant", options[1].id);
+    expect(transport.callsOf("open_project")).toHaveLength(1);
+    await user.keyboard("{Alt>}{ArrowUp}{ArrowUp}{/Alt}");
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["repo", "beta", "gamma"]);
+  });
+
+  it("reorders by dragging a project onto another", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    const gamma = screen.getByRole("option", { name: "gamma" });
+    const repo = screen.getByRole("option", { name: "repo" });
+    expect(gamma).toHaveAttribute("draggable", "true");
+    const dataTransfer = stubTransfer();
+    fireEvent.dragStart(gamma, { dataTransfer });
+    fireEvent.dragOver(repo, { dataTransfer });
+    expect(repo).toHaveAttribute("data-drop", "above");
+    fireEvent.drop(repo, { dataTransfer });
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["gamma", "repo", "beta"]);
+    await waitFor(() => expect(names()).toEqual(["gamma", "repo", "beta"]));
+    expect(screen.getByRole("option", { name: "repo" })).not.toHaveAttribute("data-drop");
+  });
+
+  it("does nothing when a project is dropped on itself", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    const beta = screen.getByRole("option", { name: "beta" });
+    const dataTransfer = stubTransfer();
+    fireEvent.dragStart(beta, { dataTransfer });
+    fireEvent.dragOver(beta, { dataTransfer });
+    fireEvent.drop(beta, { dataTransfer });
+    expect(transport.callsOf("reorder_projects")).toHaveLength(0);
+  });
+
+  it("reorders the background chips among the places they have in the whole list", async () => {
+    const { store, user, transport } = setup({ others: [BETA, DELTA, GAMMA] });
+    await openRepo(store);
+    const chips = () => within(screen.getByRole("list", { name: "バックグラウンドで動作中のプロジェクト" })).getAllByRole("button").map((b) => b.textContent);
+    expect(chips()).toEqual(["beta", "delta"]);
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /^beta に切り替え/ }) });
+    const menu = screen.getByRole("menu", { name: "beta の操作" });
+    expect(within(menu).getByRole("menuitem", { name: "上へ移動" })).toBeDisabled();
+    await user.click(within(menu).getByRole("menuitem", { name: "下へ移動" }));
+    // gamma (not a chip) keeps its place; the chips trade theirs.
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["repo", "delta", "beta", "gamma"]);
+    await waitFor(() => expect(chips()).toEqual(["delta", "beta"]));
+
+    screen.getByRole("button", { name: /^beta に切り替え/ }).focus();
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["repo", "beta", "delta", "gamma"]);
+  });
+});
+
 describe("projects running in the background: a project that sleeps leaves", () => {
   it("is not listed while every chat of the open project sleeps, though it stays in the pull-down", async () => {
     const { store, user } = setup({ others: [{ ...BETA, awake: false }, GAMMA] });
@@ -332,7 +434,8 @@ describe("sleeping a project", () => {
     await openRepo(store);
     await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /beta に切り替え/ }) });
     const menu = screen.getByRole("menu", { name: "beta の操作" });
-    expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["スリープ"]);
+    // Moving shares the menu with sleep.
+    expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["上へ移動", "下へ移動", "スリープ"]);
     expect(sleepItem()).toBeEnabled();
     expect(transport.callsOf("open_project").map((c) => c.path)).toEqual(["/tmp/repo"]);
     await user.click(sleepItem());
