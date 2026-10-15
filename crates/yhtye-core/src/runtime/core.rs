@@ -284,6 +284,15 @@ impl Core {
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
+            ApiCommand::SleepProject { project } => {
+                self.known_project(&project).await?;
+                // A project that is not open has no session up: already asleep.
+                let open = self.lock_open().get(&project).cloned();
+                if let Some(orch) = open {
+                    orch.sleep_project().await.map_err(user_action_error)?;
+                }
+                Ok(ApiResponse::Accepted)
+            }
             ApiCommand::ListChats { project } => {
                 self.known_project(&project).await?;
                 Ok(ApiResponse::Chats {

@@ -123,6 +123,10 @@ fn commands() -> Vec<Sample> {
                 "keys": ["/home/u/repo", "feat/x"]}),
         ),
         (
+            "sleep_project",
+            json!({"type": "sleep_project", "project": "repo"}),
+        ),
+        (
             "list_chats",
             json!({"type": "list_chats", "project": "repo"}),
         ),

@@ -218,21 +218,60 @@ class ActivityTest {
 
     // ---- backgroundProjects ----
 
-    private val list = listOf(info("a"), info("b"), info("c", open = false), info("d"))
+    // a: 起きている、b: 作業中、c: 開いていない、d: 起きている、e: 開いているがチャットはみな眠っている
+    private val list = listOf(info("a", awake = true), info("b", running = true), info("c", open = false), info("d", awake = true), info("e"))
 
     @Test
-    fun listsTheOpenProjectsOtherThanTheOneOnScreenInOrder() {
+    fun listsTheOpenProjectsWithSomethingUpOtherThanTheOneOnScreenInOrder() {
         assertEquals(listOf("b", "d"), backgroundProjects(list, "a").map { it.id })
     }
 
     @Test
-    fun listsEveryOpenProjectWhenNoneIsOnScreen() {
+    fun listsEverySuchProjectWhenNoneIsOnScreen() {
         assertEquals(listOf("a", "b", "d"), backgroundProjects(list, null).map { it.id })
     }
 
     @Test
-    fun neverListsAStoppedProjectAndIsEmptyWhenNothingElseRuns() {
+    fun leavesOutAProjectWhoseChatsAllSleepAndIsEmptyWhenNothingElseRuns() {
+        assertEquals(emptyList(), backgroundProjects(listOf(info("e")), null))
         assertEquals(emptyList(), backgroundProjects(listOf(info("a"), info("c", open = false)), "a"))
         assertEquals(emptyList(), backgroundProjects(emptyList(), null))
+    }
+
+    @Test
+    fun dropsAProjectOnceItWasPutToSleep() {
+        val awake = listOf(info("a", awake = true), info("b", awake = true))
+        assertEquals(listOf("b"), backgroundProjects(awake, "a").map { it.id })
+        val slept = awake.map { if (it.id == "b") it.copy(awake = false) else it }
+        assertEquals(emptyList(), backgroundProjects(slept, "a"))
+    }
+
+    // ---- canSleepProject ----
+
+    @Test
+    fun canSleepAnOpenBackgroundProjectWithAnIdleOrchestratorUp() {
+        assertTrue(canSleepProject(info("a", awake = true), null))
+        assertTrue(canSleepProject(info("a", awake = true), viewOf(info("b"))))
+    }
+
+    @Test
+    fun cannotSleepAProjectThatIsNotOpenOrWhoseChatsAllSleep() {
+        assertFalse(canSleepProject(info("a", open = false), null))
+        assertFalse(canSleepProject(info("a"), viewOf(info("b"))))
+    }
+
+    @Test
+    fun cannotSleepAProjectWhileWorkIsOn() {
+        assertFalse(canSleepProject(info("a", running = true, awake = true), viewOf(info("b"))))
+        val a = info("a")
+        assertFalse(canSleepProject(a, viewOf(a, sessions = listOf(session(turnRunning = true)))))
+        assertFalse(canSleepProject(a, viewOf(a, tasks = listOf(task(TaskStatus.Running)))))
+    }
+
+    @Test
+    fun judgesTheProjectOnScreenByItsView() {
+        val a = info("a")
+        assertTrue(canSleepProject(a, viewOf(a, sessions = listOf(session()))))
+        assertFalse(canSleepProject(a, viewOf(a)))
     }
 }

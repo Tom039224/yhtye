@@ -100,6 +100,12 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "sleep_project",
+        ApiCommand.Serializer,
+        "{\"type\":\"sleep_project\",\"project\":\"repo\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "list_chats",
         ApiCommand.Serializer,
         "{\"type\":\"list_chats\",\"project\":\"repo\"}",

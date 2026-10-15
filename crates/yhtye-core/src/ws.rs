@@ -424,6 +424,7 @@ mod tests {
             r#"{"type": "set_secret_env", "name": "A", "value": "v"}"#,
             r#"{"type": "send_user_message", "project": "p", "chat": "c", "text": "t"}"#,
             r#"{"type": "sleep_chat", "project": "p", "chat": "c"}"#,
+            r#"{"type": "sleep_project", "project": "p"}"#,
             r#"{"type": "list_clients"}"#,
         ];
         for json in anyone {

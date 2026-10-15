@@ -25,9 +25,22 @@ export function projectRing(p: ProjectInfo, view: ProjectView | null): Ring {
   return p.open && p.awake ? "ready" : "stopped";
 }
 
-/** The projects running in the core in the background: open, but not the one shown. */
+/**
+ * The projects running in the core in the background: open, not the one shown,
+ * and with something up (work on, or a chat's orchestrator awake). A project
+ * whose chats all sleep is not running: it is left out, and is still in the picker.
+ */
 export function backgroundProjects(projects: ProjectInfo[], currentId: string | null): ProjectInfo[] {
-  return projects.filter((p) => p.open && p.id !== currentId);
+  return projects.filter((p) => p.open && (p.running || p.awake) && p.id !== currentId);
+}
+
+/**
+ * Whether a project can be put to sleep now: one of its chats is awake and none
+ * is working (a stopped project has nothing to put to sleep, and the core
+ * refuses to cut a turn off).
+ */
+export function canSleepProject(p: ProjectInfo, view: ProjectView | null): boolean {
+  return projectRing(p, view) === "ready";
 }
 
 export const RING_LABEL: Record<Ring, string> = { running: "実行中", ready: "待機中", stopped: "停止" };

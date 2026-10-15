@@ -158,8 +158,17 @@ fun projectRing(p: ProjectInfo, view: ProjectView?): Ring {
     return if (p.open && p.awake) Ring.Ready else Ring.Stopped
 }
 
-/** バックグラウンドで動いているプロジェクト: 開いているが表示していないもの。 */
+/**
+ * バックグラウンドで動いているプロジェクト: 開いていて、表示しておらず、何かが上がっているもの (作業が動いている・
+ * オーケストレータが起きている)。チャットがみな眠っているプロジェクトは動いていないので出さない (一覧には残る)。
+ */
 fun backgroundProjects(projects: List<ProjectInfo>, currentId: String?): List<ProjectInfo> =
-    projects.filter { it.open && it.id != currentId }
+    projects.filter { it.open && (it.running || it.awake) && it.id != currentId }
+
+/**
+ * プロジェクトを今眠らせられるか: どれかのチャットが起きていて、どれも作業中ではない。停止中のプロジェクトは眠らせる
+ * ものが無く、作業中ならコアがターンを切らないので断る (PC の `canSleepProject`)。
+ */
+fun canSleepProject(p: ProjectInfo, view: ProjectView?): Boolean = projectRing(p, view) == Ring.Ready
 
 val RING_LABEL: Map<Ring, String> = mapOf(Ring.Running to "実行中", Ring.Ready to "待機中", Ring.Stopped to "停止")

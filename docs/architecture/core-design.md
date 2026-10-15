@@ -1428,8 +1428,9 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   順が変わらないとき (すでに先頭のものを使った、同じ順を送った) は何も出さない。`resync` と再接続では `list_projects` と `get_branch_order` を読み直す。
 - **PC**: `store/order.ts` の関数と `AppState.branchOrder`。`buildTree(chats, overview, awaiting, order)` が作業ツリーと「他のブランチ」を順に並べる (ブランチ内のチャットは従来どおり `byRecency`)。
   並べ替えは、ドラッグ&ドロップ (`ui/useSortable.ts`。ブラウザの drag イベント。行を別の行に落とすとその行の場所に入る)、右クリックの `RowMenu` の「上へ移動 / 下へ移動」、行にフォーカスして Alt+↑/↓。
+  プロジェクトの右クリックメニュー (`ProjectMenu`) は T-102 のスリープと同じメニューで、並べ替えは一覧を開いたまま、スリープは一覧を閉じる。
   対象は、プロジェクトのプルダウン (`ProjectPicker`。Alt+↑/↓ はリストボックスで)、左パネルの稼働中プロジェクトのチップ (`BackgroundProjects`。出ているチップだけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
-- **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・作業ツリー・他のブランチの行を**長押し**すると `ReorderMenu` (「上へ移動 / 下へ移動」) が開く。
+- **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
 - テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/ProjectPicker.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)

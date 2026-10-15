@@ -17,29 +17,35 @@ import androidx.compose.ui.unit.dp
 /** @param tag テスト用の印: 項目は `$tag-up` / `$tag-down`。 */
 @Composable
 fun ReorderMenu(expanded: Boolean, onDismiss: () -> Unit, keys: List<String>, key: String, tag: String, onMove: (List<String>) -> Unit) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        ReorderMenuItems(onDismiss, keys, key, tag, onMove)
+    }
+}
+
+/** [ReorderMenu] の項目だけ (ほかの項目と同じメニューに入れる: プロジェクトのメニューはスリープと並べる)。 */
+@Composable
+fun ReorderMenuItems(onDismiss: () -> Unit, keys: List<String>, key: String, tag: String, onMove: (List<String>) -> Unit) {
     val c = Yhtye.colors
     val up = step(keys, key, -1)
     val down = step(keys, key, 1)
-    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        DropdownMenuItem(
-            text = { Text("上へ移動") },
-            leadingIcon = { YIcon(YIcons.ArrowUp, c.tx3, 18.dp) },
-            enabled = up != null,
-            onClick = {
-                onDismiss()
-                up?.let(onMove)
-            },
-            modifier = Modifier.testTag("$tag-up"),
-        )
-        DropdownMenuItem(
-            text = { Text("下へ移動") },
-            leadingIcon = { YIcon(YIcons.ArrowDown, c.tx3, 18.dp) },
-            enabled = down != null,
-            onClick = {
-                onDismiss()
-                down?.let(onMove)
-            },
-            modifier = Modifier.testTag("$tag-down"),
-        )
-    }
+    DropdownMenuItem(
+        text = { Text("上へ移動") },
+        leadingIcon = { YIcon(YIcons.ArrowUp, c.tx3, 18.dp) },
+        enabled = up != null,
+        onClick = {
+            onDismiss()
+            up?.let(onMove)
+        },
+        modifier = Modifier.testTag("$tag-up"),
+    )
+    DropdownMenuItem(
+        text = { Text("下へ移動") },
+        leadingIcon = { YIcon(YIcons.ArrowDown, c.tx3, 18.dp) },
+        enabled = down != null,
+        onClick = {
+            onDismiss()
+            down?.let(onMove)
+        },
+        modifier = Modifier.testTag("$tag-down"),
+    )
 }
