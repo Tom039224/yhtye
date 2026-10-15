@@ -146,7 +146,7 @@ private fun DetailHeader(task: Task, onBack: () -> Unit, onMention: (Mention) ->
         Column(Modifier.weight(1f).padding(vertical = 8.dp, horizontal = 2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TaskStatusChip(task, tone)
-                Text("${task.id} · ${task.group}", color = c.tx4, fontFamily = MonoFont, fontSize = 11.5.sp, maxLines = 1)
+                Text("${task.id} · ${task.group}", color = c.tx4, fontFamily = MonoFont, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text(
                 task.title,

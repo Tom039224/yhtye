@@ -369,6 +369,9 @@ private fun NoticeBox(item: TranscriptItem.Notice) {
     }
 }
 
+/** グループ・タスクの ID (32 文字までの名前) の幅の上限: タイトルの場所を残し、超えた分は省略記号で切る。 */
+private val ID_MAX_WIDTH = 140.dp
+
 /** 会話の中のグループのカード (タスクは今の状態から読む)。 */
 @Composable
 private fun GroupCardView(item: TranscriptItem.GroupCard, state: State?) {
@@ -394,7 +397,7 @@ private fun GroupCardView(item: TranscriptItem.GroupCard, state: State?) {
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 7.dp),
             )
-            Text(item.groupId, color = c.tx3, fontFamily = MonoFont, fontSize = 12.sp)
+            Text(item.groupId, color = c.tx3, fontFamily = MonoFont, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = ID_MAX_WIDTH))
         }
         if (tasks.isEmpty()) {
             Text("タスクはまだありません", color = c.tx4, fontSize = 13.sp, modifier = Modifier.padding(10.dp))
@@ -409,7 +412,15 @@ private fun GroupCardView(item: TranscriptItem.GroupCard, state: State?) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 YIcon(toneIcon(tone, t.kind), toneColor(tone), 14.dp)
-                Text(t.id, color = c.tx4, fontFamily = MonoFont, fontSize = 11.5.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                Text(
+                    t.id,
+                    color = c.tx4,
+                    fontFamily = MonoFont,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp).widthIn(max = ID_MAX_WIDTH),
+                )
                 Text(t.title, color = c.txBody, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
