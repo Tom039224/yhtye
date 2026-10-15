@@ -22,9 +22,11 @@ use yhtye_core::runtime::Orchestration;
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn plan(tasks: &[Value]) -> Value {
-    let mut actions = vec![json!({"mcp_call": {"tool": "create_group", "args": {"title": "g"}}})];
-    for t in tasks {
-        let mut args = json!({"group_id": "${group_id}", "title": "t", "kind": "code",
+    let mut actions =
+        vec![json!({"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "g"}}})];
+    for (i, t) in tasks.iter().enumerate() {
+        let name = format!("t{}", i + 1);
+        let mut args = json!({"group_id": "${group_id}", "name": name, "title": "t", "kind": "code",
                               "steps": [{"kind": "implement"}], "instruction": "do it"});
         if let (Some(a), Some(extra)) = (args.as_object_mut(), t.as_object()) {
             a.extend(extra.clone());
@@ -85,19 +87,19 @@ async fn silent_turns_get_a_reminder_then_protocol_violation_help() {
     ]});
     let (orch, events, _dir) = run_until_finished(orch_script, impl_script).await;
 
-    let impl_prompts = prompts_to(&events, "T-1/implementer");
+    let impl_prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(impl_prompts.len(), 3, "{impl_prompts:#?}");
     assert!(impl_prompts[0].starts_with("[yhtye:step]"));
-    assert!(impl_prompts[1].starts_with("[yhtye:reminder] task=T-1 step=1"));
+    assert!(impl_prompts[1].starts_with("[yhtye:reminder] task=t1 step=1"));
     assert!(impl_prompts[2].contains("Note from the orchestrator:\njust report it"));
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
         orch_prompts[1]
-            .starts_with("[yhtye:help_raised] help_id=H-1 task=T-1 kind=protocol_violation\n")
+            .starts_with("[yhtye:help_raised] help_id=H-1 task=t1 kind=protocol_violation\n")
     );
     assert_eq!(
         orch_prompts[2],
-        "[yhtye:group_settled] group=G-1\nT-1 done: reported after restart"
+        "[yhtye:group_settled] group=g1\nt1 done: reported after restart"
     );
     shutdown_and_check(orch, &events).await;
 }
@@ -114,8 +116,7 @@ async fn crashed_agent_raises_help_and_resume_starts_a_new_session() {
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
-        orch_prompts[1]
-            .starts_with("[yhtye:help_raised] help_id=H-1 task=T-1 kind=agent_crashed\n"),
+        orch_prompts[1].starts_with("[yhtye:help_raised] help_id=H-1 task=t1 kind=agent_crashed\n"),
         "{orch_prompts:#?}"
     );
     assert!(
@@ -125,13 +126,13 @@ async fn crashed_agent_raises_help_and_resume_starts_a_new_session() {
     );
     let starts = started_sessions(&events);
     assert_eq!(
-        starts.iter().filter(|s| **s == "T-1/implementer").count(),
+        starts.iter().filter(|s| **s == "t1/implementer").count(),
         2,
         "{starts:?}"
     );
     assert_eq!(
         orch_prompts[2],
-        "[yhtye:group_settled] group=G-1\nT-1 done: ok after crash"
+        "[yhtye:group_settled] group=g1\nt1 done: ok after crash"
     );
     shutdown_and_check(orch, &events).await;
 }
@@ -161,42 +162,42 @@ async fn failing_sub_agent_start_raises_agent_crashed() {
     .await;
     assert!(events.iter().any(|e| matches!(&e.body,
         ApiEventBody::SessionFailed { session, error, retrying: false }
-            if session == "T-1/implementer" && error.contains("session/new"))));
+            if session == "t1/implementer" && error.contains("session/new"))));
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
         orch_prompts[1].contains("kind=agent_crashed\nThe implementer agent could not be started")
     );
-    assert!(orch_prompts[2].starts_with("[yhtye:group_settled] group=G-1\nT-1 cancelled"));
+    assert!(orch_prompts[2].starts_with("[yhtye:group_settled] group=g1\nt1 cancelled"));
     shutdown_and_check(orch, &events).await;
 }
 
 #[tokio::test]
 async fn dependency_with_empty_instruction_asks_orchestrator_when_resolved() {
     let orch_script = json!({"turns": [
-        plan(&[json!({"instruction": "first"}), json!({"depends_on": ["T-1"], "instruction": null})]),
+        plan(&[json!({"instruction": "first"}), json!({"depends_on": ["t1"], "instruction": null})]),
         {"match": "[yhtye:instruction_needed]", "actions": [
             {"mcp_call": {"tool": "set_instruction", "args": {
-                "task_id": "${task}", "instruction": "second, using T-1's result"}}}]},
+                "task_id": "${task}", "instruction": "second, using t1's result"}}}]},
         settled_turn()
     ]});
     let impl_script = json!({"turns": [
-        {"match": "task=T-2", "actions": [report("second done")]},
-        {"match": "task=T-1", "actions": [report("first done")]}
+        {"match": "task=t2", "actions": [report("second done")]},
+        {"match": "task=t1", "actions": [report("first done")]}
     ]});
     let (orch, events, _dir) = run_until_finished(orch_script, impl_script).await;
 
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],
-        "[yhtye:instruction_needed] task=T-2\nT-1: first done"
+        "[yhtye:instruction_needed] task=t2\nt1: first done"
     );
     assert_eq!(
         orch_prompts[2],
-        "[yhtye:group_settled] group=G-1\nT-1 done: first done\nT-2 done: second done"
+        "[yhtye:group_settled] group=g1\nt1 done: first done\nt2 done: second done"
     );
-    let t2 = prompts_to(&events, "T-2/implementer");
-    assert!(t2[0].contains("second, using T-1's result"));
-    let order: Vec<usize> = ["T-1", "T-2"]
+    let t2 = prompts_to(&events, "t2/implementer");
+    assert!(t2[0].contains("second, using t1's result"));
+    let order: Vec<usize> = ["t1", "t2"]
         .iter()
         .map(|t| {
             events
@@ -215,7 +216,7 @@ async fn cancel_task_stops_the_agent_mid_turn() {
     let orch_script = json!({"turns": [
         plan(&[json!({})]),
         {"match": "cancel it", "actions": [
-            {"mcp_call": {"tool": "cancel_task", "args": {"task_id": "T-1", "reason": "user asked"}}}]},
+            {"mcp_call": {"tool": "cancel_task", "args": {"task_id": "t1", "reason": "user asked"}}}]},
         {"match": "[yhtye:group_settled]", "actions": [
             {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "${group}", "reason": "user asked"}}}]}
     ]});
@@ -230,23 +231,23 @@ async fn cancel_task_stops_the_agent_mid_turn() {
     let mut events = Vec::new();
     common::orch::send(&orch, "please").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "T-1/implementer")
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "t1/implementer")
     })
     .await;
     common::orch::send(&orch, "cancel it").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")
+        matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if session == "t1/implementer")
     })
     .await;
     assert!(
         events
             .iter()
-            .any(|e| is_task_status(e, "T-1", TaskStatus::Cancelled))
+            .any(|e| is_task_status(e, "t1", TaskStatus::Cancelled))
     );
     assert!(
         events.iter().any(|e| matches!(&e.body,
             ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(Ok(StopReason::Cancelled)) }
-                if session == "T-1/implementer")),
+                if session == "t1/implementer")),
         "the running turn is cancelled before the session stops"
     );
     // The stop is published after the session's last event (Stage 6a fix: it
@@ -254,7 +255,7 @@ async fn cancel_task_stops_the_agent_mid_turn() {
     assert!(
         events.iter().any(|e| matches!(&e.body,
             ApiEventBody::Agent { session, event: AgentEvent::Exited { .. } }
-                if session == "T-1/implementer")),
+                if session == "t1/implementer")),
         "the process exit is published before the session stops"
     );
     until(&mut rx, &mut events, TIMEOUT, |e| {

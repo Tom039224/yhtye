@@ -28,10 +28,18 @@ fn finish_called(e: &ApiEvent) -> bool {
 
 fn log_run(events: &[ApiEvent]) {
     eprintln!("tool calls: {:#?}", tool_calls(events));
-    eprintln!(
-        "reviewer prompts: {:#?}",
-        prompts_to(events, "T-1/review-1")
-    );
+    let reviewers: Vec<&str> = events
+        .iter()
+        .filter_map(|e| match &e.body {
+            ApiEventBody::Prompted { session, .. } if session.contains("/review-") => {
+                Some(session.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    for reviewer in reviewers {
+        eprintln!("prompts of {reviewer}: {:#?}", prompts_to(events, reviewer));
+    }
     eprintln!(
         "messages: {:#?}",
         summary(events)
@@ -56,10 +64,11 @@ async fn real_group_with_two_code_tasks_lands_on_the_base_branch() {
     assert_haiku(&events);
 
     let snap = orch.snapshot().await.expect("snapshot");
-    let group = snap.state.group("G-1").expect("group G-1");
+    // The orchestrator names the group itself.
+    let group = snap.state.groups.last().expect("a group");
     eprintln!("group: {group:#?}");
     assert_eq!(group.status, GroupStatus::Done, "{:?}", group.detail);
-    let code_tasks: Vec<_> = snap.state.tasks_of("G-1").collect();
+    let code_tasks: Vec<_> = snap.state.tasks_of(&group.id).collect();
     assert!(code_tasks.len() >= 2, "{code_tasks:#?}");
     assert!(
         code_tasks.iter().all(|t| t.status == TaskStatus::Done),
@@ -72,7 +81,8 @@ async fn real_group_with_two_code_tasks_lands_on_the_base_branch() {
 
     let log = r.git(&["log", "--format=%s", "main"]);
     eprintln!("main log:\n{log}");
-    assert!(log.contains("Merge yhtye/G-1 (G-1) into main"), "{log}");
+    let merge = format!("Merge yhtye/{} into main", group.id);
+    assert!(log.contains(&merge), "{log}");
     for file in ["add.py", "sub.py"] {
         assert!(r.repo.join(file).exists(), "{file} on main");
     }
@@ -108,7 +118,8 @@ async fn real_implementer_waits_for_a_long_command_before_reporting() {
     assert_haiku(&events);
 
     let snap = orch.snapshot().await.expect("snapshot");
-    let tasks: Vec<_> = snap.state.tasks_of("G-1").collect();
+    let group = snap.state.groups.last().expect("a group");
+    let tasks: Vec<_> = snap.state.tasks_of(&group.id).collect();
     eprintln!("tasks: {tasks:#?}\nhelps: {:#?}", snap.state.helps);
     assert!(
         snap.state.helps.is_empty(),
@@ -156,7 +167,7 @@ async fn real_group_without_a_finish_hint_still_ends_done() {
     assert_haiku(&events);
 
     let snap = orch.snapshot().await.expect("snapshot");
-    let group = snap.state.group("G-1").expect("group G-1");
+    let group = snap.state.groups.last().expect("a group");
     eprintln!(
         "group: {group:#?}\nfinished by the orchestrator: {}, reminders: {}",
         events.iter().any(finish_called),
