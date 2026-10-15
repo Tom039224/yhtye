@@ -32,7 +32,7 @@ fn merge_finished(ok: bool) -> impl Fn(&ApiEvent) -> bool + Copy {
 }
 
 fn finish_args(into: Option<&str>) -> Value {
-    let mut args = json!({"group_id": "G-1", "summary": "done"});
+    let mut args = json!({"group_id": "g1", "summary": "done"});
     if let Some(into) = into {
         args["into"] = json!(into);
     }
@@ -51,9 +51,10 @@ fn scripts(hold: &Hold, finishes: bool) -> (Value, Value) {
         vec![json!({"message": "noted"})]
     };
     let mut turns = vec![
-        json!({"match": "work", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "work"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+        // Not just "work": Yhtye's reminders and merge results say "work" too.
+        json!({"match": "[yhtye:user_message]\nwork", "actions": [
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "work"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "x", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "write-x"}}},
             {"message": "planned"}

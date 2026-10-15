@@ -290,12 +290,12 @@ async fn real_codex_implementer_reports_through_mcp() {
     .await
     .expect("mcp host");
     let token = host.registry().issue(SessionBinding {
-        session: "T-1/0".into(),
+        session: "t1/0".into(),
         role: Role::Implementer,
         project: "P-1".into(),
         chat: None,
-        group: Some("G-1".into()),
-        task: Some("T-1".into()),
+        group: Some("g1".into()),
+        task: Some("t1".into()),
         step: Some(0),
     });
     let options = SpawnOptions {
@@ -305,7 +305,7 @@ async fn real_codex_implementer_reports_through_mcp() {
     };
     let mut cx = start_default(dir.path(), options).await;
     let prompt = step_prompt(&StepPrompt {
-        task_id: "T-1",
+        task_id: "t1",
         task_title: "Append a line to README.md",
         task_kind: TaskKind::Code,
         step_index: 0,
@@ -333,7 +333,7 @@ async fn real_codex_implementer_reports_through_mcp() {
     assert!(
         calls
             .iter()
-            .any(|(b, c)| b.session == "T-1/0" && matches!(c, ToolCall::ReportStepDone(_))),
+            .any(|(b, c)| b.session == "t1/0" && matches!(c, ToolCall::ReportStepDone(_))),
         "{calls:?}"
     );
     let body = std::fs::read_to_string(dir.path().join("README.md")).expect("README");

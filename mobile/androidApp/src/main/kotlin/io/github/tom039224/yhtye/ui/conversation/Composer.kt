@@ -53,6 +53,9 @@ import kotlinx.coroutines.launch
 
 private val BOX_SHAPE = RoundedCornerShape(24.dp)
 private val CHIP_SHAPE = RoundedCornerShape(15.dp)
+
+/** メンションのチップの中のタスクの名前 (32 文字まで) の幅の上限: 残りをタイトルに。 */
+private val MENTION_ID_MAX_WIDTH = 110.dp
 private val INPUT_MAX_HEIGHT = 128.dp
 private const val CHIP_POP_FROM = 0.4f
 
@@ -202,8 +205,18 @@ private fun MentionChip(m: Mention, onRemove: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         YIcon(YIcons.At, c.accent, 14.dp)
+        // タスクの名前 (32 文字まで) が長くてもタイトルの場所を残す
         Text(
-            "${m.task} ${m.title}",
+            m.task,
+            color = c.accent,
+            fontFamily = MonoFont,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 4.dp).widthIn(max = MENTION_ID_MAX_WIDTH),
+        )
+        Text(
+            m.title,
             color = c.accent,
             fontFamily = MonoFont,
             fontSize = 12.sp,
