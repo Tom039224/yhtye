@@ -1,14 +1,15 @@
 // The project pull-down and the projects running in the background under it
 // (Sidebar).
 
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import type { ProjectInfo, SessionRecord, Snapshot } from "../api/generated";
+import { CommandError } from "../api/transport";
 import { AppStore } from "../store/app";
 import { StoreContext } from "../store/useStore";
-import { prompted, turnEnded, ORCHESTRATOR } from "../test/events";
+import { ev, prompted, turnEnded, ORCHESTRATOR } from "../test/events";
 import { FULL_RUN, PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
 import { Sidebar } from "./Sidebar";
@@ -159,6 +160,17 @@ describe("project pull-down", () => {
   });
 });
 
+const idle: SessionRecord = {
+  session_key: "orchestrator:C-1",
+  role: "orchestrator",
+  task: null,
+  acp_session_id: "acp",
+  status: "live",
+  turn_running: false,
+  agent: null,
+  cwd: null,
+};
+
 describe("project status rings", () => {
   const running: SessionRecord = {
     session_key: "orchestrator:C-1",
@@ -273,7 +285,8 @@ describe("projects running in the background", () => {
   });
 
   it("switches to the project on click, and the one left takes its place", async () => {
-    const { store, user, transport } = setup();
+    // repo has an orchestrator up when it is left, so it is still running in the background.
+    const { store, user, transport } = setup({ snapshot: { ...FULL_RUN.start, sessions: [idle] } });
     await openRepo(store);
     await user.click(await screen.findByRole("button", { name: /beta に切り替え/ }));
     expect(transport.callsOf("open_project").at(-1)?.path).toBe("/tmp/beta");
@@ -288,5 +301,135 @@ describe("projects running in the background", () => {
     await user.click(screen.getByRole("button", { name: "repo" }));
     expect(screen.getByRole("option", { name: "gamma" })).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "バックグラウンドで動作中のプロジェクト" })).not.toBeInTheDocument();
+  });
+});
+
+describe("projects running in the background: a project that sleeps leaves", () => {
+  it("is not listed while every chat of the open project sleeps, though it stays in the pull-down", async () => {
+    const { store, user } = setup({ others: [{ ...BETA, awake: false }, GAMMA] });
+    await openRepo(store);
+    expect(screen.queryByRole("list", { name: "バックグラウンドで動作中のプロジェクト" })).not.toBeInTheDocument();
+    await user.click(trigger());
+    expect(screen.getByTestId("ring-beta")).toHaveClass("ring-stopped");
+  });
+
+  it("vanishes from the chips once the core reports it asleep", async () => {
+    const { store, core, transport } = setup();
+    await openRepo(store);
+    expect(screen.getByTestId("bg-ring-beta")).toBeInTheDocument();
+    core.others = [{ ...BETA, awake: false }, GAMMA];
+    transport.emit(ev(1, { type: "session_stopped", session: ORCHESTRATOR, suspended: false }, false, "beta"));
+    await waitFor(() => expect(screen.queryByTestId("bg-ring-beta")).not.toBeInTheDocument());
+    expect(screen.queryByRole("list", { name: "バックグラウンドで動作中のプロジェクト" })).not.toBeInTheDocument();
+  });
+});
+
+describe("sleeping a project", () => {
+  const sleepItem = () => screen.getByRole("menuitem", { name: "スリープ" });
+
+  it("opens a menu with sleep on a right click on a background chip, and sleeps the project", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /beta に切り替え/ }) });
+    const menu = screen.getByRole("menu", { name: "beta の操作" });
+    expect(within(menu).getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["スリープ"]);
+    expect(sleepItem()).toBeEnabled();
+    expect(transport.callsOf("open_project").map((c) => c.path)).toEqual(["/tmp/repo"]);
+    await user.click(sleepItem());
+    expect(transport.callsOf("sleep_project")).toEqual([{ type: "sleep_project", project: "beta" }]);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(transport.callsOf("open_project").map((c) => c.path)).toEqual(["/tmp/repo"]);
+  });
+
+  it("disables sleep for a background project while a chat of it works", async () => {
+    const { store, user, transport } = setup({ others: [{ ...BETA, running: true }, GAMMA] });
+    await openRepo(store);
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: /beta に切り替え/ }) });
+    expect(sleepItem()).toBeDisabled();
+    await user.click(sleepItem());
+    expect(transport.callsOf("sleep_project")).toEqual([]);
+  });
+
+  it("opens the menu on a right click on a row of the pull-down, and closes the pull-down after sleeping", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "beta" }) });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(sleepItem()).toBeEnabled();
+    expect(transport.callsOf("open_project").map((c) => c.path)).toEqual(["/tmp/repo"]);
+    await user.click(sleepItem());
+    expect(transport.callsOf("sleep_project")).toEqual([{ type: "sleep_project", project: "beta" }]);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(transport.callsOf("open_project").map((c) => c.path)).toEqual(["/tmp/repo"]);
+  });
+
+  it("disables sleep for a project of the pull-down that is not open", async () => {
+    const { store, user, transport } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "gamma" }) });
+    expect(screen.getByRole("menu", { name: "gamma の操作" })).toBeInTheDocument();
+    expect(sleepItem()).toBeDisabled();
+    expect(transport.callsOf("sleep_project")).toEqual([]);
+  });
+
+  it("Esc in the menu closes only the menu, the pull-down stays", async () => {
+    const { store, user } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("option", { name: "beta" }) });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.getByRole("listbox")).toHaveFocus();
+  });
+
+  it("sleeps the project on screen from a right click on the pull-down button", async () => {
+    const { store, user, transport } = setup({ snapshot: { ...FULL_RUN.start, sessions: [idle] } });
+    await openRepo(store);
+    await user.pointer({ keys: "[MouseRight]", target: trigger() });
+    expect(screen.getByRole("menu", { name: "repo の操作" })).toBeInTheDocument();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    await user.click(sleepItem());
+    expect(transport.callsOf("sleep_project")).toEqual([{ type: "sleep_project", project: "repo" }]);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("disables sleep for the project on screen while its chats all sleep", async () => {
+    const { store, user } = setup();
+    await openRepo(store);
+    await user.pointer({ keys: "[MouseRight]", target: trigger() });
+    expect(sleepItem()).toBeDisabled();
+  });
+
+  it("opens the menu of the active row when the focused list is asked for one (the menu key)", async () => {
+    const { store, user } = setup();
+    await openRepo(store);
+    await user.click(trigger());
+    await user.keyboard("{ArrowDown}");
+    fireEvent.contextMenu(screen.getByRole("listbox"));
+    expect(screen.getByRole("menu", { name: "beta の操作" })).toBeInTheDocument();
+    expect(sleepItem()).toBeEnabled();
+  });
+
+  it("disables sleep for the project on screen while a chat of it works", async () => {
+    const working: SessionRecord = { ...idle, turn_running: true };
+    const { store, user } = setup({ snapshot: { ...FULL_RUN.start, sessions: [working] } });
+    await openRepo(store);
+    await user.pointer({ keys: "[MouseRight]", target: trigger() });
+    expect(sleepItem()).toBeDisabled();
+  });
+
+  it("shows the core's refusal as an error", async () => {
+    const { store, core } = setup();
+    await openRepo(store);
+    core.failures.set("sleep_project", new CommandError("invalid_state", "the orchestrator of chat C-1 is working"));
+    await act(() => store.sleepProject("beta"));
+    expect(store.getState().errors.map((e) => e.message)).toEqual([
+      "sleep_project failed: the orchestrator of chat C-1 is working",
+    ]);
   });
 });

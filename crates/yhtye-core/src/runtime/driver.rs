@@ -51,6 +51,9 @@ pub(super) enum Cmd {
     /// Stops a chat's orchestrator session (`not_found`: no such chat;
     /// `invalid_state`: it is starting or in a turn).
     SleepChat(String, oneshot::Sender<Result<(), ToolError>>),
+    /// Stops every chat's orchestrator session (`invalid_state`, with nothing
+    /// stopped, if one is starting or in a turn).
+    SleepProject(oneshot::Sender<Result<(), ToolError>>),
     /// A new chat in a worktree (given, or the branch's).
     CreateChat(ChatTarget, oneshot::Sender<Result<Chat, ToolError>>),
     /// The user renames a chat (chat, title).
@@ -259,6 +262,9 @@ impl Driver {
             }
             Some(Cmd::SleepChat(chat, tx)) => {
                 let _ = tx.send(self.sleep_chat(&chat));
+            }
+            Some(Cmd::SleepProject(tx)) => {
+                let _ = tx.send(self.sleep_project());
             }
             Some(Cmd::CreateChat(target, tx)) => {
                 let _ = tx.send(self.create_chat(target).await);

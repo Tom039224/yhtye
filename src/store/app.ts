@@ -352,6 +352,17 @@ export class AppStore extends SettingsCommands {
     await this.run({ type: "sleep_chat", project, chat }, "accepted");
   }
 
+  /**
+   * Puts every chat of a project to sleep (any project, not only the one on
+   * screen): stops all their orchestrator processes, so the project is no
+   * longer awake. All or nothing: a refusal (a turn is running in one of the
+   * chats) is shown as an error. The project list follows the `session_stopped`
+   * events of a project that is not on screen.
+   */
+  async sleepProject(project: string): Promise<void> {
+    await this.run({ type: "sleep_project", project }, "accepted");
+  }
+
   async cancelTask(task: string): Promise<void> {
     const project = this.state.project?.info.id;
     if (project) await this.run({ type: "cancel_task", project, task }, "accepted");

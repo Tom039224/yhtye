@@ -3,6 +3,7 @@ package io.github.tom039224.yhtye.shared.sync
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
+import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.SessionStatus
 import io.github.tom039224.yhtye.shared.client.ConnectionState
@@ -203,6 +204,39 @@ class AppStoreTest {
     }
 
     @Test
+    fun sleepsTheProjectAndShowsARefusal() = runTest {
+        core.log = log
+        val store = newStore(core)
+        openAndSettle(store)
+        // 表示していないプロジェクトにも、表示中のものにも
+        store.sleepProject("beta")
+        assertEquals(listOf(ApiCommand.SleepProject("beta")), core.calls.takeLast(1))
+        store.sleepProject("repo")
+        assertEquals(listOf(ApiCommand.SleepProject("repo")), core.calls.takeLast(1))
+        core.fail(ApiCommand.SleepProject::class, ApiErrorCode.InvalidState, "the orchestrator of chat C-1 is working")
+        store.sleepProject("repo")
+        assertTrue(store.state.value.errors.last().message.startsWith("sleep_project failed: "))
+        assertTrue(store.state.value.errors.last().message.contains("is working"))
+    }
+
+    @Test
+    fun dropsAProjectFromTheBackgroundOnceItsOrchestratorsStopped() = runTest {
+        core.others = listOf(beta.copy(awake = true))
+        core.log = log
+        val store = newStore(core)
+        openAndSettle(store)
+        store.refreshProjects()
+        assertEquals(listOf("beta"), backgroundProjects(store.state.value.projects, "repo").map { it.id })
+
+        store.sleepProject("beta")
+        core.others = listOf(beta.copy(awake = false))
+        push(core, beta(1, ev(1, ApiEventBody.SessionStopped(ORCHESTRATOR, suspended = false))))
+        advanceTimeBy(250)
+        runCurrent()
+        assertEquals(emptyList(), backgroundProjects(store.state.value.projects, "repo"))
+    }
+
+        @Test
     fun ignoresEventsOfOtherProjectsAndTracksTheOrchestratorsTurn() = runTest {
         core.log = log
         val store = newStore(core)
