@@ -37,8 +37,12 @@ import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
+import io.github.tom039224.yhtye.YhtyeTheme
+import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
+import io.github.tom039224.yhtye.shared.sync.HostView
 import io.github.tom039224.yhtye.ui.panels.Dimmed
+import io.github.tom039224.yhtye.ui.panels.HostAndClients
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -495,6 +499,32 @@ class LeftPanelTest {
     }
 
     @Test
+    fun `a PC without a GUI has a server icon of its own`() {
+        // ping は前面にある間だけ動く (ハーネスのアプリは前面ではない) ので、答えを受けた後の状態を直接描く
+        rule.setContent {
+            YhtyeTheme(darkTheme = true) {
+                HostAndClients(AppState(host = HostView("headless-pc", 0L, "0.1.0", headless = true)), selfId = null)
+            }
+        }
+        rule.waitForIdle()
+        iconIn("host", "headless-server-icon").assertCountEquals(1)
+        iconIn("host", "server-icon").assertCountEquals(0)
+        rule.onNodeWithTag("host").assertExists()
+    }
+
+    @Test
+    fun `a PC with a GUI keeps the plain server icon`() {
+        rule.setContent {
+            YhtyeTheme(darkTheme = true) {
+                HostAndClients(AppState(host = HostView("pc", 0L, "0.1.0")), selfId = null)
+            }
+        }
+        rule.waitForIdle()
+        iconIn("host", "server-icon").assertCountEquals(1)
+        iconIn("host", "headless-server-icon").assertCountEquals(0)
+    }
+
+    @Test
     fun `the paired devices have the phone icon, this device is marked and offline ones are greyed out`() {
         h.open { devices = listOf(tablet, self, pixel) }
         h.openLeft()
@@ -509,6 +539,17 @@ class LeftPanelTest {
         iconIn("client-device", "client-self").assertCountEquals(1)
         rule.onNodeWithTag("client-device").assert(hasContentDescription("My Pixel 8a (この端末) · Android · 接続中"))
         rule.onNodeWithTag("client-dev-2").assert(hasContentDescription("Tablet · Android · オフライン · 最終接続", substring = true))
+    }
+
+    @Test
+    fun `another desktop app has the monitor icon and is called a PC`() {
+        val laptop = ClientDevice("dev-3", "Laptop", ClientKind.Desktop, connected = true, lastSeenMs = 4_000)
+        h.open { devices = listOf(self, pixel, laptop) }
+        h.openLeft()
+        iconIn("client-dev-3", "monitor-icon").assertCountEquals(1)
+        iconIn("client-dev-3", "phone-icon").assertCountEquals(0)
+        iconIn("client-dev-1", "phone-icon").assertCountEquals(1)
+        rule.onNodeWithTag("client-dev-3").assert(hasContentDescription("Laptop · PC · 接続中"))
     }
 
     @Test

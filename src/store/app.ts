@@ -13,8 +13,14 @@
 //   (`resync`: catch up like after a reconnect).
 // - clients (T-73): the PC and the paired devices for the host footer, read on
 //   every (re)connect and resync and replaced by each `clients_changed`.
+// - hosts (T-97): a store speaks to one core, through its transport: this app's
+//   own, or another Yhtye it is a client of (`store/hosts.ts` makes one store per
+//   host). Project ids repeat across hosts (they come from directory names), so the
+//   keys this store saves under and the keys the UI makes from a project id carry
+//   the host's `keyScope` ("" for the local core, "host:<id>:" for a remote one).
 
 import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type { HostCompatibility } from "../api/remoteHosts";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
 import { upsertChat } from "./chats";
@@ -54,7 +60,7 @@ export const ACTIVITY_REFRESH_MS = 200;
 /** Preference key: path of the project opened last (reopened after a reload). */
 export const LAST_PROJECT_KEY = "yhtye.lastProject";
 /** Preference key (per project id): the chat shown when the project is opened again. */
-export const chatPrefKey = (project: string): string => `yhtye.chat.${project}`;
+export const chatPrefKey = (project: string, scope = ""): string => `${scope}yhtye.chat.${project}`;
 const MAX_ERRORS = 5;
 /** How often the usage meters are re-read while connected (the core caches for a minute). */
 export const USAGE_REFRESH_MS = 5 * 60_000;
@@ -100,6 +106,16 @@ export interface UsageView {
 export interface HostView {
   /** Its host name (`null` until the first answer). */
   name: string | null;
+  /** Its Yhtye version (`null` until the first answer, or if it predates the field). */
+  version: string | null;
+  /**
+   * Whether that version works with this app, for a remote host (the shell
+   * judges it when it connects). `null` for the local core, and while unknown.
+   * The UI warns when it is `incompatible`.
+   */
+  compatibility: HostCompatibility | null;
+  /** It runs without a GUI (`yhtye --headless`); a core that does not say is taken as having one. */
+  headless: boolean;
   /** When the core last answered a ping (ms since the epoch). */
   lastPingAt: number | null;
 }
@@ -107,6 +123,20 @@ export interface HostView {
 export interface AppStoreOptions {
   /** Where the last project is remembered (default: in memory only). */
   prefs?: Prefs;
+  /** Unsent composer text (default: this store's own, in memory). */
+  drafts?: Drafts;
+  /**
+   * Prepended to the keys this store saves under and the UI builds from project
+   * ids (`scopedKey`): "" for the local core (the keys stay what they were),
+   * "host:<server id>:" for a remote host.
+   */
+  keyScope?: string;
+  /**
+   * Open the project that was open last when the connection first comes up
+   * (default: yes). Off for a remote host: connecting to it must not start
+   * anything there until the person picks a project.
+   */
+  reopenLast?: boolean;
   historyWindow?: number;
   historyPage?: number;
 }
@@ -146,6 +176,8 @@ export class AppStore extends SettingsCommands {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private activityToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
+  /** This store's host is the one on screen (the meters are read only then, see `setForeground`). */
+  private foreground = true;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private pinging = false;
   /** Bumped by every read and `clients_changed`: only the newest one is kept. */
@@ -155,13 +187,19 @@ export class AppStore extends SettingsCommands {
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
   /** Unsent composer text per chat (kept while another chat or project is shown). */
-  readonly drafts: Drafts = memoryDrafts();
+  readonly drafts: Drafts;
+  /** See {@link AppStoreOptions.keyScope}. */
+  readonly keyScope: string;
+  private readonly reopenOnConnect: boolean;
   private readonly historyWindow: number;
   private readonly historyPage: number;
 
   constructor(transport: Transport, options: AppStoreOptions = {}) {
     super(transport);
     this.prefs = options.prefs ?? memoryPrefs();
+    this.drafts = options.drafts ?? memoryDrafts();
+    this.keyScope = options.keyScope ?? "";
+    this.reopenOnConnect = options.reopenLast ?? true;
     this.historyWindow = options.historyWindow ?? HISTORY_WINDOW;
     this.historyPage = options.historyPage ?? HISTORY_PAGE;
     this.state = {
@@ -174,7 +212,7 @@ export class AppStore extends SettingsCommands {
       git: null,
       branchOrder: null,
       usage: { report: null, error: null, loading: false },
-      host: { name: null, lastPingAt: null },
+      host: { name: null, version: null, compatibility: null, headless: false, lastPingAt: null },
       clients: [],
     };
   }
@@ -195,6 +233,31 @@ export class AppStore extends SettingsCommands {
   }
 
   getState = (): AppState => this.state;
+
+  /** A key for something of project `id` (a React key, ...) that is not the same one on another host. */
+  scopedKey(id: string): string {
+    return this.keyScope + id;
+  }
+
+  /**
+   * Whether this store's host is the one on screen. The subscription meters are
+   * read only for the host on screen: a host that is only connected to has no
+   * use for them, and reading them makes it query its harness. Stores are in the
+   * foreground until told otherwise.
+   */
+  setForeground(foreground: boolean): void {
+    if (foreground === this.foreground) return;
+    this.foreground = foreground;
+    if (!foreground) this.stopUsagePolling();
+    else if (this.state.connection.state === "open") this.startUsagePolling();
+  }
+
+  /** The shell's verdict on the host's version (a remote host's; see {@link HostView.compatibility}). */
+  noteHostCompatibility(compatibility: HostCompatibility | null): void {
+    const host = this.state.host;
+    if (JSON.stringify(host.compatibility) === JSON.stringify(compatibility)) return;
+    this.set({ host: { ...host, compatibility } });
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -296,7 +359,7 @@ export class AppStore extends SettingsCommands {
   selectChat(chat: string): void {
     const view = this.state.project;
     if (!view || view.selectedChat === chat || !view.chats.some((c) => c.id === chat)) return;
-    this.prefs.set(chatPrefKey(view.info.id), chat);
+    this.prefs.set(chatPrefKey(view.info.id, this.keyScope), chat);
     const { [chat]: _read, ...unread } = view.unread;
     this.updateProject((v) => ({ ...v, selectedChat: chat, unread }));
     void this.openChat(view.info.id, chat);
@@ -535,6 +598,11 @@ export class AppStore extends SettingsCommands {
     }
   }
 
+  /** Shows a message in the error banners (for what the host management layer could not do). */
+  showError(message: string): void {
+    this.pushError(message);
+  }
+
   dismissError(id: number): void {
     this.set({ errors: this.state.errors.filter((e) => e.id !== id) });
   }
@@ -550,13 +618,13 @@ export class AppStore extends SettingsCommands {
     const left = this.state.project?.info.id === info.id ? null : this.state.project;
     this.set({ project: newProjectView(info), projects: rememberRunning(this.state.projects, left), git: keepGit });
     if (left) this.scheduleActivityRefresh();
-    this.prefs.set(LAST_PROJECT_KEY, info.path);
+    this.prefs.set(this.keyScope + LAST_PROJECT_KEY, info.path);
     void this.refreshGit();
     void this.refreshBranchOrder();
     try {
       const snap = await this.invoke({ type: "get_snapshot", project: info.id }, "snapshot");
       if (token !== this.loadToken) return;
-      const remembered = this.prefs.get(chatPrefKey(info.id));
+      const remembered = this.prefs.get(chatPrefKey(info.id, this.keyScope));
       this.updateProject((v) => applySnapshot(v, snap.snapshot, this.historyWindow, remembered));
       await this.catchUp(token);
       if (token !== this.loadToken) return;
@@ -655,7 +723,7 @@ export class AppStore extends SettingsCommands {
       this.stopPinging();
       return;
     }
-    this.startUsagePolling();
+    if (this.foreground) this.startUsagePolling();
     this.startPinging();
     void this.refreshClients();
     const reconnect = this.everOpen;
@@ -667,8 +735,10 @@ export class AppStore extends SettingsCommands {
       void this.resync(view.info);
       void this.refreshGit();
       void this.refreshBranchOrder();
-    } else {
+    } else if (this.reopenOnConnect) {
       void this.reopenLast();
+    } else {
+      void this.refreshProjects();
     }
   }
 
@@ -717,7 +787,7 @@ export class AppStore extends SettingsCommands {
   /** After a (re)load of the page: open the project that was open last. */
   private async reopenLast(): Promise<void> {
     await this.refreshProjects();
-    const last = this.prefs.get(LAST_PROJECT_KEY);
+    const last = this.prefs.get(this.keyScope + LAST_PROJECT_KEY);
     if (!last || this.state.project || this.state.busy.opening) return;
     if (this.state.projects.some((p) => p.path === last)) await this.openProject(last);
   }
@@ -753,7 +823,15 @@ export class AppStore extends SettingsCommands {
     this.pinging = true;
     try {
       const r = await withTimeout(this.invoke({ type: "ping" }, "pong"), PING_TIMEOUT_MS);
-      this.set({ host: { name: r.host, lastPingAt: Date.now() } });
+      this.set({
+        host: {
+          ...this.state.host,
+          name: r.host,
+          version: r.version ? r.version : null,
+          headless: r.headless === true,
+          lastPingAt: Date.now(),
+        },
+      });
     } catch {
       // Missed; the next ping tries again.
     } finally {
@@ -883,7 +961,7 @@ export class AppStore extends SettingsCommands {
     }
     const next = after.selectedChat;
     if (next === before.selectedChat) return;
-    this.prefs.set(chatPrefKey(project), next ?? "");
+    this.prefs.set(chatPrefKey(project, this.keyScope), next ?? "");
     if (next && after.phase === "ready") void this.openChat(project, next);
   }
 

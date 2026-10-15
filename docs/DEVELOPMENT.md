@@ -58,20 +58,70 @@ Debian / Ubuntu 系のビルド依存は [`.github/workflows/ci.yml`](../.github
 pnpm install
 pnpm tauri dev      # デスクトップアプリとして起動 (本物のコア + Claude Code)
 pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に起動 → http://localhost:1420
+cargo run -p yhtye -- --headless --data-dir /tmp/yhtye-headless   # GUI 無し (DISPLAY 不要) で本物のコア + リモート接続
 ```
 
 - 既定のエージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
   モデルは `YHTYE_MODEL` (既定 `haiku`)。ハーネス (Claude Code / OpenCode / Codex / Devin / MiniMax Code / Google Antigravity / Grok Build) は、必要なコマンド (`npx` / `opencode` / `codex` + `npx` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) が
   `PATH` か既知の場所 (`~/.local/bin` など。`mcode` は `~/.minimax-code/bin` と `$MCODE_INSTALL_ROOT/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` と `$GROK_HOME/bin` も) にあるときだけ選べる。設定を開いたときと「再検出」で見つけ直し、パスは手動でも指定できる
   ([`core-design.md`](architecture/core-design.md) §15.2)。
-- アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`。
+- アプリのデータ (SQLite と worktree) は `--data-dir` / `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`
+  (`src-tauri/src/data_dir.rs`。GUI とヘッドレスで共通)。
   以前の識別子 `com.tom039224.yhtye` のディレクトリが残っていれば、初回起動時に新しい名前へ自動で移す
   (両方あるときは触らない。`src-tauri/src/legacy_data.rs`)。
   Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
-- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する)。
-  並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する。
+  終了コードは GUI が 1、ヘッドレスが 3)。並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+  **例外 (T-97)**: 既定のデータディレクトリの GUI がもう動いていて、同じく既定のディレクトリで GUI を起動したときは、ロックの前に
+  `tauri-plugin-single-instance` が引数を動いている方へ渡し (ウィンドウが前に出る)、2 つ目は終了コード 0 で終わる (`yhtye://pair?…` のリンクを開く OS の
+  起動がこの経路。`--data-dir` / `YHTYE_DATA_DIR` を指定した GUI には働かない。ヘッドレスが既定のディレクトリを持っているときの GUI は従来どおりロックで終了コード 1)。
 - アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
   次の起動時に自動で開き、中断したタスクを再開する。
+
+### ヘッドレス起動 (`yhtye --headless`)
+
+ウィンドウを開かずコアとリモート接続だけを動かす実行時オプション (cargo feature ではない。`main()` が引数を最初に見るので、`DISPLAY` の無い環境でも落ちない。
+設計は [`core-design.md`](architecture/core-design.md) §9、使い方は [`SETUP.md`](../SETUP.md))。
+
+```sh
+yhtye --headless [-d] [--port N] [--data-dir DIR] [--model NAME]   # -d: デーモン (切り離して戻る。ログは <データディレクトリ>/headless.log)
+yhtye remote pair | devices | revoke <id> | status | stop [--data-dir DIR]   # 動いているヘッドレスへ (<データディレクトリ>/yhtye.sock)
+env -u DISPLAY -u WAYLAND_DISPLAY target/release/yhtye --headless --data-dir /tmp/yhtye-headless   # 実機での確認の例
+```
+
+- 確認のしかた: 上のように DISPLAY を外して起動し、別の端末で `yhtye remote status` / `pair` が答え、SIGTERM で「all agents stopped」を出して終了コード 0 になること。
+  フラグ無しで DISPLAY を外すと案内を出して終了コード 1。Tailscale の無い環境では、起動時に「remote access is not running: … (trying again every 30 s)」が出る (これが再試行の確認になる)。
+- `-d` の確認: 起動した側が戻り (終了コード 0)、デーモンが新しいセッションのリーダーとして残り、`remote status` が PID を答え、2 つ目の `-d` が終了コード 3、
+  `remote stop` で終わって制御ソケットが消えること (`src-tauri/tests/headless_daemon.rs` が本物のバイナリで確かめる)。端末を閉じる確認は、`script` などの疑似端末から `-d` を起動して端末側を落とす。
+- ログは stderr、stdout は人間向けの表示 (端末のときだけペアリングの案内)。`RUST_LOG` で調整する。デーモンではどちらもログファイルへ行く。
+- テスト: 引数 (`cli.rs`)、データディレクトリの規則 (`data_dir.rs`)、制御口のプロトコルとクライアント (`headless/control.rs`)、デーモンの起動 (`headless/daemon.rs`)、
+  表示 (`headless/report.rs`)、リモートの再試行 (`headless/mod.rs`)、本物のバイナリでのデーモン (`tests/headless_daemon.rs`) は `cargo test -p yhtye`。コアの `Ping` が `headless` を返すことは `crates/yhtye-core/tests/core_facade.rs`。
+
+### 別のホストへの接続 (PC の GUI、T-97)
+
+PC の GUI が別の Yhtye (別の PC、`--headless` のホスト) に接続する。設計は [`core-design.md`](architecture/core-design.md) §9「PC のクライアント」・§11・§18.10。
+ブラウザ (`pnpm dev:browser`) では使えない (Tauri のシェルが WS を張る)。
+
+```sh
+# ホスト (1 台目): ウィンドウ無しで起動し、ペアリングコードを出す (Tailscale が要る)
+yhtye --headless --data-dir /tmp/yhtye-host && yhtye remote pair --data-dir /tmp/yhtye-host    # → yhtye://pair?… と QR
+# クライアント (2 台目): GUI を起動して、出た URI を引数に別のプロセスとして開く (OS がリンクのクリックでする起動と同じ)
+yhtye 'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'    # 動いている GUI があればそこへ渡る
+```
+
+- リンクを開くと設定が「接続先」で開き、リンクが入った状態になる (行き先のホストとポート・端末名が出る)。「接続」を押すまでペアリングしない (T-98。T-97 の確認ダイアログは
+  この節に置き換えた)。ペアリングを済ませると、プロジェクトの一覧にホストのプロジェクトがこの PC のものの後ろに並び、名前の右にリモートのアイコンが付く
+  (同じ名前があるときだけホスト名も添える)。ホスト側の `yhtye remote devices` に `desktop` として載る。手入力 (ホスト・ポート・コード) も同じ節。
+- **試すときは環境を分ける**: `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_RUNTIME_DIR` / `HOME` を一時ディレクトリにして `dbus-run-session` の中で動かすと、
+  普段のアプリのデータ・キーリング・単一インスタンスの D-Bus 名・`yhtye://` の既定のハンドラ (debug ビルドは `register_all()` が `xdg-mime default` を実行する) に触れない。
+  画面が無ければ Xvfb (`Xvfb :98 -screen 0 1440x900x24`、`DISPLAY=:98`、`WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1`)。
+  キーリングを試すなら同じバスの中で `echo -n pw | gnome-keyring-daemon --login` (無ければトークンはそのプロセスの間だけで、再起動後は自動接続しない)。
+  1 台でホストを用意するなら `cargo run -p yhtye-core --example remote_server -- --port 14231` (§18.6。標準入力の `open <path>` / `code` / `devices`)。
+- テスト: Tauri 層 (`src-tauri/src/remote_hosts/tests.rs`: エラーの対応・イベントと通知の JSON・ペアリングの入力・起動時の自動接続、`deep_link.rs`: リンクの待ち行列と
+  設定ファイル、`cli.rs`: リンクの引数)、WebView の `src/api/tauri.test.ts` (ホストごとの送信とイベントの振り分け・接続状態)、`src/api/remoteHosts.test.ts`、
+  `src/store/hosts.test.ts` (登録簿)、`src/store/appHosts.test.ts` (キーの前置・ホストの版)、`src/ui/Hosts.test.tsx` (プロジェクトの選択とリモートのアイコン・
+  接続の帯・フッタ)、`src/ui/HostsSettings.test.tsx` (設定の「接続先」・リンクで開く流れ・リモートのホストが出ているときの「リモート接続」)、`src/ui/hostLabels.test.ts` (文言)。
+  Rust の `the_messages_the_screen_tells_apart_start_as_it_expects` は、UI がペアリングの失敗の文言を選ぶ手がかり (英語のメッセージの先頭) を固定する。
 
 ### ブラウザで動かす (開発・E2E 用)
 
@@ -161,7 +211,8 @@ html / body / `#root` は `height: 100%` + `overflow: hidden` で固定してあ
   `scrollX / scrollY == 0`、枠 (`.app` `.body` `.sidebar` `.conversation` `.right` など) の中身がはみ出していないこと、
   ポップアップ (⋯ メニュー・プロジェクトのプルダウン・モデル一覧) がウィンドウ内に収まっていることを確かめる。
   状態は、プロジェクト無し・記録した実行・大量の会話/タスク/ブランチ・ホイール操作・各ポップアップ・設定・
-  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・下部パネルに 8 個のタスクタブを開いた状態
+  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・別のホストを持つ状態 (`hosts`: 長い名前・失効・再接続待ちのホスト。
+  プルダウン・リモートのプロジェクトを開いた画面・設定の「接続先」・リンクを受けた画面)・下部パネルに 8 個のタスクタブを開いた状態
   (タブ列が横スクロールして全部に届くこと、git の見出しやセッションの選択が潰れないこと) を 1060x600 から 1920x1080 まで。
   Rust のコアは要らない (Vite だけを空いているポートで起動する)。画面を足す・直すときは実行しておく。
 

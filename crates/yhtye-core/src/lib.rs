@@ -14,6 +14,7 @@
 //! - [`usage`]: subscription usage / quota read from the harness
 //! - [`ws`]: the API over a WebSocket (dev bridge and remote server)
 //! - [`remote`]: remote access over Tailscale (pairing, devices, the server)
+//! - [`remote_client`]: the other side: this app as a client of another Yhtye
 
 pub mod acp;
 pub mod agents;
@@ -25,6 +26,7 @@ pub mod mcp;
 pub mod order;
 pub mod prompts;
 pub mod remote;
+pub mod remote_client;
 pub mod runtime;
 pub mod secrets;
 pub mod store;

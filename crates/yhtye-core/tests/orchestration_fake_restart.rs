@@ -24,14 +24,14 @@ use yhtye_core::runtime::Orchestration;
 use yhtye_core::store::SessionStatus;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
-const IMPLEMENTER: &str = "T-1/implementer";
+const IMPLEMENTER: &str = "t1/implementer";
 
 /// First run: the orchestrator plans a one-step task and keeps its turn open;
 /// the implementer starts working and is still in its turn at the "quit".
 async fn run_until_quit(dir: &Path) -> Vec<ApiEvent> {
     let orch_script = json!({"turns": [{"match": "[yhtye:user_message]", "actions": [
-        {"mcp_call": {"tool": "create_group", "args": {"title": "Add a line"}}},
-        {"mcp_call": {"tool": "create_task", "args": {
+        {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "Add a line"}}},
+        {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
             "group_id": "${group_id}", "title": "append", "kind": "code",
             "steps": [{"kind": "implement"}], "instruction": "append hello to README.md"}}},
         {"message": "planned"},
@@ -207,7 +207,7 @@ fn assert_task_done_after_interruption(events: &[ApiEvent]) {
     let statuses: Vec<TaskStatus> = domain_events(events)
         .into_iter()
         .filter_map(|e| match e {
-            DomainEvent::TaskStatusChanged { task, status } if task == "T-1" => Some(*status),
+            DomainEvent::TaskStatusChanged { task, status } if task == "t1" => Some(*status),
             _ => None,
         })
         .collect();
@@ -223,14 +223,14 @@ fn assert_task_done_after_interruption(events: &[ApiEvent]) {
     assert!(
         events
             .iter()
-            .any(|e| is_task_status(e, "T-1", TaskStatus::Done))
+            .any(|e| is_task_status(e, "t1", TaskStatus::Done))
     );
 }
 
 /// The restarted orchestrator was started only once its task had finished.
 fn assert_orchestrator_started_after_the_task_settled(events: &[ApiEvent]) {
     let position = |f: &dyn Fn(&ApiEvent) -> bool| events.iter().position(f);
-    let done = position(&|e| is_task_status(e, "T-1", TaskStatus::Done));
+    let done = position(&|e| is_task_status(e, "t1", TaskStatus::Done));
     let started = position(&|e| {
         matches!(&e.body, ApiEventBody::SessionStarted { session, .. }
             if session == ORCHESTRATOR_SESSION)
@@ -264,7 +264,7 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
     .await;
     // Numbering continues where the first run stopped.
     assert_gapless_from(&events, last_seq(&before) + 1);
-    assert_eq!(interrupted(&events), [IMPLEMENTER, ORCHESTRATOR_SESSION]);
+    assert_eq!(interrupted(&events), [ORCHESTRATOR_SESSION, IMPLEMENTER]);
     assert_task_done_after_interruption(&events);
     // Both sessions came back with their old ACP session ids via session/load.
     assert_eq!(
@@ -280,7 +280,7 @@ async fn restart_mid_step_restores_the_sessions_with_session_load() {
     assert_eq!(failures(&events, IMPLEMENTER), Vec::<String>::new());
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
-    assert!(impl_prompts[0].starts_with("[yhtye:resume] task=T-1 step=1\n"));
+    assert!(impl_prompts[0].starts_with("[yhtye:resume] task=t1 step=1\n"));
     // The orchestrator was not started with the project: the notice that the
     // group settled started it, and its first prompt also says that its turn was
     // cut off by the quit.
@@ -378,7 +378,7 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
     // The new implementer session gets the whole step again, with a note.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1);
-    assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
+    assert!(impl_prompts[0].starts_with("[yhtye:step] task=t1"));
     assert!(impl_prompts[0].contains("could not be restored"));
     // The new orchestrator session gets a summary of the state.
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
@@ -387,7 +387,7 @@ async fn restart_starts_new_sessions_when_session_load_fails() {
         "{orch_prompts:?}"
     );
     assert!(
-        orch_prompts[0].contains("task T-1 [done]"),
+        orch_prompts[0].contains("task t1 [done]"),
         "{orch_prompts:?}"
     );
     assert_orchestrator_started_after_the_task_settled(&events);
@@ -410,7 +410,7 @@ async fn restart_with_an_agent_that_cannot_load_uses_the_full_step_prompt() {
     // The agent never tried to load it, but the old session id is kept anyway.
     assert_eq!(lost(&events, IMPLEMENTER), [Some(old_impl[0].0.clone())]);
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
-    assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
+    assert!(impl_prompts[0].starts_with("[yhtye:step] task=t1"));
     assert!(
         summary(&events)
             .iter()
@@ -457,7 +457,7 @@ async fn a_restore_that_times_out_is_tried_again_with_a_new_agent_process() {
     // It continued the step instead of redoing it.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert_eq!(impl_prompts.len(), 1, "{impl_prompts:?}");
-    assert!(impl_prompts[0].starts_with("[yhtye:resume] task=T-1 step=1\n"));
+    assert!(impl_prompts[0].starts_with("[yhtye:resume] task=t1 step=1\n"));
     let sessions = orch.store().sessions("P-1").await.expect("sessions");
     let record = sessions.iter().find(|r| r.session_key == IMPLEMENTER);
     assert_eq!(record.map(|r| r.lost_acp_session_id.clone()), Some(None));
@@ -501,7 +501,7 @@ async fn when_every_try_fails_the_old_acp_session_id_is_kept() {
     assert_eq!(retrying(&events, IMPLEMENTER), [true, true, true]);
     // The step starts over in the new session.
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
-    assert!(impl_prompts[0].starts_with("[yhtye:step] task=T-1"));
+    assert!(impl_prompts[0].starts_with("[yhtye:step] task=t1"));
     // The old id is in the database, next to the new one, after the task is done.
     let sessions = orch.store().sessions("P-1").await.expect("sessions");
     let record = sessions
@@ -628,7 +628,7 @@ async fn a_notification_for_a_chat_that_is_not_running_starts_it_and_reaches_it(
 
     // The user cancels the running task from the UI: the chat's orchestrator is
     // told, which starts it.
-    orch.cancel_task("T-1", "not needed").await.expect("cancel");
+    orch.cancel_task("t1", "not needed").await.expect("cancel");
     until(&mut rx, &mut events, TIMEOUT, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == ORCHESTRATOR_SESSION)
     })
@@ -637,7 +637,7 @@ async fn a_notification_for_a_chat_that_is_not_running_starts_it_and_reaches_it(
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(orch_prompts.len(), 1, "{orch_prompts:?}");
     assert!(
-        orch_prompts[0].contains("the user cancelled task T-1"),
+        orch_prompts[0].contains("the user cancelled task t1"),
         "{orch_prompts:?}"
     );
     assert!(

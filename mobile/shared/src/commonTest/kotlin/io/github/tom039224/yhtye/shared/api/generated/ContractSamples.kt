@@ -336,7 +336,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "pong",
         ApiResponse.Serializer,
-        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}",
+        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":true}",
     ),
     ContractSample(
         "ApiResponse",
@@ -468,13 +468,13 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "remote_devices",
         ApiResponse.Serializer,
-        "{\"type\":\"remote_devices\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}",
+        "{\"type\":\"remote_devices\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766650000,\"connected\":true}]}",
     ),
     ContractSample(
         "ApiResponse",
         "clients",
         ApiResponse.Serializer,
-        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}",
+        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"connected\":true,\"last_seen_ms\":1790766650000}]}}",
     ),
     ContractSample(
         "ApiResponse",
@@ -984,13 +984,13 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "remote_devices_changed",
         ApiEvent.serializer(),
-        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"remote_devices_changed\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}}",
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"remote_devices_changed\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766650000,\"connected\":true}]}}",
     ),
     ContractSample(
         "ApiEvent",
         "clients_changed",
         ApiEvent.serializer(),
-        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"clients_changed\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}}",
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"clients_changed\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"connected\":true,\"last_seen_ms\":1790766650000}]}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -1206,7 +1206,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "WsServerMessage",
         "reply/ok",
         WsServerMessage.Serializer,
-        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}}",
+        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":false}}",
     ),
     ContractSample(
         "WsServerMessage",
@@ -1225,6 +1225,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "pair",
         PairRequest.serializer(),
         "{\"code\":\"ABCD2345\",\"device_name\":\"Pixel 9\"}",
+    ),
+    ContractSample(
+        "PairRequest",
+        "pair_desktop",
+        PairRequest.serializer(),
+        "{\"code\":\"ABCD2345\",\"device_name\":\"Workstation\",\"kind\":\"desktop\"}",
     ),
     ContractSample(
         "PairResponse",

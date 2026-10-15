@@ -22,11 +22,12 @@ fn create_group_errors() {
     let unknown_chat = DomainCommand::CreateGroup {
         chat: "C-9".into(),
         args: crate::mcp::tools::CreateGroupArgs {
+            name: "g".into(),
             title: "g".into(),
             summary: None,
         },
         base_branch: "main".into(),
-        taken: 0,
+        taken_in_git: None,
     };
     assert_eq!(sim.run(unknown_chat).expect_err("no chat").code, NotFound);
     sim.group();
@@ -40,7 +41,7 @@ fn create_group_errors() {
 fn create_task_errors() {
     let mut sim = with_task();
     let base =
-        json!({"group_id": "G-1", "title": "t", "kind": "code", "steps": [{"kind": "implement"}]});
+        json!({"group_id": "g1", "title": "t", "kind": "code", "steps": [{"kind": "implement"}]});
     let with = |extra: serde_json::Value| {
         let mut a = base.clone();
         if let (Some(a), Some(e)) = (a.as_object_mut(), extra.as_object()) {
@@ -49,8 +50,8 @@ fn create_task_errors() {
         a
     };
     let cases = [
-        (with(json!({"group_id": "G-9"})), NotFound),
-        (with(json!({"depends_on": ["T-9"]})), NotFound),
+        (with(json!({"group_id": "g9"})), NotFound),
+        (with(json!({"depends_on": ["t9"]})), NotFound),
         (with(json!({"title": ""})), InvalidArgument),
         (with(json!({"steps": []})), InvalidArgument),
         (
@@ -71,16 +72,16 @@ fn create_task_errors() {
     }
     sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "x"}),
+        json!({"task_id": "t1", "reason": "x"}),
     );
     assert_eq!(
-        sim.orch_err(ToolName::CreateTask, with(json!({"depends_on": ["T-1"]}))),
+        sim.orch_err(ToolName::CreateTask, with(json!({"depends_on": ["t1"]}))),
         InvalidState,
         "depending on a cancelled task could never start"
     );
     sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "x"}),
+        json!({"group_id": "g1", "reason": "x"}),
     );
     assert_eq!(sim.orch_err(ToolName::CreateTask, base), InvalidState);
 }
@@ -90,15 +91,15 @@ fn set_instruction_errors() {
     let mut sim = with_task();
     let set = |task: &str, instr: &str| json!({"task_id": task, "instruction": instr});
     assert_eq!(
-        sim.orch_err(ToolName::SetInstruction, set("T-9", "x")),
+        sim.orch_err(ToolName::SetInstruction, set("t9", "x")),
         NotFound
     );
     assert_eq!(
-        sim.orch_err(ToolName::SetInstruction, set("T-1", " ")),
+        sim.orch_err(ToolName::SetInstruction, set("t1", " ")),
         InvalidArgument
     );
     assert_eq!(
-        sim.orch_err(ToolName::SetInstruction, set("T-1", "x")),
+        sim.orch_err(ToolName::SetInstruction, set("t1", "x")),
         InvalidState
     );
 }
@@ -106,12 +107,9 @@ fn set_instruction_errors() {
 #[test]
 fn modify_steps_errors() {
     let mut sim = with_task();
-    let args = |steps: serde_json::Value| json!({"task_id": "T-1", "steps": steps});
+    let args = |steps: serde_json::Value| json!({"task_id": "t1", "steps": steps});
     assert_eq!(
-        sim.orch_err(
-            ToolName::ModifySteps,
-            json!({"task_id": "T-9", "steps": []})
-        ),
+        sim.orch_err(ToolName::ModifySteps, json!({"task_id": "t9", "steps": []})),
         NotFound
     );
     assert_eq!(
@@ -121,7 +119,7 @@ fn modify_steps_errors() {
         ),
         InvalidArgument
     );
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     assert_eq!(
         sim.orch_err(ToolName::ModifySteps, args(json!([]))),
         InvalidState
@@ -140,11 +138,11 @@ fn resolve_checkpoint_errors() {
     let mut sim = with_task();
     let args = |task: &str| json!({"task_id": task, "decision": "continue"});
     assert_eq!(
-        sim.orch_err(ToolName::ResolveCheckpoint, args("T-9")),
+        sim.orch_err(ToolName::ResolveCheckpoint, args("t9")),
         NotFound
     );
     assert_eq!(
-        sim.orch_err(ToolName::ResolveCheckpoint, args("T-1")),
+        sim.orch_err(ToolName::ResolveCheckpoint, args("t1")),
         InvalidState
     );
 }
@@ -158,7 +156,7 @@ fn answer_help_errors() {
         NotFound
     );
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "question", "message": "?"}),
     );
@@ -181,12 +179,9 @@ fn answer_help_errors() {
 fn cancel_task_errors() {
     let mut sim = with_task();
     let args = |task: &str| json!({"task_id": task, "reason": "r"});
-    assert_eq!(sim.orch_err(ToolName::CancelTask, args("T-9")), NotFound);
-    sim.orch_ok(ToolName::CancelTask, args("T-1"));
-    assert_eq!(
-        sim.orch_err(ToolName::CancelTask, args("T-1")),
-        InvalidState
-    );
+    assert_eq!(sim.orch_err(ToolName::CancelTask, args("t9")), NotFound);
+    sim.orch_ok(ToolName::CancelTask, args("t1"));
+    assert_eq!(sim.orch_err(ToolName::CancelTask, args("t1")), InvalidState);
 }
 
 #[test]
@@ -194,26 +189,26 @@ fn group_tool_errors() {
     let mut sim = with_task();
     let finish = |g: &str| json!({"group_id": g, "summary": "s"});
     let cancel = |g: &str| json!({"group_id": g, "reason": "r"});
-    assert_eq!(sim.orch_err(ToolName::FinishGroup, finish("G-9")), NotFound);
-    assert_eq!(sim.orch_err(ToolName::CancelGroup, cancel("G-9")), NotFound);
+    assert_eq!(sim.orch_err(ToolName::FinishGroup, finish("g9")), NotFound);
+    assert_eq!(sim.orch_err(ToolName::CancelGroup, cancel("g9")), NotFound);
     assert_eq!(
-        sim.orch_err(ToolName::GetStatus, json!({"group_id": "G-9"})),
+        sim.orch_err(ToolName::GetStatus, json!({"group_id": "g9"})),
         NotFound
     );
     assert_eq!(
-        sim.orch_err(ToolName::GetTask, json!({"task_id": "T-9"})),
+        sim.orch_err(ToolName::GetTask, json!({"task_id": "t9"})),
         NotFound
     );
-    let code = sim.orch_err(ToolName::FinishGroup, finish("G-1"));
-    assert_eq!(code, InvalidState, "T-1 is still running");
-    sim.report("T-1", Role::Implementer, None);
-    sim.orch_ok(ToolName::FinishGroup, finish("G-1"));
+    let code = sim.orch_err(ToolName::FinishGroup, finish("g1"));
+    assert_eq!(code, InvalidState, "t1 is still running");
+    sim.report("t1", Role::Implementer, None);
+    sim.orch_ok(ToolName::FinishGroup, finish("g1"));
     assert_eq!(
-        sim.orch_err(ToolName::FinishGroup, finish("G-1")),
+        sim.orch_err(ToolName::FinishGroup, finish("g1")),
         InvalidState
     );
     assert_eq!(
-        sim.orch_err(ToolName::CancelGroup, cancel("G-1")),
+        sim.orch_err(ToolName::CancelGroup, cancel("g1")),
         InvalidState
     );
     assert_eq!(
@@ -228,8 +223,8 @@ fn report_step_done_errors() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
-    let imp = sub("T-1", Role::Implementer, 0);
-    let rev = sub("T-1", Role::Reviewer, 1);
+    let imp = sub("t1", Role::Implementer, 0);
+    let rev = sub("t1", Role::Reviewer, 1);
     let report = |r: &str| json!({"result": r});
     assert_eq!(
         sim.sub_err(imp.clone(), ToolName::ReportStepDone, report(" ")),
@@ -263,7 +258,7 @@ fn report_step_done_errors() {
         InvalidState,
         "already reported"
     );
-    let mut unbound = sub("T-1", Role::Implementer, 0);
+    let mut unbound = sub("t1", Role::Implementer, 0);
     unbound.task = None;
     assert_eq!(
         sim.sub_err(unbound, ToolName::ReportStepDone, report("x")),
@@ -274,7 +269,7 @@ fn report_step_done_errors() {
 #[test]
 fn help_errors() {
     let mut sim = with_task();
-    let imp = sub("T-1", Role::Implementer, 0);
+    let imp = sub("t1", Role::Implementer, 0);
     let help = json!({"kind": "blocked", "message": "m"});
     assert_eq!(
         sim.sub_err(

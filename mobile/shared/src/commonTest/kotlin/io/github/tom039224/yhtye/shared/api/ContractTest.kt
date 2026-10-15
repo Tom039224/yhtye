@@ -4,6 +4,8 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.ClientKind
+import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.ContractSample
 import io.github.tom039224.yhtye.shared.api.generated.DomainEvent
 import io.github.tom039224.yhtye.shared.api.generated.PairRequest
@@ -138,6 +140,30 @@ class ContractTest {
 
         val message = ApiJson.decodeFromString(WsServerMessage.Serializer, """{"hello":1}""")
         assertIs<WsServerMessage.Unrecognized>(message)
+    }
+
+    @Test
+    fun aDesktopClientIsKnownAndADeviceKindOfANewerPcIsKept() {
+        val devices = """
+            {"server":{"host":"pc"},"devices":[
+              {"id":"a","name":"Workstation","kind":"desktop","connected":true,"last_seen_ms":1},
+              {"id":"b","name":"Fridge","kind":"appliance","connected":false,"last_seen_ms":null}]}
+        """.trimIndent()
+        val clients = ApiJson.decodeFromString(Clients.serializer(), devices)
+        // 一覧は壊れず、知らない種類だけが Unrecognized になる (画面では「不明な端末」)
+        assertEquals(listOf(ClientKind.Desktop, ClientKind.Unrecognized), clients.devices.map { it.kind })
+        assertEquals(listOf("Workstation", "Fridge"), clients.devices.map { it.name })
+    }
+
+    @Test
+    fun aPairRequestNamesTheKindOnlyWhenGiven() {
+        val android = PairRequest(code = "ABCD2345", deviceName = "Pixel 9")
+        assertEquals("""{"code":"ABCD2345","device_name":"Pixel 9"}""", ApiJson.encodeToString(PairRequest.serializer(), android))
+        val desktop = PairRequest(code = "ABCD2345", deviceName = "PC", kind = ClientKind.Desktop)
+        assertEquals(
+            """{"code":"ABCD2345","device_name":"PC","kind":"desktop"}""",
+            ApiJson.encodeToString(PairRequest.serializer(), desktop),
+        )
     }
 
     @Test
