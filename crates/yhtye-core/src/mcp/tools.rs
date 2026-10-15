@@ -18,10 +18,10 @@ const SUB: &[Role] = &[Role::Implementer, Role::Reviewer];
 #[serde(deny_unknown_fields)]
 pub struct CreateGroupArgs {
     /// The group's name, which becomes its id (group_id) and branch
-    /// `yhtye/<name>`: a short English slug of the work in kebab-case, e.g.
-    /// `headless-server` (lowercase letters and digits joined by single hyphens,
-    /// at most 32 chars). Unique in the project for good: if it is taken, choose
-    /// another name.
+    /// `yhtye/<name>`: name it as you would a git branch for the work, a short
+    /// English slug in kebab-case, e.g. `headless-server` (lowercase letters and
+    /// digits joined by single hyphens, at most 32 chars). Unique in the project
+    /// for good: if it is taken, choose another name.
     pub name: String,
     /// Short title of the user's request.
     pub title: String,
@@ -35,10 +35,12 @@ pub struct CreateGroupArgs {
 pub struct CreateTaskArgs {
     /// Group id returned by create_group.
     pub group_id: String,
-    /// The task's name, which becomes its id (task_id): a short English slug of
-    /// the task's work in kebab-case, e.g. `remote-icon` (lowercase letters and
-    /// digits joined by single hyphens, at most 32 chars). Unique in the project
-    /// for good, across all groups: if it is taken, choose another name.
+    /// The task's name, which becomes its id (task_id) and branch
+    /// `yhtye/<group>--<name>`: name it as you would a git branch for the task's
+    /// work (without the group's name), a short English slug in kebab-case, e.g.
+    /// `remote-icon` (lowercase letters and digits joined by single hyphens, at
+    /// most 32 chars). Unique in the project for good, across all groups: if it
+    /// is taken, choose another name.
     pub name: String,
     /// Short display name of the task.
     pub title: String,

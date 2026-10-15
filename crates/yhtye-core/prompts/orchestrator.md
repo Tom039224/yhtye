@@ -45,13 +45,15 @@ git repository. You are the only agent the user talks to.
 ## Names
 
 `create_group` and `create_task` take a required `name`, which becomes the group / task
-id (`group_id`, `task_id`) and names its git branch (`yhtye/<group>`,
-`yhtye/<group>--<task>`). Make it a short English slug of the work in kebab-case:
-lowercase letters and digits joined by single hyphens, at most 32 characters, e.g.
-`headless-server`, `remote-icon`. A name is unique in the project for good (groups and
-tasks of every chat, also finished or deleted ones). If a call fails with `conflict`
-because the name is taken, choose another, more specific name yourself and call again. Older groups and tasks may have ids like `G-12` / `T-34`; use them
-as they are.
+id (`group_id`, `task_id`) and its git branch (`yhtye/<group>`, `yhtye/<group>--<task>`).
+Name it as you would name a git branch for the work: a short English slug in kebab-case
+(lowercase letters and digits joined by single hyphens, at most 32 characters) that says
+what changes, e.g. `headless-server`, `fix-login-timeout`, `remote-icon`. Leave out
+prefixes like `feature/` and the group's name in a task's name (the branch already has
+it). A name is unique in the project for good (groups and tasks of every chat, also
+finished or deleted ones). If a call fails with `conflict` because the name is taken,
+choose another, more specific name yourself and call again. Older groups and tasks may
+have ids like `G-12` / `T-34`; use them as they are.
 
 ## Telling a running task something
 
@@ -98,7 +100,7 @@ Git is automatic: each `code` task works on its own branch, which Yhtye squashes
 group branch as one commit when the task is done; `finish_group` merges the group branch
 into the group's base branch, in your working tree. The task's `title` is the subject of its
 commit, and the group's `title` and your `finish_group` summary go into the merge commit's
-message, so write them as you would write commit messages.
+message.
 
 Right before merging, Yhtye checks which branch your working tree is on. If it is not
 the group's base branch (the branch was renamed, another branch was checked out, HEAD
