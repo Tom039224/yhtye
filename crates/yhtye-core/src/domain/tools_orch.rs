@@ -7,6 +7,7 @@ use super::command::{Effect, GitOp, MergeTrigger};
 use super::event::DomainEvent;
 use super::flow::help_agent;
 use super::machine::{Tx, non_empty};
+use super::names::{check_group_name, check_name, name_taken};
 use super::state::{Group, GroupStatus, HelpSource, Step, Task, TaskStatus};
 use super::steps::{normalize_steps, normalize_tail};
 use super::types::{StepKind, ToolError};
@@ -32,7 +33,9 @@ impl Tx {
             ToolCall::CreateGroup(_) => Err(ToolError::internal(
                 "create_group must be sent as DomainCommand::CreateGroup",
             )),
-            ToolCall::CreateTask(a) => self.create_task(a),
+            ToolCall::CreateTask(_) => Err(ToolError::internal(
+                "create_task must be sent as DomainCommand::CreateTask",
+            )),
             ToolCall::SetInstruction(a) => self.set_instruction(a),
             ToolCall::ModifySteps(a) => self.modify_steps(a),
             ToolCall::ResolveCheckpoint(a) => self.resolve_checkpoint(a),
@@ -52,17 +55,55 @@ impl Tx {
         Ok(())
     }
 
+    /// `create_task` by `binding` (`taken_in_git`: what in git already uses
+    /// the name, read by the runtime).
+    pub(super) fn create_task_call(
+        &mut self,
+        binding: &SessionBinding,
+        a: CreateTaskArgs,
+        taken_in_git: Option<&str>,
+    ) -> Result<(), ToolError> {
+        let owner = self.state.chat_of_group(&a.group_id);
+        self.forbid_foreign(binding, owner)?;
+        let reply = self.create_task(a, taken_in_git)?;
+        self.reply(Ok(reply));
+        Ok(())
+    }
+
+    /// `name` (of a new group or task) must be valid and used by nothing: no
+    /// group or task of the project (also of deleted chats) and nothing in git.
+    fn check_new_name(
+        &self,
+        what: &str,
+        name: &str,
+        taken_in_git: Option<&str>,
+    ) -> Result<(), ToolError> {
+        if what == "group" {
+            check_group_name(name)?;
+        } else {
+            check_name(what, name)?;
+        }
+        if self.state.name_used(name) {
+            return Err(name_taken(what, name, "by a group or task of this project"));
+        }
+        match taken_in_git {
+            Some(by) => Err(name_taken(what, name, by)),
+            None => Ok(()),
+        }
+    }
+
     /// `create_group` of the orchestrator of `chat`: the group merges into
     /// `base_branch` (what the chat's worktree has checked out now), and only
-    /// one group per worktree may be open (Stage 8e).
+    /// one group per worktree may be open (Stage 8e). Its name is its id.
     pub(super) fn create_group(
         &mut self,
         chat: &str,
         a: CreateGroupArgs,
         base_branch: String,
-        taken: u32,
+        taken_in_git: Option<&str>,
     ) -> Result<(), ToolError> {
         non_empty("title", &a.title)?;
+        self.check_new_name("group", &a.name, taken_in_git)?;
         let worktree = self
             .state
             .chat(chat)
@@ -89,7 +130,7 @@ impl Tx {
                 g.status.as_str()
             )));
         }
-        let id = format!("G-{}", self.state.counters.groups.max(taken) + 1);
+        let id = a.name;
         let group_branch = super::state::group_branch(&id);
         self.emit(DomainEvent::GroupCreated {
             group: Group {
@@ -116,7 +157,7 @@ impl Tx {
         Ok(())
     }
 
-    fn create_task(&mut self, a: CreateTaskArgs) -> Reply {
+    fn create_task(&mut self, a: CreateTaskArgs, taken_in_git: Option<&str>) -> Reply {
         non_empty("title", &a.title)?;
         let group = self
             .state
@@ -131,7 +172,8 @@ impl Tx {
         }
         let steps = normalize_steps(a.kind, &a.steps)?;
         let depends_on = self.check_dependencies(&a.group_id, &a.depends_on)?;
-        let id = format!("T-{}", self.state.counters.tasks + 1);
+        self.check_new_name("task", &a.name, taken_in_git)?;
+        let id = a.name;
         self.emit(DomainEvent::TaskCreated {
             task: Task {
                 id: id.clone(),
@@ -417,7 +459,6 @@ impl Tx {
     /// tasks (`forbidden` otherwise). Unknown ids pass: the tool reports them.
     fn check_owner(&self, binding: &SessionBinding, call: &ToolCall) -> Result<(), ToolError> {
         let owner = match call {
-            ToolCall::CreateTask(a) => self.state.chat_of_group(&a.group_id),
             ToolCall::FinishGroup(a) => self.state.chat_of_group(&a.group_id),
             ToolCall::CancelGroup(a) => self.state.chat_of_group(&a.group_id),
             ToolCall::GetStatus(a) => a

@@ -292,7 +292,7 @@ async fn real_orchestrator_merges_into_a_branch_renamed_mid_flow_with_finish_gro
     } if from == "feature" && to == "renamed"))
     );
     let snap = orch.snapshot().await.expect("snapshot");
-    let group = snap.state.group("G-1").expect("group G-1");
+    let group = snap.state.groups.last().expect("a group");
     assert_eq!(group.base_branch, "renamed");
     assert_eq!(group.status, GroupStatus::Done, "{:?}", group.detail);
     assert!(r.show("renamed", "README.md").contains("renamed ok"));

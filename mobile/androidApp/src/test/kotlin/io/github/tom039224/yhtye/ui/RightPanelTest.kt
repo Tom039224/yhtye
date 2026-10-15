@@ -201,6 +201,42 @@ class RightPanelTest {
     }
 
     @Test
+    fun `32-character group and task names are cut short and leave the counts and buttons in the row`() {
+        val group = "the-long-group-name-for-a-layout"
+        val task = "the-long-task-name-for-layout-01"
+        val s = activeGroup(h)
+        val named = s.copy(
+            state = s.state.copy(
+                groups = s.state.groups.map { if (it.id == "G-1") it.copy(id = group, groupBranch = "yhtye/$group") else it },
+                tasks = s.state.tasks.map { t ->
+                    when {
+                        t.id == "T-1" -> t.copy(id = task, group = group)
+                        t.group == "G-1" -> t.copy(group = group, dependsOn = t.dependsOn.map { if (it == "T-1") task else it })
+                        else -> t
+                    }
+                },
+            ),
+        )
+        h.open(named)
+        h.openRight()
+        // 読み上げ (テキスト) は名前の全体
+        rule.onNodeWithTag("group-id-$group", useUnmergedTree = true).assertTextEquals(group)
+        rule.onNodeWithTag("task-id-$task", useUnmergedTree = true).assertTextEquals(task)
+        val panel = rule.onNodeWithTag("right-panel").fetchSemanticsNode().boundsInRoot
+        val bar = rule.onNodeWithTag("group-$group").fetchSemanticsNode().boundsInRoot
+        for (tag in listOf("group-count-$group", "cancel-group-$group")) {
+            val r = rule.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+            assertTrue(r.width > 0f && r.right <= bar.right + 0.5f && r.right <= panel.right + 0.5f, "$tag is pushed out: $r of $bar")
+        }
+        val card = rule.onNodeWithTag("task-$task").fetchSemanticsNode().boundsInRoot
+        for (tag in listOf("mention-button-$task", "cancel-task-$task")) {
+            val r = rule.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot
+            assertTrue(r.width >= 39f * rule.density.density && r.right <= card.right + 0.5f, "$tag is pushed out or squeezed: $r of $card")
+        }
+        rule.onNode(hasContentDescription("$task の完了待ち")).assertExists()
+    }
+
+    @Test
     fun `a row swipe that starts on the screen edge is left to the system`() {
         h.open(activeGroup(h), insets = WindowInsets(left = 24.dp, right = 24.dp))
         h.openRight()

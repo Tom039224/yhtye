@@ -74,8 +74,8 @@ async fn an_orchestrator_starts_lazily_in_its_chats_worktree() {
 fn planning_scripts(hold: &Hold) -> (Value, Value) {
     let plan = |needle: &str, instruction: &str| {
         json!({"match": needle, "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": needle}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": needle, "title": needle}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": instruction,
                 "group_id": "${group_id}", "title": needle, "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": instruction}}},
             {"message": "planned"}
@@ -194,16 +194,16 @@ async fn a_second_open_group_in_the_same_worktree_is_rejected_and_other_chats_ar
     let r = TempRepo::new();
     let orch_script = json!({"turns": [
         {"match": "first", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "hold"}}},
             {"message": "started"}
         ]},
         {"match": "second", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "two"}}},
-            {"mcp_call": {"tool": "get_status", "args": {"group_id": "G-1"}}},
-            {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "G-1", "reason": "x"}}},
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g2", "title": "two"}}},
+            {"mcp_call": {"tool": "get_status", "args": {"group_id": "g1"}}},
+            {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "g1", "reason": "x"}}},
             {"message": "second-done"}
         ]}
     ]});
@@ -445,8 +445,8 @@ async fn a_chat_with_an_open_group_starts_when_its_group_settles_after_a_restart
     let dir = tempfile::tempdir().expect("tempdir");
     let orch_script = json!({"turns": [
         {"match": "work", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "g"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "g"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "hold"}}},
             {"crash": 3}
@@ -573,32 +573,55 @@ async fn a_chat_whose_worktree_disappeared_refuses_messages_but_keeps_its_histor
 }
 
 #[tokio::test]
-async fn group_numbers_skip_leftovers_of_a_wiped_database() {
+async fn names_used_by_leftovers_of_a_wiped_database_are_refused() {
     let r = TempRepo::new();
-    // What a database that was wiped left in git: group and task branches, and
-    // a worktree directory of a group.
+    // What a database that was wiped left in git: group and task branches
+    // (of a numbered group too), and a worktree directory of a group.
+    r.git(&["branch", "yhtye/api"]);
+    r.git(&["branch", "yhtye/web--login"]);
     r.git(&["branch", "yhtye/G-3"]);
-    r.git(&["branch", "yhtye/G-3-T-1"]);
-    std::fs::create_dir_all(worktree_root(&r.data, PROJECT).join("G-5/_group")).expect("mkdir");
+    std::fs::create_dir_all(worktree_root(&r.data, PROJECT).join("docs/_group")).expect("mkdir");
+    let group = |name: &str| json!({"mcp_call": {"tool": "create_group", "args": {"name": name, "title": "work"}}});
+    let task = |name: &str| {
+        json!({"mcp_call": {"tool": "create_task", "args": {"name": name, "group_id": "fresh",
+            "title": "t", "kind": "investigate", "steps": [{"kind": "implement"}]}}})
+    };
     let script = json!({"turns": [{"match": "hello", "actions": [
-        {"mcp_call": {"tool": "create_group", "args": {"title": "work"}}},
+        group("api"), group("web"), group("docs"), group("g-3"), group("fresh"),
+        task("login"), task("logout"),
         {"message": "planned"}
     ]}]});
     let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
     let chat = new_chat(&orch, "main").await;
     say(&orch, &chat, "hello").await;
     wait(&mut rx, &mut events, said("orchestrator:C-1", "planned")).await;
-    let created: Vec<String> = events
+
+    let replies = messages(&events, "orchestrator:C-1");
+    let errors: Vec<&String> = replies.iter().filter(|m| m.contains(":error:")).collect();
+    assert_eq!(errors.len(), 5, "{replies:#?}");
+    for (error, (name, by)) in errors.iter().zip([
+        ("api", "yhtye/api"),
+        ("web", "yhtye/web--login"),
+        ("docs", "docs"),
+        ("g-3", "yhtye/G-3"),
+        ("login", "yhtye/web--login"),
+    ]) {
+        assert!(
+            error.contains("conflict") && error.contains(name) && error.contains(by),
+            "{error}"
+        );
+        assert!(error.contains("choose another name"), "{error}");
+    }
+    let snapshot = orch.snapshot().await.expect("snapshot");
+    let groups: Vec<&str> = snapshot
+        .state
+        .groups
         .iter()
-        .filter_map(|e| match &e.body {
-            ApiEventBody::Domain {
-                event: DomainEvent::GroupCreated { group },
-            } => Some(group.id.clone()),
-            _ => None,
-        })
+        .map(|g| g.id.as_str())
         .collect();
-    assert_eq!(created, ["G-6"], "past G-3 and the G-5 directory");
-    assert!(r.branch_exists("yhtye/G-6"));
+    let tasks: Vec<&str> = snapshot.state.tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!((groups, tasks), (vec!["fresh"], vec!["logout"]));
+    assert!(r.branch_exists("yhtye/fresh"));
     shutdown_and_check(orch, &events).await;
 }
 
