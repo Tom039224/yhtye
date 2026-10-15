@@ -34,15 +34,15 @@ const ALL: [Fixture; 10] = [
     Fixture::Cancelled,
 ];
 
-/// A state where task `T-2` is in the fixture's status.
+/// A state where task `t2` is in the fixture's status.
 fn build(f: Fixture) -> Sim {
     let mut sim = Sim::new();
     sim.group();
-    sim.task(json!({})); // T-1: running, a dependency for Pending
+    sim.task(json!({})); // t1: running, a dependency for Pending
     let steps = json!([{"kind": "implement"}]);
     match f {
         Fixture::Pending => {
-            sim.task(json!({"depends_on": ["T-1"]}));
+            sim.task(json!({"depends_on": ["t1"]}));
         }
         Fixture::Awaiting => {
             sim.task(json!({"instruction": null}));
@@ -54,7 +54,7 @@ fn build(f: Fixture) -> Sim {
             sim.task(json!({"steps": steps}));
         }
     }
-    let me = sub("T-2", Role::Implementer, 0);
+    let me = sub("t2", Role::Implementer, 0);
     let report = json!({"result": "r"});
     match f {
         Fixture::Reported => {
@@ -69,7 +69,7 @@ fn build(f: Fixture) -> Sim {
         }
         Fixture::HandlingYhtye => {
             sim.run(DomainCommand::AgentExited {
-                agent: agent("T-2", Role::Implementer, 0),
+                agent: agent("t2", Role::Implementer, 0),
                 detail: "x".into(),
             })
             .expect("ok");
@@ -78,19 +78,19 @@ fn build(f: Fixture) -> Sim {
             sim.sub_ok(me, ToolName::ReportStepDone, report);
             // A single step: the merge effect is left unanswered.
             sim.step(DomainCommand::TurnEnded {
-                agent: agent("T-2", Role::Implementer, 0),
+                agent: agent("t2", Role::Implementer, 0),
                 outcome: TurnOutcome::EndTurn,
                 prompt_queued: false,
             })
             .expect("ok");
         }
         Fixture::Done => {
-            sim.report("T-2", Role::Implementer, None);
+            sim.report("t2", Role::Implementer, None);
         }
         Fixture::Cancelled => {
             sim.orch_ok(
                 ToolName::CancelTask,
-                json!({"task_id": "T-2", "reason": "x"}),
+                json!({"task_id": "t2", "reason": "x"}),
             );
         }
         _ => {}
@@ -115,7 +115,7 @@ type Outcome = Result<TaskStatus, ErrorCode>;
 
 fn apply(sim: &mut Sim, b: SessionBinding, tool: ToolName, args: Value) -> Outcome {
     match sim.tool(b, tool, args) {
-        Ok(_) => Ok(sim.status("T-2")),
+        Ok(_) => Ok(sim.status("t2")),
         Err(e) => Err(e.code),
     }
 }
@@ -123,7 +123,7 @@ fn apply(sim: &mut Sim, b: SessionBinding, tool: ToolName, args: Value) -> Outco
 fn check(name: &str, tool: ToolName, args: Value, b: SessionBinding, expected: [Outcome; 10]) {
     for (f, want) in ALL.into_iter().zip(expected) {
         let mut sim = build(f);
-        assert_eq!(sim.status("T-2"), fixture_status(f), "fixture {f:?}");
+        assert_eq!(sim.status("t2"), fixture_status(f), "fixture {f:?}");
         let got = apply(&mut sim, b.clone(), tool, args.clone());
         assert_eq!(got, want, "{name} on {f:?}");
     }
@@ -135,7 +135,7 @@ fn set_instruction() {
     check(
         "set_instruction",
         ToolName::SetInstruction,
-        json!({"task_id": "T-2", "instruction": "i"}),
+        json!({"task_id": "t2", "instruction": "i"}),
         orch(),
         // pending, awaiting, running, reported, checkpoint, h-agent, h-yhtye, merging, done, cancelled
         [Ok(Pending), Ok(Running), e, e, e, e, e, e, e, e],
@@ -148,7 +148,7 @@ fn modify_steps() {
     check(
         "modify_steps",
         ToolName::ModifySteps,
-        json!({"task_id": "T-2", "steps": [{"kind": "implement"}]}),
+        json!({"task_id": "t2", "steps": [{"kind": "implement"}]}),
         orch(),
         [
             Ok(Pending),
@@ -171,7 +171,7 @@ fn resolve_checkpoint() {
     check(
         "resolve_checkpoint",
         ToolName::ResolveCheckpoint,
-        json!({"task_id": "T-2", "decision": "continue"}),
+        json!({"task_id": "t2", "decision": "continue"}),
         orch(),
         [e, e, e, e, Ok(Running), e, e, e, e, e],
     );
@@ -184,7 +184,7 @@ fn cancel_task() {
     check(
         "cancel_task",
         ToolName::CancelTask,
-        json!({"task_id": "T-2", "reason": "r"}),
+        json!({"task_id": "t2", "reason": "r"}),
         orch(),
         [c, c, c, c, c, c, c, c, e, e],
     );
@@ -196,7 +196,7 @@ fn message_task() {
     check(
         "message_task",
         ToolName::MessageTask,
-        json!({"task_id": "T-2", "text": "hi"}),
+        json!({"task_id": "t2", "text": "hi"}),
         orch(),
         // A running step is handed to the runtime and a reported one is
         // answered at once: the task stays running either way.
@@ -211,7 +211,7 @@ fn report_step_done() {
         "report_step_done",
         ToolName::ReportStepDone,
         json!({"result": "r"}),
-        sub("T-2", Role::Implementer, 0),
+        sub("t2", Role::Implementer, 0),
         [e, e, Ok(Running), e, e, e, e, e, e, e],
     );
 }
@@ -223,16 +223,16 @@ fn help() {
         "help",
         ToolName::Help,
         json!({"kind": "question", "message": "m"}),
-        sub("T-2", Role::Implementer, 0),
+        sub("t2", Role::Implementer, 0),
         [e, e, Ok(Handling), e, e, e, e, e, e, e],
     );
 }
 
 #[test]
 fn answer_help_resume_and_cancel() {
-    // Only tasks with an open help accept answers; the rest have no H-1 for T-2.
+    // Only tasks with an open help accept answers; the rest have no H-1 for t2.
     for f in [Fixture::HandlingAgent, Fixture::HandlingYhtye] {
-        let help_id = |sim: &Sim| sim.state.open_help("T-2").expect("help").id.clone();
+        let help_id = |sim: &Sim| sim.state.open_help("t2").expect("help").id.clone();
         let mut sim = build(f);
         let id = help_id(&sim);
         let got = apply(
@@ -259,16 +259,16 @@ fn merge_result_after_cancel_is_ignored() {
     let mut sim = build(Fixture::Merging);
     sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-2", "reason": "r"}),
+        json!({"task_id": "t2", "reason": "r"}),
     );
     let before = sim.state.clone();
     sim.run(DomainCommand::GitDone {
         op: GitOp::FinishTask {
-            group: "G-1".into(),
-            task: "T-2".into(),
+            group: "g1".into(),
+            task: "t2".into(),
             kind: TaskKind::Code,
             message: "m".into(),
-            group_branch: "yhtye/G-1".into(),
+            group_branch: "yhtye/g1".into(),
             base_branch: "main".into(),
         },
         result: GitResult::Merged {

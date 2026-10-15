@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::event::DomainEvent;
 use super::types::{MessageOutcome, MessageVia, Role, TaskKind, ToolError};
 use crate::mcp::SessionBinding;
-use crate::mcp::tools::{CreateGroupArgs, MessageTaskArgs, ToolCall};
+use crate::mcp::tools::{CreateGroupArgs, CreateTaskArgs, MessageTaskArgs, ToolCall};
 
 /// The agent session working on one step of a task. The runtime keeps one
 /// implementer session per task and a fresh reviewer session per review step.
@@ -148,10 +148,17 @@ pub enum DomainCommand {
         chat: String,
         args: CreateGroupArgs,
         base_branch: String,
-        /// The highest group number git already has (branches or worktree
-        /// directories left by an earlier database): the new group is numbered
-        /// past it, and past every group of the state.
-        taken: u32,
+        /// What in git already uses the group's name (a branch or worktree
+        /// directory left by an earlier database, read by the runtime); `None`:
+        /// nothing. The name is then refused, like one the state has.
+        taken_in_git: Option<String>,
+    },
+    /// `create_task` (a tool call of `binding`), with what in git already uses
+    /// the task's name (its branch or worktree directory; see `CreateGroup`).
+    CreateTask {
+        binding: SessionBinding,
+        args: CreateTaskArgs,
+        taken_in_git: Option<String>,
     },
     /// Any other tool call.
     Tool {

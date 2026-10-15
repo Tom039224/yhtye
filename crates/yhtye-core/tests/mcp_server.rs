@@ -50,12 +50,12 @@ async fn fixture() -> Fixture {
 
 fn sub_binding(role: Role) -> SessionBinding {
     SessionBinding {
-        session: "T-1/0".into(),
+        session: "t1/0".into(),
         role,
         project: "P-1".into(),
         chat: None,
-        group: Some("G-1".into()),
-        task: Some("T-1".into()),
+        group: Some("g1".into()),
+        task: Some("t1".into()),
         step: Some(0),
     }
 }
@@ -192,10 +192,10 @@ async fn wrong_role_is_forbidden_and_bad_args_are_invalid_argument() {
     let res = call(&client, "report_step_done", json!({"result": "x"})).await;
     assert_eq!(error_code(&res).as_deref(), Some("forbidden"));
 
-    let res = call(&client, "message_task", json!({"task_id": "T-1"})).await;
+    let res = call(&client, "message_task", json!({"task_id": "t1"})).await;
     assert_eq!(error_code(&res).as_deref(), Some("invalid_argument"));
 
-    let res = call(&client, "create_task", json!({"group_id": "G-1"})).await;
+    let res = call(&client, "create_task", json!({"group_id": "g1"})).await;
     assert_eq!(error_code(&res).as_deref(), Some("invalid_argument"));
 
     let res = call(&client, "create_group", json!({"title": 3})).await;
@@ -215,7 +215,7 @@ async fn wrong_role_is_forbidden_and_bad_args_are_invalid_argument() {
     let res = call(
         &client,
         "message_task",
-        json!({"task_id": "T-1", "text": "hi"}),
+        json!({"task_id": "t1", "text": "hi"}),
     )
     .await;
     assert_eq!(error_code(&res).as_deref(), Some("forbidden"));

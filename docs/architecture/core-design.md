@@ -583,7 +583,7 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   (`<data_dir>/worktrees/<projectId>`)。`NoopGit` は git を使わないテスト用に残す。
 - `GitOp::PrepareWorkspace` / `FinishTask` は `group_branch` / `base_branch` を持つ (3c で追加):
   消えた group ブランチ・統合 worktree を作り直すため。ブランチ名は `domain::group_branch` /
-  `domain::task_branch` (`yhtye/<groupId>-<taskId>`) の 1 か所で決める。
+  `domain::task_branch` (`yhtye/<group>--<task>`、古い `T-<n>` は `yhtye/<group>-T-<n>`) の 1 か所で決める。
 - トレイトに `workspace_changes(workdir, group_branch)` を追加 (既定実装は空)。再起動のフォールバック
   プロンプトに `git status --short` + 分岐点からの `git diff` (16 KiB まで) を添えるのに使う
   (runtime の `Effect::ResumeStep` 処理)。
@@ -1289,7 +1289,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **ドメイン**:
   - `Chat { id, worktree: PathBuf, title }` (`branch` を削除)。`DomainCommand::CreateChat { worktree }` (runtime が解決・検査したパス)。
-  - `DomainCommand::CreateGroup { chat, args, base_branch, taken }` — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
+  - `DomainCommand::CreateGroup { chat, args, base_branch, taken_in_git }` (当時は `taken`。名前 = ID になって置き換え、orchestration-model §2.1「名前」) — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
     **作業ツリーごと** (`State::open_group_in(worktree)` = チャットの作業ツリーが同じグループのうち `active` / `finishing`)。
   - `GitOp::MergeGroup { group, worktree, group_branch, base_branch, trigger }` — `worktree` = グループのチャットの作業ツリー。
   - `finish_group` は `active` (全タスク終端) と `merge_blocked` を受け付ける。`merge_blocked` からは `RetryGroupMerge` と同じく同じ作業ツリーの open グループがあれば `conflict`。

@@ -960,3 +960,47 @@ async fn remote_devices_and_app_settings_are_stored() {
         Some("c")
     );
 }
+
+#[tokio::test]
+async fn retired_names_are_kept_with_the_counters_and_older_counters_still_load() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let empty = State::new("P-1", DomainConfig::default());
+    store
+        .create_project(&empty, dir.path())
+        .await
+        .expect("create");
+    // Counters as an older Yhtye stored them: no `retired_names`.
+    sqlx::query("UPDATE projects SET counters = ? WHERE id = 'P-1'")
+        .bind(r#"{"chats":1,"groups":46,"tasks":99,"helps":0,"inbox":0}"#)
+        .execute(&store.pool)
+        .await
+        .expect("old counters");
+    let old = store.load_state("P-1").await.expect("load").expect("state");
+    assert_eq!((old.counters.groups, old.counters.tasks), (46, 99));
+    assert!(old.counters.retired_names.is_empty());
+
+    let mut named = old.clone();
+    named.apply(&DomainEvent::ChatCreated {
+        chat: Chat {
+            id: "C-1".into(),
+            worktree: dir.path().into(),
+            title: None,
+        },
+    });
+    named.apply(&DomainEvent::GroupCreated {
+        group: group_of("api", "C-1"),
+    });
+    let events = [event(
+        1,
+        ApiEventBody::Domain {
+            event: DomainEvent::GroupCreated {
+                group: group_of("api", "C-1"),
+            },
+        },
+    )];
+    store.commit(&events, &old, &named).await.expect("commit");
+    let after = commit_deletion(&store, 2, &named, "C-1").await;
+    assert_eq!(after.counters.retired_names, ["api"]);
+    assert_eq!(store.load_state("P-1").await.expect("load"), Some(after));
+}

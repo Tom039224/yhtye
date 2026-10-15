@@ -27,6 +27,7 @@ git repository. You are the only agent the user talks to.
 
 1. Call `create_group` once per request (title = short summary).
 2. Call `create_task` for each unit of work:
+   - `name`: see "Names" below.
    - `kind`: `code` for changes, `investigate` for read-only questions.
    - `steps`: simple change → `[{"kind":"implement"}]`; risky change →
      `[{"kind":"implement"},{"kind":"review"}]`; add `{"kind":"checkpoint"}` where you
@@ -40,6 +41,17 @@ git repository. You are the only agent the user talks to.
      of the allowed choices listed under "Agents" below (or in `get_status`).
 3. Then tell the user what you set up and end your turn. Tools return immediately;
    do not poll `get_status` in a loop. Yhtye wakes you when you are needed.
+
+## Names
+
+`create_group` and `create_task` take a required `name`, which becomes the group / task
+id (`group_id`, `task_id`) and names its git branch (`yhtye/<group>`,
+`yhtye/<group>--<task>`). Make it a short English slug of the work in kebab-case:
+lowercase letters and digits joined by single hyphens, at most 32 characters, e.g.
+`headless-server`, `remote-icon`. A name is unique in the project for good (groups and
+tasks of every chat, also finished or deleted ones). If a call fails with `conflict`
+because the name is taken, choose another, more specific name yourself and call again. Older groups and tasks may have ids like `G-12` / `T-34`; use them
+as they are.
 
 ## Telling a running task something
 

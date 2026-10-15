@@ -60,19 +60,19 @@ type Verdict = "approve" | "needs_changes";
 
 | | |
 |---|---|
-| 引数 | `title: string` (必須), `summary?: string` |
-| 戻り値 | `{ group_id, group_branch, base_branch }` (`base_branch` = 呼び出した時点でチャットの作業ツリーがチェックアウトしているブランチ。Stage 8e) |
+| 引数 | `name: string` (必須。グループの名前 = `group_id`。作業を表す短い英語のケバブケース、`^[a-z0-9]+(-[a-z0-9]+)*$`、32 文字まで、プロジェクト内で一意。例 `headless-server`。[`orchestration-model.md`](orchestration-model.md) §2.1「名前」), `title: string` (必須), `summary?: string` |
+| 戻り値 | `{ group_id, group_branch, base_branch }` (`group_id` = `name`、`group_branch` = `yhtye/<name>`) (`base_branch` = 呼び出した時点でチャットの作業ツリーがチェックアウトしているブランチ。Stage 8e) |
 | 遷移 | 新しい Group を `active` で作成 (`base_branch` を記録)。group ブランチと統合 worktree を作る |
-| エラー | `conflict` (**そのチャットの作業ツリー**に active / finishing のグループが既にある — 同じ作業ツリーの別チャットのものも数える。`merge_blocked` は数えない。Stage 8e で「ブランチに」から変更), `invalid_state` (作業ツリーが detached HEAD / `yhtye/*` をチェックアウト中 / 作業ツリーが見つからない。Stage 8e), `invalid_argument`, `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
+| エラー | `conflict` (**そのチャットの作業ツリー**に active / finishing のグループが既にある — 同じ作業ツリーの別チャットのものも数える。`merge_blocked` は数えない。Stage 8e で「ブランチに」から変更), `conflict` (名前が使用済み: このプロジェクトのグループ・タスク (削除したチャットのものも)、または git の `yhtye/<name>`・`yhtye/<name>--*` ブランチや worktree ディレクトリ。別の名前で呼び直す。番号の自動付加はしない。予約名 `branches` も), `invalid_state` (作業ツリーが detached HEAD / `yhtye/*` をチェックアウト中 / 作業ツリーが見つからない。Stage 8e), `invalid_argument` (`name` が無い・書式違反 — 規則と例をエラー文で示す、`title` が空など), `internal` (group ブランチの作成に失敗。グループは `cancelled` になる) |
 
 ### `create_task`
 
 | | |
 |---|---|
-| 引数 | `group_id: string`, `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `effort?: string`, `review_harness?: string`, `review_model?: string`, `review_effort?: string` (Stage 7b、`effort` は 7d。普段は省略) |
-| 戻り値 | `{ task_id, status, steps: StepSpec[] }` (末尾 `done` 補完後の正規化済み工程) |
+| 引数 | `group_id: string`, `name: string` (必須。タスクの名前 = `task_id`。書式は `create_group` の `name` と同じ。例 `remote-icon`。全グループのタスクの中で一意), `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `effort?: string`, `review_harness?: string`, `review_model?: string`, `review_effort?: string` (Stage 7b、`effort` は 7d。普段は省略) |
+| 戻り値 | `{ task_id, status, steps: StepSpec[] }` (`task_id` = `name`。末尾 `done` 補完後の正規化済み工程) |
 | 遷移 | Task を `pending` で作成。依存が全て `done` なら即座に評価し、`instruction` があれば `running` (最初の Step を開始)、無ければ `awaiting_instruction` として受信箱に `instruction_needed` を積む |
-| エラー | `not_found` (group / depends_on の ID。他グループのタスクも), `invalid_state` (グループが `active` でない / depends_on のタスクが `cancelled` か、それが原因で開始不能 — 決して始まらないため), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため) |
+| エラー | `not_found` (group / depends_on の ID。他グループのタスクも), `invalid_state` (グループが `active` でない / depends_on のタスクが `cancelled` か、それが原因で開始不能 — 決して始まらないため), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため、`name` が無い・書式違反), `conflict` (名前が使用済み: このプロジェクトのグループ・タスク (削除したチャットのものも)、または git のいずれかのグループの `yhtye/*--<name>` ブランチや `<group>/<name>` worktree ディレクトリ。別の名前で呼び直す) |
 
 `depends_on` は既存タスクしか指せないので循環は起こりえない (`conflict` は返らない)。重複は取り除く。
 
@@ -185,7 +185,7 @@ effort 違いで複数あるのに `effort` が無ければ、`invalid_argument`
 | | |
 |---|---|
 | 引数 | `task_id` |
-| 戻り値 | タスクの全 Step (kind / status / instruction / result / verdict)、ブランチ名 (`code` のみ。`yhtye/<groupId>-<taskId>`)、worktree パス、未回答 help |
+| 戻り値 | タスクの全 Step (kind / status / instruction / result / verdict)、ブランチ名 (`code` のみ。`yhtye/<group>--<task>`、古い `T-<n>` のタスクは `yhtye/<group>-T-<n>`)、worktree パス、未回答 help |
 | 遷移 | なし |
 
 ## 4. サブエージェント用ツール (implementer / reviewer 共通)

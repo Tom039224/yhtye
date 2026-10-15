@@ -71,11 +71,11 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
 
 | 属性 | 内容 |
 |---|---|
-| `id` | Yhtye が採番 (`G-<連番>`) |
+| `id` | **名前** = ID。オーケストレータが `create_group` の `name` で付ける (下記「名前」) |
 | `title` / `summary` | オーケストレータが `create_group` で与える |
 | `chat` | このグループを作ったチャット (`C-<n>`)。グループ関連の通知はこのチャットのオーケストレータに届く |
 | `base_branch` | マージ先。`create_group` の時点でチャットの作業ツリーがチェックアウトしていたブランチを記録する (Stage 8e。detached HEAD なら `create_group` は `invalid_state`)。group / タスクブランチの作成と表示に使う。`finish_group` の `into` でだけ変わる (§6) |
-| `group_branch` | `yhtye/<groupId>` — `base_branch` の HEAD から作成 |
+| `group_branch` | `yhtye/<group>` — `base_branch` の HEAD から作成 |
 | `status` | `active` → `finishing` → `done` / `cancelled` / `merge_blocked` |
 
 - **active なグループは作業ツリーごとに最大 1 つ** (Stage 8 で「プロジェクトごと」から「ブランチごと」、Stage 8e で「作業ツリーごと」に変更。
@@ -101,11 +101,26 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
   選ばずにターンを終えたときの安全網である (報告: Stage 7a 結果メモ)。
 - `finish_group` で Yhtye は `group_branch` を `base_branch` に自動マージする (§6。直前に作業ツリーのブランチを確かめ、食い違いはオーケストレータに返す)。
 
+**名前 (グループとタスクの ID)**: 以前は Yhtye が `G-<連番>` / `T-<連番>` を採番していたが、名前が ID になった。
+
+- オーケストレータが `create_group` / `create_task` の必須引数 `name` で、作業内容を表す短い英語のスラッグを付ける
+  (例 `headless-server`、`remote-icon`)。それがそのまま `group_id` / `task_id` になり、状態・イベント・ツールの引数と応答・ブランチ名で使われる。
+- 書式: `^[a-z0-9]+(-[a-z0-9]+)*$`、32 文字まで (`--`・先頭や末尾の `-`・大文字は不可)。違反や `name` の欠落は `invalid_argument`
+  (規則と例を示す。Yhtye が名前を作り出すことはしない)。グループ名 `branches` は予約 (worktree ルートの `branches/` と重なるため。`conflict`)。
+- 一意性: グループ名はプロジェクト内のすべてのグループ (全チャット・過去のものも) で、タスク名はすべてのタスクで一意
+  (ツールが `task_id` だけで指すため)。削除したチャットのグループ・タスクの名前も再利用しない (`Counters.retired_names` に残す。
+  セッションキーやイベントログが ID で引かれるため)。さらに git にその名前を使うものがあれば拒否する: グループなら `yhtye/<name>` か
+  `yhtye/<name>--*` のブランチ・worktree ルート直下の `<name>` ディレクトリ、タスクならいずれかのグループの `yhtye/*--<name>` ブランチ・
+  `<group>/<name>` ディレクトリ (大文字小文字を区別せずに比べる。DB を消した後の残骸など)。かぶれば `conflict` (「その名前は使われている。別の名前を」)。
+  番号を付け足して自動でずらすことはしない (以前の「git に残る `G-<n>` の番号を飛ばす」仕組みはこれに置き換わった)。
+- 互換: 以前の `G-<n>` / `T-<n>` を含む状態・イベントログはそのまま読み込み・再生でき、進行中の古いグループも続けて完了できる。
+  古い ID のブランチ名は変わらない (§6)。`Counters` の `groups` / `tasks` は作成数として残る (ID には使わない)。チャット `C-<n>`・help `H-<n>` は従来どおり連番。
+
 ### 2.2 Task
 
 | 属性 | 内容 |
 |---|---|
-| `id` | `T-<連番>` (プロジェクト内で一意) |
+| `id` | **名前** = ID。オーケストレータが `create_task` の `name` で付ける (§2.1「名前」。プロジェクト内で一意) |
 | `title` | 短い表示名 |
 | `kind` | Yhtye 定義。当面 `code` と `investigate` の 2 種 (§3) |
 | `depends_on` | 先行タスク ID の配列。全て `done` になるまで開始しない |
@@ -172,7 +187,7 @@ help の逆向き: オーケストレータが、**実行中**のタスクの担
 
 | kind | 作業場所 | 書き込み | 完了時 |
 |---|---|---|---|
-| `code` | タスク専用の git worktree + ブランチ `yhtye/<groupId>-<taskId>` (group ブランチから分岐。Stage 3c で `/` 区切りから変更、§6) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへマージ |
+| `code` | タスク専用の git worktree + ブランチ `yhtye/<group>--<task>` (group ブランチから分岐。古い `T-<n>` のタスクは `yhtye/<group>-T-<n>`。§6) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへマージ |
 | `investigate` | group の統合 worktree (group ブランチ。共有、§6) | 不可 (プロンプトで禁止し、終了時に `git status` が汚れていたら変更を stash に退避して `help`) | マージなし。結果テキストのみ |
 
 kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。追加は実運用後。
@@ -238,14 +253,17 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 
 ## 6. git
 
-- **group ブランチ** `yhtye/<groupId>`: `create_group` 時に `base_branch` (= チャットの作業対象ブランチ) の HEAD から作る。
-  Yhtye 管理の**統合 worktree** (`<data_dir>/worktrees/<projectId>/<groupId>/_group`) に
+- **group ブランチ** `yhtye/<group>`: `create_group` 時に `base_branch` (= チャットの作業対象ブランチ) の HEAD から作る。
+  Yhtye 管理の**統合 worktree** (`<data_dir>/worktrees/<projectId>/<group>/_group`) に
   チェックアウトする。タスクブランチのマージはここで行う。
-- **タスクブランチ** `yhtye/<groupId>-<taskId>` (例 `yhtye/G-1-T-2`): `code` タスクの開始時に
-  group ブランチの現在の HEAD から作り、専用 worktree (`.../<groupId>/<taskId>`) にチェックアウトする。
-  **Stage 3c で変更**: 当初の `yhtye/<groupId>/<taskId>` は git では作れない
-  (`refs/heads/yhtye/G-1` があると `refs/heads/yhtye/G-1/T-1` を作れない — ref はファイルなので
-  同名のディレクトリを持てない。git 2.55 で確認)。group ブランチ名 `yhtye/<groupId>` は合意どおり。
+- **タスクブランチ** `yhtye/<group>--<task>` (例 `yhtye/headless-server--remote-icon`。区切りは `-` 2 つ): `code` タスクの開始時に
+  group ブランチの現在の HEAD から作り、専用 worktree (`.../<group>/<task>`) にチェックアウトする。
+  名前は `--` を含められないので区切りは一意に決まる。`/` で区切らないのは、git が `refs/heads/yhtye/x` と
+  `refs/heads/yhtye/x/y` を同時に持てないため (ref はファイルなので同名のディレクトリを持てない。git 2.55 で確認。
+  Stage 3c で当初の `yhtye/<groupId>/<taskId>` から変更)。
+  **古い ID の互換**: `T-<n>` (連番) のタスクは以前のまま `yhtye/<group>-T-<n>` (例 `yhtye/G-1-T-2`)。
+  名前のタスクは古いグループの中でも `--` (例 `yhtye/G-46--remote-icon`)。この規則は `domain::task_branch` の 1 か所だけで決め、
+  git 操作・再起動 / 復旧・レビュー範囲 (プロンプト)・後片付けはすべてそれを使う。
 - worktree はリポジトリの外 (Yhtye のデータディレクトリ) に置き、ユーザーの作業ツリーを汚さない。
 - **タスク完了時**: 未コミット変更があれば Yhtye がコミット (メッセージはタスク ID + 最終報告の要約)
   → 統合 worktree で `git merge --no-ff <taskBranch>` → 成功で worktree を削除 (ブランチは残す)。
