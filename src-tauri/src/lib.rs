@@ -56,7 +56,7 @@ pub mod headless {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 enum CommandReply {
-    Local(ApiResponse),
+    Local(Box<ApiResponse>),
     Remote(Value),
 }
 
@@ -69,7 +69,10 @@ async fn yhtye_command(
     cmd: ApiCommand,
 ) -> Result<CommandReply, ApiError> {
     match host {
-        None => core.command(cmd).await.map(CommandReply::Local),
+        None => core
+            .command(cmd)
+            .await
+            .map(|reply| CommandReply::Local(Box::new(reply))),
         Some(server_id) => core
             .remote_hosts()
             .call(&server_id, &cmd)
