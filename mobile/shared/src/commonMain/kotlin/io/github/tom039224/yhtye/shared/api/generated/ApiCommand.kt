@@ -119,6 +119,19 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
+     * each): all its orchestrator sessions stop, so the project is no longer
+     * awake. All or none: `invalid_state` (and nothing is stopped) while any
+     * chat's orchestrator is working (starting or in a turn). A project that
+     * is known but not open has nothing up, so it is already asleep:
+     * accepted. `not_found` for an unknown project.
+     */
+    @Serializable
+    data class SleepProject(
+        val project: String,
+    ) : ApiCommand
+
+    /**
      * The project's chats, most recently used first. Works for projects that
      * are not open.
      */
@@ -426,6 +439,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("cancel_orchestrator_turn", CancelOrchestratorTurn.serializer()) { it is CancelOrchestratorTurn },
             TaggedVariant<ApiCommand>("compact_chat", CompactChat.serializer()) { it is CompactChat },
             TaggedVariant<ApiCommand>("sleep_chat", SleepChat.serializer()) { it is SleepChat },
+            TaggedVariant<ApiCommand>("sleep_project", SleepProject.serializer()) { it is SleepProject },
             TaggedVariant<ApiCommand>("list_chats", ListChats.serializer()) { it is ListChats },
             TaggedVariant<ApiCommand>("create_chat", CreateChat.serializer()) { it is CreateChat },
             TaggedVariant<ApiCommand>("rename_chat", RenameChat.serializer()) { it is RenameChat },

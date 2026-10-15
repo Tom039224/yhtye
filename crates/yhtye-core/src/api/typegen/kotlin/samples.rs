@@ -110,6 +110,10 @@ fn commands() -> Vec<Sample> {
             json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
         ),
         (
+            "sleep_project",
+            json!({"type": "sleep_project", "project": "repo"}),
+        ),
+        (
             "list_chats",
             json!({"type": "list_chats", "project": "repo"}),
         ),

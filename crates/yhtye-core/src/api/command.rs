@@ -98,6 +98,15 @@ pub enum ApiCommand {
         project: String,
         chat: String,
     },
+    /// Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
+    /// each): all its orchestrator sessions stop, so the project is no longer
+    /// awake. All or none: `invalid_state` (and nothing is stopped) while any
+    /// chat's orchestrator is working (starting or in a turn). A project that
+    /// is known but not open has nothing up, so it is already asleep:
+    /// accepted. `not_found` for an unknown project.
+    SleepProject {
+        project: String,
+    },
     /// The project's chats, most recently used first. Works for projects that
     /// are not open.
     ListChats {

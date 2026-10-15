@@ -6,18 +6,23 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
+import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.BranchState
 import io.github.tom039224.yhtye.shared.api.generated.BranchStatus
@@ -104,6 +109,91 @@ class LeftPanelTest {
         rule.onNode(hasContentDescription("busy-repo に切り替え (実行中)")).assertExists()
         rule.onNodeWithTag("bg-project-${busy.id}").performClick()
         h.settle { h.sync.state.value.project?.info?.id == busy.id }
+    }
+
+    @Test
+    fun `a long press on a background chip opens a menu that sleeps the project`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        // 切り替えは起きない (メニューを開いただけ)
+        assertEquals(listOf(PROJECT.path), h.core.callsOf<ApiCommand.OpenProject>().map { it.path })
+        assertFalse(h.exists("menu-sleep-${awake.id}"))
+    }
+
+    @Test
+    fun `sleep is disabled for a background project while a chat of it works`() {
+        h.open { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${busy.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${busy.id}").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `a background chip leaves once the core says its orchestrators stopped`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake) }
+        h.openLeft()
+        assertTrue(h.exists("bg-project-${awake.id}"))
+        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        h.core.projects = listOf(PROJECT, awake.copy(awake = false))
+        h.core.emit(ApiEvent(1, 0, awake.id, false, ApiEventBody.SessionStopped("orchestrator:C-1", suspended = false)))
+        h.settle { !h.exists("bg-project-${awake.id}") }
+    }
+
+    @Test
+    fun `a long press on a row of the picker sleeps that project and closes the list`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake, other) }
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performClick()
+        rule.onNodeWithTag("project-option-${other.id}").performTouchInput { longClick() }
+        // 開いていないプロジェクトには眠らせるものが無い
+        rule.onNodeWithTag("menu-sleep-${other.id}").assertIsNotEnabled()
+        rule.onNodeWithTag("project-option-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        assertEquals(listOf(PROJECT.path), h.core.callsOf<ApiCommand.OpenProject>().map { it.path })
+        assertFalse(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `the project on screen sleeps from a long press on the picker button`() {
+        h.open()
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        // 開いたままのプロジェクトはオーケストレータが上がっているので眠らせられる
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(PROJECT.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        assertFalse(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `sleep is disabled for the project on screen while its chats all sleep`() {
+        val orchestrator = "orchestrator:C-1"
+        val end = h.recording.end
+        h.open(end.copy(sessions = end.sessions.filter { it.sessionKey != orchestrator }))
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `sleep is disabled for the project on screen while its orchestrator works`() {
+        val orchestrator = "orchestrator:C-1"
+        val end = h.recording.end
+        h.open(end.copy(sessions = end.sessions.map { if (it.sessionKey == orchestrator) it.copy(turnRunning = true) else it }))
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
     }
 
     @Test

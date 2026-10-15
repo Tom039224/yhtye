@@ -327,6 +327,17 @@ class AppStore(
         }
     }
 
+    /**
+     * プロジェクトのチャットをみな眠らせる (表示していないプロジェクトも): すべてのオーケストレータのプロセスを止めて、
+     * プロジェクトは動いていない扱いになる。一括で、断られたら (どれかのターンが動いている) 何も止めずエラーに出す。
+     * 表示していないプロジェクトの一覧は、コアの `session_stopped` を受けて更新する。
+     */
+    suspend fun sleepProject(project: String) {
+        onConfined {
+            report<ApiResponse.Accepted>(ApiCommand.SleepProject(project))
+        }
+    }
+
     /** タスクを中止する (そのエージェントを止める)。 */
     suspend fun cancelTask(task: String) {
         onConfined {

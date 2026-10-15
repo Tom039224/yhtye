@@ -283,6 +283,15 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
+    /// Stops every chat's orchestrator session (see
+    /// [`crate::api::ApiCommand::SleepProject`]): `invalid_state`, with nothing
+    /// stopped, while any of them is starting or in a turn.
+    pub async fn sleep_project(&self) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::SleepProject(tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     /// Gives `chat` the user's title (`not_found` for an unknown chat,
     /// `invalid_argument` for an empty or too long title); returns the chat as
     /// listed afterwards.
