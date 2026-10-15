@@ -81,7 +81,7 @@ async fn real_group_with_two_code_tasks_lands_on_the_base_branch() {
 
     let log = r.git(&["log", "--format=%s", "main"]);
     eprintln!("main log:\n{log}");
-    let merge = format!("Merge yhtye/{0} ({0}) into main", group.id);
+    let merge = format!("Merge yhtye/{} into main", group.id);
     assert!(log.contains(&merge), "{log}");
     for file in ["add.py", "sub.py"] {
         assert!(r.repo.join(file).exists(), "{file} on main");

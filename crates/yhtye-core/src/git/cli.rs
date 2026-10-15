@@ -2,8 +2,8 @@
 //! (`orchestration-model.md` §6, `core-design.md` §7).
 //!
 //! Layout: the group branch is checked out in the group's integration worktree
-//! `<root>/<group>/_group` (task branches are merged there, `investigate` tasks
-//! read there); each `code` task has `<root>/<group>/<task>` (ids: names, or
+//! `<root>/<group>/_group` (task branches are squashed into it, `investigate`
+//! tasks read there); each `code` task has `<root>/<group>/<task>` (ids: names, or
 //! the numbered `G-<n>` / `T-<n>` of older projects). `<root>` is
 //! outside the repository ([`worktree_root`]), so the user's tree stays clean.
 //! Every operation accepts the results of an earlier, interrupted run of itself.
@@ -14,11 +14,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::branches;
-use super::repo::{self, Hooks, MergeOutcome};
+use super::message::{self, GroupMessage, SquashMessage};
+use super::repo::{self, MergeOutcome, SquashOutcome};
 use super::run::git_ok;
 use super::worktree::{ensure_worktree, is_worktree, listed_path, remove_worktree};
 use super::{BranchWorktreeError, CreateBranchError, GitService};
-use crate::domain::{GitOp, GitResult, TaskKind, task_branch};
+use crate::agents::AgentChoice;
+use crate::domain::{GitOp, GitResult, GroupTask, TaskKind, task_branch};
 
 /// Most of the `git diff` given to a restarted agent (bytes).
 const MAX_CHANGES: usize = 16 * 1024;
@@ -54,6 +56,23 @@ struct Branches<'a> {
     group: &'a str,
     group_branch: &'a str,
     base_branch: &'a str,
+}
+
+/// What the squash commit of a finished task says besides its changes.
+struct TaskInfo<'a> {
+    task: &'a str,
+    /// Message of the commit of what the agents left uncommitted.
+    message: &'a str,
+    title: &'a str,
+    agent: Option<&'a AgentChoice>,
+    reviewers: &'a [AgentChoice],
+}
+
+/// What the merge commit of a group says besides its changes.
+struct GroupInfo<'a> {
+    title: &'a str,
+    summary: &'a str,
+    tasks: &'a [GroupTask],
 }
 
 type Step<T> = Result<T, String>;
@@ -176,9 +195,11 @@ impl GitCli {
         Ok(GitResult::Workspace { path: dir })
     }
 
-    /// `code`: commits what the agents left, merges the task branch into the
-    /// group branch (in the integration worktree) and removes the task worktree.
-    async fn finish_code(&self, b: &Branches<'_>, task: &str, message: &str) -> Step<GitResult> {
+    /// `code`: commits what the agents left, squashes the task branch into the
+    /// group branch as one commit (in the integration worktree) and removes the
+    /// task worktree.
+    async fn finish_code(&self, b: &Branches<'_>, info: &TaskInfo<'_>) -> Step<GitResult> {
+        let task = info.task;
         let dir = self.task_dir(b.group, task);
         let branch = task_branch(b.group, task);
         if is_worktree(&self.repo, &dir).await? {
@@ -187,26 +208,22 @@ impl GitCli {
             if !unresolved.is_empty() {
                 return Ok(GitResult::Conflict { files: unresolved });
             }
-            repo::commit_all(&dir, message).await?;
+            repo::commit_all(&dir, info.message).await?;
         }
         if !repo::branch_exists(&self.repo, &branch).await? {
             return Err(format!("the task branch {branch} does not exist"));
         }
         let group_dir = self.ensure_group(b).await?;
-        let result = if repo::is_ancestor(&group_dir, &branch, "HEAD").await? {
+        let result = if already_in_group(&group_dir, &branch, task).await? {
             // Nothing to merge: no changes, or merged before a restart.
             GitResult::Merged {
                 detail: format!("{branch} is already in {}", b.group_branch),
             }
         } else {
             self.clean_integration(&group_dir).await?;
-            let msg = format!("Merge {branch} ({task}) into {}", b.group_branch);
-            match repo::merge_no_ff(&group_dir, &branch, &msg, Hooks::Skip).await? {
-                MergeOutcome::Merged(head) => GitResult::Merged {
-                    detail: format!("merged {branch} into {} ({})", b.group_branch, short(&head)),
-                },
-                MergeOutcome::Conflict(files) => return Ok(GitResult::Conflict { files }),
-                MergeOutcome::Failed(message) => return Err(message),
+            match squash_task(&group_dir, b, &branch, info).await? {
+                Squashed::Done(result) => result,
+                Squashed::Conflict(files) => return Ok(GitResult::Conflict { files }),
             }
         };
         if let Err(e) = remove_worktree(&self.repo, &dir).await {
@@ -215,9 +232,10 @@ impl GitCli {
         Ok(result)
     }
 
-    /// Makes sure the integration worktree can take a merge: a merge left
-    /// behind by an interrupted run is aborted (the tree is Yhtye's own).
+    /// Makes sure the integration worktree can take a merge: a merge or squash
+    /// left behind by an interrupted run is aborted (the tree is Yhtye's own).
     async fn clean_integration(&self, dir: &Path) -> Step<()> {
+        repo::abort_squash(dir).await?;
         if let Some(op) = repo::operation_in_progress(dir).await? {
             if op != "a merge" {
                 return Err(format!("{op} is in progress in {}", dir.display()));
@@ -240,6 +258,8 @@ impl GitCli {
     /// are moved to a stash (kept, not lost) and reported as `Dirty`.
     async fn finish_investigate(&self, b: &Branches<'_>, task: &str) -> Step<GitResult> {
         let dir = self.ensure_group(b).await?;
+        // Not the leftovers of a task merge, which is not this task's doing.
+        repo::abort_squash(&dir).await?;
         refuse_unfinished(&dir, &[]).await?;
         let files = repo::changed_files(&dir).await?;
         if files.is_empty() {
@@ -268,6 +288,7 @@ impl GitCli {
     async fn remove_group(&self, group: &str) -> Step<GitResult> {
         let dir = self.group_dir(group);
         if is_worktree(&self.repo, &dir).await? {
+            repo::abort_squash(&dir).await?;
             if repo::operation_in_progress(&dir).await? == Some("a merge") {
                 super::run::git_ok(&dir, &["merge", "--abort"]).await?;
             }
@@ -287,7 +308,12 @@ impl GitCli {
     /// user's tree is never changed except by a successful merge. The check and
     /// the merge are not atomic (another chat or the user may switch branches in
     /// between), so where the merge landed is checked afterwards.
-    async fn merge_group(&self, dir: &Path, b: &Branches<'_>) -> Step<GitResult> {
+    async fn merge_group(
+        &self,
+        dir: &Path,
+        b: &Branches<'_>,
+        info: &GroupInfo<'_>,
+    ) -> Step<GitResult> {
         if let Some(reason) = base_mismatch(dir, b).await? {
             return Ok(GitResult::Blocked { detail: reason });
         }
@@ -305,11 +331,8 @@ impl GitCli {
                 detail: format!("{} is already in {}", b.group_branch, b.base_branch),
             }
         } else {
-            let msg = format!(
-                "Merge {} ({}) into {}",
-                b.group_branch, b.group, b.base_branch
-            );
-            match repo::merge_no_ff(&dir, b.group_branch, &msg, Hooks::Run).await? {
+            let msg = group_commit_message(&dir, b, &before, info).await?;
+            match repo::merge_no_ff(&dir, b.group_branch, &msg).await? {
                 MergeOutcome::Merged(head) => landing(&dir, b, &before, &head).await?,
                 MergeOutcome::Conflict(files) => GitResult::Blocked {
                     detail: format!(
@@ -364,10 +387,22 @@ impl GitCli {
                 message,
                 group_branch,
                 base_branch,
+                title,
+                agent,
+                reviewers,
             } => {
                 let b = branch_set(group, group_branch, base_branch);
                 match kind {
-                    TaskKind::Code => self.finish_code(&b, task, message).await,
+                    TaskKind::Code => {
+                        let info = TaskInfo {
+                            task,
+                            message,
+                            title,
+                            agent: agent.as_ref(),
+                            reviewers,
+                        };
+                        self.finish_code(&b, &info).await
+                    }
                     TaskKind::Investigate => self.finish_investigate(&b, task).await,
                 }
             }
@@ -378,13 +413,107 @@ impl GitCli {
                 worktree,
                 group_branch,
                 base_branch,
+                title,
+                summary,
+                tasks,
                 ..
             } => {
                 let b = branch_set(group, group_branch, base_branch);
-                self.merge_group(worktree, &b).await
+                let info = GroupInfo {
+                    title,
+                    summary,
+                    tasks,
+                };
+                self.merge_group(worktree, &b, &info).await
             }
         }
     }
+}
+
+/// Whether the work of the task branch `branch` is already in the group
+/// branch checked out in `group_dir`: the branch is in its history (no changes,
+/// or merged with `--no-ff` by an older Yhtye), or a squash commit that names
+/// the task (`Yhtye-Task:`) was made after the branch forked from it.
+async fn already_in_group(group_dir: &Path, branch: &str, task: &str) -> Step<bool> {
+    if repo::is_ancestor(group_dir, branch, "HEAD").await? {
+        return Ok(true);
+    }
+    let squashed = repo::merged_tasks(group_dir, &format!("{branch}..HEAD")).await?;
+    Ok(squashed.iter().any(|t| t == task))
+}
+
+/// Result of squashing a task branch.
+enum Squashed {
+    Done(GitResult),
+    Conflict(Vec<String>),
+}
+
+/// Squashes `branch` into the group branch checked out in `group_dir`, which
+/// is clean: one commit with the task's title, its commits' subjects and the
+/// trailers. A conflict leaves `group_dir` clean again.
+async fn squash_task(
+    group_dir: &Path,
+    b: &Branches<'_>,
+    branch: &str,
+    info: &TaskInfo<'_>,
+) -> Step<Squashed> {
+    match repo::merge_squash(group_dir, branch).await? {
+        SquashOutcome::Conflict(files) => Ok(Squashed::Conflict(files)),
+        SquashOutcome::Failed(message) => Err(message),
+        SquashOutcome::Nothing => Ok(Squashed::Done(GitResult::Merged {
+            detail: format!("{branch} has no changes for {}", b.group_branch),
+        })),
+        SquashOutcome::Staged => {
+            let range = format!("{}..{branch}", b.group_branch);
+            let commits = repo::commit_subjects(group_dir, &range).await?;
+            let msg = message::squash_message(&SquashMessage {
+                group: b.group,
+                task: info.task,
+                title: info.title,
+                commits: &commits,
+                implementer: info.agent,
+                reviewers: info.reviewers,
+            });
+            match repo::commit_squash(group_dir, &msg).await {
+                Ok(head) => Ok(Squashed::Done(GitResult::Merged {
+                    detail: format!(
+                        "merged {branch} into {} as one commit ({})",
+                        b.group_branch,
+                        short(&head)
+                    ),
+                })),
+                Err(e) => {
+                    // Leave the tree clean for the retry.
+                    if let Err(abort) = repo::abort_squash(group_dir).await {
+                        tracing::warn!("undoing the squash of {branch} failed: {abort}");
+                    }
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
+/// The message of the merge of group `b.group` into the base branch, whose
+/// tip is `base_tip`: the tasks are listed in the order they were merged into
+/// the group.
+async fn group_commit_message(
+    dir: &Path,
+    b: &Branches<'_>,
+    base_tip: &str,
+    info: &GroupInfo<'_>,
+) -> Step<String> {
+    let range = format!("{base_tip}..{}", b.group_branch);
+    let merged = repo::merged_tasks(dir, &range).await?;
+    let tasks = message::in_merge_order(info.tasks, &merged);
+    Ok(message::group_message(&GroupMessage {
+        group: b.group,
+        group_branch: b.group_branch,
+        base_branch: b.base_branch,
+        title: info.title,
+        summary: info.summary,
+        tasks: &tasks,
+    }))
 }
 
 /// Why the group cannot be merged in `dir` because it is not on the group's

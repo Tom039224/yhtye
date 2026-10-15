@@ -36,6 +36,9 @@ fn finish(task: &str, kind: TaskKind) -> GitOp {
         message: format!("{task}: work\n\nresult"),
         group_branch: "yhtye/g1".into(),
         base_branch: "main".into(),
+        title: format!("Task {task}"),
+        agent: None,
+        reviewers: Vec::new(),
     }
 }
 
@@ -47,6 +50,9 @@ fn merge_group(repo: &std::path::Path) -> GitOp {
         group_branch: "yhtye/g1".into(),
         base_branch: "main".into(),
         trigger: yhtye_core::domain::MergeTrigger::FinishGroup,
+        title: "Group g1".into(),
+        summary: String::new(),
+        tasks: Vec::new(),
     }
 }
 
@@ -164,8 +170,10 @@ async fn finishing_commits_leftovers_merges_and_removes_the_worktree() {
     assert_eq!(subject.trim(), "t1: work");
     // Finishing again after a restart: already merged.
     assert_merged(&git.run(&finish("t1", TaskKind::Code)).await);
+    let commits = r.git(&["rev-list", "--count", "main..yhtye/g1"]);
+    assert_eq!(commits.trim(), "1", "one squash commit, no second one");
     let merges = r.git(&["rev-list", "--merges", "--count", "yhtye/g1"]);
-    assert_eq!(merges.trim(), "1", "no second merge");
+    assert_eq!(merges.trim(), "0", "a task is squashed, not merged");
 }
 
 #[tokio::test]
@@ -321,7 +329,7 @@ async fn group_merge_lands_on_the_base_branch_and_cleans_up() {
     assert_eq!(r.read("untracked.txt"), "user's scratch file\n");
     assert_merged(&git.run(&merge_group(&r.repo)).await);
     let merges = r.git(&["rev-list", "--merges", "--count", "main"]);
-    assert_eq!(merges.trim(), "2", "the task merge and one group merge");
+    assert_eq!(merges.trim(), "1", "one group merge (the task is squashed)");
 }
 
 #[tokio::test]
@@ -451,6 +459,9 @@ async fn numbered_tasks_keep_their_old_branch_and_named_ones_use_two_hyphens() {
             message: format!("{task}: work"),
             group_branch: group_branch.into(),
             base_branch: "main".into(),
+            title: format!("Task {task}"),
+            agent: None,
+            reviewers: Vec::new(),
         };
         assert_merged(&git.run(&op).await);
     }

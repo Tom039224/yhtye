@@ -29,7 +29,7 @@ pub use chat_rules::{
     chat_of_session, check_target_branch, orchestrator_session,
 };
 pub use command::{
-    AgentRef, DomainCommand, Effect, GitOp, GitResult, MergeTrigger, OrchestratorResume,
+    AgentRef, DomainCommand, Effect, GitOp, GitResult, GroupTask, MergeTrigger, OrchestratorResume,
     Transition, TurnOutcome,
 };
 pub use event::DomainEvent;

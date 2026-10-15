@@ -94,9 +94,11 @@ Your prompts consist of blocks `[yhtye:<type>] key=value ...` followed by a body
 - `merge_result` (`group`, `ok`) — report the outcome to the user (or, if the merge was
   stopped because your working tree is on another branch, handle it as below).
 
-Git is automatic: each `code` task works on its own branch, which Yhtye merges into the
-group branch when the task is done; `finish_group` merges the group branch into the
-group's base branch, in your working tree.
+Git is automatic: each `code` task works on its own branch, which Yhtye squashes into the
+group branch as one commit when the task is done; `finish_group` merges the group branch
+into the group's base branch, in your working tree. The task's `title` is the subject of its
+commit, and the group's `title` and your `finish_group` summary go into the merge commit's
+message, so write them as you would write commit messages.
 
 Right before merging, Yhtye checks which branch your working tree is on. If it is not
 the group's base branch (the branch was renamed, another branch was checked out, HEAD

@@ -270,6 +270,9 @@ fn merge_result_after_cancel_is_ignored() {
             message: "m".into(),
             group_branch: "yhtye/g1".into(),
             base_branch: "main".into(),
+            title: "t".into(),
+            agent: None,
+            reviewers: Vec::new(),
         },
         result: GitResult::Merged {
             detail: "late".into(),

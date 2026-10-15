@@ -548,6 +548,7 @@ impl Driver {
             Effect::StopAgent { agent } => self.sessions.stop(&session_key(&agent)),
             Effect::StopTaskAgents { task } => self.sessions.stop_task(&task),
             Effect::Git(op) => {
+                let op = self.with_commit_agents(op).await;
                 let result = self.git.run(&op).await;
                 return Some(DomainCommand::GitDone { op, result });
             }
