@@ -41,8 +41,8 @@ fn write_flag(flag: &Path) -> Value {
 fn orchestrator(steps: Value, flag: &Path, text: &str) -> Value {
     json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "Add a line"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "Add a line"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "append", "kind": "code",
                 "steps": steps, "instruction": "append hello to README.md"}}},
             wait_for(flag),
@@ -102,7 +102,7 @@ fn nothing_went_wrong(events: &[ApiEvent]) {
 
 fn task_done(events: &[ApiEvent]) -> bool {
     domain_events(events).into_iter().any(|e| {
-        matches!(e, DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1")
+        matches!(e, DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "t1")
     })
 }
 
@@ -133,13 +133,13 @@ async fn a_steering_harness_takes_the_message_into_the_running_turn() {
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
     let reply = message_task_reply(&events);
-    assert_eq!(reply["task_id"], "T-1");
+    assert_eq!(reply["task_id"], "t1");
     assert_eq!(reply["step"], 0);
     assert_eq!(reply["outcome"], "delivered", "{reply}");
     assert_eq!(reply["via"], "steering", "{reply}");
     let body = "[yhtye:orchestrator_message]\nuse tabs\n\n(This message is from the orchestrator";
     // The agent's turn got the message, and its conversation shows it.
-    let mut steered = String::from("T-1/implementer");
+    let mut steered = String::from("t1/implementer");
     steered.push_str(": steered:");
     steered.push_str(body);
     assert!(
@@ -147,7 +147,7 @@ async fn a_steering_harness_takes_the_message_into_the_running_turn() {
         "{:#?}",
         summary(&events)
     );
-    let prompts = prompts_to(&events, "T-1/implementer");
+    let prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(
         prompts.len(),
         2,
@@ -204,7 +204,7 @@ async fn a_harness_without_steering_is_interrupted_and_gets_the_message_as_a_pro
     let reply = message_task_reply(&events);
     assert_eq!(reply["outcome"], "delivered", "{reply}");
     assert_eq!(reply["via"], "interrupt", "{reply}");
-    let prompts = prompts_to(&events, "T-1/implementer");
+    let prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(prompts.len(), 2, "{prompts:#?}");
     assert!(
         prompts[1].starts_with(
@@ -217,7 +217,7 @@ async fn a_harness_without_steering_is_interrupted_and_gets_the_message_as_a_pro
     // The cancelled turn did not count as a silent one.
     let cancelled = events.iter().any(|e| {
         matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(Ok(StopReason::Cancelled)) }
-            if session == "T-1/implementer")
+            if session == "t1/implementer")
     });
     assert!(cancelled, "the turn was cancelled");
     let errored = events.iter().any(|e| {
@@ -286,7 +286,7 @@ async fn a_message_to_a_step_that_already_reported_is_handed_back_and_the_task_g
     assert!(detail.contains("already reported step 1 done"), "{detail}");
     assert!(detail.contains("modify_steps"), "{detail}");
     assert_eq!(
-        prompts_to(&events, "T-1/implementer").len(),
+        prompts_to(&events, "t1/implementer").len(),
         1,
         "nothing was sent"
     );
@@ -330,10 +330,10 @@ async fn the_agent_of_a_review_step_can_be_messaged() {
     assert_eq!(reply["step"], 1, "{reply}");
     assert_eq!(reply["outcome"], "delivered", "{reply}");
     assert_eq!(reply["via"], "steering", "{reply}");
-    let prompts = prompts_to(&events, "T-1/review-1");
+    let prompts = prompts_to(&events, "t1/review-1");
     assert_eq!(prompts.len(), 2, "{prompts:#?}");
     assert!(prompts[1].starts_with("[yhtye:orchestrator_message]\nalso check the docs\n"));
-    assert_eq!(prompts_to(&events, "T-1/implementer").len(), 1);
+    assert_eq!(prompts_to(&events, "t1/implementer").len(), 1);
     nothing_went_wrong(&events);
     assert!(task_done(&events));
     shutdown_and_check(orch, &events).await;
@@ -345,21 +345,21 @@ async fn refusals_reach_the_orchestrator_as_tool_errors() {
     let flag = dir.path().join("agent-running");
     let orch_script = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "g"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "g"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "do it"}}},
             wait_for(&flag),
             {"mcp_call": {"tool": "message_task", "args": {"task_id": "${task_id}", "text": " "}}},
-            {"mcp_call": {"tool": "message_task", "args": {"task_id": "T-99", "text": "hi"}}},
+            {"mcp_call": {"tool": "message_task", "args": {"task_id": "t99", "text": "hi"}}},
             {"mcp_call": {"tool": "cancel_task", "args": {"task_id": "${task_id}", "reason": "r"}}},
-            {"mcp_call": {"tool": "message_task", "args": {"task_id": "T-1", "text": "hi"}}}
+            {"mcp_call": {"tool": "message_task", "args": {"task_id": "t1", "text": "hi"}}}
         ]}
     ]});
     let impl_script = json!({"turns": [
         {"match": "[yhtye:step]", "actions": [
             write_flag(&flag),
-            {"mcp_call": {"tool": "message_task", "args": {"task_id": "T-1", "text": "me?"}}},
+            {"mcp_call": {"tool": "message_task", "args": {"task_id": "t1", "text": "me?"}}},
             {"sleep": LONG_WAIT_MS}
         ]}
     ]});
@@ -400,7 +400,7 @@ async fn refusals_reach_the_orchestrator_as_tool_errors() {
     );
     // A task agent cannot message tasks.
     let own = summary(&events).into_iter().any(|m| {
-        m.starts_with("T-1/implementer: mcp:message_task:error:") && m.contains("\"forbidden\"")
+        m.starts_with("t1/implementer: mcp:message_task:error:") && m.contains("\"forbidden\"")
     });
     assert!(own, "{:#?}", summary(&events));
     // Only the accepted ones are in the log: none was.
@@ -419,8 +419,8 @@ async fn a_message_while_the_agent_is_starting_is_handed_back() {
     let dir = tempfile::tempdir().expect("tempdir");
     let orch_script = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "g"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "g"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "do it"}}},
             {"mcp_call": {"tool": "message_task", "args": {"task_id": "${task_id}", "text": "hi"}}}
@@ -453,7 +453,7 @@ async fn a_message_while_the_agent_is_starting_is_handed_back() {
         "{reply}"
     );
     assert_eq!(resolutions(&events), vec![(MessageOutcome::Returned, None)]);
-    assert!(prompts_to(&events, "T-1/implementer").is_empty());
+    assert!(prompts_to(&events, "t1/implementer").is_empty());
     shutdown_and_check(orch, &events).await;
 }
 
@@ -487,7 +487,7 @@ async fn cancelling_the_task_hands_back_a_message_waiting_for_a_stuck_agent() {
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
     // ... and the loop is free meanwhile: the user cancels the task.
-    orch.cancel_task("T-1", "no longer needed")
+    orch.cancel_task("t1", "no longer needed")
         .await
         .expect("cancelled");
     until(&mut rx, &mut events, TIMEOUT, |e| {
@@ -501,7 +501,7 @@ async fn cancelling_the_task_hands_back_a_message_waiting_for_a_stuck_agent() {
     assert!(detail.contains("is now cancelled"), "{detail}");
     assert_eq!(resolutions(&events), vec![(MessageOutcome::Returned, None)]);
     // The stuck turn ends cancelled; nothing is sent to the stopped agent.
-    assert_eq!(prompts_to(&events, "T-1/implementer").len(), 1);
+    assert_eq!(prompts_to(&events, "t1/implementer").len(), 1);
     shutdown_and_check(orch, &events).await;
 }
 
@@ -541,7 +541,7 @@ async fn a_stuck_agent_hands_the_message_back_and_the_step_goes_on_after_a_remin
     assert_eq!(resolutions(&events), vec![(MessageOutcome::Returned, None)]);
     // The message was not sent; the step went on after a reminder.
     assert!(
-        !prompts_to(&events, "T-1/implementer")
+        !prompts_to(&events, "t1/implementer")
             .iter()
             .any(|p| p.contains("orchestrator_message"))
     );

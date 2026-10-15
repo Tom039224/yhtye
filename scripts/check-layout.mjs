@@ -194,6 +194,39 @@ function inspectBottomTabs({ tasks, active, atStart }) {
   return problems;
 }
 
+/**
+ * Run in the page of the `names` scenario (32-character group and task names): an id cut short
+ * has the whole in a tooltip (its own or its control's), and the task cards keep room for their
+ * titles and their buttons. Returns what is wrong (empty: fine).
+ */
+function inspectNames({ ids }) {
+  const problems = [];
+  const rect = (el) => el.getBoundingClientRect();
+  const seen = new Set();
+  for (const selector of ids) {
+    for (const el of document.querySelectorAll(selector)) {
+      if (el.getClientRects().length === 0) continue; // folded away
+      const text = el.textContent.trim();
+      seen.add(selector);
+      if (el.scrollWidth <= el.clientWidth + 1) continue;
+      const tip = el.closest("[title]")?.getAttribute("title") ?? "";
+      if (!tip.includes(text)) problems.push(`${selector} "${text}" is cut short and no tooltip has the whole (title: "${tip}")`);
+    }
+  }
+  for (const card of document.querySelectorAll(".task")) {
+    if (card.getClientRects().length === 0) continue;
+    const id = card.querySelector(".task-id")?.textContent.trim();
+    const header = card.querySelector(".task-header");
+    const title = card.querySelector(".task-title");
+    if (title && rect(title).width < 60) problems.push(`the title of task ${id} is squeezed (${Math.round(rect(title).width)}px)`);
+    for (const button of card.querySelectorAll(".task-actions .icon-button")) {
+      if (rect(button).right > rect(header).right + 0.5 || rect(button).width < 23.5) problems.push(`a button of task ${id} is pushed out or squeezed`);
+    }
+  }
+  if (!seen.has(".task-id")) problems.push("no task card is shown");
+  return problems;
+}
+
 // ---- the screen states -------------------------------------------------------------------------
 
 const click = (page, name, options = {}) => page.getByRole("button", { name, ...options }).first().click();
@@ -229,11 +262,24 @@ async function showRemoteProject(page) {
   await page.locator(".banners .alert").first().waitFor();
 }
 
+/** The `n`th task's id (from 1) in the `long` scenario, and in `names` (src/test/layoutHarness.tsx). */
+const numberedTask = (n) => `T-${n}`;
+const namedTask = (n) => `the-long-task-name-for-layout-${String(n).padStart(2, "0")}`;
+
 /** Opens the first `count` tasks' output in turn: a tab each, the last one shown. */
-async function openTaskTabs(page, count) {
-  for (let i = 1; i <= count; i++) await page.locator(`article[aria-label="task T-${i}"] .task-title`).click();
+async function openTaskTabs(page, count, task = numberedTask) {
+  for (let i = 1; i <= count; i++) await page.locator(`article[aria-label="task ${task(i)}"] .task-title`).click();
   await page.getByRole("region", { name: "agent output" }).waitFor();
 }
+
+/** Where ids are shown (inspectNames). */
+const ID_SELECTORS = [".task-id", ".group-id", ".group-card-header .dim", ".group-card-row .n", ".tab-label", ".git-badge-text", ".mention-id"];
+const names = (page) => page.evaluate(inspectNames, { ids: ID_SELECTORS });
+const namesAndTabs = (options) => async (page) => [...(await names(page)), ...(await bottomTabs(options)(page))];
+const narrowestRight = async (page) => {
+  await page.getByRole("separator", { name: "右パネルの幅" }).focus();
+  await page.keyboard.press("Shift+Home");
+};
 
 /** The tab row's check (inspectBottomTabs) as a state's `verify`. */
 const bottomTabs = (options) => (page) => page.evaluate(inspectBottomTabs, options);
@@ -386,6 +432,18 @@ const STATES = [
     await page.getByText(/そのホスト自身でしか行えません/).waitFor();
   } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
+  { name: "names: 32-character group and task names", scenario: "names", verify: names },
+  { name: "names: right panel dragged to its narrowest", scenario: "names", interactive: true, run: narrowestRight, verify: names },
+  { name: "names: three tasks quoted into the composer", scenario: "names", interactive: true, run: async (page) => {
+    for (const n of [1, 2, 3]) await click(page, `${namedTask(n)} をオーケストレータへ引用`, { exact: true });
+  }, verify: names },
+  { name: "names: 8 task tabs open (agent output)", scenario: "names", interactive: true, run: (page) => openTaskTabs(page, 8, namedTask), verify: namesAndTabs({ tasks: 8, active: namedTask(8) }) },
+  { name: "names: 8 task tabs open, right panel dragged to its narrowest, git shown", scenario: "names", interactive: true, run: async (page) => {
+    await narrowestRight(page);
+    await openTaskTabs(page, 8, namedTask);
+    await click(page, "git", { exact: true });
+    await page.getByRole("region", { name: "git" }).waitFor();
+  }, verify: namesAndTabs({ tasks: 8, active: null }) },
   { name: "run: every control reached with Tab", scenario: "run", interactive: true, tab: 60 },
 ];
 

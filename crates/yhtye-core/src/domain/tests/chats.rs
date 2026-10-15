@@ -13,7 +13,7 @@ fn two_chats() -> Sim {
     sim
 }
 
-/// `C-2` creates a group (`G-2` when `G-1` exists) and returns the reply.
+/// `C-2` creates a group (`g2` when `g1` exists) and returns the reply.
 fn group_of_c2(sim: &mut Sim) -> Result<Chain, ToolError> {
     sim.tool(
         orch_of("C-2"),
@@ -105,7 +105,7 @@ fn a_group_merges_into_the_branch_its_worktree_has_checked_out() {
         .iter()
         .map(|g| (g.id.as_str(), g.chat.as_str(), g.base_branch.as_str()))
         .collect();
-    assert_eq!(bases, [("G-1", "C-1", "main"), ("G-2", "C-2", "feature")]);
+    assert_eq!(bases, [("g1", "C-1", "main"), ("g2", "C-2", "feature")]);
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn a_second_open_group_in_the_same_worktree_conflicts_even_across_chats() {
         .expect_err("same worktree");
     assert_eq!(err.code, ErrorCode::Conflict);
     assert!(
-        err.message.contains("G-1") && err.message.contains("C-1"),
+        err.message.contains("g1") && err.message.contains("C-1"),
         "{err}"
     );
     // The chat's own second group conflicts too (as before Stage 8).
@@ -143,7 +143,7 @@ fn a_second_open_group_in_the_same_worktree_conflicts_even_across_chats() {
     // Once the group is cancelled the worktree is free again.
     sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "x"}),
+        json!({"group_id": "g1", "reason": "x"}),
     );
     sim.tool(
         orch_of("C-2"),
@@ -166,10 +166,10 @@ fn a_blocked_merge_does_not_count_and_retry_respects_the_worktree_limit() {
     sim.group();
     sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "s"}),
+        json!({"group_id": "g1", "summary": "s"}),
     );
     assert_eq!(
-        sim.state.group("G-1").expect("G-1").status,
+        sim.state.group("g1").expect("g1").status,
         GroupStatus::MergeBlocked
     );
     sim.tool(
@@ -179,10 +179,8 @@ fn a_blocked_merge_does_not_count_and_retry_respects_the_worktree_limit() {
     )
     .expect("a merge_blocked group does not count");
     let err = sim
-        .run(DomainCommand::RetryGroupMerge {
-            group: "G-1".into(),
-        })
-        .expect_err("G-2 is open in the worktree");
+        .run(DomainCommand::RetryGroupMerge { group: "g1".into() })
+        .expect_err("g2 is open in the worktree");
     assert_eq!(err.code, ErrorCode::Conflict);
 }
 
@@ -195,35 +193,35 @@ fn tools_only_reach_the_orchestrators_own_chat() {
     let calls = [
         (
             ToolName::CreateTask,
-            json!({"group_id": "G-1", "title": "t", "kind": "code",
+            json!({"group_id": "g1", "title": "t", "kind": "code",
             "steps": [{"kind": "implement"}], "instruction": "x"}),
         ),
         (
             ToolName::SetInstruction,
-            json!({"task_id": "T-1", "instruction": "x"}),
+            json!({"task_id": "t1", "instruction": "x"}),
         ),
         (
             ToolName::ModifySteps,
-            json!({"task_id": "T-1", "steps": [{"kind": "implement"}]}),
+            json!({"task_id": "t1", "steps": [{"kind": "implement"}]}),
         ),
         (
             ToolName::ResolveCheckpoint,
-            json!({"task_id": "T-1", "decision": "continue"}),
+            json!({"task_id": "t1", "decision": "continue"}),
         ),
         (
             ToolName::CancelTask,
-            json!({"task_id": "T-1", "reason": "x"}),
+            json!({"task_id": "t1", "reason": "x"}),
         ),
         (
             ToolName::FinishGroup,
-            json!({"group_id": "G-1", "summary": "x"}),
+            json!({"group_id": "g1", "summary": "x"}),
         ),
         (
             ToolName::CancelGroup,
-            json!({"group_id": "G-1", "reason": "x"}),
+            json!({"group_id": "g1", "reason": "x"}),
         ),
-        (ToolName::GetStatus, json!({"group_id": "G-1"})),
-        (ToolName::GetTask, json!({"task_id": "T-1"})),
+        (ToolName::GetStatus, json!({"group_id": "g1"})),
+        (ToolName::GetTask, json!({"task_id": "t1"})),
     ];
     for (tool, args) in calls {
         let before = sim.state.clone();
@@ -233,10 +231,10 @@ fn tools_only_reach_the_orchestrators_own_chat() {
     }
     // Unknown ids are still `not_found`, and the owner is not restricted.
     let err = sim
-        .tool(c2, ToolName::GetTask, json!({"task_id": "T-9"}))
+        .tool(c2, ToolName::GetTask, json!({"task_id": "t9"}))
         .expect_err("unknown");
     assert_eq!(err.code, ErrorCode::NotFound);
-    sim.orch_ok(ToolName::GetTask, json!({"task_id": "T-1"}));
+    sim.orch_ok(ToolName::GetTask, json!({"task_id": "t1"}));
 }
 
 #[test]
@@ -245,7 +243,7 @@ fn a_help_can_only_be_answered_by_the_chat_that_owns_the_task() {
     sim.group();
     sim.task(json!({}));
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
     );
@@ -266,39 +264,39 @@ fn a_help_can_only_be_answered_by_the_chat_that_owns_the_task() {
 #[test]
 fn get_status_without_a_group_shows_the_own_chats_group_only() {
     let mut sim = two_chats();
-    sim.group(); // G-1 of C-1
+    sim.group(); // g1 of C-1
     let err = sim
         .tool(orch_of("C-2"), ToolName::GetStatus, json!({}))
         .expect_err("C-2 has no group");
     assert_eq!(err.code, ErrorCode::NotFound);
-    group_of_c2(&mut sim).expect("G-2");
+    group_of_c2(&mut sim).expect("g2");
     let chain = sim
         .tool(orch_of("C-2"), ToolName::GetStatus, json!({}))
         .expect("status");
     let status = chain.reply.expect("reply").expect("ok");
-    assert_eq!(status["group"]["id"], json!("G-2"));
+    assert_eq!(status["group"]["id"], json!("g2"));
     let (status, _) = sim.orch_ok(ToolName::GetStatus, json!({}));
-    assert_eq!(status["group"]["id"], json!("G-1"));
+    assert_eq!(status["group"]["id"], json!("g1"));
 }
 
 #[test]
 fn notifications_go_to_the_chat_that_owns_the_group() {
     let mut sim = two_chats();
-    sim.group(); // G-1 of C-1
-    group_of_c2(&mut sim).expect("G-2 of C-2");
+    sim.group(); // g1 of C-1
+    group_of_c2(&mut sim).expect("g2 of C-2");
     let c2 = orch_of("C-2");
     sim.tool(
         c2,
         ToolName::CreateTask,
-        json!({"group_id": "G-2", "title": "t", "kind": "code",
+        json!({"group_id": "g2", "title": "t", "kind": "code",
                "steps": [{"kind": "implement"}], "instruction": "x"}),
     )
-    .expect("T-1 in G-2");
+    .expect("t1 in g2");
     // The agent asks for help, then finishes another task.
     sim.sub_ok(
         SessionBinding {
-            group: Some("G-2".into()),
-            ..sub("T-1", Role::Implementer, 0)
+            group: Some("g2".into()),
+            ..sub("t1", Role::Implementer, 0)
         },
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
@@ -324,14 +322,14 @@ fn notifications_go_to_the_chat_that_owns_the_group() {
 fn a_users_cancel_is_reported_to_the_groups_chat() {
     let mut sim = two_chats();
     sim.group();
-    group_of_c2(&mut sim).expect("G-2");
+    group_of_c2(&mut sim).expect("g2");
     sim.tool(
         orch_of("C-2"),
         ToolName::CreateTask,
-        json!({"group_id": "G-2", "title": "t", "kind": "code",
+        json!({"group_id": "g2", "title": "t", "kind": "code",
                "steps": [{"kind": "implement"}], "instruction": "x"}),
     )
-    .expect("T-1 in G-2");
+    .expect("t1 in g2");
     sim.deliver_inbox_of("C-1");
     sim.deliver_inbox_of("C-2");
     // The cancelled group's settle notice goes to the chat that owns it.
@@ -341,7 +339,7 @@ fn a_users_cancel_is_reported_to_the_groups_chat() {
     };
     let call = crate::mcp::tools::parse_call(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "user"})
+        json!({"task_id": "t1", "reason": "user"})
             .as_object()
             .cloned(),
     )
@@ -358,9 +356,9 @@ fn a_users_cancel_is_reported_to_the_groups_chat() {
 #[test]
 fn a_turn_end_only_reminds_about_the_chats_own_settled_group() {
     let mut sim = two_chats();
-    sim.group(); // G-1 of C-1, settled below
+    sim.group(); // g1 of C-1, settled below
     sim.task(json!({}));
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     sim.deliver_inbox_of("C-1");
     let other = sim
         .run(DomainCommand::OrchestratorTurnEnded {
@@ -371,7 +369,7 @@ fn a_turn_end_only_reminds_about_the_chats_own_settled_group() {
         .expect("ok");
     assert!(
         other.events.is_empty(),
-        "C-2's turn end says nothing about G-1"
+        "C-2's turn end says nothing about g1"
     );
     let own = sim
         .run(DomainCommand::OrchestratorTurnEnded {
@@ -380,9 +378,10 @@ fn a_turn_end_only_reminds_about_the_chats_own_settled_group() {
             prompt_queued: false,
         })
         .expect("ok");
-    assert!(own.events.contains(&DomainEvent::GroupFinishReminded {
-        group: "G-1".into()
-    }));
+    assert!(
+        own.events
+            .contains(&DomainEvent::GroupFinishReminded { group: "g1".into() })
+    );
 }
 
 #[test]
@@ -390,7 +389,7 @@ fn a_started_orchestrator_is_told_what_it_lost_and_only_its_own_state() {
     let mut sim = two_chats();
     sim.group();
     sim.task(json!({}));
-    group_of_c2(&mut sim).expect("G-2");
+    group_of_c2(&mut sim).expect("g2");
     sim.deliver_inbox_of("C-1");
     let lost = OrchestratorResume {
         had_session: true,
@@ -417,8 +416,8 @@ fn a_started_orchestrator_is_told_what_it_lost_and_only_its_own_state() {
         .item
         .body
         .clone();
-    assert!(text.contains("group G-2"), "{text}");
-    assert!(!text.contains("G-1") && !text.contains("T-1"), "{text}");
+    assert!(text.contains("group g2"), "{text}");
+    assert!(!text.contains("g1") && !text.contains("t1"), "{text}");
 }
 
 #[test]
@@ -492,18 +491,18 @@ fn a_group_records_the_branch_checked_out_when_it_is_created() {
     let mut sim = Sim::new();
     sim.checkout("main", Some("trunk"));
     sim.group();
-    assert_eq!(sim.state.group("G-1").expect("G-1").base_branch, "trunk");
+    assert_eq!(sim.state.group("g1").expect("g1").base_branch, "trunk");
     // A later checkout does not change the recorded base branch.
     sim.checkout("main", Some("other"));
-    assert_eq!(sim.state.group("G-1").expect("G-1").base_branch, "trunk");
-    let chain = finish(&mut sim, json!({"group_id": "G-1", "summary": "s"})).expect("finish");
+    assert_eq!(sim.state.group("g1").expect("g1").base_branch, "trunk");
+    let chain = finish(&mut sim, json!({"group_id": "g1", "summary": "s"})).expect("finish");
     assert_eq!(merges(&chain), [(wt("main"), "trunk".to_string())]);
 }
 
 #[test]
 fn a_group_needs_a_branch_checked_out() {
     let mut sim = Sim::new();
-    for head in [None, Some("yhtye/G-7")] {
+    for head in [None, Some("yhtye/g7")] {
         sim.checkout("main", head);
         assert_eq!(
             sim.orch_err(ToolName::CreateGroup, json!({"title": "g"})),
@@ -516,7 +515,7 @@ fn a_group_needs_a_branch_checked_out() {
 #[test]
 fn the_open_group_limit_is_per_worktree_whatever_the_branch() {
     let mut sim = two_chats();
-    sim.group(); // G-1 in /wt/main on main
+    sim.group(); // g1 in /wt/main on main
     sim.checkout("main", Some("renamed"));
     assert_eq!(
         sim.orch_err(ToolName::CreateGroup, json!({"title": "again"})),
@@ -535,16 +534,16 @@ fn finish_group_into_moves_the_base_branch_then_merges() {
     sim.group();
     let chain = finish(
         &mut sim,
-        json!({"group_id": "G-1", "summary": "s", "into": "trunk"}),
+        json!({"group_id": "g1", "summary": "s", "into": "trunk"}),
     )
     .expect("finish");
     assert!(chain.events.contains(&DomainEvent::GroupBaseChanged {
-        group: "G-1".into(),
+        group: "g1".into(),
         from: "main".into(),
         to: "trunk".into(),
     }));
     assert_eq!(merges(&chain), [(wt("main"), "trunk".to_string())]);
-    let g = sim.state.group("G-1").expect("G-1");
+    let g = sim.state.group("g1").expect("g1");
     assert_eq!(
         (g.base_branch.as_str(), g.status),
         ("trunk", GroupStatus::Done)
@@ -555,8 +554,8 @@ fn finish_group_into_moves_the_base_branch_then_merges() {
 fn finish_group_into_the_same_branch_changes_nothing_and_bad_names_are_refused() {
     let mut sim = Sim::new();
     sim.group();
-    for into in [" ", "yhtye/G-1"] {
-        let args = json!({"group_id": "G-1", "summary": "s", "into": into});
+    for into in [" ", "yhtye/g1"] {
+        let args = json!({"group_id": "g1", "summary": "s", "into": into});
         assert_eq!(
             sim.orch_err(ToolName::FinishGroup, args),
             ErrorCode::InvalidArgument,
@@ -565,7 +564,7 @@ fn finish_group_into_the_same_branch_changes_nothing_and_bad_names_are_refused()
     }
     let chain = finish(
         &mut sim,
-        json!({"group_id": "G-1", "summary": "s", "into": "main"}),
+        json!({"group_id": "g1", "summary": "s", "into": "main"}),
     )
     .expect("finish");
     assert!(
@@ -584,7 +583,7 @@ fn finish_group_runs_the_merge_of_a_blocked_group_again() {
     sim.group();
     let (reply, _) = sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "s"}),
+        json!({"group_id": "g1", "summary": "s"}),
     );
     assert_eq!(reply["merge"]["ok"], json!(false));
     assert_eq!(reply["status"], json!("merge_blocked"));
@@ -595,18 +594,18 @@ fn finish_group_runs_the_merge_of_a_blocked_group_again() {
     sim.git = Box::new(noop_git);
     let chain = finish(
         &mut sim,
-        json!({"group_id": "G-1", "summary": "again", "into": "trunk"}),
+        json!({"group_id": "g1", "summary": "again", "into": "trunk"}),
     )
     .expect("again");
     assert_eq!(merges(&chain), [(wt("main"), "trunk".to_string())]);
-    let g = sim.state.group("G-1").expect("G-1");
+    let g = sim.state.group("g1").expect("g1");
     assert_eq!(g.status, GroupStatus::Done);
     assert_eq!(g.finish_summary.as_deref(), Some("again"));
     // A finished group cannot be finished again.
     assert_eq!(
         sim.orch_err(
             ToolName::FinishGroup,
-            json!({"group_id": "G-1", "summary": "s"})
+            json!({"group_id": "g1", "summary": "s"})
         ),
         ErrorCode::InvalidState
     );
@@ -617,12 +616,12 @@ fn finish_group_of_a_blocked_group_respects_the_worktree_limit() {
     let mut sim = Sim::new();
     blocked_merges(&mut sim);
     sim.group();
-    finish(&mut sim, json!({"group_id": "G-1", "summary": "s"})).expect("blocked");
-    sim.group(); // G-2, active in the same worktree
+    finish(&mut sim, json!({"group_id": "g1", "summary": "s"})).expect("blocked");
+    sim.group(); // g2, active in the same worktree
     assert_eq!(
         sim.orch_err(
             ToolName::FinishGroup,
-            json!({"group_id": "G-1", "summary": "s"})
+            json!({"group_id": "g1", "summary": "s"})
         ),
         ErrorCode::Conflict
     );
@@ -633,11 +632,9 @@ fn a_merge_yhtye_or_the_user_started_is_reported_to_the_chat() {
     let mut sim = Sim::new();
     blocked_merges(&mut sim);
     sim.group();
-    finish(&mut sim, json!({"group_id": "G-1", "summary": "s"})).expect("blocked");
-    sim.run(DomainCommand::RetryGroupMerge {
-        group: "G-1".into(),
-    })
-    .expect("retried");
+    finish(&mut sim, json!({"group_id": "g1", "summary": "s"})).expect("blocked");
+    sim.run(DomainCommand::RetryGroupMerge { group: "g1".into() })
+        .expect("retried");
     let item = sim.state.inbox_of("C-1").last().expect("merge_result");
     assert_eq!(item.item.kind, InboxKind::MergeResult);
     assert!(
@@ -726,24 +723,24 @@ fn a_bad_title_or_an_unknown_chat_is_refused_without_a_change() {
     );
 }
 
-/// C-1 has an active group G-1 with task T-1 and its help H-1; C-2 has G-2 with T-2.
+/// C-1 has an active group g1 with task t1 and its help H-1; C-2 has g2 with t2.
 fn chats_with_work() -> Sim {
     let mut sim = two_chats();
     sim.group();
     sim.task(json!({}));
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
     );
-    group_of_c2(&mut sim).expect("G-2");
+    group_of_c2(&mut sim).expect("g2");
     sim.tool(
         orch_of("C-2"),
         ToolName::CreateTask,
-        json!({"group_id": "G-2", "title": "t", "kind": "code",
+        json!({"group_id": "g2", "title": "t", "kind": "code",
                "steps": [{"kind": "implement"}], "instruction": "x"}),
     )
-    .expect("T-2 in G-2");
+    .expect("t2 in g2");
     sim
 }
 
@@ -752,11 +749,11 @@ fn deleting_a_chat_removes_what_belongs_to_it_and_nothing_else() {
     let mut sim = chats_with_work();
     sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "x"}),
+        json!({"group_id": "g1", "reason": "x"}),
     );
     user_message(&mut sim, "C-1", "hi").expect("ok");
     user_message(&mut sim, "C-2", "hello").expect("ok");
-    let counters = sim.state.counters;
+    let counters = sim.state.counters.clone();
 
     let chain = delete(&mut sim, "C-1").expect("deleted");
     assert_eq!(
@@ -771,15 +768,19 @@ fn deleting_a_chat_removes_what_belongs_to_it_and_nothing_else() {
     );
     assert_eq!(
         ids(s.groups.iter().map(|g| g.id.as_str()).collect()),
-        ["G-2"]
+        ["g2"]
     );
-    assert_eq!(
-        ids(s.tasks.iter().map(|t| t.id.as_str()).collect()),
-        ["T-2"]
-    );
-    assert!(s.helps.is_empty(), "H-1 belonged to T-1");
+    assert_eq!(ids(s.tasks.iter().map(|t| t.id.as_str()).collect()), ["t2"]);
+    assert!(s.helps.is_empty(), "H-1 belonged to t1");
     assert!(s.inbox.iter().all(|e| e.chat == "C-2") && !s.inbox.is_empty());
-    assert_eq!(s.counters, counters, "ids are never reused");
+    assert_eq!(
+        s.counters,
+        Counters {
+            retired_names: ids(vec!["g1", "t1"]),
+            ..counters
+        },
+        "the counters stay and the names are never given again"
+    );
     assert_eq!(sim.chat("again"), "C-3");
 }
 
@@ -787,9 +788,9 @@ fn deleting_a_chat_removes_what_belongs_to_it_and_nothing_else() {
 fn a_chat_with_unfinished_work_is_not_deleted() {
     let mut sim = chats_with_work();
     let before = sim.state.clone();
-    let err = delete(&mut sim, "C-1").expect_err("G-1 is active");
+    let err = delete(&mut sim, "C-1").expect_err("g1 is active");
     assert_eq!(err.code, ErrorCode::InvalidState);
-    assert!(err.message.contains("G-1"), "{err}");
+    assert!(err.message.contains("g1"), "{err}");
     assert_eq!(before, sim.state);
 
     // Finishing leaves the merge blocked: still the orchestrator's to settle.
@@ -801,14 +802,14 @@ fn a_chat_with_unfinished_work_is_not_deleted() {
     });
     sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "x"}),
+        json!({"task_id": "t1", "reason": "x"}),
     );
     sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "s"}),
+        json!({"group_id": "g1", "summary": "s"}),
     );
     assert_eq!(
-        sim.state.group("G-1").expect("G-1").status,
+        sim.state.group("g1").expect("g1").status,
         GroupStatus::MergeBlocked
     );
     let err = delete(&mut sim, "C-1").expect_err("merge_blocked");
@@ -816,7 +817,7 @@ fn a_chat_with_unfinished_work_is_not_deleted() {
 
     sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "x"}),
+        json!({"group_id": "g1", "reason": "x"}),
     );
     delete(&mut sim, "C-1").expect("finished now");
 }

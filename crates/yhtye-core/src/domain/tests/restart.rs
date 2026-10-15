@@ -60,95 +60,92 @@ fn resume_step(chain: &Chain) -> (AgentRef, String, String) {
 fn a_running_agent_step_is_interrupted_then_resumed_in_its_session() {
     let mut sim = running(json!([{"kind": "implement"}, {"kind": "review"}]));
     let chain = restart(&mut sim);
-    assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
+    assert_eq!(sim.status("t1"), TaskStatus::Interrupted);
     assert!(chain.effects.is_empty(), "nothing runs before ResumeTask");
     assert!(
         sim.state.inbox.is_empty(),
         "no orchestrator is woken by a restart"
     );
 
-    let chain = resume(&mut sim, "T-1");
-    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+    let chain = resume(&mut sim, "t1");
+    assert_eq!(sim.status("t1"), TaskStatus::Running);
     let (agent_ref, prompt, fallback) = resume_step(&chain);
-    assert_eq!(agent_ref, agent("T-1", Role::Implementer, 0));
+    assert_eq!(agent_ref, agent("t1", Role::Implementer, 0));
     assert!(
-        prompt.starts_with("[yhtye:resume] task=T-1 step=1\n"),
+        prompt.starts_with("[yhtye:resume] task=t1 step=1\n"),
         "{prompt}"
     );
-    assert!(fallback.starts_with("[yhtye:step] task=T-1 kind=code step=1/3"));
+    assert!(fallback.starts_with("[yhtye:step] task=t1 kind=code step=1/3"));
     assert!(fallback.ends_with(RESTART_NOTE));
-    assert_eq!(sim.t("T-1").steps[0].status, StepStatus::Running);
+    assert_eq!(sim.t("t1").steps[0].status, StepStatus::Running);
 
     // The resumed session reports as usual and the task goes on.
-    let chain = sim.report("T-1", Role::Implementer, None);
-    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 1)]);
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Reviewer, 1)]);
 }
 
 #[test]
 fn a_reported_step_whose_turn_end_was_lost_advances() {
     let mut sim = running(json!([{"kind": "implement"}, {"kind": "review"}]));
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::ReportStepDone,
         json!({"result": "done before the crash"}),
     );
     restart(&mut sim);
-    assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
-    let chain = resume(&mut sim, "T-1");
-    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 1)]);
-    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+    assert_eq!(sim.status("t1"), TaskStatus::Interrupted);
+    let chain = resume(&mut sim, "t1");
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Reviewer, 1)]);
+    assert_eq!(sim.status("t1"), TaskStatus::Running);
 }
 
 #[test]
 fn an_interrupted_merge_is_retried() {
     let mut sim = running(json!([{"kind": "implement"}]));
     // As if Yhtye died while git was merging the task branch.
-    let t = sim.state.task_mut("T-1").expect("task");
+    let t = sim.state.task_mut("t1").expect("task");
     t.steps[0].status = StepStatus::Done;
     t.steps[1].status = StepStatus::Running;
     t.current = 1;
     t.status = TaskStatus::Merging;
     restart(&mut sim);
-    assert_eq!(sim.status("T-1"), TaskStatus::Interrupted);
-    let chain = resume(&mut sim, "T-1");
+    assert_eq!(sim.status("t1"), TaskStatus::Interrupted);
+    let chain = resume(&mut sim, "t1");
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::Git(GitOp::FinishTask { .. })
     )));
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::GroupSettled]);
 }
 
 #[test]
 fn a_task_waiting_for_its_workspace_prepares_it_again() {
     let mut sim = running(json!([{"kind": "implement"}]));
-    let t = sim.state.task_mut("T-1").expect("task");
+    let t = sim.state.task_mut("t1").expect("task");
     t.workdir = None;
     t.steps[0].status = StepStatus::Pending;
     restart(&mut sim);
-    let chain = resume(&mut sim, "T-1");
+    let chain = resume(&mut sim, "t1");
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::Git(GitOp::PrepareWorkspace { .. })
     )));
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 0)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 0)]);
 }
 
 #[test]
 fn tasks_waiting_for_the_orchestrator_are_left_alone() {
     let mut sim = running(json!([{"kind": "checkpoint"}, {"kind": "implement"}]));
     sim.task(json!({"instruction": null, "depends_on": []}));
-    assert_eq!(sim.status("T-1"), TaskStatus::Checkpoint);
-    assert_eq!(sim.status("T-2"), TaskStatus::AwaitingInstruction);
+    assert_eq!(sim.status("t1"), TaskStatus::Checkpoint);
+    assert_eq!(sim.status("t2"), TaskStatus::AwaitingInstruction);
     let inbox = sim.state.inbox.clone();
     let chain = restart(&mut sim);
     assert!(chain.events.is_empty(), "{:?}", chain.events);
     assert_eq!(sim.state.inbox, inbox, "undelivered inbox is kept");
     assert!(
-        resume(&mut sim, "T-1").events.is_empty(),
+        resume(&mut sim, "t1").events.is_empty(),
         "only interrupted tasks resume"
     );
 }
@@ -157,12 +154,12 @@ fn tasks_waiting_for_the_orchestrator_are_left_alone() {
 fn an_agent_waiting_for_a_help_answer_is_marked_lost() {
     let mut sim = running(json!([{"kind": "implement"}]));
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
     );
     restart(&mut sim);
-    assert_eq!(sim.status("T-1"), TaskStatus::Handling);
+    assert_eq!(sim.status("t1"), TaskStatus::Handling);
     assert!(sim.state.help("H-1").expect("help").agent_lost);
     // Resuming restarts the step (the session is restored by the runtime if it
     // can be); the reply becomes a note, and is not required.
@@ -170,28 +167,25 @@ fn an_agent_waiting_for_a_help_answer_is_marked_lost() {
         ToolName::AnswerHelp,
         json!({"help_id": "H-1", "action": "resume", "reply": "README.md"}),
     );
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 0)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 0)]);
     assert!(prompt_of(&chain).contains("Note from the orchestrator:\nREADME.md"));
 }
 
 #[test]
 fn an_interrupted_group_merge_is_reported_as_blocked() {
     let mut sim = running(json!([{"kind": "implement"}]));
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     sim.deliver_inbox();
-    sim.state.group_mut("G-1").expect("group").status = GroupStatus::Finishing;
+    sim.state.group_mut("g1").expect("group").status = GroupStatus::Finishing;
     restart(&mut sim);
-    let g = sim.state.group("G-1").expect("group");
+    let g = sim.state.group("g1").expect("group");
     assert_eq!(g.status, GroupStatus::MergeBlocked);
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::MergeResult]);
     assert!(
         sim.state.inbox[0]
             .item
             .render()
-            .starts_with("[yhtye:merge_result] group=G-1 ok=false\n")
+            .starts_with("[yhtye:merge_result] group=g1 ok=false\n")
     );
 }
 
@@ -229,11 +223,8 @@ fn the_orchestrator_is_told_what_it_missed() {
     );
     let body = &sim.state.inbox[0].item.body;
     assert!(body.contains("could not be restored"), "{body}");
-    assert!(body.contains("group G-1 [active]: g"), "{body}");
-    assert!(
-        body.contains("task T-1 [interrupted] step 1/2: t"),
-        "{body}"
-    );
+    assert!(body.contains("group g1 [active]: g"), "{body}");
+    assert!(body.contains("task t1 [interrupted] step 1/2: t"), "{body}");
 
     sim.deliver_inbox();
     start_orchestrator(

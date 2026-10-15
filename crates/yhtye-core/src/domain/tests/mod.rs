@@ -8,6 +8,7 @@ mod errors;
 mod flows;
 mod git;
 mod message;
+mod names;
 mod orch;
 mod restart;
 mod table;
@@ -76,7 +77,7 @@ fn sub(task: &str, role: Role, step: usize) -> SessionBinding {
         role,
         project: "P-1".into(),
         chat: None,
-        group: Some("G-1".into()),
+        group: Some("g1".into()),
         task: Some(task.into()),
         step: Some(step),
     }
@@ -125,9 +126,21 @@ impl Sim {
     }
 
     /// The command for a tool call, as the runtime builds it: `create_group`
-    /// gets the branch the chat's worktree has checked out.
+    /// gets the branch the chat's worktree has checked out. For brevity a
+    /// `create_group` / `create_task` without `name` gets `g<n>` / `t<n>` (`n`:
+    /// how many were created so far + 1), like the numbered ids of old.
     fn tool_cmd(&self, binding: SessionBinding, tool: ToolName, args: Value) -> DomainCommand {
-        let call = parse_call(tool, args.as_object().cloned()).expect("valid args");
+        let mut args = args.as_object().cloned().unwrap_or_default();
+        let counters = &self.state.counters;
+        let default_name = match tool {
+            ToolName::CreateGroup => Some(format!("g{}", counters.groups + 1)),
+            ToolName::CreateTask => Some(format!("t{}", counters.tasks + 1)),
+            _ => None,
+        };
+        if let Some(name) = default_name {
+            args.entry("name").or_insert(json!(name));
+        }
+        let call = parse_call(tool, Some(args)).expect("valid args");
         match call {
             crate::mcp::ToolCall::CreateGroup(args) => {
                 let chat = binding.chat.clone().expect("an orchestrator binding");
@@ -139,9 +152,14 @@ impl Sim {
                     chat,
                     args,
                     base_branch,
-                    taken: 0,
+                    taken_in_git: None,
                 }
             }
+            crate::mcp::ToolCall::CreateTask(args) => DomainCommand::CreateTask {
+                binding,
+                args,
+                taken_in_git: None,
+            },
             crate::mcp::ToolCall::MessageTask(args) => DomainCommand::MessageTask {
                 binding,
                 args,
@@ -231,13 +249,15 @@ impl Sim {
         .expect("turn_ended never fails")
     }
 
+    /// Creates group `g<n>` (see [`Sim::tool_cmd`]).
     fn group(&mut self) {
         self.orch_ok(ToolName::CreateGroup, json!({"title": "g"}));
     }
 
-    /// Creates a task in G-1 with `extra` merged into the default arguments.
+    /// Creates a task (`t<n>` unless `extra` gives a `name`) in g1 with `extra`
+    /// merged into the default arguments.
     fn task(&mut self, extra: Value) -> Chain {
-        let mut args = json!({"group_id": "G-1", "title": "t", "kind": "code",
+        let mut args = json!({"group_id": "g1", "title": "t", "kind": "code",
                               "steps": [{"kind": "implement"}], "instruction": "do it"});
         if let (Some(a), Some(e)) = (args.as_object_mut(), extra.as_object()) {
             a.extend(e.clone());

@@ -577,21 +577,30 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 - 構成: `git/run.rs` (実行: `LC_ALL=C`・`GIT_TERMINAL_PROMPT=0`・`GIT_EDITOR=true`、
   `GIT_DIR` 等の継承を除去、stdin は null、1 コマンド 120 秒のタイムアウトで kill) /
-  `git/repo.rs` (照会と commit / merge / stash) / `git/worktree.rs` (worktree の作成・再利用・削除) /
+  `git/repo.rs` (照会と commit / squash / merge / stash) / `git/worktree.rs` (worktree の作成・再利用・削除) /
+  `git/message.rs` (squash コミットと group マージコミットのメッセージ。純粋関数。orchestration-model §6.2) /
   `git/cli.rs` (`GitCli`: `GitOp` ごとの手順)。
 - 生成: `GitCli::new(project_dir, git::worktree_root(data_dir, project_id))`
   (`<data_dir>/worktrees/<projectId>`)。`NoopGit` は git を使わないテスト用に残す。
 - `GitOp::PrepareWorkspace` / `FinishTask` は `group_branch` / `base_branch` を持つ (3c で追加):
   消えた group ブランチ・統合 worktree を作り直すため。ブランチ名は `domain::group_branch` /
-  `domain::task_branch` (`yhtye/<groupId>-<taskId>`) の 1 か所で決める。
+  `domain::task_branch` (`yhtye/<group>--<task>`、古い `T-<n>` は `yhtye/<group>-T-<n>`) の 1 か所で決める。
+- **タスクは squash、グループは `--no-ff`**: `FinishTask` (`code`) は統合 worktree で `git merge --squash` + コミット (マージコミットなし)、
+  `MergeGroup` は従来どおり `git merge --no-ff`。メッセージの材料は `GitOp` のフィールドで渡す
+  (`FinishTask.title` / `agent` / `reviewers`、`MergeGroup.title` / `summary` / `tasks`。すべて `#[serde(default)]`)。
+  `agent` / `reviewers` (harness × model × effort) はドメインが知らないので、ランタイムが `Effect::Git(FinishTask)` を実行する直前に
+  セッション記録から埋める (`runtime/commit_agents.rs`)。「マージ済み」は squash では祖先で判定できないので
+  `Yhtye-Task` トレーラー (と、祖先 = 変更なし / 旧方式の `--no-ff`) で判定する (orchestration-model §6 冪等性)。
+  squash はコンフリクトでも途中で止まっても `MERGE_HEAD` が無いので、`git reset --merge` で巻き戻す (`SQUASH_MSG` の有無で途中かを知る)。
 - トレイトに `workspace_changes(workdir, group_branch)` を追加 (既定実装は空)。再起動のフォールバック
   プロンプトに `git status --short` + 分岐点からの `git diff` (16 KiB まで) を添えるのに使う
   (runtime の `Effect::ResumeStep` 処理)。
 - 各 `GitOp` の手順と冪等性・安全性の規則は orchestration-model §6「Stage 3c で決めた細部」。
   予期された結果 (`Conflict` / `Dirty` / `Blocked`) 以外の失敗は `Failed{message}` → ドメインが
   `git_failed` の help (タスク) か `internal` (create_group) にする。
-- テスト: `tests/git_cli.rs` (一時リポジトリで 17 件)、`tests/orchestration_fake_git.rs`
-  (偽エージェント + 実 git で 4 シナリオ)、`tests/orchestration_claude_git.rs` (実 Haiku、`#[ignore]`)。
+- テスト: `tests/git_cli.rs` (一時リポジトリで worktree・マージ・コンフリクト・冪等性)、`tests/git_squash.rs`
+  (squash コミットの内容とトレーラー、再起動・旧方式のマージ済み判定、コンフリクト → 再試行、group のメッセージ)、`tests/orchestration_fake_git.rs`
+  (偽エージェント + 実 git。コミットメッセージの `Yhtye-Agent` / `Yhtye-Reviewer` まで)、`tests/orchestration_claude_git.rs` (実 Haiku、`#[ignore]`)。
   一時リポジトリは `tests/common/repo.rs::TempRepo` (リポジトリと data ディレクトリを同じ一時
   ディレクトリの別の子に置く。DB も data 側)。
 
@@ -1414,7 +1423,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **ドメイン**:
   - `Chat { id, worktree: PathBuf, title }` (`branch` を削除)。`DomainCommand::CreateChat { worktree }` (runtime が解決・検査したパス)。
-  - `DomainCommand::CreateGroup { chat, args, base_branch, taken }` — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
+  - `DomainCommand::CreateGroup { chat, args, base_branch, taken_in_git }` (当時は `taken`。名前 = ID になって置き換え、orchestration-model §2.1「名前」) — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
     **作業ツリーごと** (`State::open_group_in(worktree)` = チャットの作業ツリーが同じグループのうち `active` / `finishing`)。
   - `GitOp::MergeGroup { group, worktree, group_branch, base_branch, trigger }` — `worktree` = グループのチャットの作業ツリー。
   - `finish_group` は `active` (全タスク終端) と `merge_blocked` を受け付ける。`merge_blocked` からは `RetryGroupMerge` と同じく同じ作業ツリーの open グループがあれば `conflict`。

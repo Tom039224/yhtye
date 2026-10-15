@@ -97,18 +97,25 @@ pub enum StepStatus {
     Done,
 }
 
-/// Branch of group `group`: `yhtye/<groupId>` (`orchestration-model.md` §6).
+/// Branch of group `group`: `yhtye/<group>` (`orchestration-model.md` §6).
 #[must_use]
 pub fn group_branch(group: &str) -> String {
     format!("yhtye/{group}")
 }
 
-/// Branch of `code` task `task` in group `group`: `yhtye/<groupId>-<taskId>`.
-/// Not `yhtye/<groupId>/<taskId>`: git cannot have both `refs/heads/yhtye/G-1`
-/// and `refs/heads/yhtye/G-1/T-1` (a ref cannot also be a directory).
+/// Branch of `code` task `task` in group `group`: `yhtye/<group>--<task>`
+/// (names never contain `--`, so the split is unambiguous). A numbered task of
+/// an older Yhtye (`T-<n>`) keeps its old branch `yhtye/<group>-T-<n>`, also in
+/// a numbered group. Not `yhtye/<group>/<task>`: git cannot have both
+/// `refs/heads/yhtye/x` and `refs/heads/yhtye/x/y` (a ref cannot also be a
+/// directory). Every branch of a task is derived here.
 #[must_use]
 pub fn task_branch(group: &str, task: &str) -> String {
-    format!("yhtye/{group}-{task}")
+    if super::names::is_numbered_task_id(task) {
+        format!("yhtye/{group}-{task}")
+    } else {
+        format!("yhtye/{group}--{task}")
+    }
 }
 
 /// A conversation with the orchestrator, bound to one worktree
@@ -304,15 +311,25 @@ pub struct InboxEntry {
     pub item: InboxItem,
 }
 
-/// Id counters (the number of each kind created so far).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+/// Id counters (the number of each kind created so far), and the names that
+/// are gone from the state but may not be used again.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct Counters {
     #[serde(default)]
     pub chats: u32,
+    /// Groups created (their ids are names now; older ones are `G-<n>`).
     pub groups: u32,
+    /// Tasks created (their ids are names now; older ones are `T-<n>`).
     pub tasks: u32,
     pub helps: u32,
     pub inbox: u64,
+    /// Names of the groups and tasks of deleted chats: names are unique in the
+    /// project for good, so these are never given again (empty in older stores;
+    /// left out when empty, so clients that do not know it see no change).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(as = "Option<Vec<String>>", optional)]
+    #[schemars(extend("default" = []))]
+    pub retired_names: Vec<String>,
 }
 
 /// Everything the state machine knows about one project.
@@ -409,6 +426,15 @@ impl State {
     #[must_use]
     pub fn open_group_of(&self, chat: &str) -> Option<&Group> {
         self.groups.iter().find(|g| g.chat == chat && g.is_open())
+    }
+
+    /// Whether `name` is the id of a group or task of the project, now or of a
+    /// deleted chat (names are unique among both, for good).
+    #[must_use]
+    pub fn name_used(&self, name: &str) -> bool {
+        self.group(name).is_some()
+            || self.task(name).is_some()
+            || self.counters.retired_names.iter().any(|n| n == name)
     }
 
     /// Whether any group is `active` or `finishing`.

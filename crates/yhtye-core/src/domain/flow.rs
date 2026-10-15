@@ -140,6 +140,9 @@ impl Tx {
             ),
             group_branch,
             base_branch,
+            title: t.title.clone(),
+            agent: None,
+            reviewers: Vec::new(),
         };
         self.effect(Effect::Git(op));
     }

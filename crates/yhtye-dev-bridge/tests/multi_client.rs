@@ -52,10 +52,10 @@ async fn what_one_client_does_reaches_the_other() {
     let (repo, data) = temp_repo(root.path());
     let orch = json!({"turns": [
         {"match": "start", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1", "group_id": "${group_id}", "title": "a",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-a"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "b",
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t2", "group_id": "${group_id}", "title": "b",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-b"}}},
             {"message": "started"}
         ]},
@@ -124,15 +124,15 @@ async fn what_one_client_does_reaches_the_other() {
         json!({"type": "send_user_message", "project": project, "chat": "C-1", "text": "start"});
     call(&mut a, 5, say, &mut ea).await;
     until_event(&mut b, &mut eb, |e| {
-        domain_type(e) == "step_started" && e["body"]["event"]["task"] == "T-2"
+        domain_type(e) == "step_started" && e["body"]["event"]["task"] == "t2"
     })
     .await;
 
     // Both cancel a task, then the group, at once: both accepted, each done once.
-    let cancel = json!({"type": "cancel_task", "project": project, "task": "T-1"});
+    let cancel = json!({"type": "cancel_task", "project": project, "task": "t1"});
     let replies = both((&mut a, &mut ea), (&mut b, &mut eb), 6, cancel).await;
     assert!(accepted(&replies), "{replies:?}");
-    let cancel = json!({"type": "cancel_group", "project": project, "group": "G-1"});
+    let cancel = json!({"type": "cancel_group", "project": project, "group": "g1"});
     let replies = both((&mut a, &mut ea), (&mut b, &mut eb), 7, cancel).await;
     assert!(accepted(&replies), "{replies:?}");
     // The orchestrator is told of the group once; then it is idle.
@@ -140,7 +140,7 @@ async fn what_one_client_does_reaches_the_other() {
         e["body"]["type"] == "prompted"
             && e["body"]["text"]
                 .as_str()
-                .is_some_and(|t| t.contains("cancelled group G-1"))
+                .is_some_and(|t| t.contains("cancelled group g1"))
     };
     seen_or_wait(&mut b, &mut eb, note).await;
     let told = eb.iter().position(note).expect("told");
