@@ -253,6 +253,15 @@ async function wheelOver(page, selector, deltaY) {
   await page.waitForTimeout(150);
 }
 
+/** A project of the remote host with the long name, picked in the pull-down (that host's store is on screen). */
+async function showRemoteProject(page) {
+  await openProjectPicker(page);
+  await page.locator(".project-option", { hasText: "server-only" }).first().click();
+  await page.waitForFunction(() => document.querySelector(".host-footer [data-icon='server-headless']"));
+  await page.evaluate(() => window.__yhtye.hosts.api.notice({ type: "status", server_id: "sid-long", status: { connection: { state: "waiting_to_reconnect", attempt: 1, delay_ms: 3000, reason: "connection refused: the host is not there" }, server: null } }));
+  await page.locator(".banners .alert").first().waitFor();
+}
+
 /** The `n`th task's id (from 1) in the `long` scenario, and in `names` (src/test/layoutHarness.tsx). */
 const numberedTask = (n) => `T-${n}`;
 const namedTask = (n) => `the-long-task-name-for-layout-${String(n).padStart(2, "0")}`;
@@ -382,6 +391,45 @@ const STATES = [
   { name: "long: 12 devices under the host, unfolded", scenario: "long", interactive: true, run: async (page) => {
     await click(page, "他 9 台");
     await page.getByRole("button", { name: "折りたたむ" }).waitFor();
+  } },
+  { name: "hosts: other Yhtye hosts paired with (this PC's project on screen)", scenario: "hosts" },
+  { name: "hosts: project pull-down open (remote rows with long host names)", scenario: "hosts", interactive: true, run: openProjectPicker },
+  { name: "hosts: a remote host's project on screen (footer, remote mark, lost connection)", scenario: "hosts", interactive: true, run: showRemoteProject },
+  { name: "hosts: settings (接続先) with the hosts listed", scenario: "hosts", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "接続先");
+    await page.getByRole("list", { name: "接続先の一覧" }).waitFor();
+  } },
+  { name: "hosts: settings (接続先), typing host, port and code", scenario: "hosts", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "接続先");
+    await click(page, "ホスト・ポート・コード");
+    await page.getByRole("textbox", { name: "ホスト" }).fill("100.64.0.7");
+  } },
+  { name: "hosts: a pairing link arrives (settings open on 接続先)", scenario: "hosts", interactive: true, run: async (page) => {
+    await page.evaluate(() => window.__yhtye.hosts.api.link("yhtye://pair?v=1&ip=100.64.0.7&port=1423&code=ABCD2345&sid=sid-new"));
+    await page.getByRole("textbox", { name: "ペアリングリンク" }).waitFor();
+    await page.getByLabel("リンクの接続先").waitFor();
+  } },
+  { name: "hosts: a pairing that fails", scenario: "hosts", interactive: true, run: async (page) => {
+    await page.evaluate(() => {
+      window.__yhtye.hosts.api.addError = Object.assign(new Error("could not reach 100.64.0.7:1423: timed out"), { code: "unavailable" });
+      window.__yhtye.hosts.api.link("yhtye://pair?v=1&ip=100.64.0.7&port=1423&code=ABCD2345&sid=sid-new");
+    });
+    await page.getByLabel("リンクの接続先").waitFor();
+    await click(page, "接続", { exact: true });
+    await page.getByRole("alert").waitFor();
+  } },
+  { name: "hosts: settings of a remote host on screen (agents, host's name by the heading)", scenario: "hosts", interactive: true, run: async (page) => {
+    await showRemoteProject(page);
+    await click(page, "設定");
+    await page.getByTitle(/のものです/).waitFor();
+  } },
+  { name: "hosts: settings (remote access) of a remote host on screen", scenario: "hosts", interactive: true, run: async (page) => {
+    await showRemoteProject(page);
+    await click(page, "設定");
+    await click(page, "リモート接続");
+    await page.getByText(/そのホスト自身でしか行えません/).waitFor();
   } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
   { name: "names: 32-character group and task names", scenario: "names", verify: names },

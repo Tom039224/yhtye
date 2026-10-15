@@ -1,9 +1,11 @@
-import { type FocusEvent, type FormEvent, type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type FocusEvent, type FormEvent, type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
-import type { ProjectInfo } from "../api/generated";
+import { type HostEntry, type HostKey, type HostProject, LOCAL_HOST, scopedKey as scopedProjectKey } from "../store/hosts";
+import { useActiveHost, useAllProjects, useHostsRegistry, useHostsState } from "../store/useHosts";
 import { useAppState, useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
 import { projectRing, RING_LABEL } from "./projectActivity";
+import { RemoteMark } from "./RemoteMark";
 
 /**
  * Scrolls `list` just far enough to show its `index`th row. Only the list moves: `scrollIntoView`
@@ -19,17 +21,44 @@ function revealRow(list: HTMLElement, index: number): void {
 }
 
 /**
- * The project on screen as a pull-down: a listbox of the known projects
- * (↑↓ Home End move, Enter / click switch, Esc closes) and the form that opens
- * another repository. Focus moves into the popup while it is open and back to
- * the trigger when it closes; leaving the popup closes it.
+ * The names that more than one host has a project of (those rows are told
+ * apart by their host's name).
+ */
+function sharedNames(projects: readonly HostProject[]): ReadonlySet<string> {
+  const hostsOf = new Map<string, Set<HostKey>>();
+  for (const row of projects) {
+    const hosts = hostsOf.get(row.project.name) ?? new Set<HostKey>();
+    hosts.add(row.host);
+    hostsOf.set(row.project.name, hosts);
+  }
+  return new Set([...hostsOf].filter(([, hosts]) => hosts.size > 1).map(([name]) => name));
+}
+
+/**
+ * The project on screen as a pull-down: a listbox of the known projects of
+ * every host (this PC's first, then each remote host's; ↑↓ Home End move,
+ * Enter / click switch, Esc closes) and the form that opens another
+ * repository on the host on screen. A project of another host carries the
+ * remote mark after its name (grey while that host is not connected), and its
+ * host's name too where another host has a project of the same name. Focus
+ * moves into the popup while it is open and back to the trigger when it
+ * closes; leaving the popup closes it.
  */
 export function ProjectPicker() {
   const store = useStore();
-  const projects = useAppState((s) => s.projects);
+  const registry = useHostsRegistry();
+  const own = useAppState((s) => s.projects);
+  const everyones = useAllProjects();
+  const activeHost = useActiveHost();
+  const hostEntries = useHostsState((s) => s.hosts);
   const view = useAppState((s) => s.project);
   const opening = useAppState((s) => s.busy.opening);
   const connected = useAppState((s) => s.connection.state === "open");
+  // Without a registry (one store is all there is) the list is the store's own.
+  const projects = useMemo(
+    () => everyones ?? own.map((project): HostProject => ({ host: activeHost, remote: false, hostName: null, project })),
+    [everyones, own, activeHost],
+  );
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [path, setPath] = useState("");
@@ -42,7 +71,14 @@ export function ProjectPicker() {
   const optionId = (i: number) => `${id}-option-${i}`;
   const blocked = !connected || opening;
   const currentId = view?.info.id ?? null;
-  const current = projects.find((p) => p.id === currentId) ?? view?.info ?? null;
+  const isCurrent = (row: HostProject) => row.host === activeHost && row.project.id === currentId;
+  // Another host's projects are as available as that host's connection is.
+  const entryOf = (host: HostKey): HostEntry | undefined => hostEntries?.find((h) => h.key === host);
+  const isBlocked = (row: HostProject) => (row.host === activeHost ? blocked : entryOf(row.host)?.connection !== "open");
+  const shared = useMemo(() => sharedNames(projects), [projects]);
+  const current = projects.find(isCurrent)?.project ?? view?.info ?? null;
+  const activeEntry = activeHost === LOCAL_HOST ? undefined : entryOf(activeHost);
+  const remoteName = activeEntry ? (activeEntry.name ?? activeHost) : null;
   const activeIndex = Math.max(0, Math.min(active, projects.length - 1));
 
   useEffect(() => {
@@ -54,17 +90,21 @@ export function ProjectPicker() {
   }, [open, activeIndex]);
 
   const openPopup = () => {
-    setActive(Math.max(0, projects.findIndex((p) => p.id === currentId)));
+    setActive(Math.max(0, projects.findIndex(isCurrent)));
     setOpen(true);
   };
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) triggerRef.current?.focus();
   };
-  const choose = (p: ProjectInfo | undefined) => {
-    if (!p || blocked) return;
-    if (p.id !== currentId) void store.openProject(p.path);
+  const choose = (row: HostProject | undefined) => {
+    if (!row || isBlocked(row)) return;
+    if (!isCurrent(row)) selectRow(row);
     close(true);
+  };
+  const selectRow = (row: HostProject) => {
+    if (registry) void registry.selectProject(row.host, row.project);
+    else void store.openProject(row.project.path);
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -125,12 +165,13 @@ export function ProjectPicker() {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? popupId : undefined}
-        title={current ? `${current.path} · ${RING_LABEL[ring ?? "stopped"]}` : undefined}
+        title={current ? `${remoteName ? `${remoteName}: ` : ""}${current.path} · ${RING_LABEL[ring ?? "stopped"]}` : undefined}
         onClick={() => (open ? close(false) : openPopup())}
         onKeyDown={onTriggerKeyDown}
       >
         {ring ? <span className={`ring ring-${ring}`} data-testid="current-ring" /> : null}
         <span className={`name ${current ? "" : "placeholder"}`}>{label}</span>
+        {current ? <RemoteMark entry={activeEntry} /> : null}
         <Icon name="chevron-down" size={14} className="chevron" />
       </button>
       {open ? (
@@ -147,23 +188,31 @@ export function ProjectPicker() {
               aria-activedescendant={optionId(activeIndex)}
               onKeyDown={onListKeyDown}
             >
-              {projects.map((p, i) => {
-                const ring = projectRing(p, view);
+              {projects.map((row, i) => {
+                const p = row.project;
+                // A project of another host is not the open one, whose view `view` is.
+                const ring = projectRing(p, row.host === activeHost ? view : null);
+                const hostName = row.remote ? (row.hostName ?? row.host) : null;
+                // Told apart by the host's name only where the name alone would not do.
+                const tag = hostName !== null && shared.has(p.name) ? hostName : null;
                 return (
                   <li
-                    key={p.id}
+                    key={scopedProjectKey(row.host, p.id)}
                     id={optionId(i)}
                     role="option"
-                    aria-selected={p.id === currentId}
-                    aria-disabled={blocked || undefined}
+                    aria-selected={isCurrent(row)}
+                    aria-disabled={isBlocked(row) || undefined}
                     className={`project-option ${i === activeIndex ? "active" : ""}`}
-                    title={`${p.path} · ${RING_LABEL[ring]}`}
+                    title={`${hostName ? `${hostName}: ` : ""}${p.path} · ${RING_LABEL[ring]}`}
                     onMouseEnter={() => setActive(i)}
-                    onClick={() => choose(p)}
+                    onClick={() => choose(row)}
                   >
                     <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
                     <span className="name">{p.name}</span>
-                    {p.id === currentId ? <Icon name="check" size={14} className="check" /> : null}
+                    <RemoteMark entry={entryOf(row.host)} />
+                    {tag ? <span className="host-tag">{tag}</span> : null}
+                    <span className="spacer" />
+                    {isCurrent(row) ? <Icon name="check" size={14} className="check" /> : null}
                   </li>
                 );
               })}
@@ -172,8 +221,8 @@ export function ProjectPicker() {
           <form className="open-form" onSubmit={submit}>
             <input
               ref={inputRef}
-              aria-label="開くリポジトリのパス"
-              placeholder="/path/to/git/repository"
+              aria-label={remoteName ? `開くリポジトリのパス (${remoteName} 上)` : "開くリポジトリのパス"}
+              placeholder={remoteName ? `${remoteName} 上のパス` : "/path/to/git/repository"}
               value={path}
               onChange={(e) => setPath(e.target.value)}
               disabled={blocked}
@@ -184,7 +233,7 @@ export function ProjectPicker() {
               spin={opening}
               size={14}
               label="開く"
-              title="リポジトリを開く"
+              title={remoteName ? `${remoteName} 上のリポジトリを開く` : "リポジトリを開く"}
               disabled={blocked || !path.trim()}
             />
           </form>

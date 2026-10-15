@@ -1,8 +1,11 @@
 // Generated from the Rust API types of yhtye-core (crates/yhtye-core/src/api/typegen/kotlin).
 // Do not edit; run `pnpm gen:kotlin` (or `pnpm gen:types`).
+@file:OptIn(ExperimentalSerializationApi::class)
 
 package io.github.tom039224.yhtye.shared.api.generated
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -21,4 +24,10 @@ data class PairRequest(
      */
     @SerialName("device_name")
     val deviceName: String,
+    /**
+     * What the device is; left out by the Android client (which is the
+     * default), `desktop` for another Yhtye desktop app.
+     */
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val kind: ClientKind? = null,
 )
