@@ -425,6 +425,20 @@ class AppStoreChatsTest {
     }
 
     @Test
+    fun keepsThatThePcRunsWithoutAGui() = runTest {
+        core.hostHeadless = true
+        val s = newStore(core, prefs, foreground = true)
+        assertEquals(HostView("test-host", currentTime, headless = true), s.state.value.host)
+    }
+
+    @Test
+    fun aPcIsTakenAsHavingAGuiUntilItSaysOtherwise() = runTest {
+        // 古い PC は headless を返さない (生成した型の既定の false になる)
+        val s = newStore(core, prefs, foreground = true)
+        assertEquals(false, s.state.value.host.headless)
+    }
+
+    @Test
     fun theVersionIsUnknownWhenAnOldPcLeavesItOut() = runTest {
         // 古い PC は version を返さない (生成した型の既定の空文字になる)
         val s = newStore(core, prefs, foreground = true)

@@ -51,14 +51,36 @@ function nextPairing(p: Pairing | null, status: RemoteStatus, now: number): Pair
 }
 
 /**
+ * What the "リモート接続" section says where it cannot act: the remote access of a
+ * host (its server, its pairing codes, its devices) is run by the host itself
+ * and by nobody that is connected to it. `hostName`: the host on screen, if
+ * it is another one.
+ */
+export function RemoteSettingsElsewhere({ hostName }: { hostName: string | null }) {
+  return (
+    <div className="agent-section remote-section">
+      <p className="agent-panel-note" role="status">
+        <Icon name="info" size={14} />
+        <span>
+          {hostName ? `${hostName} の` : ""}リモート接続の設定・端末の追加と失効は、そのホスト自身でしか行えません (ヘッドレスなら <code>yhtye remote pair</code> など)。
+          この PC から別のホストにつなぐ設定は「接続先」にあります。
+        </span>
+      </p>
+    </div>
+  );
+}
+
+/**
  * The settings' "リモート接続" section (core-design.md §18): the server for the
  * Android client over Tailscale — on/off and its port, where it listens, a
  * pairing code as a QR code (and for typing in), and the paired devices with
  * their revocation. The core's `remote_status_changed` / `remote_devices_changed`
  * events keep it current. A server that fails to start shows the core's reason.
  */
-export function RemoteSettingsSection() {
+export function RemoteSettingsSection({ hostName = null }: { hostName?: string | null }) {
   const store = useStore();
+  // The host refused these commands (they are the host's own to give): it says so instead of an error.
+  const [forbidden, setForbidden] = useState(false);
   const [status, setStatus] = useState<RemoteStatus | null>(null);
   const [devices, setDevices] = useState<RemoteDevice[] | null>(null);
   const [pairing, setPairing] = useState<Pairing | null>(null);
@@ -69,6 +91,12 @@ export function RemoteSettingsSection() {
   const [switching, setSwitching] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const statusRef = useRef<RemoteStatus | null>(null);
+
+  const failed = useCallback((e: unknown) => {
+    const error = toCommandError(e);
+    if (error.code === "forbidden") setForbidden(true);
+    else setError(error.message);
+  }, []);
 
   const applyStatus = useCallback((next: RemoteStatus) => {
     statusRef.current = next;
@@ -93,12 +121,12 @@ export function RemoteSettingsSection() {
         applyStatus(s);
         setDevices(d);
       },
-      (e) => live && setError(toCommandError(e).message),
+      (e) => live && failed(e),
     );
     return () => {
       live = false;
     };
-  }, [store, applyStatus]);
+  }, [store, applyStatus, failed]);
 
   // The box follows the stored port (also when it changes elsewhere).
   const storedPort = status?.port;
@@ -112,7 +140,7 @@ export function RemoteSettingsSection() {
     try {
       await action();
     } catch (e) {
-      setError(toCommandError(e).message);
+      failed(e);
     } finally {
       setBusy(false);
     }
@@ -158,6 +186,8 @@ export function RemoteSettingsSection() {
       setConfirming(null);
       setDevices(await store.revokeRemoteDevice(device));
     });
+
+  if (forbidden) return <RemoteSettingsElsewhere hostName={hostName} />;
 
   return (
     <div className="agent-section remote-section">

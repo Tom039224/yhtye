@@ -86,7 +86,10 @@ pub fn group_prs(text: &str) -> Result<HashMap<String, Vec<GhPr>>, String> {
         serde_json::from_str(text).map_err(|e| format!("could not parse `gh pr list`: {e}"))?;
     let mut by_branch: HashMap<String, Vec<GhPr>> = HashMap::new();
     for pr in prs {
-        by_branch.entry(pr.head_ref_name.clone()).or_default().push(pr);
+        by_branch
+            .entry(pr.head_ref_name.clone())
+            .or_default()
+            .push(pr);
     }
     Ok(by_branch)
 }
@@ -105,9 +108,7 @@ pub fn decide_state(
         return (BranchState::PrOpen, Some(pr.number), pr.url.clone());
     }
     let mut merged: Vec<&GhPr> = prs.iter().filter(|p| p.is_merged()).collect();
-    merged.sort_by(|a, b| {
-        (a.merged_at.clone(), a.number).cmp(&(b.merged_at.clone(), b.number))
-    });
+    merged.sort_by_key(|a| (a.merged_at.clone(), a.number));
     if let Some(pr) = merged.last() {
         if branch_head == pr.head_ref_oid || head_is_ancestor_of_pr_head {
             return (BranchState::Merged, Some(pr.number), pr.url.clone());
@@ -130,10 +131,7 @@ pub fn decide_state(
 pub async fn default_branch(dir: &Path) -> Option<String> {
     if let Ok(out) = git(dir, &["symbolic-ref", "refs/remotes/origin/HEAD"]).await
         && out.ok
-        && let Some(name) = out
-            .stdout
-            .trim()
-            .strip_prefix("refs/remotes/origin/")
+        && let Some(name) = out.stdout.trim().strip_prefix("refs/remotes/origin/")
     {
         return Some(name.to_string());
     }
@@ -149,7 +147,11 @@ pub async fn default_branch(dir: &Path) -> Option<String> {
 async fn local_branches(dir: &Path) -> Result<Vec<(String, String)>, String> {
     let out = git(
         dir,
-        &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads"],
+        &[
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname)",
+            "refs/heads",
+        ],
     )
     .await?;
     let text = out.into_result("git for-each-ref")?;
@@ -184,7 +186,10 @@ async fn fetch_prs(dir: &Path) -> Option<HashMap<String, Vec<GhPr>>> {
     .kill_on_drop(true)
     .env("LC_ALL", "C")
     .env("GH_PROMPT_DISABLED", "1");
-    let output = tokio::time::timeout(GH_TIMEOUT, cmd.output()).await.ok()?.ok()?;
+    let output = tokio::time::timeout(GH_TIMEOUT, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     group_prs(&text).ok()
 }
@@ -238,9 +243,7 @@ pub async fn branch_statuses(dir: &Path) -> BranchStatuses {
 /// The merged PR the state is measured against (latest `merged_at`, then number).
 fn latest_merged(prs: &[GhPr]) -> Option<&GhPr> {
     let mut merged: Vec<&GhPr> = prs.iter().filter(|p| p.is_merged()).collect();
-    merged.sort_by(|a, b| {
-        (a.merged_at.clone(), a.number).cmp(&(b.merged_at.clone(), b.number))
-    });
+    merged.sort_by_key(|a| (a.merged_at.clone(), a.number));
     merged.into_iter().last()
 }
 
@@ -333,7 +336,11 @@ mod tests {
                 .current_dir(dir.path())
                 .output()
                 .expect("run git");
-            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         git(&["init", "-q", "-b", "main"]);
         git(&["config", "user.name", "Test"]);
@@ -346,8 +353,16 @@ mod tests {
         std::fs::write(dir.path().join("f"), "2").expect("write");
         git(&["commit", "-qam", "more"]);
         assert_eq!(default_branch(dir.path()).await.as_deref(), Some("main"));
-        assert!(repo::is_ancestor(dir.path(), "merged", "main").await.expect("ancestor"));
-        assert!(!repo::is_ancestor(dir.path(), "unmerged", "main").await.expect("ancestor"));
+        assert!(
+            repo::is_ancestor(dir.path(), "merged", "main")
+                .await
+                .expect("ancestor")
+        );
+        assert!(
+            !repo::is_ancestor(dir.path(), "unmerged", "main")
+                .await
+                .expect("ancestor")
+        );
     }
 
     #[tokio::test]
@@ -359,7 +374,11 @@ mod tests {
                 .current_dir(dir.path())
                 .output()
                 .expect("run git");
-            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         git(&["init", "-q", "-b", "dev"]);
         git(&["config", "user.name", "Test"]);

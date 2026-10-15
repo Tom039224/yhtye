@@ -23,8 +23,8 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// The orchestrator's planning turn: one group, one task with `steps`.
 fn plan_turn(steps: Value) -> Value {
     json!({"match": "[yhtye:user_message]", "actions": [
-        {"mcp_call": {"tool": "create_group", "args": {"title": "Add a line"}}},
-        {"mcp_call": {"tool": "create_task", "args": {
+        {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "Add a line"}}},
+        {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
             "group_id": "${group_id}", "title": "append", "kind": "code",
             "steps": steps, "instruction": "append hello to README.md"}}},
         {"message": "planned"}
@@ -56,7 +56,7 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     let orch_script = json!({"turns": [plan, settled_turn()]});
     let impl_script = json!({"turns": [{"match": "[yhtye:step]", "actions": [
         "mcp_list",
-        {"mcp_call": {"tool": "create_group", "args": {"title": "not mine"}}},
+        {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "not mine"}}},
         {"mcp_call": {"tool": "report_step_done", "args": {"result": "added hello"}}}
     ]}]});
     let cfg = config(
@@ -75,8 +75,8 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     for needle in [
         "orchestrator:C-1: mcp:tools:create_group,create_task,",
         "orchestrator:C-1: mcp:report_step_done:error:{\"error\":{\"code\":\"forbidden\"",
-        "T-1/implementer: mcp:tools:report_step_done,help",
-        "T-1/implementer: mcp:create_group:error:{\"error\":{\"code\":\"forbidden\"",
+        "t1/implementer: mcp:tools:report_step_done,help",
+        "t1/implementer: mcp:create_group:error:{\"error\":{\"code\":\"forbidden\"",
         "orchestrator:C-1: mcp:finish_group:ok:",
         "no git in this build (NoopGit)",
     ] {
@@ -86,7 +86,7 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     for expected in [
         (ORCHESTRATOR_SESSION, "create_group", true),
         (ORCHESTRATOR_SESSION, "create_task", true),
-        ("T-1/implementer", "report_step_done", true),
+        ("t1/implementer", "report_step_done", true),
         (ORCHESTRATOR_SESSION, "finish_group", true),
     ] {
         assert!(
@@ -94,10 +94,10 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
             "{expected:?} not in {calls:?}"
         );
     }
-    let step_prompts = prompts_to(&events, "T-1/implementer");
+    let step_prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(step_prompts.len(), 1);
     assert!(
-        step_prompts[0].starts_with("[yhtye:step] task=T-1 kind=code step=1/2 step_kind=implement")
+        step_prompts[0].starts_with("[yhtye:step] task=t1 kind=code step=1/2 step_kind=implement")
     );
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
@@ -106,20 +106,20 @@ async fn create_task_spawns_sub_agent_whose_report_wakes_orchestrator() {
     );
     assert_eq!(
         orch_prompts[1],
-        "[yhtye:group_settled] group=G-1\nT-1 done: added hello"
+        "[yhtye:group_settled] group=g1\nt1 done: added hello"
     );
     // The implementer is stopped in the background when its task is done; the
     // stop may be published after the orchestrator's next turn.
     let stopped = |e: &ApiEvent| {
         matches!(&e.body,
-            ApiEventBody::SessionStopped { session, .. } if session == "T-1/implementer")
+            ApiEventBody::SessionStopped { session, .. } if session == "t1/implementer")
     };
     if !events.iter().any(stopped) {
         until(&mut rx, &mut events, TIMEOUT, stopped).await;
     }
     let domain = domain_events(&events);
     assert!(domain.iter().any(|e| matches!(e,
-        DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1")));
+        DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "t1")));
     assert!(
         domain
             .iter()
@@ -165,13 +165,13 @@ async fn help_is_answered_and_the_agent_resumes() {
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],
-        "[yhtye:help_raised] help_id=H-1 task=T-1 kind=question\nwhich file?"
+        "[yhtye:help_raised] help_id=H-1 task=t1 kind=question\nwhich file?"
     );
     assert_eq!(
         orch_prompts[2],
-        "[yhtye:group_settled] group=G-1\nT-1 done: used README.md"
+        "[yhtye:group_settled] group=g1\nt1 done: used README.md"
     );
-    let impl_prompts = prompts_to(&events, "T-1/implementer");
+    let impl_prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(
         impl_prompts[1],
         "[yhtye:help_answer] help_id=H-1\nuse README.md"
@@ -214,22 +214,22 @@ async fn needs_changes_loops_through_fresh_reviewer_sessions() {
     let sessions = started_sessions(&events);
     let count = |s: &str| sessions.iter().filter(|x| **x == s).count();
     assert_eq!(
-        count("T-1/implementer"),
+        count("t1/implementer"),
         1,
         "one implementer session: {sessions:?}"
     );
-    assert_eq!(count("T-1/review-1"), 1, "{sessions:?}");
-    assert_eq!(count("T-1/review-3"), 1, "{sessions:?}");
+    assert_eq!(count("t1/review-1"), 1, "{sessions:?}");
+    assert_eq!(count("t1/review-3"), 1, "{sessions:?}");
     let calls = tool_calls(&events);
-    assert!(calls.contains(&("T-1/review-1".into(), "report_step_done".into(), false)));
-    let impl_prompts = prompts_to(&events, "T-1/implementer");
+    assert!(calls.contains(&("t1/review-1".into(), "report_step_done".into(), false)));
+    let impl_prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(impl_prompts.len(), 2);
     assert!(impl_prompts[1].contains("Address these findings:\nplease add a test"));
-    let review_prompts = prompts_to(&events, "T-1/review-3");
+    let review_prompts = prompts_to(&events, "t1/review-3");
     assert!(review_prompts[0].contains("step 2 (implement): added the test"));
     let review_stopped = |e: &ApiEvent| {
         matches!(&e.body,
-            ApiEventBody::SessionStopped { session, .. } if session == "T-1/review-1")
+            ApiEventBody::SessionStopped { session, .. } if session == "t1/review-1")
     };
     if !events.iter().any(review_stopped) {
         until(&mut rx, &mut events, TIMEOUT, review_stopped).await;
@@ -237,7 +237,7 @@ async fn needs_changes_loops_through_fresh_reviewer_sessions() {
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],
-        "[yhtye:group_settled] group=G-1\nT-1 done: lgtm"
+        "[yhtye:group_settled] group=g1\nt1 done: lgtm"
     );
     assert!(
         domain_events(&events)
@@ -277,13 +277,13 @@ async fn checkpoint_wakes_orchestrator_and_note_reaches_the_next_step() {
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert_eq!(
         orch_prompts[1],
-        "[yhtye:checkpoint_reached] task=T-1 step=1\nstep 0 (implement): first"
+        "[yhtye:checkpoint_reached] task=t1 step=1\nstep 0 (implement): first"
     );
     assert_eq!(
         orch_prompts[2],
-        "[yhtye:group_settled] group=G-1\nT-1 done: second"
+        "[yhtye:group_settled] group=g1\nt1 done: second"
     );
-    let impl_prompts = prompts_to(&events, "T-1/implementer");
+    let impl_prompts = prompts_to(&events, "t1/implementer");
     assert!(impl_prompts[1].contains("Note from the orchestrator:\nalso add a newline"));
     assert_eq!(
         started_sessions(&events)

@@ -23,6 +23,12 @@ sealed interface ApiResponse {
          * as "unknown" (the Android client checks it against its own version).
          */
         val version: String = "",
+        /**
+         * The core runs without a GUI (`yhtye --headless`): clients show
+         * another icon for the host. A core that predates the field leaves it
+         * out, which a reader takes as `false`.
+         */
+        val headless: Boolean = false,
     ) : ApiResponse
 
     /**

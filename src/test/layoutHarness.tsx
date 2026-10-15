@@ -7,30 +7,43 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, HarnessModels, Help, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
 import { emptyState } from "../store/domain";
 import { CommandError } from "../api/transport";
 import { memoryPrefs } from "../store/prefs";
+import { LOCAL_HOST } from "../store/hosts";
+import { HostsProvider } from "../store/useHosts";
 import { StoreContext } from "../store/useStore";
 import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
+import { FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "./remoteHosts";
 
 /**
  * What a scenario opens: nothing, the recorded run, the recorded run with a few paired devices
- * under the host (one connected, one offline with a long name), or a project with far more
- * content than fits (12 devices among it: folded into "他 N 台").
+ * under the host (one connected, one offline with a long name), a project with far more
+ * content than fits (12 devices among it: folded into "他 N 台"), the same with group and task
+ * names of the most characters there can be (32) instead of the older `G-1` / `T-1`, or the
+ * recorded run with other Yhtye hosts paired with (one connected with a long name, one revoked,
+ * one waiting to reconnect).
  */
-const SCENARIOS = ["empty", "run", "devices", "long"] as const;
+const SCENARIOS = ["empty", "run", "devices", "long", "names", "hosts"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 declare global {
   interface Window {
     /** For the checking script: drive the in-memory core and the store from the page. */
-    __yhtye?: { store: AppStore; core: FakeCore; transport: MemoryTransport; failCommand: (type: string, message: string) => void };
+    __yhtye?: {
+      store: AppStore;
+      core: FakeCore;
+      transport: MemoryTransport;
+      failCommand: (type: string, message: string) => void;
+      /** The hosts scenario: the registry and the shell's fake (to push a pairing link, ...). */
+      hosts?: TestHosts;
+    };
   }
 }
 
@@ -44,17 +57,29 @@ const TASKS = 14;
 const WORKTREES = 12;
 const COMMITS = 80;
 
+/** The ids of the long scenarios: the older numbered ones, or 32-character names (orchestration-model §2.1). */
+interface Ids {
+  group: string;
+  task: (i: number) => string;
+  /** A task's branch (the core's `domain::task_branch`). */
+  taskBranch: (i: number) => string;
+}
+const NUMBERED: Ids = { group: "G-1", task: (i) => `T-${i + 1}`, taskBranch: (i) => `yhtye/G-1-T-${i + 1}` };
+const NAMED_GROUP = "the-long-group-name-for-a-layout";
+const namedTask = (i: number) => `the-long-task-name-for-layout-${String(i + 1).padStart(2, "0")}`;
+const NAMED: Ids = { group: NAMED_GROUP, task: namedTask, taskBranch: (i) => `yhtye/${NAMED_GROUP}--${namedTask(i)}` };
+
 function longTitle(i: number): string {
   return i % 3 === 0 ? `${NO_SPACES}${i}` : `${i} 件目の、とても長いタイトルのタスク。折り返さず省略記号で切れるはずの文章です`;
 }
 
-function longTasks(): { tasks: Task[]; helps: Help[] } {
+function longTasks(ids: Ids): { tasks: Task[]; helps: Help[] } {
   const base = FULL_RUN.end.state.tasks[0];
   const done = base.steps.map((s) => ({ ...s, status: "done" as const }));
   const running = base.steps.map((s, i) => ({ ...s, status: i === 0 ? ("running" as const) : ("pending" as const), result: null, verdict: null }));
   const helps: Help[] = [];
   const tasks = Array.from({ length: TASKS }, (_, i): Task => {
-    const id = `T-${i + 1}`;
+    const id = ids.task(i);
     const kind = i % 4;
     const status = (["done", "running", "handling", "pending"] as const)[kind];
     if (status === "handling") {
@@ -74,7 +99,7 @@ function longTasks(): { tasks: Task[]; helps: Help[] } {
     return {
       ...base,
       id,
-      group: "G-1",
+      group: ids.group,
       title: longTitle(i),
       status,
       steps: settled ? done : running,
@@ -113,7 +138,7 @@ function longBranchStatuses(git: GitOverview): BranchStatuses {
   return { default_branch: "main", statuses };
 }
 
-function longGit(): { git: GitOverview; chats: ChatInfo[]; chatStates: State["chats"] } {
+function longGit(ids: Ids): { git: GitOverview; chats: ChatInfo[]; chatStates: State["chats"] } {
   const sha = (c: string, i: number) => `${c}${i}`.padEnd(40, c);
   const branches = Array.from({ length: WORKTREES }, (_, i) => ({ name: i === 0 ? "main" : `feature/${NO_SPACES}${i}`, sha: sha("b", i) }));
   const worktrees = branches.map((b, i) => ({
@@ -126,7 +151,7 @@ function longGit(): { git: GitOverview; chats: ChatInfo[]; chatStates: State["ch
   const commits: GitCommit[] = Array.from({ length: COMMITS }, (_, i) => ({
     sha: sha("c", i),
     parents: i + 1 < COMMITS ? [sha("c", i + 1)] : [],
-    branches: i === 0 ? ["main"] : i % 10 === 0 ? [`feature/${NO_SPACES}${i}`] : [],
+    branches: i === 0 ? ["main"] : i === 1 ? [`yhtye/${ids.group}`] : i % 10 === 0 ? [`feature/${NO_SPACES}${i}`] : i % 10 === 5 ? [ids.taskBranch(i % TASKS), ids.taskBranch((i + 7) % TASKS)] : [],
     subject: `commit ${i}: ${PARAGRAPH}`,
     ts_ms: NOW - i * 3_600_000,
   }));
@@ -157,7 +182,7 @@ function longModels(): HarnessModels {
 
 const WIDE_TABLE = `| ${Array.from({ length: 8 }, (_, i) => `column ${i}`).join(" | ")} |\n| ${Array.from({ length: 8 }, () => "---").join(" | ")} |\n| ${Array.from({ length: 8 }, () => NO_SPACES).join(" | ")} |`;
 
-function longLog(): ApiEvent[] {
+function longLog(group: Group, ids: Ids): ApiEvent[] {
   const orchestrator = orchestratorKey(CHAT_ID);
   const log: ApiEvent[] = [];
   let seq = 1;
@@ -172,18 +197,30 @@ function longLog(): ApiEvent[] {
     push((n) => agentText(n, orchestrator, `${i} 件目への返答です。\n\n- ${PARAGRAPH}\n- \`${NO_SPACES}\`\n\n${WIDE_TABLE}\n\n\`\`\`\n${NO_SPACES}${NO_SPACES}\n\`\`\``));
     push((n) => turnEnded(n, orchestrator));
   }
+  // At the end (in view once scrolled down): the group's card and a notice naming a task.
+  push((n) => ev(n, { type: "domain", event: { type: "group_created", group } }));
+  const attrs: [string, string][] = [["task", ids.task(2)], ["help", "H-1"], ["group", group.id]];
+  push((n) => ev(n, { type: "domain", event: { type: "inbox_queued", entry: { id: EXCHANGES + 1, chat: CHAT_ID, item: { kind: "help_raised", attrs, body: PARAGRAPH } } } }));
   return log;
 }
 
 function build(scenario: Scenario): { core: FakeCore; open: boolean } {
-  if (scenario === "long") {
-    const { tasks, helps } = longTasks();
-    const { git, chats, chatStates } = longGit();
-    const group = { ...FULL_RUN.end.state.groups[0], id: "G-1", chat: CHAT_ID, title: `グループ ${NO_SPACES}`, status: "active" as const };
+  if (scenario === "long" || scenario === "names") {
+    const ids = scenario === "names" ? NAMED : NUMBERED;
+    const { tasks, helps } = longTasks(ids);
+    const { git, chats, chatStates } = longGit(ids);
+    const group: Group = {
+      ...FULL_RUN.end.state.groups[0],
+      id: ids.group,
+      chat: CHAT_ID,
+      title: `グループ ${NO_SPACES}`,
+      status: "active",
+      group_branch: `yhtye/${ids.group}`,
+    };
     const state: State = { ...emptyState("repo", { max_review_rounds: 2 }), chats: chatStates, groups: [group], tasks, helps };
     const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats, starting: [] };
     const core = new FakeCore(PROJECT, snapshot);
-    core.log = longLog();
+    core.log = longLog(group, ids);
     core.git = git;
     core.branchStatuses = longBranchStatuses(git);
     core.usage = {
@@ -197,9 +234,10 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     core.agents.models["claude-code"] = longModels();
     core.remote.dnsName = `${NO_SPACES}.tailnet.ts.net`;
     core.remote.set(true, undefined);
-    core.remote.devices = Array.from({ length: 12 }, (_, i) => ({
+    core.remote.devices = Array.from({ length: 12 }, (_, i): RemoteDevice => ({
       id: `dev-${i}`,
       name: i % 3 === 0 ? `${NO_SPACES}${i}` : `端末 ${i}`,
+      kind: i % 3 === 1 ? "desktop" : "android",
       created_ms: NOW - i * 86_400_000,
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
@@ -211,16 +249,51 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
   core.log = durable(FULL_RUN);
   if (scenario === "devices") {
     core.remote.devices = [
-      { id: "dev-1", name: "Pixel 9", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
-      { id: "dev-2", name: `Tablet ${NO_SPACES}`, created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
+      { id: "dev-1", name: "Pixel 9", kind: "android", created_ms: NOW - 86_400_000, last_seen_ms: NOW, connected: true },
+      { id: "dev-2", name: `Workstation ${NO_SPACES}`, kind: "desktop", created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
     ];
   }
   return { core, open: scenario !== "empty" };
 }
 
+/** The recorded run with three other hosts paired with, whose projects are listed after this PC's. */
+async function mountHosts(): Promise<TestHosts> {
+  const long = `${NO_SPACES}host`;
+  const t = newTestHosts({
+    configureFar: (far) => {
+      far.core.host = far.id === "sid-long" ? long : `host-${far.id}`;
+      far.core.headless = far.id === "sid-long";
+    },
+  });
+  t.localCore.log = durable(FULL_RUN);
+  const api = t.api as FakeHostsApi;
+  const named = (id: string, name: string) => ({ ...hostInfo(id), name });
+  api.hosts = [
+    named("sid-long", long),
+    { ...named("sid-gone", "build-server"), status: { connection: { state: "revoked" as const }, server: null } },
+    { ...named("sid-wait", "office-pc"), status: { connection: { state: "waiting_to_reconnect" as const, attempt: 2, delay_ms: 5000, reason: "refused" }, server: null } },
+  ];
+  window.__yhtye = { store: t.registry.activeStore, core: t.localCore, transport: t.localTransport, failCommand: () => {}, hosts: t };
+  void t.registry.start();
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <HostsProvider registry={t.registry}>
+        <App />
+      </HostsProvider>
+    </React.StrictMode>,
+  );
+  await t.registry.selectProject(LOCAL_HOST, PROJECT);
+  return t;
+}
+
 async function main(): Promise<void> {
   const requested = new URLSearchParams(window.location.search).get("scenario") ?? "run";
   const scenario = SCENARIOS.find((s) => s === requested) ?? "run";
+  if (scenario === "hosts") {
+    await mountHosts();
+    document.documentElement.dataset.ready = scenario;
+    return;
+  }
   const transport = new MemoryTransport({ state: "open" });
   const { core, open } = build(scenario);
   core.attach(transport);

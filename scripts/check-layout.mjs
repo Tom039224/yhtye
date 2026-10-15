@@ -194,6 +194,39 @@ function inspectBottomTabs({ tasks, active, atStart }) {
   return problems;
 }
 
+/**
+ * Run in the page of the `names` scenario (32-character group and task names): an id cut short
+ * has the whole in a tooltip (its own or its control's), and the task cards keep room for their
+ * titles and their buttons. Returns what is wrong (empty: fine).
+ */
+function inspectNames({ ids }) {
+  const problems = [];
+  const rect = (el) => el.getBoundingClientRect();
+  const seen = new Set();
+  for (const selector of ids) {
+    for (const el of document.querySelectorAll(selector)) {
+      if (el.getClientRects().length === 0) continue; // folded away
+      const text = el.textContent.trim();
+      seen.add(selector);
+      if (el.scrollWidth <= el.clientWidth + 1) continue;
+      const tip = el.closest("[title]")?.getAttribute("title") ?? "";
+      if (!tip.includes(text)) problems.push(`${selector} "${text}" is cut short and no tooltip has the whole (title: "${tip}")`);
+    }
+  }
+  for (const card of document.querySelectorAll(".task")) {
+    if (card.getClientRects().length === 0) continue;
+    const id = card.querySelector(".task-id")?.textContent.trim();
+    const header = card.querySelector(".task-header");
+    const title = card.querySelector(".task-title");
+    if (title && rect(title).width < 60) problems.push(`the title of task ${id} is squeezed (${Math.round(rect(title).width)}px)`);
+    for (const button of card.querySelectorAll(".task-actions .icon-button")) {
+      if (rect(button).right > rect(header).right + 0.5 || rect(button).width < 23.5) problems.push(`a button of task ${id} is pushed out or squeezed`);
+    }
+  }
+  if (!seen.has(".task-id")) problems.push("no task card is shown");
+  return problems;
+}
+
 // ---- the screen states -------------------------------------------------------------------------
 
 const click = (page, name, options = {}) => page.getByRole("button", { name, ...options }).first().click();
@@ -220,11 +253,33 @@ async function wheelOver(page, selector, deltaY) {
   await page.waitForTimeout(150);
 }
 
+/** A project of the remote host with the long name, picked in the pull-down (that host's store is on screen). */
+async function showRemoteProject(page) {
+  await openProjectPicker(page);
+  await page.locator(".project-option", { hasText: "server-only" }).first().click();
+  await page.waitForFunction(() => document.querySelector(".host-footer [data-icon='server-headless']"));
+  await page.evaluate(() => window.__yhtye.hosts.api.notice({ type: "status", server_id: "sid-long", status: { connection: { state: "waiting_to_reconnect", attempt: 1, delay_ms: 3000, reason: "connection refused: the host is not there" }, server: null } }));
+  await page.locator(".banners .alert").first().waitFor();
+}
+
+/** The `n`th task's id (from 1) in the `long` scenario, and in `names` (src/test/layoutHarness.tsx). */
+const numberedTask = (n) => `T-${n}`;
+const namedTask = (n) => `the-long-task-name-for-layout-${String(n).padStart(2, "0")}`;
+
 /** Opens the first `count` tasks' output in turn: a tab each, the last one shown. */
-async function openTaskTabs(page, count) {
-  for (let i = 1; i <= count; i++) await page.locator(`article[aria-label="task T-${i}"] .task-title`).click();
+async function openTaskTabs(page, count, task = numberedTask) {
+  for (let i = 1; i <= count; i++) await page.locator(`article[aria-label="task ${task(i)}"] .task-title`).click();
   await page.getByRole("region", { name: "agent output" }).waitFor();
 }
+
+/** Where ids are shown (inspectNames). */
+const ID_SELECTORS = [".task-id", ".group-id", ".group-card-header .dim", ".group-card-row .n", ".tab-label", ".git-badge-text", ".mention-id"];
+const names = (page) => page.evaluate(inspectNames, { ids: ID_SELECTORS });
+const namesAndTabs = (options) => async (page) => [...(await names(page)), ...(await bottomTabs(options)(page))];
+const narrowestRight = async (page) => {
+  await page.getByRole("separator", { name: "右パネルの幅" }).focus();
+  await page.keyboard.press("Shift+Home");
+};
 
 /** The tab row's check (inspectBottomTabs) as a state's `verify`. */
 const bottomTabs = (options) => (page) => page.evaluate(inspectBottomTabs, options);
@@ -337,7 +392,58 @@ const STATES = [
     await click(page, "他 9 台");
     await page.getByRole("button", { name: "折りたたむ" }).waitFor();
   } },
+  { name: "hosts: other Yhtye hosts paired with (this PC's project on screen)", scenario: "hosts" },
+  { name: "hosts: project pull-down open (remote rows with long host names)", scenario: "hosts", interactive: true, run: openProjectPicker },
+  { name: "hosts: a remote host's project on screen (footer, remote mark, lost connection)", scenario: "hosts", interactive: true, run: showRemoteProject },
+  { name: "hosts: settings (接続先) with the hosts listed", scenario: "hosts", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "接続先");
+    await page.getByRole("list", { name: "接続先の一覧" }).waitFor();
+  } },
+  { name: "hosts: settings (接続先), typing host, port and code", scenario: "hosts", interactive: true, run: async (page) => {
+    await click(page, "設定");
+    await click(page, "接続先");
+    await click(page, "ホスト・ポート・コード");
+    await page.getByRole("textbox", { name: "ホスト" }).fill("100.64.0.7");
+  } },
+  { name: "hosts: a pairing link arrives (settings open on 接続先)", scenario: "hosts", interactive: true, run: async (page) => {
+    await page.evaluate(() => window.__yhtye.hosts.api.link("yhtye://pair?v=1&ip=100.64.0.7&port=1423&code=ABCD2345&sid=sid-new"));
+    await page.getByRole("textbox", { name: "ペアリングリンク" }).waitFor();
+    await page.getByLabel("リンクの接続先").waitFor();
+  } },
+  { name: "hosts: a pairing that fails", scenario: "hosts", interactive: true, run: async (page) => {
+    await page.evaluate(() => {
+      window.__yhtye.hosts.api.addError = Object.assign(new Error("could not reach 100.64.0.7:1423: timed out"), { code: "unavailable" });
+      window.__yhtye.hosts.api.link("yhtye://pair?v=1&ip=100.64.0.7&port=1423&code=ABCD2345&sid=sid-new");
+    });
+    await page.getByLabel("リンクの接続先").waitFor();
+    await click(page, "接続", { exact: true });
+    await page.getByRole("alert").waitFor();
+  } },
+  { name: "hosts: settings of a remote host on screen (agents, host's name by the heading)", scenario: "hosts", interactive: true, run: async (page) => {
+    await showRemoteProject(page);
+    await click(page, "設定");
+    await page.getByTitle(/のものです/).waitFor();
+  } },
+  { name: "hosts: settings (remote access) of a remote host on screen", scenario: "hosts", interactive: true, run: async (page) => {
+    await showRemoteProject(page);
+    await click(page, "設定");
+    await click(page, "リモート接続");
+    await page.getByText(/そのホスト自身でしか行えません/).waitFor();
+  } },
   { name: "long: every control reached with Tab", scenario: "long", interactive: true, tab: 80 },
+  { name: "names: 32-character group and task names", scenario: "names", verify: names },
+  { name: "names: right panel dragged to its narrowest", scenario: "names", interactive: true, run: narrowestRight, verify: names },
+  { name: "names: three tasks quoted into the composer", scenario: "names", interactive: true, run: async (page) => {
+    for (const n of [1, 2, 3]) await click(page, `${namedTask(n)} をオーケストレータへ引用`, { exact: true });
+  }, verify: names },
+  { name: "names: 8 task tabs open (agent output)", scenario: "names", interactive: true, run: (page) => openTaskTabs(page, 8, namedTask), verify: namesAndTabs({ tasks: 8, active: namedTask(8) }) },
+  { name: "names: 8 task tabs open, right panel dragged to its narrowest, git shown", scenario: "names", interactive: true, run: async (page) => {
+    await narrowestRight(page);
+    await openTaskTabs(page, 8, namedTask);
+    await click(page, "git", { exact: true });
+    await page.getByRole("region", { name: "git" }).waitFor();
+  }, verify: namesAndTabs({ tasks: 8, active: null }) },
   { name: "run: every control reached with Tab", scenario: "run", interactive: true, tab: 60 },
 ];
 

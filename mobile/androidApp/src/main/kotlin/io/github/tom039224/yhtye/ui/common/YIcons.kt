@@ -149,12 +149,22 @@ object YIcons {
     val Key = lineIcon("key", circle(8f, 15.5f, 3.5f), "M10.5 13L19 4.5", "M16.5 7l2.5 2.5", "M13.5 10l2 2")
     val Star = lineIcon("star", "M12 4l2.4 5 5.4.7-4 3.8 1 5.4L12 16.2l-4.8 2.7 1-5.4-4-3.8 5.4-.7z")
     val Phone = lineIcon("phone", rect(7f, 3.5f, 10f, 17f, 2f), "M11 17.5h2")
+    val Monitor = lineIcon("monitor", rect(3.5f, 4.5f, 17f, 11f, 1.5f), "M9 19.5h6", "M12 15.5v4")
     val Server = lineIcon(
         "server",
         rect(4.5f, 4.5f, 15f, 6.5f, 1.5f),
         rect(4.5f, 13f, 15f, 6.5f, 1.5f),
         "M8 7.75h.01M8 16.25h.01",
         "M12 7.75h4M12 16.25h4",
+    )
+    /** GUI 無しのサーバー: 箱の中に状態灯と `>_` (PC の `server-headless`)。 */
+    val ServerHeadless = lineIcon(
+        "serverHeadless",
+        rect(4.5f, 4.5f, 15f, 15f, 1.5f),
+        "M4.5 9.25h15",
+        "M8 6.9h.01",
+        "M8.25 12.25l2.75 2.5-2.75 2.5",
+        "M13.25 17.25h3",
     )
     val Activity = lineIcon("activity", "M22 12h-4l-3 9L9 3l-3 9H2")
     val Flag = lineIcon("flag", "M4 22V4", "M4 4h13l-2 4 2 4H4")

@@ -2,10 +2,12 @@ import { useId, useRef, useState } from "react";
 
 import type { ProjectInfo } from "../api/generated";
 import { fillSlots } from "../store/order";
+import { useActiveHostEntry } from "../store/useHosts";
 import { useAppState, useStore } from "../store/useStore";
 import { Icon } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { backgroundProjects, projectRing, RING_LABEL } from "./projectActivity";
+import { RemoteMark } from "./RemoteMark";
 import { reorderKey, useSortable } from "./useSortable";
 
 /**
@@ -14,7 +16,8 @@ import { reorderKey, useSortable } from "./useSortable";
  * right click opens its menu (sleep, move up / down). Chips can also be dragged
  * onto each other, or moved with Alt + ↑ / ↓. Each chip carries the same ring
  * as the picker (a turning arc while a chat of the project is working, a hollow
- * one otherwise).
+ * one otherwise). They are the projects of the host on screen: of a remote
+ * host, each chip carries the remote mark.
  */
 export function BackgroundProjects() {
   const store = useStore();
@@ -53,6 +56,7 @@ interface BackgroundChipProps {
 
 function BackgroundChip({ project: p, shown, onMove }: BackgroundChipProps) {
   const store = useStore();
+  const host = useActiveHostEntry();
   const view = useAppState((s) => s.project);
   const opening = useAppState((s) => s.busy.opening);
   const connected = useAppState((s) => s.connection.state === "open");
@@ -78,6 +82,7 @@ function BackgroundChip({ project: p, shown, onMove }: BackgroundChipProps) {
       >
         <span className={`ring ring-${ring}`} data-testid={`bg-ring-${p.id}`} aria-hidden="true" />
         <span className="name">{p.name}</span>
+        <RemoteMark entry={host ?? undefined} size={11} />
       </button>
       {menuOpen ? (
         <ProjectMenu

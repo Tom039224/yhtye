@@ -79,6 +79,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
     /** `ping` が返す PC の版 (空 = この項目を返す前の古い PC)。 */
     var hostVersion = ""
 
+    /** `ping` が答える、PC が GUI 無しで動いているか。 */
+    var hostHeadless = false
+
     /** `list_projects` の答え (`open_project` はパスが合うものを返す)。 */
     var projects: List<ProjectInfo> = listOf(PROJECT)
 
@@ -144,7 +147,7 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         calls += command
         failures[command::class]?.let { throw ApiException(it) }
         return when (command) {
-            ApiCommand.Ping -> ApiResponse.Pong("test-host", hostVersion)
+            ApiCommand.Ping -> ApiResponse.Pong("test-host", hostVersion, hostHeadless)
             ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer("test-host"), devices))
             ApiCommand.ListProjects -> ApiResponse.Projects(sortByOrder(projects, projectOrder) { it.id })
             is ApiCommand.OpenProject -> {

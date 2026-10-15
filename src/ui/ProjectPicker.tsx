@@ -1,10 +1,13 @@
-import { type FocusEvent, type FormEvent, type KeyboardEvent, type MouseEvent, useEffect, useId, useRef, useState } from "react";
+import { type FocusEvent, type FormEvent, type KeyboardEvent, type MouseEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import type { ProjectInfo } from "../api/generated";
+import { type HostEntry, type HostKey, type HostProject, LOCAL_HOST, scopedKey as scopedProjectKey } from "../store/hosts";
+import { useActiveHost, useAllProjects, useHostsRegistry, useHostsState } from "../store/useHosts";
 import { useAppState, useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
 import { ProjectMenu } from "./ProjectMenu";
 import { projectRing, RING_LABEL } from "./projectActivity";
+import { RemoteMark } from "./RemoteMark";
 import { reorderKey, useSortable } from "./useSortable";
 
 /**
@@ -21,18 +24,48 @@ function revealRow(list: HTMLElement, index: number): void {
 }
 
 /**
- * The project on screen as a pull-down: a listbox of the known projects
- * (↑↓ Home End move, Enter / click switch, Esc closes) and the form that opens
- * another repository. Focus moves into the popup while it is open and back to
- * the trigger when it closes; leaving the popup closes it. A right click on a
- * project (a row, or the button for the one on screen) opens its menu (sleep).
+ * The names that more than one host has a project of (those rows are told
+ * apart by their host's name).
+ */
+function sharedNames(projects: readonly HostProject[]): ReadonlySet<string> {
+  const hostsOf = new Map<string, Set<HostKey>>();
+  for (const row of projects) {
+    const hosts = hostsOf.get(row.project.name) ?? new Set<HostKey>();
+    hosts.add(row.host);
+    hostsOf.set(row.project.name, hosts);
+  }
+  return new Set([...hostsOf].filter(([, hosts]) => hosts.size > 1).map(([name]) => name));
+}
+
+/**
+ * The project on screen as a pull-down: a listbox of the known projects of
+ * every host (this PC's first, then each remote host's; ↑↓ Home End move,
+ * Enter / click switch, Esc closes) and the form that opens another
+ * repository on the host on screen. A project of another host carries the
+ * remote mark after its name (grey while that host is not connected), and its
+ * host's name too where another host has a project of the same name. Focus
+ * moves into the popup while it is open and back to the trigger when it
+ * closes; leaving the popup closes it. A right click on a project of the host
+ * on screen (a row, or the button for the one on screen) opens its menu (sleep,
+ * move up / down); those rows can also be dragged onto each other, or moved
+ * with Alt + ↑ / ↓. Another host's projects have neither: the screen's store
+ * speaks to one host only.
  */
 export function ProjectPicker() {
   const store = useStore();
-  const projects = useAppState((s) => s.projects);
+  const registry = useHostsRegistry();
+  const own = useAppState((s) => s.projects);
+  const everyones = useAllProjects();
+  const activeHost = useActiveHost();
+  const hostEntries = useHostsState((s) => s.hosts);
   const view = useAppState((s) => s.project);
   const opening = useAppState((s) => s.busy.opening);
   const connected = useAppState((s) => s.connection.state === "open");
+  // Without a registry (one store is all there is) the list is the store's own.
+  const projects = useMemo(
+    () => everyones ?? own.map((project): HostProject => ({ host: activeHost, remote: false, hostName: null, project })),
+    [everyones, own, activeHost],
+  );
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [path, setPath] = useState("");
@@ -49,14 +82,23 @@ export function ProjectPicker() {
   const optionId = (i: number) => `${id}-option-${i}`;
   const blocked = !connected || opening;
   const currentId = view?.info.id ?? null;
-  const current = projects.find((p) => p.id === currentId) ?? view?.info ?? null;
+  const isCurrent = (row: HostProject) => row.host === activeHost && row.project.id === currentId;
+  // Another host's projects are as available as that host's connection is.
+  const entryOf = (host: HostKey): HostEntry | undefined => hostEntries?.find((h) => h.key === host);
+  const isBlocked = (row: HostProject) => (row.host === activeHost ? blocked : entryOf(row.host)?.connection !== "open");
+  const shared = useMemo(() => sharedNames(projects), [projects]);
+  const current = projects.find(isCurrent)?.project ?? view?.info ?? null;
+  const activeEntry = activeHost === LOCAL_HOST ? undefined : entryOf(activeHost);
+  const remoteName = activeEntry ? (activeEntry.name ?? activeHost) : null;
   const activeIndex = Math.max(0, Math.min(active, projects.length - 1));
-  const ids = projects.map((p) => p.id);
+  // The screen's store speaks to the host on screen: only its projects can be moved or put to sleep.
+  const ownRows = projects.filter((row) => row.host === activeHost);
+  const ids = ownRows.map((row) => row.project.id);
   // The order is the core's: a drag or the menu asks it, and the listing comes back.
   const move = (next: string[]) => void store.reorderProjects(next);
   const sortable = useSortable(ids, move, connected);
   // The open menu's project as the list says now (not as it was when the menu opened).
-  const menuProject = menuFor === null ? null : (projects.find((p) => p.id === menuFor) ?? (menuFor === currentId ? current : null));
+  const menuProject = menuFor === null ? null : (ownRows.find((row) => row.project.id === menuFor)?.project ?? (menuFor === currentId ? current : null));
 
   useEffect(() => {
     if (open) (listRef.current ?? inputRef.current)?.focus();
@@ -67,17 +109,21 @@ export function ProjectPicker() {
   }, [open, activeIndex]);
 
   const openPopup = () => {
-    setActive(Math.max(0, projects.findIndex((p) => p.id === currentId)));
+    setActive(Math.max(0, projects.findIndex(isCurrent)));
     setOpen(true);
   };
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) triggerRef.current?.focus();
   };
-  const choose = (p: ProjectInfo | undefined) => {
-    if (!p || blocked) return;
-    if (p.id !== currentId) void store.openProject(p.path);
+  const choose = (row: HostProject | undefined) => {
+    if (!row || isBlocked(row)) return;
+    if (!isCurrent(row)) selectRow(row);
     close(true);
+  };
+  const selectRow = (row: HostProject) => {
+    if (registry) void registry.selectProject(row.host, row.project);
+    else void store.openProject(row.project.path);
   };
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -106,10 +152,11 @@ export function ProjectPicker() {
   };
   const onListKeyDown = (e: KeyboardEvent) => {
     const last = projects.length - 1;
-    const activeProject = projects[activeIndex];
-    // Alt + ↑ / ↓ moves the project; the highlight follows it.
-    if (activeProject && connected && reorderKey(e, ids, activeProject.id, (next) => {
-      setActive(next.indexOf(activeProject.id));
+    const activeRow = projects[activeIndex];
+    const activeId = activeRow?.host === activeHost ? activeRow.project.id : null;
+    // Alt + ↑ / ↓ moves the project; the highlight follows it (the host's rows are one run of the list).
+    if (activeId !== null && connected && reorderKey(e, ids, activeId, (next) => {
+      setActive(projects.findIndex((row) => row.host === activeHost) + next.indexOf(activeId));
       move(next);
     })) return;
     switch (e.key) {
@@ -143,11 +190,13 @@ export function ProjectPicker() {
     e.preventDefault();
     openMenu(p, e.currentTarget);
   };
+  // Another host's row has no menu (a right click on it opens none, not even the active row's).
+  const menuProjectOf = (row: HostProject | undefined): ProjectInfo | null => (row?.host === activeHost ? row.project : null);
   // The menu key (Shift+F10) asks the focused list, not a row: the active row's menu opens.
   const onListContextMenu = (e: MouseEvent<HTMLElement>) => {
     if (e.defaultPrevented) return;
     e.preventDefault();
-    openMenu(projects[activeIndex] ?? null, e.currentTarget.children[activeIndex] as HTMLElement | undefined ?? null);
+    openMenu(menuProjectOf(projects[activeIndex]), e.currentTarget.children[activeIndex] as HTMLElement | undefined ?? null);
   };
   const onBlur = (e: FocusEvent) => {
     if (!rootRef.current?.contains(e.relatedTarget)) setOpen(false);
@@ -164,13 +213,14 @@ export function ProjectPicker() {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? popupId : undefined}
-        title={current ? `${current.path} · ${RING_LABEL[ring ?? "stopped"]}` : undefined}
+        title={current ? `${remoteName ? `${remoteName}: ` : ""}${current.path} · ${RING_LABEL[ring ?? "stopped"]}` : undefined}
         onClick={() => (open ? close(false) : openPopup())}
         onKeyDown={onTriggerKeyDown}
         onContextMenu={onContextMenuOf(current)}
       >
         {ring ? <span className={`ring ring-${ring}`} data-testid="current-ring" /> : null}
         <span className={`name ${current ? "" : "placeholder"}`}>{label}</span>
+        {current ? <RemoteMark entry={activeEntry} /> : null}
         <Icon name="chevron-down" size={14} className="chevron" />
       </button>
       {open ? (
@@ -188,25 +238,33 @@ export function ProjectPicker() {
               onKeyDown={onListKeyDown}
               onContextMenu={onListContextMenu}
             >
-              {projects.map((p, i) => {
-                const ring = projectRing(p, view);
+              {projects.map((row, i) => {
+                const p = row.project;
+                // A project of another host is not the open one, whose view `view` is.
+                const ring = projectRing(p, row.host === activeHost ? view : null);
+                const hostName = row.remote ? (row.hostName ?? row.host) : null;
+                // Told apart by the host's name only where the name alone would not do.
+                const tag = hostName !== null && shared.has(p.name) ? hostName : null;
                 return (
                   <li
-                    key={p.id}
+                    key={scopedProjectKey(row.host, p.id)}
                     id={optionId(i)}
                     role="option"
-                    aria-selected={p.id === currentId}
-                    aria-disabled={blocked || undefined}
+                    aria-selected={isCurrent(row)}
+                    aria-disabled={isBlocked(row) || undefined}
                     className={`project-option ${i === activeIndex ? "active" : ""}`}
-                    title={`${p.path} · ${RING_LABEL[ring]}`}
+                    title={`${hostName ? `${hostName}: ` : ""}${p.path} · ${RING_LABEL[ring]}`}
                     onMouseEnter={() => setActive(i)}
-                    onClick={() => choose(p)}
-                    onContextMenu={onContextMenuOf(p)}
-                    {...sortable.rowProps(p.id)}
+                    onClick={() => choose(row)}
+                    onContextMenu={onContextMenuOf(menuProjectOf(row))}
+                    {...(row.host === activeHost ? sortable.rowProps(p.id) : {})}
                   >
                     <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
                     <span className="name">{p.name}</span>
-                    {p.id === currentId ? <Icon name="check" size={14} className="check" /> : null}
+                    <RemoteMark entry={entryOf(row.host)} />
+                    {tag ? <span className="host-tag">{tag}</span> : null}
+                    <span className="spacer" />
+                    {isCurrent(row) ? <Icon name="check" size={14} className="check" /> : null}
                   </li>
                 );
               })}
@@ -215,8 +273,8 @@ export function ProjectPicker() {
           <form className="open-form" onSubmit={submit}>
             <input
               ref={inputRef}
-              aria-label="開くリポジトリのパス"
-              placeholder="/path/to/git/repository"
+              aria-label={remoteName ? `開くリポジトリのパス (${remoteName} 上)` : "開くリポジトリのパス"}
+              placeholder={remoteName ? `${remoteName} 上のパス` : "/path/to/git/repository"}
               value={path}
               onChange={(e) => setPath(e.target.value)}
               disabled={blocked}
@@ -227,7 +285,7 @@ export function ProjectPicker() {
               spin={opening}
               size={14}
               label="開く"
-              title="リポジトリを開く"
+              title={remoteName ? `${remoteName} 上のリポジトリを開く` : "リポジトリを開く"}
               disabled={blocked || !path.trim()}
             />
           </form>

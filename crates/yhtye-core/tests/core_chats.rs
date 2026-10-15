@@ -203,7 +203,7 @@ async fn chats_are_created_listed_and_used_through_the_api() {
 #[tokio::test]
 async fn creating_chats_and_sending_report_bad_input() {
     let r = TempRepo::new();
-    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&["branch", "yhtye/g1"]);
     let core = Core::start(core_config(&r, hello_script()))
         .await
         .expect("core");
@@ -211,7 +211,7 @@ async fn creating_chats_and_sending_report_bad_input() {
     let create = |branch: &str| chat_on(&project, Some(branch), None);
     assert_eq!(code(&core, create("nope")).await, ApiErrorCode::NotFound);
     assert_eq!(
-        code(&core, create("yhtye/G-1")).await,
+        code(&core, create("yhtye/g1")).await,
         ApiErrorCode::InvalidArgument
     );
     assert_eq!(
@@ -267,13 +267,13 @@ async fn a_chat_can_be_made_in_a_worktree_given_by_its_path() {
         std::fs::canonicalize(&r.repo).expect("repo")
     );
     let internal = r.data.join("internal");
-    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&["branch", "yhtye/g1"]);
     r.git(&[
         "worktree",
         "add",
         "-q",
         &internal.to_string_lossy(),
-        "yhtye/G-1",
+        "yhtye/g1",
     ]);
     let bad = [
         (
@@ -792,7 +792,9 @@ async fn sleep_chat_stops_the_chat_and_the_project_rests_until_it_is_used_again(
             .expect("timed out waiting for the restart")
             .expect("event stream open");
         if let ApiEventBody::SessionStarted {
-            session, resumed: r, ..
+            session,
+            resumed: r,
+            ..
         } = &ev.body
             && session == "orchestrator:C-1"
         {
@@ -801,7 +803,7 @@ async fn sleep_chat_stops_the_chat_and_the_project_rests_until_it_is_used_again(
     }
     assert_eq!(resumed, Some(true), "the stored session was loaded again");
     until(&mut rx, said("orchestrator:C-1", "hi")).await;
-    assert_eq!(activity_of(&core, &project).await.1, true);
+    assert!(activity_of(&core, &project).await.1);
     core.shutdown().await;
 }
 

@@ -414,22 +414,22 @@ impl Driver {
                     ToolError::forbidden("create_group needs an orchestrator chat")
                 })?;
                 let base_branch = self.checked_out_branch(&chat).await?;
-                let taken = self.git.highest_group_number().await.map_err(|e| {
-                    ToolError::internal(format!("could not list the group numbers in git: {e}"))
-                })?;
+                let taken_in_git = self.name_in_git(&args.name, None).await?;
                 DomainCommand::CreateGroup {
                     chat,
                     args,
                     base_branch,
-                    taken,
+                    taken_in_git,
                 }
             }
             ToolCall::CreateTask(args) => {
                 let settings = self.cfg.agents.available_settings(Some(&self.cfg.project));
                 let args = choose_agents(&settings, args)?;
-                DomainCommand::Tool {
+                let taken_in_git = self.name_in_git(&args.group_id, Some(&args.name)).await?;
+                DomainCommand::CreateTask {
                     binding,
-                    call: ToolCall::CreateTask(args),
+                    args,
+                    taken_in_git,
                 }
             }
             ToolCall::FinishGroup(args) => {
@@ -462,6 +462,27 @@ impl Driver {
             }
             other => other,
         }
+    }
+
+    /// What in git already uses the name of a new group (`task: None`) or of a
+    /// new task of the existing group `group` (which may have an older numbered
+    /// id). Only asked for a valid name: the state machine refuses the others.
+    async fn name_in_git(
+        &self,
+        group: &str,
+        task: Option<&str>,
+    ) -> Result<Option<String>, ToolError> {
+        let looked_up = match task {
+            None => crate::domain::is_valid_name(group),
+            Some(task) => crate::domain::is_valid_name(task) && self.state.group(group).is_some(),
+        };
+        if !looked_up {
+            return Ok(None);
+        }
+        self.git
+            .name_in_git(group, task)
+            .await
+            .map_err(|e| ToolError::internal(format!("could not look up the name in git: {e}")))
     }
 
     /// Applies `cmd` and everything that follows from it (git results), and
@@ -545,6 +566,7 @@ impl Driver {
             Effect::StopAgent { agent } => self.sessions.stop(&session_key(&agent)),
             Effect::StopTaskAgents { task } => self.sessions.stop_task(&task),
             Effect::Git(op) => {
+                let op = self.with_commit_agents(op).await;
                 let result = self.git.run(&op).await;
                 return Some(DomainCommand::GitDone { op, result });
             }

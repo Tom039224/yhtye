@@ -34,6 +34,7 @@ use crate::clock::now_ms;
 use crate::domain::DomainConfig;
 use crate::git::{self, BranchStatuses, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
+use crate::remote_client::{RemoteHosts, TokenVault};
 use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
@@ -82,6 +83,9 @@ pub struct CoreConfig {
     /// This PC on Tailscale, for remote access (the `tailscale` command; tests
     /// use a fake).
     pub tailscale: Arc<dyn Tailscale>,
+    /// The host runs without a GUI (`yhtye --headless`); `Ping` tells the
+    /// clients, which show another icon for it.
+    pub headless: bool,
 }
 
 impl CoreConfig {
@@ -100,6 +104,7 @@ impl CoreConfig {
             usage: Some(HarnessConfig::claude_code_usage_probe()),
             secret_backend: Arc::new(KeyringBackend::new()),
             tailscale: Arc::new(TailscaleCli),
+            headless: false,
         }
     }
 
@@ -145,6 +150,8 @@ struct Inner {
     /// The PR / merge statuses by project id with when they were read (see
     /// [`Core::branch_statuses`]).
     status_cache: tokio::sync::Mutex<HashMap<String, (std::time::Instant, BranchStatuses)>>,
+    /// The other Yhtye hosts this one is a client of (`core-design.md` §18.9).
+    remote_hosts: RemoteHosts,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -182,6 +189,9 @@ impl Core {
         let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
         let remote =
             RemoteService::new(store.clone(), cfg.tailscale.clone(), events.clone()).await?;
+        // The device tokens of the hosts go where the secret environment variables do.
+        let remote_hosts =
+            RemoteHosts::new(store.clone(), TokenVault::new(cfg.secret_backend.clone()));
         Ok(Self {
             inner: Arc::new(Inner {
                 cfg,
@@ -199,9 +209,17 @@ impl Core {
                 secrets,
                 remote,
                 status_cache: tokio::sync::Mutex::new(HashMap::new()),
+                remote_hosts,
                 closed: AtomicBool::new(false),
             }),
         })
+    }
+
+    /// The Yhtye hosts this one uses as a client (`core-design.md` §18.9): pair,
+    /// connect, run commands there. Its connections are closed by [`Core::shutdown`].
+    #[must_use]
+    pub fn remote_hosts(&self) -> RemoteHosts {
+        self.inner.remote_hosts.clone()
     }
 
     /// Every project's events (durable and live), in order per project.
@@ -215,6 +233,7 @@ impl Core {
             ApiCommand::Ping => Ok(ApiResponse::Pong {
                 host: host_name(),
                 version: APP_VERSION.to_string(),
+                headless: self.inner.cfg.headless,
             }),
             ApiCommand::ListProjects => Ok(ApiResponse::Projects {
                 projects: self.list_projects().await?,
@@ -568,6 +587,7 @@ impl Core {
         self.inner.closed.store(true, Ordering::SeqCst);
         // First: remote clients must not start work while the projects stop.
         self.inner.remote.shutdown().await;
+        self.inner.remote_hosts.shutdown().await;
         self.inner.usage.close().await;
         self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;
@@ -698,11 +718,10 @@ impl Core {
             }
         }
         let statuses = git::branch_statuses(&record.path).await;
-        self.inner
-            .status_cache
-            .lock()
-            .await
-            .insert(project.to_string(), (std::time::Instant::now(), statuses.clone()));
+        self.inner.status_cache.lock().await.insert(
+            project.to_string(),
+            (std::time::Instant::now(), statuses.clone()),
+        );
         Ok(statuses)
     }
 

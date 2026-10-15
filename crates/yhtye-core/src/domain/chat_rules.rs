@@ -17,7 +17,7 @@ pub const MAX_TITLE_CHARS: usize = 40;
 /// Longest title the user can give a chat (`rename_chat`), in characters.
 pub const MAX_RENAMED_TITLE_CHARS: usize = 80;
 
-/// Prefix of Yhtye's internal branches (`yhtye/<groupId>`); a chat cannot work on one.
+/// Prefix of Yhtye's internal branches (`yhtye/<group>`); a chat cannot work on one.
 pub const INTERNAL_BRANCH_PREFIX: &str = "yhtye/";
 
 /// What the user's "compact" button sends to a chat's orchestrator, as the

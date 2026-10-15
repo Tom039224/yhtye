@@ -577,21 +577,30 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 
 - 構成: `git/run.rs` (実行: `LC_ALL=C`・`GIT_TERMINAL_PROMPT=0`・`GIT_EDITOR=true`、
   `GIT_DIR` 等の継承を除去、stdin は null、1 コマンド 120 秒のタイムアウトで kill) /
-  `git/repo.rs` (照会と commit / merge / stash) / `git/worktree.rs` (worktree の作成・再利用・削除) /
+  `git/repo.rs` (照会と commit / squash / merge / stash) / `git/worktree.rs` (worktree の作成・再利用・削除) /
+  `git/message.rs` (squash コミットと group マージコミットのメッセージ。純粋関数。orchestration-model §6.2) /
   `git/cli.rs` (`GitCli`: `GitOp` ごとの手順)。
 - 生成: `GitCli::new(project_dir, git::worktree_root(data_dir, project_id))`
   (`<data_dir>/worktrees/<projectId>`)。`NoopGit` は git を使わないテスト用に残す。
 - `GitOp::PrepareWorkspace` / `FinishTask` は `group_branch` / `base_branch` を持つ (3c で追加):
   消えた group ブランチ・統合 worktree を作り直すため。ブランチ名は `domain::group_branch` /
-  `domain::task_branch` (`yhtye/<groupId>-<taskId>`) の 1 か所で決める。
+  `domain::task_branch` (`yhtye/<group>--<task>`、古い `T-<n>` は `yhtye/<group>-T-<n>`) の 1 か所で決める。
+- **タスクは squash、グループは `--no-ff`**: `FinishTask` (`code`) は統合 worktree で `git merge --squash` + コミット (マージコミットなし)、
+  `MergeGroup` は従来どおり `git merge --no-ff`。メッセージの材料は `GitOp` のフィールドで渡す
+  (`FinishTask.title` / `agent` / `reviewers`、`MergeGroup.title` / `summary` / `tasks`。すべて `#[serde(default)]`)。
+  `agent` / `reviewers` (harness × model × effort) はドメインが知らないので、ランタイムが `Effect::Git(FinishTask)` を実行する直前に
+  セッション記録から埋める (`runtime/commit_agents.rs`)。「マージ済み」は squash では祖先で判定できないので
+  `Yhtye-Task` トレーラー (と、祖先 = 変更なし / 旧方式の `--no-ff`) で判定する (orchestration-model §6 冪等性)。
+  squash はコンフリクトでも途中で止まっても `MERGE_HEAD` が無いので、`git reset --merge` で巻き戻す (`SQUASH_MSG` の有無で途中かを知る)。
 - トレイトに `workspace_changes(workdir, group_branch)` を追加 (既定実装は空)。再起動のフォールバック
   プロンプトに `git status --short` + 分岐点からの `git diff` (16 KiB まで) を添えるのに使う
   (runtime の `Effect::ResumeStep` 処理)。
 - 各 `GitOp` の手順と冪等性・安全性の規則は orchestration-model §6「Stage 3c で決めた細部」。
   予期された結果 (`Conflict` / `Dirty` / `Blocked`) 以外の失敗は `Failed{message}` → ドメインが
   `git_failed` の help (タスク) か `internal` (create_group) にする。
-- テスト: `tests/git_cli.rs` (一時リポジトリで 17 件)、`tests/orchestration_fake_git.rs`
-  (偽エージェント + 実 git で 4 シナリオ)、`tests/orchestration_claude_git.rs` (実 Haiku、`#[ignore]`)。
+- テスト: `tests/git_cli.rs` (一時リポジトリで worktree・マージ・コンフリクト・冪等性)、`tests/git_squash.rs`
+  (squash コミットの内容とトレーラー、再起動・旧方式のマージ済み判定、コンフリクト → 再試行、group のメッセージ)、`tests/orchestration_fake_git.rs`
+  (偽エージェント + 実 git。コミットメッセージの `Yhtye-Agent` / `Yhtye-Reviewer` まで)、`tests/orchestration_claude_git.rs` (実 Haiku、`#[ignore]`)。
   一時リポジトリは `tests/common/repo.rs::TempRepo` (リポジトリと data ディレクトリを同じ一時
   ディレクトリの別の子に置く。DB も data 側)。
 
@@ -691,19 +700,110 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
 ## 9. Tauri アプリ層 (`src-tauri`)
 
 - `Core::start` を `setup` で呼び `manage` する。コマンドは
-  `#[tauri::command] async fn yhtye_command(cmd: ApiCommand) -> Result<ApiResponse, ApiError>`
-  の 1 本だけ。`subscribe` した `ApiEvent` を `app.emit("yhtye://event", ev)` で流す
-  (broadcast の `Lagged` では `resync` を送り、UI が追いつく。T-65、§19)。
+  `#[tauri::command] async fn yhtye_command(host: Option<String>, cmd: ApiCommand) -> Result<CommandReply, ApiError>`
+  (`host` が `None` ならローカルのコア、`Some(server_id)` なら別の Yhtye ホストへ。T-97、下の「PC のクライアント」)。
+  `subscribe` した `ApiEvent` を `yhtye://event` に `{host, event}` の形で流す
+  (broadcast の `Lagged` では `resync` を送り、UI が追いつく。T-65、§19)。ホストの管理 (一覧・追加・削除・接続) は別のコマンド (下)。
 - **データディレクトリのロック (T-65)**: `start_core` が `Core::start` の前に `<データディレクトリ>/yhtye.lock` を排他ロックし
   (`src-tauri/src/data_lock.rs`、std の `File::try_lock`)、終了までアプリが持つ。取れなければ (同じデータで動いているアプリがある)
   ログと stderr に理由を出して終了コード 1 で終わる (コアを 2 つにしない)。`YHTYE_DATA_DIR` が違えば別に動く。開発用ブリッジは
   ロックしない (既定で別のデータ)。プロセスが落ちても OS がロックを外す。
 - ウィンドウ終了時に `Core::shutdown` を await してエージェントプロセスを残さない。
-- Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `YHTYE_DATA_DIR`、なければ Tauri の
-  app data dir (Linux: `~/.local/share/io.github.tom039224.yhtye`)。モデルは `YHTYE_MODEL` (既定 `haiku`。
+- Stage 5 の実装 (`src-tauri/src/lib.rs`): データディレクトリは `--data-dir`、`YHTYE_DATA_DIR`、なければ Tauri の
+  app data dir と同じ規則の既定 (Linux: `$XDG_DATA_HOME` (無ければ `~/.local/share`) + `io.github.tom039224.yhtye`。
+  `AppHandle` を要らない形で `src-tauri/src/data_dir.rs` に切り出し、GUI とヘッドレスの両方が使う。識別子は `tauri.conf.json` の
+  `identifier` と一致することをテストで確かめる)。モデルは `--model`、`YHTYE_MODEL` (既定 `haiku`。
   再構築中の検証方針に合わせた)。起動後に `resume_unfinished` (§2)。終了は `RunEvent::Exit` で
   `block_on(core.shutdown())`。SIGINT / SIGTERM (`pnpm tauri dev` の Ctrl+C など) は `app.exit(0)` に
   変換して同じ経路で止める。ログは `tracing-subscriber` (`RUST_LOG`)。
+- **ヘッドレス起動 (`yhtye --headless`、T-95)**: GUI の無いマシンでコアとリモート接続だけを動かす。cargo feature ではなく**実行時オプション**で、
+  `pnpm tauri build --no-bundle` で作る 1 つのバイナリがそのまま動く。GTK の初期化は `tauri::Builder::build` の中 (tao の `gtk::init()`) まで
+  遅延されるので、ライブラリがリンクされているだけなら DISPLAY が無くても落ちない。したがって `main()` が**最初に**引数を見て分岐する
+  (`webkit_env::apply()` も `tauri::Builder` もそれより後)。
+  - 入口: `src-tauri/src/main.rs` が `cli::parse` (`src-tauri/src/cli.rs`) で `Invocation` を決める。`--headless` → `headless::run`、
+    `yhtye remote …` → `headless::run_remote` (どちらも GUI を起動しない)、フラグ無し → 窓を開く (`run_app`)。フラグは `--headless`、`-d` / `--daemon`
+    (ヘッドレスのみ。下記)、`--port N` (ヘッドレスのみ)、`--data-dir DIR`、`--model NAME`、`--help` (内部用に `--daemon-child`)。知らない引数は終了コード 2 (`--headles` の打ち間違いで窓が開かないように)。
+    フラグ無しで `DISPLAY` も `WAYLAND_DISPLAY` も無いとき (Linux) は、panic せず「GUI を表示できません。`yhtye --headless` を使ってください」と
+    stderr に出して終了コード 1。
+  - 起動の流れ (`src-tauri/src/headless/mod.rs`): データディレクトリ (`DataDir::resolve` → 既定のとき `legacy_data::migrate` → 作成) →
+    `data_lock::acquire` (取れなければ**終了コード 3**。GUI は従来どおり 1) → 自前の tokio ランタイム → シグナルの待ち受けを先に登録 →
+    `Core::start(CoreConfig::installed(..))` (`headless: true`) → `resume_unfinished` を spawn → 制御口 → リモート接続を有効化して保つ。
+    ログ (tracing) は **stderr** (端末でなければ色コードなし)、stdout は人間向けの「起動した」表示だけ。
+  - **デーモン (`yhtye --headless -d`)**: systemd 無しで、端末を閉じても動き続ける (`headless/daemon.rs`)。fork ではなく**自分自身の再実行**: 起動した側 (`launch`) が
+    データディレクトリを決めて移行・作成し、`headless.log` (`<データディレクトリ>/headless.log`、追記、0600) を開いて、`current_exe() --headless --daemon-child --data-dir <絶対パス> [--port N] [--model M]`
+    を stdin = `/dev/null`、stdout・stderr = ログファイルで spawn する。子 (`--daemon-child`) は最初に `setsid` で端末のセッションを抜け (制御端末が無いので端末を閉じても SIGHUP が来ない)、
+    SIGHUP を**無視**する (`Signals { hangup_stops: false }`。前面のヘッドレスでは SIGHUP は停止)。**ロックは子が取る**: 取れなければ子が終了コード 3 で終わり、起動した側がそれを見て
+    「another Yhtye is already running」(+ `remote status` / `remote stop` の案内) を出して終了コード 3。起動した側は 100 ms ごとに、子が終了していないか (終了なら終了コードとログの新しい末尾を添えて失敗、終了コード 1)、
+    制御ソケットが**その子**として答えるか (`SO_PEERCRED` の pid が子の pid、かつ `GetRemoteStatus` が通る) を見て、答えたら戻る (60 秒で諦めて子を kill)。戻る前に PID・ログのパス・`yhtye remote pair` /
+    `yhtye remote stop` のしかたを stdout に出す。デーモンでは起動時のペアリング表示を出さない (stdout はログファイル)。制御ソケットが開けなければデーモンは起動に失敗する
+    (前面では警告だけ。ソケット無しでは `remote stop` もできないため)。`-d` は `--headless` が要る。systemd のユニットの中では `-d` を使わない (前面で動かして見張らせる)。
+  - **リモート接続を保つ**: `SetRemoteSettings { enabled: true, port }` で有効にする (DB に保存される。`--port` が無ければ保存済みのポート)。
+    Tailscale がまだ上がっていない等で起動に失敗したら、**30 秒ごとに**状態を見て、running でなければ同じ命令で再試行する (ユーザーユニットは
+    システムの `tailscaled` に順序付けできないので、これが前提)。同じ失敗理由は繰り返しログに出さない。
+  - **ペアリングの案内は TTY のときだけ**: stdout が端末のときに限り、リモートが running になった最初の 1 回、コードを発行して URI・QR・ホスト/ポート/コードを出す。
+    端末でないとき (systemd のログなど) は有効なコードをどこにも出さない (Orca の方針)。コードが欲しいときは `yhtye remote pair`。
+  - **制御口 (`headless/control.rs`)**: ペアリングコードはプロセスのメモリ内にあり、失効は WS 接続の cancel を伴うので、動いているプロセスに頼む必要がある。
+    ヘッドレスは `<データディレクトリ>/yhtye.sock` (Unix ドメインソケット、0600。パスが 100 バイトを超えるときは `$XDG_RUNTIME_DIR/yhtye-<SHA-256 の先頭 8 バイトの hex>.sock`、
+    それも無ければ `<temp>/yhtye-<uid>-<hash>.sock`) で待ち受ける。起動時、ロックを取った後に残っている古いソケットファイルは消す (ソケットでないファイルは消さずエラー)。
+    1 行 JSON の `ApiCommand` を受け、`{"ok": ApiResponse}` または `{"err": ApiError}` を 1 行で返す (接続ごとに順番、接続は並行。1 行は 1 MiB まで、5 分無言で切る)。`ApiCommand` ではない唯一の要求として、ちょうど `{"type":"shutdown"}` の 1 行は
+    プロセスの停止を頼み (`{"ok":{"type":"stopping"}}` を返してから停止の経路に入る)、他の形は `invalid_argument`。クライアントは `SO_PEERCRED` で接続先のプロセスの pid を知れる (Linux。PID ファイルは作らない)。
+    **ファイルの権限が認証**で、念のため接続元の uid (`SO_PEERCRED`) が自分か root かも見る。ローカル専用コマンド (`ApiCommand::is_local_only()`) も許す
+    (`SessionPolicy::LOCAL` 相当)。コマンドの中身 (秘密の値を含みうる) はログに出さない。ソケットが作れなくてもヘッドレスは動く (エラーをログに出し、`yhtye remote` だけが使えない)。
+  - **サブコマンド** (`headless/remote_cli.rs`、薄いクライアント。ブロッキングの std の `UnixStream`): `remote pair` (`CreatePairingCode` + `GetRemoteStatus`。
+    URI の QR を `qrcode` crate の `Dense1x2` (半角ブロック。暗い背景の端末向けの極性) で描き、ホスト/ポート/コード/URI と残り時間を出す)、`remote devices`、
+    `remote revoke <id>`、`remote status` (動いているか・PID・データディレクトリ + リモートの状態)、`remote stop` (停止を頼み、**プロセスが消えるまで**最大 120 秒待つ。
+    消えるのは `Core::shutdown` がエージェントを止めた後)。動いていなければ、ヘッドレスを起動するよう書いたエラーで終了コード 1。リモートが running でなければ `pair` は理由 (`RemoteStatus.error`) を添えて失敗する。
+    出力の文面は `headless/report.rs` (純粋関数。日時は UTC)。
+  - **終了**: SIGINT / SIGTERM / SIGHUP (デーモンでは SIGHUP は除く) か、制御口の停止要求で、制御口を閉じてソケットファイルを消し、`Core::shutdown().await` (リモート → エージェントの順) を待ってから終了コード 0。
+    停止中にもう一度シグナルが来たら待たずに終了コード 1 (エージェントの残りは次の起動のプロセス登録簿が片付ける)。
+  - **ホストがヘッドレスかをクライアントへ**: `CoreConfig.headless` → `ApiResponse::Pong { host, version, headless }` (`#[serde(default)]`: 古いコアは省き、読み手は `false` =
+    GUI のあるホストとみなす)。クライアントは左下のサーバーの行 (PC は `src/ui/HostFooter.tsx`、Android は `HostFooter.kt`) を、ヘッドレスなら別のアイコン (`server-headless`: 箱に `>_`) にする。
+    PC の GUI のホストと端末のアイコンは変えない。
+  - キーリング (Secret Service) が使えないとき (`SecretBackend::get` が失敗) は、起動時に警告を出すだけ (代わりの保存先は作らない。§16)。
+  - systemd: `packaging/arch/yhtye-headless.service` (ユーザーユニット。`Restart=on-failure`、`RestartSec=10`、`RestartPreventExitStatus=3`、`KillMode=mixed`、`TimeoutStopSec=120`)。
+    PKGBUILD が `/usr/lib/systemd/user/` に入れる (有効化は利用者)。
+- **PC のクライアント (別のホストへの接続、T-97)**: PC 版が別の Yhtye (別の PC の GUI、`--headless` のホスト) に Android と同じペアリングと WS
+  でつなぐための Tauri 層 (`src-tauri/src/remote_hosts.rs`)。接続・再接続・トークンの保管・ホスト一覧の保存は `yhtye_core::remote_client`
+  (§18.9。`Core::remote_hosts()`) で、ここは **WebView との橋渡しだけ**。**WS は Rust 側で張る** (WebView の `WebSocket` は
+  `Authorization` ヘッダを送れず、CSP の `connect-src` も `ws://100.x` を許さない。トークンを WebView に出さないためでもある)。
+  - `yhtye_command(host, cmd)`: `host` が無ければ今までどおり `Core::command`、あれば `RemoteHosts::call(server_id, &cmd)` で相手に送る。
+    応答は `CommandReply` (`#[serde(untagged)]`: ローカルは `ApiResponse` のまま、リモートはホストの `ok` の JSON。どちらも `type` を持つ)。
+    失敗は `ApiError` にそろえる (`remote_hosts::api_error`): ホスト自身のエラー (`CallError::Api`) はそのまま、つながっていない・タイムアウト・
+    トークン無しは `unavailable`、知らないホストは `not_found`、ペアリングの拒否は `forbidden` (コードの誤り・他の Tailscale ユーザー) /
+    `invalid_argument` / `conflict` (QR と違うサーバー) / `unavailable` (届かない・5xx)。
+  - イベント: `yhtye://event` のペイロードは **`{host, event}`** (`host` が `null` = ローカルのコア、文字列 = `server_id`)。ローカルのコアの
+    イベントは `forward_events` が、ホストのイベントは `remote_hosts::forward_notices` が (`RemoteHosts::subscribe()` の `HostNotice::Event` を
+    ホストが送ったまま) 流す。`Lagged` のときは、ローカルは今までどおり `resync`、リモートは全ホストの `resync` と一覧の再読込を促す通知を流す。
+    接続中の購読は起動時に `connect_saved` より**前**に作る (通知を取りこぼさない)。
+  - `yhtye://hosts`: ホストの一覧や状態の変化 (`HostNotice::HostsChanged` / `Status { server_id, status }` の JSON。イベントは含まない)。
+    WebView は `hosts_changed` で一覧を読み直し、`status` で接続状態・相手の版・互換性 (`Compatibility`) を更新する。
+  - 管理のコマンド: `yhtye_remote_hosts` (一覧と状態。トークンは含まない)、`yhtye_remote_preview_pairing(input)` (リンク / 手入力が指す先
+    (ホスト・ポート・`sid`) と端末名の既定値 (このマシンのホスト名)。**何も送らない**。コードは返さない)、`yhtye_remote_add(input, deviceName)`
+    (ペアリング → 記録 → 接続)、`yhtye_remote_remove(serverId)`、`yhtye_remote_connect(serverId)` (拒否された後のやり直し・待ちを飛ばす)。
+    `input` は `{kind: "uri", uri}` か `{kind: "manual", host, port, code}`。Tailscale のアドレスだけ受ける (`remote_client::HostPolicy::TailscaleOnly`)。
+  - **起動時に保存済みのホストへ自動接続** (`connect_saved`: 一覧を読んで全部 `connect`。トークンの無いもの (キーリング無しで再起動した) は
+    ログに出して接続せず、状態は未接続のまま)。**終了時は `Core::shutdown` が全接続を閉じる** (`RemoteHosts::shutdown`)。
+  - **ディープリンク `yhtye://pair?…`** (`src-tauri/src/deep_link.rs`): QR コードやリンクのクリックでペアリングを始める。**確認なしでは
+    ペアリングしない**: ペアリングはホストの 1 回限りのコードを使い、そのホストにこの端末を登録するので、WebView が接続先と端末名を見せて
+    (設定の「接続先」。`src/ui/HostsSettingsSection.tsx`、T-98) 「接続」の押下を得てから `yhtye_remote_add` を呼ぶ。リンクは `yhtye://pair?…` だけ通す (`looks_like_pairing_uri`)。
+    ログにはリンクの中身 (コードを含む) を出さない。
+    - 来かた: (1) 起動時の引数 (`DeepLink::get_current`)。(2) 動作中に来るもの: Linux・Windows ではクリックのたびに OS が `yhtye <リンク>` を
+      **もう 1 つ起動する** (`.desktop` の `Exec=yhtye %u` + `MimeType=x-scheme-handler/yhtye;`、`packaging/arch/PKGBUILD`) ので、
+      `tauri-plugin-single-instance` (feature `deep-link`) が 2 つ目の引数を既存のプロセスへ渡して (deep-link プラグインの `on_open_url` が発火) 2 つ目は
+      終了コード 0 で終わる。macOS は OS が動作中のアプリに渡す。`tauri.conf.json` の `plugins.deep-link.desktop.schemes: ["yhtye"]`、
+      capability に `deep-link:default`。debug ビルドでは `register_all()` で OS にスキームを登録する (Windows・Linux。`xdg-mime default` を実行して
+      ユーザーの既定のハンドラを書き換えるので、試すときは `XDG_DATA_HOME` / `XDG_CONFIG_HOME` を一時ディレクトリにする)。
+    - **single-instance は最初のプラグイン**で、データディレクトリのロック (`data_lock`) より前 (プラグインの `setup` は `Builder::build` の中で、
+      ユーザーの `setup` が `start_core` を呼ぶより前) に働く。**データディレクトリが既定のときだけ**登録する (`--data-dir` / `YHTYE_DATA_DIR` を
+      指定したのは、2 つ目のアプリを並べて動かすためなので引き継がない。プラグインはアプリの識別子だけで同じアプリかを決めるため)。
+      ヘッドレス (`--headless`、`yhtye remote …`) は Tauri を使わないので影響しない。ヘッドレスが既定のディレクトリを持っているときに GUI を起動すると、
+      従来どおりロックで「another Yhtye is already running」(終了コード 1)。`cli::parse` は `yhtye://…` を 1 つだけ**位置引数として受ける**
+      (`Options.open_url`。これが無いと 2 つ目のプロセスが「知らない引数」で `main` のうちに終わり、プラグインまで届かない)。`--headless` との組み合わせは誤り。
+    - WebView への渡し方: リンクはイベント `yhtye://pair-link` (ペイロードがリンク) で渡す。WebView がまだ聞いていない間 (起動時のリンク) は `PairLinks` に
+      溜め、WebView が `yhtye_pair_links_ready` で「聞いている」と伝えたときに溜めた分を返す (それ以後は即イベント)。同じリンクは溜めるとき 1 つにまとめる。
+      リンクが来たらウィンドウを前に出す。
+    - プラグインは `~2.4` に固定 (`tauri-plugin-deep-link` / `tauri-plugin-single-instance`): 2.5 以降は tauri 2.12 を要求し、ロックファイルの
+      広い更新になるため。`Cargo.lock` に入るのは新しい依存だけ。
 - リモート接続 (§18): 起動後に `Core::start_remote()` をバックグラウンドで呼ぶ (設定が有効なら Tailscale の
   アドレスで待ち受ける)。終了時は `Core::shutdown` がリモートサーバーを最初に止める。
 - **CSP (Stage 6b)**: `tauri.conf.json` の `app.security.csp` を `null` から
@@ -735,6 +835,8 @@ worktree・マージ・コンフリクト・フック・`.gitignore`・ユーザ
   `http://localhost:1420` / `http://127.0.0.1:1420` に限定し、起動時に表示する
   ランダムトークンを `?token=` で要求する (Vite には env で渡す)。
 - 開発・E2E 専用。配布物には含めない。
+- **別ホストへの接続 (§9「PC のクライアント」、T-97) はブリッジ経由では使えない**: ブリッジのイベントは今までどおり `{ "event": ApiEvent }` (`{host, event}` は
+  Tauri の `yhtye://event` だけ)、`createHostsRegistry` は Tauri の外ではホスト管理の API を持たず (`api: null`)、ストアはローカルの 1 つだけになる。
 - Stage 5 の実装 (`crates/yhtye-dev-bridge`、lib = `router` / `serve` + bin): axum 0.8 の `ws`。
   `Origin` ヘッダが**ある**接続 (= ブラウザ) だけ Origin を検査し、無い接続 (スクリプト・テスト) は
   トークンだけで通す。拒否は 403 (Origin) / 401 (トークン)。要求は接続ごとに並行実行 (OpenProject の
@@ -795,6 +897,12 @@ export interface Transport {
 // それ以外は WsTransport (VITE_YHTYE_BRIDGE_URL 既定 ws://127.0.0.1:1422/ws, VITE_YHTYE_BRIDGE_TOKEN)。
 ```
 
+**複数ホスト (T-97)**: `Transport` のインターフェースは変えず、1 つのトランスポート = 1 つのホスト。`TauriTransport(hostId)` (`null` = ローカルのコア) は
+`invoke("yhtye_command", { host: hostId, cmd })` で送り、`yhtye://event` の `{host, event}` のうち**自分のホストのイベントだけ**流す。リモートのホストでは
+接続状態 (`connecting` / `open` / `closed`) を WebView が `applyHost(info)` で受けた「シェルの接続状態」から作る (`linkStatus`: `connected` = open、
+`waiting_to_reconnect` = closed + 再試行までの時間、`revoked` / `rejected` / `idle` = closed で再試行なし)。シェルが切断を挟まずに接続の `session` だけ
+変えたとき (その間のイベントは取りこぼした) は、一瞬 `connecting` を挟んでストアに状態を読み直させる。
+
 Stage 4 の構成 (`src/`):
 - `api/` — `transport.ts` / `tauri.ts` (`yhtye_command` と `yhtye://event`) / `ws.ts` (要求 id の対応付け、
   切断で保留中の要求を失敗させる、バックオフで再接続、180 秒の応答タイムアウト) / `create.ts` /
@@ -811,6 +919,32 @@ Stage 4 の構成 (`src/`):
   (Enter 送信 / Shift+Enter 改行 / IME 変換中は送らない / ターン中も送れて受信箱で待機 / ターン中止)、
   グループ・タスク・Step と help / interrupted / merge_blocked、タスクのエージェント出力、
   接続状態とエラーのバナー。
+- T-97 (`store/hosts.ts`、`store/bootstrap.ts`、`store/useHosts.tsx`): **ホストごとに `AppStore` を 1 つ**持ち (ローカル + シェルが報告する
+  リモートのホスト)、**全ホストのプロジェクトを 1 つの一覧に混ぜて見せる**。**画面 (会話・ブランチ・git・設定) は常に選択中プロジェクトのホストのストア**から描く:
+  `HostsRegistry` が `active` を持ち、`HostsProvider` がそのストアを `StoreContext` に流す (既存の `useStore` / `useAppState` は無改造)。`projects` は
+  `{host, remote, hostName, project}` の一覧 (ローカルが先)。`selectProject(host, project)` がそのホストのストアをアクティブにして、まだ開いていなければそこで開く。
+  ホストのストアはホストを覚えている間は作り直さない (接続の状態が変わっても同じ。忘れたら止めて捨て、画面がそのホストならローカルに戻す)。
+  シェルの通知と一覧の読み込みの前後関係が保証されないので、一覧を読んでいる間に状態の通知が来たら読み直す。リモートのストアは**接続しても前回のプロジェクトを
+  自動で開かない** (`reopenLast: false`: ホストで勝手に何かを始めない)。
+  - **キー**: プロジェクト id はホストをまたぐと衝突する (ディレクトリ名から作る) ので、保存や UI のキーは `(ホスト, プロジェクト id)`。ローカルは今のキーのまま、
+    リモートだけ `host:<server_id>:` を前置する (`hostScope` / `scopedKey`、`AppStoreOptions.keyScope`): `yhtye.lastProject`、`yhtye.chat.<project>`、
+    下書き (`scopedDrafts`: 下書きはアプリで 1 つ持ち、ホストごとの見え方を作る)、React の `key` (`AppStore.scopedKey`: `Workspace`、`BranchTree`、`Composer`)。
+    パネルの幅などの端末ごとの設定 (`prefs` の `LAYOUT_KEY`) はホストをまたいで共有する。
+  - **購読メーター (`get_usage`) を読むのは画面に出ているホストのストアだけ** (`AppStore.setForeground`。登録簿が `active` のストアだけを前面にする。つながっているだけのホストに
+    読ませると、そのホストが使用量の取得のためにハーネスを起動してしまう)。`ping` (ホストの表示) と接続状態はどのホストでも続ける。
+  - **`HostView`** に `version` (ping の `pong.version`) と `compatibility` (リモートのみ。シェルが接続のたびに判定した `Compatibility`。`incompatible` のとき UI が警告を出せる。
+    ローカルは `null`) を足した。
+  - ペアリングのリンク (`pairLinks`) は登録簿が持つ待ち行列で、`App` が届くたびに `takePairLink()` で取り出し、設定モーダルを「接続先」で開いてリンクを入れた状態にする
+    (T-98。ペアリングはしない。接続先・ポートの確認と端末名の確認は同じ節の中で、人が「接続」を押すまで `yhtye_remote_add` は呼ばない)。設定が開いていれば「接続先」に切り替える。
+    続けて届いたリンクは後のものが入る (入力欄は 1 つ)。
+  - 画面 (T-98): プロジェクトの選択 (`ProjectPicker`) が全ホストの一覧を出し (この PC のものが先、リモートは接続先ごとにその後ろ)、別ホストのプロジェクトには
+    名前の右に**リモートのアイコン** (`remote`。`RemoteMark`) を付ける。ホバーでホスト名と接続状態、接続していないホストのアイコンは灰色で、その項目は選べない。
+    ホスト名の併記は、同じ名前のプロジェクトが複数のホストにあるときだけ。「リポジトリを開く」欄は画面に出ているホストのパスを開く (リモートなら「<ホスト名> 上のパス」)。
+    設定の「接続先」でホストを足す・状態を見る・削除する (`HostsSettingsSection`)。リモートのホストが画面にあるときは、設定の「リモート接続」(そのホスト自身のサーバー・
+    ペアリングコード・端末) は描かずに説明を出し (`RemoteSettingsElsewhere`。ホストが `forbidden` を返したときも同じ)、他の設定の見出しの横にそのホストの名前を出す。
+    `ConnectionBanner` はリモートの切断・バージョン非互換をホスト名付きで出す。表示の仕様は [`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §3.3 (T-98)。
+  - ペアリングの失敗の文言は `src/ui/hostLabels.ts` の `describePairError` が、コアとシェルの英語のメッセージの**先頭**と `code` で選ぶ
+    (`src-tauri/src/remote_hosts/tests.rs` の `the_messages_the_screen_tells_apart_start_as_it_expects` が先頭を固定する。変えるなら両方)。
 - Stage 6a: `ui/` を Claude Design のレイアウトに置き換えた (対応表は
   [`docs/design/orchestrator-desktop.md`](../design/orchestrator-desktop.md) §8)。ストアに `git` (GitOverview と
   エラー)・`lastEventAt`・履歴の遅延読み込み (`historyStart` / `loadOlderHistory`)・前回のプロジェクトの記憶
@@ -1289,7 +1423,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 - **ドメイン**:
   - `Chat { id, worktree: PathBuf, title }` (`branch` を削除)。`DomainCommand::CreateChat { worktree }` (runtime が解決・検査したパス)。
-  - `DomainCommand::CreateGroup { chat, args, base_branch, taken }` — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
+  - `DomainCommand::CreateGroup { chat, args, base_branch, taken_in_git }` (当時は `taken`。名前 = ID になって置き換え、orchestration-model §2.1「名前」) — `base_branch` は runtime が作業ツリーの HEAD から読んで渡す。open の上限は
     **作業ツリーごと** (`State::open_group_in(worktree)` = チャットの作業ツリーが同じグループのうち `active` / `finishing`)。
   - `GitOp::MergeGroup { group, worktree, group_branch, base_branch, trigger }` — `worktree` = グループのチャットの作業ツリー。
   - `finish_group` は `active` (全タスク終端) と `merge_blocked` を受け付ける。`merge_blocked` からは `RetryGroupMerge` と同じく同じ作業ツリーの open グループがあれば `conflict`。
@@ -1332,7 +1466,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.9 チャットの改名・削除とホストの ping (左パネルの改善)
 
-- **`ping`** → `pong{host, version}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) と、デスクトップアプリの版 (`APP_VERSION` = ワークスペースの版。`src-tauri`・`tauri.conf.json`・`package.json` と一致することは `tests/app_version.rs` が見る) を返す軽い疎通確認。プロジェクトは要らない。
+- **`ping`** → `pong{host, version, headless}`: コアが動いているマシンのホスト名 (`gethostname` クレート、`runtime/host.rs`。空なら `localhost`) と、デスクトップアプリの版 (`APP_VERSION` = ワークスペースの版。`src-tauri`・`tauri.conf.json`・`package.json` と一致することは `tests/app_version.rs` が見る) と、`--headless` (GUI 無し) で動いているか (`headless`。古いコアは省き、読み手は false = GUI のあるホストと読む。T-95、§9) を返す軽い疎通確認。プロジェクトは要らない。
   `version` は Android クライアントが自分の版と突き合わせて互換性を判定するのに使う (T-84)。この項目が増える前のコアは返さないので、読む側は欠けていたら「不明」として扱う (Kotlin では空文字の既定値)。
   UI (`AppStore`) は接続が開いている間 3 秒おきに送り (`PING_INTERVAL_MS`)、5 秒で応答が無ければ失敗として数える。左パネルのフッタは「ホスト名 + 最後の ping 応答からの経過時間
   (5 秒以下は `now`)」と接続状態のドット (緑 = 応答あり / 琥珀 = 接続中・初回応答待ち / 赤 = 切断か 12 秒以上応答なし) を出す。Tauri でも WS ブリッジでも同じ `ApiCommand` なので transport は変えない。
@@ -1433,9 +1567,10 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
 - テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/ProjectPicker.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
-## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)
+## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 
 設計の背景は [`docs/planned/android-client.md`](../planned/android-client.md)。段階 1 (PC 側のサーバーと認証) の実装。
+接続する側は Android のほかに、別の PC の Yhtye (デスクトップ版) もなれる (§18.9。同じペアリングと同じ WS)。
 コードは `crates/yhtye-core/src/remote/` (`mod.rs` = `RemoteService`、`server.rs` = ルート、`pairing.rs` = コードとトークン、
 `tailscale.rs` = Tailscale の trait と CLI 実装、`whois.rs` = whois の結果のキャッシュと同時数の上限) と `src/ws.rs` (共有の WS セッション、§10)。
 
@@ -1456,16 +1591,23 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   (`TailscaleSelf.tagged`)、サーバーを起動せず `RemoteStatus.error` に「タグ付きの Tailscale ノードでは使えない (自分のユーザーに属する
   ノードで使う)」と出す。タグを外して有効のまま `set_remote_settings {enabled: true}` をもう一度送ると再試行する。
 
-### 18.2 保存 (マイグレーション `0010_remote.sql`)
+- **GUI 無しの運用 (T-95、§9)**: `yhtye --headless` はこのサーバーを自分で有効にして保ち (Tailscale が上がるまで 30 秒ごとに再試行)、ペアリングと端末の管理は
+  制御口 (Unix ドメインソケット) 越しの `yhtye remote pair | devices | revoke | status` で行う (ローカル専用 API をそのまま使う)。PC の GUI の設定画面は、GUI のあるホストだけが使う。
+  このホストへは Android のほか、別の PC の Yhtye のクライアント (§18.9) もつなげる (`yhtye remote pair` のコードをそのまま使う)。
 
-- `remote_devices (id, name, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+### 18.2 保存 (マイグレーション `0010_remote.sql`、`0011_remote_device_kind.sql`)
+
+- `remote_devices (id, name, kind, token_hash UNIQUE, created_ms, last_seen_ms)`。`token_hash` は端末トークンの SHA-256 (hex)。平文は保存しない。
+  `kind` (`ClientKind` の serde 名。`android` / `desktop`) は `0011` で足した列 (`NOT NULL DEFAULT 'android'`: それ以前に
+  ペアリングした端末は Android)。端末の種類は端末が自分で言う (§18.3 の `kind`)。
 - `app_settings (key, value JSON, updated_ms)`: `remote.settings` = `{enabled, port}` (既定 `false` / 1423)、
   `remote.server_id` = 128 bit のランダム (hex 32 文字。初回の `Core::start` で `INSERT OR IGNORE` して以後同じ)。
 - 端末 ID は `dev-` + 64 bit のランダム (hex)。端末トークンは 256 bit のランダム (hex 64 文字)。
 
 ### 18.3 ペアリング (`POST /pair`)
 
-- 要求 `{"code", "device_name"}` (JSON、4 KiB まで) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
+- 要求 `{"code", "device_name", "kind"?}` (JSON、4 KiB まで。`kind` は `"android"` | `"desktop"`、省略は `android` = Android クライアントは付けない。
+  知らない値は 400。`PairRequest` は未知のフィールドを拒否する) → 200 `{"device_id", "token", "server_id"}`。エラーは `{"error": "..."}` で
   400 (JSON や端末名が不正。端末名は前後の空白と制御文字を除いて 1〜64 文字)、401 (コードが違う / 有効なコードが無い)、403 (whois)。
   型は `remote::{PairRequest, PairResponse, RemoteError}` (`/ws` を拒否するときの本文も `RemoteError`)。TS には出さず、Kotlin には生成する (§2)。
 - コード: 8 文字、文字種は `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (0/O・1/I/L を除く 31 種、棄却サンプリング)。入力は大文字化し空白と `-` を
@@ -1524,7 +1666,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `set_remote_settings {enabled: true}` を送ると再試行する。設定が変わらず起動中なら何もしない。
 - `PairingCode { code, expires_at_ms, uri }`。`uri` = `yhtye://pair?v=1&host=<MagicDNS 名>&ip=<100.x>&port=<N>&code=<コード>&sid=<サーバー ID>`
   (MagicDNS が無ければ `host` を省く。値はパーセントエンコード)。
-- `RemoteDevice { id, name, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
+- `RemoteDevice { id, name, kind: ClientKind, created_ms, last_seen_ms: number|null, connected: bool }` (トークンもハッシュも出さない)。
 - **イベント** (`ApiEventBody`): `remote_status_changed { status: RemoteStatus }` (起動・停止・失敗・コードの発行/使用/無効化) と
   `remote_devices_changed { devices: RemoteDevice[] }` (ペアリング・失効・接続・切断)。アプリ全体のイベントなので
   `project` は空文字、`live: true`、`seq: 0` (保存しない。プロジェクトの同期規則には関わらない)。`ApiEventBody::is_local_only()` が真で、
@@ -1534,12 +1676,13 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 18.6 試し方とテスト
 
+- 本番の GUI 無し起動は `yhtye --headless` (§9)。以下の例 `remote_server` は、アプリとは別の開発用 (クライアントを試す・結合テスト用)。
 - `cargo run -p yhtye-core --example remote_server -- [--port N] [--data-dir DIR]`: GUI 無しで本物の Tailscale で待ち受ける
   (既定は一時ディレクトリの DB)。標準入力の `code` / `devices` / `status` / `revoke <id>` / `quit` がローカル専用 API。
   `open <path>` は git リポジトリをプロジェクトとして開く (クライアントのプロジェクト一覧を空にしないため。T-61)。
   `--fake-agent <yhtye-fake-agent>` で全役割を偽エージェントにし、`--fake-orchestrator` / `--fake-implementer` / `--fake-reviewer`
   にそのシナリオ (`YHTYE_FAKE_SCRIPT` の JSON。省略は何もしない) を渡す (Android の同期層の結合テスト `SyncRealServerTest`。T-66)。
-- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
+- `tests/remote_access.rs`: 偽の Tailscale (アドレス 127.0.0.1。`tests/common/fake_tailscale.rs`。PC のクライアントのテスト `tests/remote_client.rs` と共有) で、ペアリング → WS (Ping, ListProjects) → ローカル専用コマンドの拒否 →
   リモートにリモートのイベントが流れない → 失効で接続が閉じ以後 401、トークン無し・誤りは 401、他ユーザーは 403 (コードの試行を消費しない)、
   誤り 5 回・再利用・新しいコードで古いのが無効、DB とデータディレクトリのファイルにトークンの平文が無い、無効化で待ち受けをやめる、
   再起動で server_id・設定・端末が残る、Tailscale 停止とポート使用中のエラー、一連の要求で whois が 1 回、他ユーザーは何度でも 403 で
@@ -1584,8 +1727,9 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - `ClientServer { host: string }`: コアが動くマシンのホスト名 (`pong.host` と同じ `host_name()`)。
   - `ClientDevice { id: string, name: string, kind: ClientKind, connected: bool, last_seen_ms: number|null }`。並びは
     `list_remote_devices` と同じ (ペアリングの古い順)。`last_seen_ms` は最後に接続した時刻 (`null` = ペアリング後まだ接続していない)。
-  - `ClientKind` = `"android"` だけ (今のペアリング済み端末はすべて Android クライアント。DB に種類の列は無い)。Kotlin では知らない値は
-    `Unrecognized` になる。
+  - `ClientKind` = `"android"` | `"desktop"` (別の PC の Yhtye。§18.9)。端末の種類は DB の `remote_devices.kind` (§18.2) で、
+    ペアリングで端末が自己申告したもの。Kotlin では知らない値は `Unrecognized` になる (Android の左パネルは「不明な端末」と出す)。
+    PC の左パネル (`src/ui/HostFooter.tsx`) は種類でアイコンを変える (`android` = phone、`desktop` = monitor。ラベルは `Android` / `PC`)。
 - **イベント** `clients_changed { clients: Clients }`: アプリ全体 (project `""`・seq 0・live)。`remote_devices_changed` と同じ契機
   (ペアリング・失効・接続・切断) で、その直後に出す (`Shared::emit_device_changes`)。`is_app_wide()` は真、`is_local_only()` は**偽**で、
   **リモートの WS にも流す**。リモート接続が止まっていても `list_clients` は読める (端末はすべて未接続)。
@@ -1596,6 +1740,63 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `tests/remote_access.rs` の `every_client_sees_the_clients_and_their_changes` (ローカルとリモート端末の両方から読める、
   トークン・ハッシュを含まない、ペアリング・接続・切断・失効でローカルと接続中の別端末に `clients_changed` が届く)、
   vitest の `ui/Sidebar.test.tsx` (アイコン・オフラインのグレー・イベントでの更新・resync と再接続での読み直し・古い読みを捨てる・折りたたみ)。
+
+### 18.9 PC のクライアント (`crates/yhtye-core/src/remote_client/`、T-96)
+
+PC 版が**別のホスト** (別の PC の Yhtye、ウィンドウ無しで起動した Yhtye) に、Android と同じペアリングと WS で接続する。
+ホスト側 (§18.1〜18.8) は変えず、`kind: "desktop"` で自分が PC のクライアントだと言う (§18.3) ことだけが違う。
+Android の共通モジュール (`mobile/shared`) の `PairingTarget.kt` / `PairingClient.kt` / `Credentials.kt` / `KtorWsTransport.kt` /
+`YhtyeClient.kt` / `Compatibility.kt` を Rust に移植したもので、入力の規則・プロトコル・状態は同じ。Tauri への依存は無い
+(`Core::remote_hosts()` が `RemoteHosts` を返す。トークンは `CoreConfig.secret_backend` (= 秘密の環境変数と同じキーリング。テストはメモリ)
+に入り、接続は `Core::shutdown` で閉じる。Tauri 層が UI との橋渡しをするのは §9「PC のクライアント」と §11 (T-97))。
+
+| ファイル | 役割 |
+|---|---|
+| `address.rs` | 接続先の判定。**Tailscale のアドレスだけ**許す (100.64.0.0/10、fd7a:115c:a1e0::/48、`*.ts.net`)。通信は平文の HTTP / WS (暗号化は WireGuard) なので、コードやトークンを他所へ送らないための歯止めはここ。全角→半角・括弧・末尾の `.`・小文字化の正規化。`HostPolicy::AnyHost` は loopback のホストを使うテスト専用 |
+| `target.rs` | ペアリング URI (`yhtye://pair?v=1&host=&ip=&port=&code=&sid=`、QR・ディープリンク) と手入力 (ホスト / IP・ポート・コード) の解析 → `PairingTarget`。コードの正規化 (全角→半角、空白と `-` の除去、大文字化、8 文字・許可文字のみ。文字種はサーバーと同じ定数)、端末名の正規化。誤りは `InvalidPairingInput` |
+| `pair.rs` | `POST /pair` (`kind: "desktop"`)。候補ホストを順に 10 秒ずつ試し、HTTP の応答が返った先で確定する (別の候補を試してもコードの試行回数を使うだけ)。失敗は `PairingFailure` (401 `CodeRejected` / 403 `OtherUser` / 400 `BadRequest` / 届かない `Unreachable` / QR の `sid` と応答の `server_id` が違う `WrongServer` (トークンは捨てる。ホストには端末が登録されてしまうので、その Yhtye で外してもらう) / `ServerError`)。プロキシとリダイレクトは使わない |
+| `transport.rs` | `WsTransport` / `WsLink` (テストでは偽物に差し替える) と、本物の `TungsteniteTransport` (`GET /ws` + `Authorization: Bearer`。前回つながった候補が先)。ハンドシェイクの HTTP 状態で 401 → `Refusal::Unauthorized` / 403 → `Forbidden` を区別し、それ以外は再試行する失敗 |
+| `connection.rs` | `RemoteConnection` = 1 つのホストへの接続。状態 `Idle` / `Connecting` / `Connected { session }` / `WaitingToReconnect` / `Revoked` (401。再接続しない) / `Rejected` (403。止まる。`start` でやり直す)。再接続は 1 秒から倍々で 30 秒まで (`Backoff`)。要求 `{id, cmd}` の id と応答 `{id, ok\|err}` の対応付け (応答は順不同)、180 秒のタイムアウト (`src/api/ws.ts` と同じ。接続を待つ時間を含む)、イベント `{event}` のブロードキャスト。WS の ping を 15 秒ごとに送り、60 秒何も届かない接続は死んだとして張り直す (サーバーは 20 秒ごとに ping する)。応答とイベントは **JSON の値**で扱う (API の応答型は Rust では書く側で `Deserialize` が無く、アプリはどのみち UI へ JSON のまま渡す) |
+| `credentials.rs` | `TokenVault`: 端末トークンを **OS のキーリング** (`secrets::KeyringBackend` と同じ keyring crate、サービス `yhtye`、アカウント `remote-host:<serverId>`) に入れる。キーリングが使えないときは**そのプロセスの間だけメモリに保持** (再起動でホストの記録は残るがトークンは消え、ペアリングし直し) し、`TokenPlace::MemoryOnly { reason }` で知らせる。平文のファイルには書かない |
+| `version.rs` | ホストの版 (`ping` の `version`) とこのアプリの版の互換性 (`Compatibility.kt` と同じ規則: 0.x の間は `0.<minor>` が同じなら互換、1.0 以降はメジャーが同じでホストのマイナーが以上。パッチとプレリリースは見ない。版が分からなければ `Unknown` で警告しない) |
+| `hosts.rs` | `RemoteHosts` (`RemoteHosts::new(store, vault)`、または `Core::remote_hosts()`): アプリが使う窓口。ホストの追加 (ペアリング → トークンを保管 → 記録) / 一覧 / 削除 (トークンを捨てる。ホスト側の端末の失効はそのホストでしかできない) / 接続の開始・停止 / 任意の `ApiCommand` の送信 / 全ホストの 1 本の通知 (`subscribe()` → `HostNotice::{Event, Status, HostsChanged}`)。ペアリングと接続のたびに接続先がまだ Tailscale のアドレスかを検査し直す (`HostPolicy`。`with_options` で緩めるのはテストだけ) |
+
+- **保存**: ホストの一覧 (秘密でない部分: `server_id`、表示名、候補ホスト、ポート、端末 ID、端末名、トークンをキーリングに入れたか) は
+  **ローカルコアの DB** の `app_settings` のキー `remote_client.hosts` (JSON の配列)。トークンは上の `TokenVault`。
+  表示名は、ペアリングの直後は最初のホストで、つながって `ping` の `host` (相手のマシン名) が分かったらそれに更新する。
+- **接続後の `ping`**: つながるたびに `ping` を 1 回送り (10 秒)、相手のマシン名・版・ヘッドレスか (`Pong.headless`。T-95、§9。無ければ `false`)・互換性 (`ServerInfo`) を `HostStatus` に入れる。
+  UI 用の定期的な ping (ホストの表示の「最後の ping からの経過」) は呼び出し側の仕事。
+- **再ペアリング**: 同じホスト (同じ `server_id`) にもう一度ペアリングすると記録を置き換える (古い端末はホストの一覧に残る)。
+- **イベントの取りこぼし**: 接続が切れている間のイベントは届かない。`Connected { session }` が変わったら読み手が状態を取り直す
+  (Android と同じ)。`subscribe()` の遅れ (`Lagged`) も同様。
+- テスト: `remote_client/*` の単体 (URI・手入力・コードの正規化、Tailscale 判定、互換性、キーリングの代替、`connection/tests.rs` は偽の
+  ホストで id の対応・エラー応答・イベント・タイムアウト・再接続と待ちの倍増・401/403・無音の切断を tokio の時間を止めて確かめる) と、
+  `tests/remote_client.rs` (§18.6 と同じ偽 Tailscale のサーバー。ペアリング → 接続 → コマンド → イベント受信 → 失効で `Revoked`、
+  ホストの端末一覧で `desktop`、リモートアクセスの再起動で張り直す、他ユーザーは 403 / `Rejected`、誤りのコードと別サーバーの QR、
+  最初の候補が応答しない、再起動後にホストとキーリングのトークンが残る、キーリングが無ければトークンは 1 回の起動の間だけ)。
+
+### 18.10 PC の GUI から別のホストを使う (T-97)
+
+§18.9 の `RemoteHosts` を PC の GUI につないだ。構成は §9「PC のクライアント」(Tauri 層)、§11「複数ホスト」(WebView のトランスポートとストア)。流れ:
+
+1. 別のホストで「設定 → リモート接続」(または `yhtye remote pair`) がペアリングコード (QR / リンク / 手入力) を出す。
+2. このアプリが `yhtye://pair?…` のリンクを受ける (クリック・起動時の引数。§9) か、手入力 (後続の設定画面) で接続先を指す。
+3. WebView が `yhtye_remote_preview_pairing` で接続先を確かめ、人が**端末名を確認して**から `yhtye_remote_add` (ペアリング → 記録 → 接続)。
+   ホスト側の端末一覧には `desktop` として載る (§18.8)。トークンは OS のキーリング (無ければそのプロセスの間だけメモリ)。
+4. 以後、起動のたびに保存済みのホストへ自動で接続する。プロジェクトの一覧に別ホストのプロジェクトが混ざり、選ぶとそのホストのストアが画面を描く。
+   つながっている間の `ping` (ホストの表示) もイベントの同期 (§19) も、ローカルのコアと同じストアの規則で動く。
+
+- **つなぎ直し**: 接続が切れたら `RemoteConnection` が倍々の間隔で再接続し (§18.9)、ストアは `closed` → `open` を見て開いているプロジェクトを `open_project` し直してログを追いつく
+  (ローカルのコアが再接続したときと同じ経路)。401 (ホストが端末を外した) / 403 は再試行せず、バナーに理由を出す。
+- **ローカル専用のコマンド** (§18.5: リモート接続の設定・ペアリングコード・端末の失効) は、リモートのホストへは `forbidden` で断られる。リモートのプロジェクトを
+  表示している間にそれらの設定画面を開くと、ホストの断りがエラーとして出る (ホストごとの設定画面は後続のタスク)。
+- **スリープと並べ替え** (§17.12、§17.13): `sleep_project` / `reorder_projects` / `reorder_branches` / `get_branch_order` はローカル専用ではなく、リモートのホストにも通る
+  (`ApiCommand::is_local_only` は上の 5 つだけ。`ws.rs` のテストが固定している)。プロジェクトのプルダウンは全ホストのプロジェクトを混ぜて出すが、右クリックのメニュー・ドラッグ・Alt+↑/↓ は
+  **画面を描いているホストの行だけ**に付く (画面のストアはそのホスト 1 つにしか話せない)。別のホストの行は、選んでそのホストに切り替えてから同じ操作をする。
+- **確認した実機の経路** (Tailscale の 2 台分を 1 台で: `remote_server` の example をホストに、Xvfb 上の GUI をクライアントに、`XDG_*` を一時ディレクトリにして):
+  2 つ目の `yhtye <リンク>` が既存の GUI にリンクを渡して終了コード 0、確認ダイアログ → ペアリング (ホストの端末一覧に `desktop`)、プロジェクト一覧にホストのプロジェクト、
+  選ぶとホストのブランチ・git が出る、GUI の再起動で自動接続 (キーリングあり)、終了でホスト側が「未接続」、`--data-dir` を付けた 2 つ目のアプリは並んで動く、
+  ヘッドレスが既定のディレクトリを持っていれば GUI は従来どおり終了コード 1。
 
 ## 19. 複数クライアントの同時操作 (T-65)
 
