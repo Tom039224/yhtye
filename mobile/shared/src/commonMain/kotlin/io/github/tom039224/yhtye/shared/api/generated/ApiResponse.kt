@@ -25,6 +25,9 @@ sealed interface ApiResponse {
         val version: String = "",
     ) : ApiResponse
 
+    /**
+     * Answer of `list_projects` and `reorder_projects`, in the project order.
+     */
     @Serializable
     data class Projects(
         val projects: List<ProjectInfo>,
@@ -74,6 +77,14 @@ sealed interface ApiResponse {
          * The chat's orchestrator is being started (now, or by an earlier call).
          */
         val starting: Boolean,
+    ) : ApiResponse
+
+    /**
+     * Answer of `get_branch_order` and `reorder_branches`.
+     */
+    @Serializable
+    data class BranchOrder(
+        val keys: List<String>,
     ) : ApiResponse
 
     @Serializable
@@ -175,6 +186,7 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("chats", Chats.serializer()) { it is Chats },
             TaggedVariant<ApiResponse>("chat", Chat.serializer()) { it is Chat },
             TaggedVariant<ApiResponse>("chat_opened", ChatOpened.serializer()) { it is ChatOpened },
+            TaggedVariant<ApiResponse>("branch_order", BranchOrder.serializer()) { it is BranchOrder },
             TaggedVariant<ApiResponse>("git_overview", GitOverview.serializer()) { it is GitOverview },
             TaggedVariant<ApiResponse>("branch_statuses", BranchStatuses.serializer()) { it is BranchStatuses },
             TaggedVariant<ApiResponse>("usage", Usage.serializer()) { it is Usage },

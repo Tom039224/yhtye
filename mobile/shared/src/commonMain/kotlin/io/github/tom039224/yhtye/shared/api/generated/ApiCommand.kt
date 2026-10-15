@@ -20,7 +20,10 @@ sealed interface ApiCommand {
     data object Ping : ApiCommand
 
     /**
-     * Every project known to the database, and whether it is open.
+     * Every project known to the database, and whether it is open, most
+     * recently used first (opening a project uses it; `reorder_projects` sets
+     * the order by hand). Projects never used come last, in the order they were
+     * registered.
      */
     @Serializable
     data object ListProjects : ApiCommand
@@ -28,7 +31,8 @@ sealed interface ApiCommand {
     /**
      * Opens (registering it on first use) the git repository at `path`: starts
      * its orchestrator and resumes interrupted tasks. Opening an open project
-     * returns it unchanged.
+     * returns it unchanged. The project is used: it moves to the front of the
+     * project order.
      */
     @Serializable
     data class OpenProject(
@@ -116,6 +120,41 @@ sealed interface ApiCommand {
     data class SleepChat(
         val project: String,
         val chat: String,
+    ) : ApiCommand
+
+    /**
+     * Puts the projects in the order the user made (a drag in the project list):
+     * `ids` come first, in that order (unknown ones are ignored), then the
+     * projects it does not name, in their order. Answers with the listing like
+     * `list_projects`; every client re-reads it (`projects_changed`).
+     */
+    @Serializable
+    data class ReorderProjects(
+        val ids: List<String>,
+    ) : ApiCommand
+
+    /**
+     * The order of the project's branches (BRANCHES tree), most recently used
+     * first: the keys of its worktrees (the worktree's path) and of its local
+     * branches that no worktree has checked out (the branch name). Items whose
+     * key is not listed come after, in the tree's own order. Works for
+     * projects that are not open.
+     */
+    @Serializable
+    data class GetBranchOrder(
+        val project: String,
+    ) : ApiCommand
+
+    /**
+     * Puts the project's branches in the order the user made: `keys` come first
+     * in that order, then the keys it does not name, as they were. Answers
+     * with the order like `get_branch_order`; every client gets
+     * `branch_order_changed`. Works for projects that are not open.
+     */
+    @Serializable
+    data class ReorderBranches(
+        val project: String,
+        val keys: List<String>,
     ) : ApiCommand
 
     /**
@@ -426,6 +465,9 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("cancel_orchestrator_turn", CancelOrchestratorTurn.serializer()) { it is CancelOrchestratorTurn },
             TaggedVariant<ApiCommand>("compact_chat", CompactChat.serializer()) { it is CompactChat },
             TaggedVariant<ApiCommand>("sleep_chat", SleepChat.serializer()) { it is SleepChat },
+            TaggedVariant<ApiCommand>("reorder_projects", ReorderProjects.serializer()) { it is ReorderProjects },
+            TaggedVariant<ApiCommand>("get_branch_order", GetBranchOrder.serializer()) { it is GetBranchOrder },
+            TaggedVariant<ApiCommand>("reorder_branches", ReorderBranches.serializer()) { it is ReorderBranches },
             TaggedVariant<ApiCommand>("list_chats", ListChats.serializer()) { it is ListChats },
             TaggedVariant<ApiCommand>("create_chat", CreateChat.serializer()) { it is CreateChat },
             TaggedVariant<ApiCommand>("rename_chat", RenameChat.serializer()) { it is RenameChat },

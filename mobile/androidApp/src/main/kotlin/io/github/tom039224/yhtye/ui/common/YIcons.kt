@@ -47,6 +47,8 @@ object YIcons {
     val Send = lineIcon("send", "M12 19V5", "M5 12l7-7 7 7")
     val ChevronRight = lineIcon("chevR", "M9 18l6-6-6-6")
     val ChevronDown = lineIcon("chevD", "M6 9l6 6 6-6")
+    val ArrowUp = lineIcon("arrowU", "M12 19V5", "M6 11l6-6 6 6")
+    val ArrowDown = lineIcon("arrowD", "M12 5v14", "M6 13l6 6 6-6")
     val ChevronsUp = lineIcon("chevronsUp", "m17 11-5-5-5 5", "m17 18-5-5-5 5")
     val Plus = lineIcon("plus", "M12 5v14", "M5 12h14")
     val MessagePlus = lineIcon(

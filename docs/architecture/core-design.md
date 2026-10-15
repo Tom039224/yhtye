@@ -125,7 +125,7 @@ pub struct CoreConfig {
     resets_at_ms}], fetched_at_ms}}` (§14)。取れなければ `unavailable` (値は作らない)。
   - `Core::shutdown` は開いている途中のプロジェクトを待ち (`opening` ロック)、以後の `OpenProject` / `GetUsage` を
     `unavailable` にし、実行中の使用量プローブを止める (終了と開く処理が競合してエージェントが残る問題、レビューの MEDIUM)。
-- `ApiCommand` (serde `type` タグ): `list_projects` / `open_project{path}` / `get_snapshot{project}` /
+- `ApiCommand` (serde `type` タグ): `list_projects` / `reorder_projects{ids}` / `get_branch_order{project}` / `reorder_branches{project, keys}` (T-103、§17.13) / `open_project{path}` / `get_snapshot{project}` /
   `list_events{project, after_seq, limit?}` (既定 500・最大 2000、応答 `events{events, more}`) /
   `send_user_message{project, text}` / `cancel_orchestrator_turn{project}` /
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
@@ -1413,6 +1413,25 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
 - テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。
 
+### 17.13 プロジェクトとブランチを最近使った順に、手動で並べ替え (T-103)
+
+プロジェクトの一覧と左パネルのブランチの木は、abc 順 (登録順・git の順) でなく「新しく使った順」に並べる。ユーザーが並べ替えた順もここに保存する。PC と Android で同じ順を共有する (`crates/yhtye-core/src/order.rs`、`runtime/core/order.rs`)。
+
+- **モデル**: 項目ごとの順序リスト (MRU)。項目を使うと**先頭に移す**。リストに無い項目 (新規・未使用) は末尾に、もとの順 (プロジェクトは登録順、ブランチは git の順) で並ぶ。リストは最大 500 件。
+  - プロジェクト: キーはプロジェクト id。`open_project` (ユーザーの操作。起動時の `resume_unfinished` は使ったことにしない) が先頭に移す。
+  - ブランチ (プロジェクトごと): キーは**作業ツリーのパス** (チャットの `worktree` と同じ文字列。ノードの名前は今のブランチだがキーは変わらない)。作業ツリーの無いローカルブランチはブランチ名。
+    `open_chat` / `send_user_message` (そのチャットの作業ツリー)、`create_chat` / `create_branch` (作ったチャットの作業ツリー) が先頭に移す。
+- **保存**: `app_settings` に JSON の文字列配列で (`order.projects`、`order.branches.<project id>`)。マイグレーションは要らない。読めない値は空 (もとの順) として扱い、順の読み書きの失敗はログだけで使った操作は失敗させない。変更は `order_lock` の下で行う。
+- **API**: `list_projects` は順に並べて返す。`reorder_projects{ids}` (応答 `projects`) は `ids` を先頭にその順で、知らない id は無視、載せなかったものはそのまま後ろに続ける。
+  `get_branch_order{project}` / `reorder_branches{project, keys}` (応答 `branch_order{keys}`、閉じているプロジェクトでも使える) も同じ規則 (画面に出ていない項目の順を壊さない)。
+- **イベント** (アプリ全体・リモートにも流す): プロジェクトの順の変化は `projects_changed` (使った項目は `project`、並べ替えは空)。ブランチの順の変化は `branch_order_changed{project, keys}` (順の全体。クライアントはこれで置き換える)。
+  順が変わらないとき (すでに先頭のものを使った、同じ順を送った) は何も出さない。`resync` と再接続では `list_projects` と `get_branch_order` を読み直す。
+- **PC**: `store/order.ts` の関数と `AppState.branchOrder`。`buildTree(chats, overview, awaiting, order)` が作業ツリーと「他のブランチ」を順に並べる (ブランチ内のチャットは従来どおり `byRecency`)。
+  並べ替えは、ドラッグ&ドロップ (`ui/useSortable.ts`。ブラウザの drag イベント。行を別の行に落とすとその行の場所に入る)、右クリックの `RowMenu` の「上へ移動 / 下へ移動」、行にフォーカスして Alt+↑/↓。
+  対象は、プロジェクトのプルダウン (`ProjectPicker`。Alt+↑/↓ はリストボックスで)、左パネルの稼働中プロジェクトのチップ (`BackgroundProjects`。出ているチップだけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
+- **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・作業ツリー・他のブランチの行を**長押し**すると `ReorderMenu` (「上へ移動 / 下へ移動」) が開く。
+- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/ProjectPicker.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
+
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55)
 
 設計の背景は [`docs/planned/android-client.md`](../planned/android-client.md)。段階 1 (PC 側のサーバーと認証) の実装。
@@ -1587,7 +1606,8 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 
 | イベント (`ApiEventBody`) | 種類 | 意味 / クライアントの対応 |
 |---|---|---|
-| `projects_changed { project: string }` | アプリ全体 (project `""`・seq 0・live)。リモートにも流す | `open_project` がプロジェクトを新しく登録した、またはこのプロセスで初めて開いた (オーケストレーションを起動した)。`list_projects` を読み直す。開いているプロジェクトを開き直しても出ない |
+| `projects_changed { project: string }` | アプリ全体 (project `""`・seq 0・live)。リモートにも流す | `open_project` がプロジェクトを新しく登録した、またはこのプロセスで初めて開いた (オーケストレーションを起動した)。`list_projects` を読み直す。開いているプロジェクトを開き直しても、すでに先頭のプロジェクトなら出ない。プロジェクトの順が変わったときも出る (§17.13) |
+| `branch_order_changed { project: string, keys: string[] }` | アプリ全体。リモートにも流す | `project` のブランチの順が変わった (チャットを使った、並べ替えた。§17.13)。`keys` は順の全体で、クライアントはこれで置き換える |
 | `settings_changed { kind: agent_settings \| harnesses \| secrets, project?: string, revision?: number }` | アプリ全体。リモートにも流す | ヒント。表示中の設定画面は読み直す (`get_agent_settings` / `get_harnesses` / `list_secret_env`)。`agent_settings` では `project` (プロジェクトの層を変えた。全体なら省略) と新しい `revision` が付く |
 | `clients_changed { clients: Clients }` | アプリ全体。リモートにも流す | 端末のペアリング・失効・接続・切断 (§18.8)。クライアント一覧の表示を置き換える |
 | `resync` | アプリ全体。**その接続にだけ**送る | そのクライアント向けのイベントを取りこぼした (broadcast の `Lagged`)。durable はログにあるので `list_events` で cursor から追いつき、`list_projects`・git・表示中のチャット (`open_chat` で起動中か)・設定を読み直す。live (ストリーミング・アプリ全体) は失われている |

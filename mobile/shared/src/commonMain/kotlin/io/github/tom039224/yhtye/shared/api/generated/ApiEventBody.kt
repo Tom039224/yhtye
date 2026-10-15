@@ -144,12 +144,24 @@ sealed interface ApiEventBody {
 
     /**
      * App-wide (`project` is empty, `live`, `seq` 0): a project was registered
-     * or opened (its orchestration started in this process); clients re-read
-     * `list_projects`.
+     * or opened (its orchestration started in this process), or the project
+     * order changed (a project was used, or the user reordered them; `project`
+     * is the one used, empty for a reorder); clients re-read `list_projects`.
      */
     @Serializable
     data class ProjectsChanged(
         val project: String,
+    ) : ApiEventBody
+
+    /**
+     * App-wide: the order of `project`'s branches changed (a chat of one was
+     * used, or the user reordered them). `keys` is the whole order, as
+     * `get_branch_order` answers it; it replaces what a client has.
+     */
+    @Serializable
+    data class BranchOrderChanged(
+        val project: String,
+        val keys: List<String>,
     ) : ApiEventBody
 
     /**
@@ -233,6 +245,7 @@ sealed interface ApiEventBody {
             TaggedVariant<ApiEventBody>("prompted", Prompted.serializer()) { it is Prompted },
             TaggedVariant<ApiEventBody>("session_starting", SessionStarting.serializer()) { it is SessionStarting },
             TaggedVariant<ApiEventBody>("projects_changed", ProjectsChanged.serializer()) { it is ProjectsChanged },
+            TaggedVariant<ApiEventBody>("branch_order_changed", BranchOrderChanged.serializer()) { it is BranchOrderChanged },
             TaggedVariant<ApiEventBody>("settings_changed", SettingsChanged.serializer()) { it is SettingsChanged },
             TaggedVariant<ApiEventBody>("resync", Resync.serializer()) { it is Resync },
             TaggedVariant<ApiEventBody>("remote_status_changed", RemoteStatusChanged.serializer()) { it is RemoteStatusChanged },

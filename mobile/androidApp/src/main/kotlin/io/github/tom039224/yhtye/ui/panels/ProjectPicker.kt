@@ -3,6 +3,7 @@ package io.github.tom039224.yhtye.ui.panels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,7 +67,9 @@ import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.RING_LABEL
 import io.github.tom039224.yhtye.shared.sync.backgroundProjects
+import io.github.tom039224.yhtye.shared.sync.fillSlots
 import io.github.tom039224.yhtye.shared.sync.projectRing
+import io.github.tom039224.yhtye.ui.common.ReorderMenu
 import io.github.tom039224.yhtye.ui.common.RingMark
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
@@ -75,7 +78,8 @@ import kotlinx.coroutines.launch
 
 // 表示中のプロジェクトのドロップダウン (PC の ProjectPicker、モックの `.picker`): 知っているプロジェクトの一覧
 // (タップで切り替え) と、別のリポジトリを開く欄。その下に PC の BackgroundProjects (表示していないが開いている
-// プロジェクトのチップ。リングは PC の規則)。
+// プロジェクトのチップ。リングは PC の規則)。プロジェクトの順は新しく使った順 (コアが持つ) で、長押しのメニューの
+// 「上へ移動 / 下へ移動」で並べ替えられる。
 
 private val TRIGGER_SHAPE = RoundedCornerShape(12.dp)
 private val FIELD_SHAPE = RoundedCornerShape(8.dp)
@@ -173,6 +177,9 @@ private fun Popup(app: AppState, sync: AppStore, onClose: () -> Unit, modifier: 
     val view = app.project
     val currentId = view?.info?.id
     val isBlocked = blocked(app)
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    val ids = app.projects.map { it.id }
+    val move = { next: List<String> -> scope.launch { sync.reorderProjects(next) }; Unit }
     val choose = { p: ProjectInfo ->
         if (!isBlocked) {
             if (p.id != currentId) scope.launch { sync.openProject(p.path) }
@@ -200,7 +207,7 @@ private fun Popup(app: AppState, sync: AppStore, onClose: () -> Unit, modifier: 
                         Modifier
                             .fillMaxWidth()
                             .height(48.dp)
-                            .clickable(enabled = !isBlocked, role = Role.Button) { choose(p) }
+                            .combinedClickable(enabled = !isBlocked, role = Role.Button, onLongClick = { menuFor = p.id }) { choose(p) }
                             .semantics {
                                 selected = p.id == currentId
                                 stateDescription = RING_LABEL.getValue(ring)
@@ -213,6 +220,7 @@ private fun Popup(app: AppState, sync: AppStore, onClose: () -> Unit, modifier: 
                         RingMark(ring)
                         Text(p.name, color = c.txBody, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         if (p.id == currentId) YIcon(YIcons.Check, c.accent, 16.dp)
+                        ReorderMenu(menuFor == p.id, { menuFor = null }, ids, p.id, "project-move-${p.id}", move)
                     }
                 }
             }
@@ -292,6 +300,10 @@ fun BackgroundProjects(app: AppState, sync: AppStore) {
     val background = backgroundProjects(app.projects, view?.info?.id)
     if (background.isEmpty()) return
     val isBlocked = blocked(app)
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    val shown = background.map { it.id }
+    // 出ているチップだけを並べ替える: 一覧の全体では、チップでないプロジェクトの場所は動かない
+    val move = { next: List<String> -> scope.launch { sync.reorderProjects(fillSlots(app.projects.map { it.id }, next)) }; Unit }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         YIcon(YIcons.Activity, c.doneBar, 14.dp, Modifier.padding(top = 10.dp).semantics { contentDescription = "バックグラウンドで動作中" })
         FlowRow(
@@ -308,7 +320,7 @@ fun BackgroundProjects(app: AppState, sync: AppStore) {
                         .clip(CHIP_SHAPE)
                         .border(1.dp, c.lineCard, CHIP_SHAPE)
                         .background(c.bgChipDim)
-                        .clickable(enabled = !isBlocked, role = Role.Button) { scope.launch { sync.openProject(p.path) } }
+                        .combinedClickable(enabled = !isBlocked, role = Role.Button, onLongClick = { menuFor = p.id }) { scope.launch { sync.openProject(p.path) } }
                         .semantics { contentDescription = "${p.name} に切り替え (${RING_LABEL.getValue(ring)})" }
                         .padding(start = 10.dp, end = 12.dp)
                         .testTag("bg-project-${p.id}"),
@@ -317,6 +329,7 @@ fun BackgroundProjects(app: AppState, sync: AppStore) {
                 ) {
                     RingMark(ring)
                     Text(p.name, color = c.tx2, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    ReorderMenu(menuFor == p.id, { menuFor = null }, shown, p.id, "bg-move-${p.id}", move)
                 }
             }
         }

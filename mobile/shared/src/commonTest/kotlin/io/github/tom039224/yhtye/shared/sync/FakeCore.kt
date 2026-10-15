@@ -50,6 +50,12 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     /** コアが知っている他のプロジェクト ([info] の後に並ぶ。`open_project` はパスで探す)。 */
     var others: List<ProjectInfo> = emptyList()
 
+    /** プロジェクトの順 (id。新しく使った順)。`open_project` は使ったことにする。 */
+    var projectOrder: List<String> = emptyList()
+
+    /** プロジェクトのブランチの順 (キー。新しく使った順)。 */
+    var branchOrder: List<String> = emptyList()
+
     /** 失敗させるコマンド (種類ごと)。 */
     val failures = HashMap<KClass<out ApiCommand>, ApiError>()
 
@@ -107,6 +113,9 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
 
     inline fun <reified T : ApiCommand> callsOf(): List<T> = calls.filterIsInstance<T>()
 
+    /** `list_projects` の答え: [projectOrder] の順、載っていないものはその後に。 */
+    private fun listing(): List<ProjectInfo> = sortByOrder(listOf(info) + others, projectOrder) { it.id }
+
     fun fail(type: KClass<out ApiCommand>, code: ApiErrorCode, message: String) {
         failures[type] = ApiError(code, message)
     }
@@ -139,8 +148,24 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     private fun handle(command: ApiCommand): ApiResponse = when (command) {
         ApiCommand.Ping -> ApiResponse.Pong(host, hostVersion)
         ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer(host), devices))
-        ApiCommand.ListProjects -> ApiResponse.Projects(listOf(info) + others)
-        is ApiCommand.OpenProject -> ApiResponse.Project((others.find { it.path == command.path } ?: info).copy(open = true))
+        ApiCommand.ListProjects -> ApiResponse.Projects(listing())
+        is ApiCommand.OpenProject -> {
+            val project = (others.find { it.path == command.path } ?: info).copy(open = true)
+            projectOrder = listOf(project.id) + projectOrder.filter { it != project.id }
+            ApiResponse.Project(project)
+        }
+        is ApiCommand.ReorderProjects -> {
+            val known = listing().map { it.id }
+            val ids = command.ids.filter { it in known }.distinct()
+            projectOrder = ids + projectOrder.filter { it !in ids }
+            ApiResponse.Projects(listing())
+        }
+        is ApiCommand.GetBranchOrder -> ApiResponse.BranchOrder(branchOrder)
+        is ApiCommand.ReorderBranches -> {
+            val keys = command.keys.filter { it.isNotEmpty() }.distinct()
+            branchOrder = keys + branchOrder.filter { it !in keys }
+            ApiResponse.BranchOrder(branchOrder)
+        }
         is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)
         is ApiCommand.ListEvents -> {
             val limit = minOf(command.limit ?: 500, pageCap)

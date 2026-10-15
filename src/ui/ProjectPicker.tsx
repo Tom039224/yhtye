@@ -4,6 +4,9 @@ import type { ProjectInfo } from "../api/generated";
 import { useAppState, useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
 import { projectRing, RING_LABEL } from "./projectActivity";
+import { RowMenu, type RowMenuAction } from "./RowMenu";
+import { type ContextMenu, useContextMenu } from "./useContextMenu";
+import { moveActions, reorderKey, useSortable } from "./useSortable";
 
 /**
  * Scrolls `list` just far enough to show its `index`th row. Only the list moves: `scrollIntoView`
@@ -16,6 +19,40 @@ function revealRow(list: HTMLElement, index: number): void {
   const at = row.getBoundingClientRect();
   if (at.top < box.top) list.scrollTop -= box.top - at.top;
   else if (at.bottom > box.bottom) list.scrollTop += at.bottom - box.bottom;
+}
+
+interface ProjectMenuProps {
+  id: string;
+  name: string;
+  actions: RowMenuAction[];
+  menu: ContextMenu;
+  /** The menu is gone and the pull-down stays open: focus goes back into it, not to the page. */
+  onClosed: () => void;
+}
+
+/** The right-click menu of a project of the pull-down (a `RowMenu` on the row that was clicked). */
+function ProjectMenu({ id, name, actions, menu, onClosed }: ProjectMenuProps) {
+  return (
+    // Esc closes the menu, not the pull-down around it.
+    <div style={{ display: "contents" }} onKeyDown={(e) => e.stopPropagation()}>
+      <RowMenu
+        id={id}
+        label={`${name} の操作`}
+        anchor={menu.anchor}
+        actions={actions.map((a) => ({
+          ...a,
+          onSelect: () => {
+            a.onSelect();
+            onClosed();
+          },
+        }))}
+        onClose={(refocus) => {
+          menu.close();
+          if (refocus) onClosed();
+        }}
+      />
+    </div>
+  );
 }
 
 /**
@@ -33,6 +70,8 @@ export function ProjectPicker() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [path, setPath] = useState("");
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menu = useContextMenu();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -44,6 +83,10 @@ export function ProjectPicker() {
   const currentId = view?.info.id ?? null;
   const current = projects.find((p) => p.id === currentId) ?? view?.info ?? null;
   const activeIndex = Math.max(0, Math.min(active, projects.length - 1));
+  const ids = projects.map((p) => p.id);
+  // The order is the core's: a drag or the menu asks it, and the listing comes back.
+  const move = (next: string[]) => void store.reorderProjects(next);
+  const sortable = useSortable(ids, move, connected);
 
   useEffect(() => {
     if (open) (listRef.current ?? inputRef.current)?.focus();
@@ -83,6 +126,12 @@ export function ProjectPicker() {
   };
   const onListKeyDown = (e: KeyboardEvent) => {
     const last = projects.length - 1;
+    const activeProject = projects[activeIndex];
+    // Alt + ↑ / ↓ moves the project; the highlight follows it.
+    if (activeProject && connected && reorderKey(e, ids, activeProject.id, (next) => {
+      setActive(next.indexOf(activeProject.id));
+      move(next);
+    })) return;
     switch (e.key) {
       case "ArrowDown":
         setActive(Math.min(last, activeIndex + 1));
@@ -160,6 +209,12 @@ export function ProjectPicker() {
                     title={`${p.path} · ${RING_LABEL[ring]}`}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => choose(p)}
+                    onContextMenu={(e) => {
+                      setActive(i);
+                      setMenuFor(p.id);
+                      menu.onContextMenu(e);
+                    }}
+                    {...sortable.rowProps(p.id)}
                   >
                     <span className={`ring ring-${ring}`} data-testid={`ring-${p.id}`} />
                     <span className="name">{p.name}</span>
@@ -169,6 +224,15 @@ export function ProjectPicker() {
               })}
             </ul>
           )}
+          {menu.isOpen && menuFor ? (
+            <ProjectMenu
+              id={`${id}-menu`}
+              name={projects.find((p) => p.id === menuFor)?.name ?? ""}
+              actions={moveActions(ids, menuFor, move)}
+              menu={menu}
+              onClosed={() => listRef.current?.focus()}
+            />
+          ) : null}
           <form className="open-form" onSubmit={submit}>
             <input
               ref={inputRef}
