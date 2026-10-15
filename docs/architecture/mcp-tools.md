@@ -69,7 +69,7 @@ type Verdict = "approve" | "needs_changes";
 
 | | |
 |---|---|
-| 引数 | `group_id: string`, `name: string` (必須。タスクの名前 = `task_id`。書式は `create_group` の `name` と同じ。例 `remote-icon`。全グループのタスクの中で一意), `title: string`, `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `effort?: string`, `review_harness?: string`, `review_model?: string`, `review_effort?: string` (Stage 7b、`effort` は 7d。普段は省略) |
+| 引数 | `group_id: string`, `name: string` (必須。タスクの名前 = `task_id`。書式は `create_group` の `name` と同じ。例 `remote-icon`。全グループのタスクの中で一意), `title: string` (タスクの squash コミットの件名になる。§6.2), `kind: TaskKind`, `steps: StepSpec[]` (1 個以上), `depends_on?: string[]` (既定 `[]`), `instruction?: string` (空・省略可), `harness?: string`, `model?: string`, `effort?: string`, `review_harness?: string`, `review_model?: string`, `review_effort?: string` (Stage 7b、`effort` は 7d。普段は省略) |
 | 戻り値 | `{ task_id, status, steps: StepSpec[] }` (`task_id` = `name`。末尾 `done` 補完後の正規化済み工程) |
 | 遷移 | Task を `pending` で作成。依存が全て `done` なら即座に評価し、`instruction` があれば `running` (最初の Step を開始)、無ければ `awaiting_instruction` として受信箱に `instruction_needed` を積む |
 | エラー | `not_found` (group / depends_on の ID。他グループのタスクも), `invalid_state` (グループが `active` でない / depends_on のタスクが `cancelled` か、それが原因で開始不能 — 決して始まらないため), `invalid_argument` (steps 空、`done` が末尾以外、未知の kind、`investigate` タスクに `review` — 差分が無いため、`name` が無い・書式違反), `conflict` (名前が使用済み: このプロジェクトのグループ・タスク (削除したチャットのものも)、または git のいずれかのグループの `yhtye/*--<name>` ブランチや `<group>/<name>` worktree ディレクトリ。別の名前で呼び直す) |
@@ -157,7 +157,7 @@ effort 違いで複数あるのに `effort` が無ければ、`invalid_argument`
 
 | | |
 |---|---|
-| 引数 | `group_id`, `summary: string` (ユーザー向けの完了要約。イベントとして保存), `into?: string` (Stage 8e: 今の作業ツリーのブランチにマージすることを受け入れる。下記) |
+| 引数 | `group_id`, `summary: string` (ユーザー向けの完了要約。イベントとして保存し、base へのマージコミットのメッセージにも入る。[`orchestration-model.md`](orchestration-model.md) §6.2), `into?: string` (Stage 8e: 今の作業ツリーのブランチにマージすることを受け入れる。下記) |
 | 戻り値 | `{ group_id, status, merge: { ok: bool, detail } }` |
 | 遷移 | 全タスクが終端の `active` グループ、または `merge_blocked` のグループ (マージのやり直し、Stage 8e)。→ `finishing` → **マージの直前にチャットの作業ツリーが今どのブランチかを確かめ**、グループの `base_branch` と同じで clean なら group ブランチをマージ → `done`。ブランチが違う (改名・別ブランチ・detached・作業ツリーが無い) なら**マージせず** `merge_blocked` にし、`merge.detail` で状況 (「base は X、作業ツリーは今 Y」) と対処を返す。dirty / コンフリクトも `merge_blocked`。応答はマージ (または確認) が終わってから返す (戻り値の `merge` が結果) |
 | `into` | 作業ツリーが今チェックアウトしているブランチ名と**一致すること** (Yhtye がその場で確かめる)。一致すればグループの `base_branch` を `into` に変えて (`group_base_changed`) からマージする。食い違いを知らされたオーケストレータが「今のブランチにマージする」と決めたときに使う。直すなら作業ツリーを base に戻して `into` なしで呼び直す |

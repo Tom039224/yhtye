@@ -4,6 +4,7 @@
 mod branches;
 mod cli;
 mod graph;
+mod message;
 mod repo;
 mod run;
 mod worktree;
@@ -16,6 +17,7 @@ pub use cli::{GitCli, worktree_root};
 pub use graph::{
     GitBranch, GitCommit, GitOverview, GitWorktree, MAX_GRAPH_COMMITS, list_branches, overview,
 };
+pub use message::{CREATED_WITH_VERSION, created_with_line};
 
 use crate::domain::{GitOp, GitResult};
 
@@ -104,7 +106,8 @@ pub trait GitService: Send + Sync + 'static {
 
     /// Runs `op`. Expected outcomes (conflicts, dirty trees) are results, not errors:
     /// `CreateGroupBranch` / `RemoveWorkspace` → `Done`; `PrepareWorkspace` →
-    /// `Workspace`; `FinishTask` → `Merged` / `Conflict` / `Dirty`;
+    /// `Workspace`; `FinishTask` (squashes a `code` task into the group branch as
+    /// one commit) → `Merged` / `Conflict` / `Dirty`;
     /// `MergeGroup` → `Merged` / `Blocked` (also when the worktree is not on the
     /// base branch any more, Stage 8e); anything else going wrong → `Failed`.
     async fn run(&self, op: &GitOp) -> GitResult;
@@ -211,6 +214,9 @@ mod tests {
                 group_branch: "yhtye/G-1".into(),
                 base_branch: "main".into(),
                 trigger: crate::domain::MergeTrigger::FinishGroup,
+                title: "Group".into(),
+                summary: String::new(),
+                tasks: Vec::new(),
             })
             .await;
         assert!(matches!(merged, GitResult::Merged { .. }));

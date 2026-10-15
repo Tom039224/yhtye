@@ -256,3 +256,135 @@ fn only_a_blocked_merge_can_be_retried_and_not_while_another_group_is_open() {
         ErrorCode::Conflict
     );
 }
+
+/// The `MergeGroup` ops among the effects of `chain`.
+fn group_merges(chain: &Chain) -> Vec<&GitOp> {
+    chain
+        .effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Git(op @ GitOp::MergeGroup { .. }) => Some(op),
+            _ => None,
+        })
+        .collect()
+}
+
+fn group_task(id: &str, title: &str) -> GroupTask {
+    GroupTask {
+        id: id.into(),
+        title: title.into(),
+    }
+}
+
+#[test]
+fn finishing_a_task_gives_git_its_title_for_the_squash_commit() {
+    let mut sim = Sim::new();
+    sim.group();
+    sim.task(json!({"title": "Add login"}));
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert!(
+        has_effect(&chain, |e| matches!(e,
+            Effect::Git(GitOp::FinishTask { task, title, agent: None, reviewers, .. })
+                if task == "t1" && title == "Add login" && reviewers.is_empty())),
+        "{:?}",
+        chain.effects
+    );
+}
+
+#[test]
+fn the_group_merge_gets_the_title_summary_and_the_done_code_tasks() {
+    let mut sim = Sim::new();
+    sim.orch_ok(
+        ToolName::CreateGroup,
+        json!({"name": "g1", "title": "Authentication"}),
+    );
+    sim.task(json!({"title": "Add login"}));
+    sim.task(json!({"title": "Add logout"}));
+    sim.task(json!({"title": "Add reset"}));
+    sim.task(json!({"title": "Look around", "kind": "investigate"}));
+    sim.report("t1", Role::Implementer, None);
+    sim.report("t2", Role::Implementer, None);
+    sim.report("t4", Role::Implementer, None);
+    sim.orch_ok(
+        ToolName::CancelTask,
+        json!({"task_id": "t3", "reason": "not needed"}),
+    );
+
+    let (_, chain) = sim.orch_ok(
+        ToolName::FinishGroup,
+        json!({"group_id": "g1", "summary": "Users can sign in and out."}),
+    );
+    let merges = group_merges(&chain);
+    let [
+        GitOp::MergeGroup {
+            title,
+            summary,
+            tasks,
+            ..
+        },
+    ] = merges[..]
+    else {
+        panic!("one group merge: {merges:?}");
+    };
+    assert_eq!(title, "Authentication");
+    assert_eq!(summary, "Users can sign in and out.");
+    assert_eq!(
+        tasks,
+        &[
+            group_task("t1", "Add login"),
+            group_task("t2", "Add logout")
+        ],
+        "done code tasks only: not the cancelled one, not the investigation"
+    );
+}
+
+#[test]
+fn a_retried_group_merge_keeps_the_summary_of_finish_group() {
+    let unblocked = Rc::new(Cell::new(false));
+    let mut sim = Sim::new();
+    sim.git = blocked_until(unblocked.clone());
+    sim.group();
+    sim.task(json!({"title": "Add login"}));
+    sim.report("t1", Role::Implementer, None);
+    sim.orch_ok(
+        ToolName::FinishGroup,
+        json!({"group_id": "g1", "summary": "did it"}),
+    );
+    unblocked.set(true);
+    let chain = sim
+        .run(DomainCommand::RetryGroupMerge { group: "g1".into() })
+        .expect("retry runs");
+    let merges = group_merges(&chain);
+    let [
+        GitOp::MergeGroup {
+            summary,
+            tasks,
+            trigger: MergeTrigger::UserRetry,
+            ..
+        },
+    ] = merges[..]
+    else {
+        panic!("one retried merge: {merges:?}");
+    };
+    assert_eq!(summary, "did it");
+    assert_eq!(tasks, &[group_task("t1", "Add login")]);
+}
+
+#[test]
+fn old_git_ops_without_the_new_fields_still_read() {
+    let finish: GitOp = serde_json::from_value(json!({
+        "op": "finish_task", "group": "G-1", "task": "T-1", "kind": "code",
+        "message": "m", "group_branch": "yhtye/G-1", "base_branch": "main"
+    }))
+    .expect("an op stored before the squash change");
+    assert!(matches!(&finish,
+        GitOp::FinishTask { title, agent: None, reviewers, .. } if title.is_empty() && reviewers.is_empty()));
+    let merge: GitOp = serde_json::from_value(json!({
+        "op": "merge_group", "group": "G-1", "worktree": "/wt/main",
+        "group_branch": "yhtye/G-1", "base_branch": "main"
+    }))
+    .expect("an op stored before the squash change");
+    assert!(matches!(&merge,
+        GitOp::MergeGroup { title, summary, tasks, .. }
+            if title.is_empty() && summary.is_empty() && tasks.is_empty()));
+}

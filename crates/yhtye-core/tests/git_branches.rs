@@ -219,6 +219,9 @@ fn merge_group_into(worktree: &Path, base: &str) -> GitOp {
         group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
         trigger: MergeTrigger::FinishGroup,
+        title: "Group".into(),
+        summary: String::new(),
+        tasks: Vec::new(),
     }
 }
 
@@ -249,6 +252,9 @@ async fn group_with_a_file(r: &TempRepo, base: &str) {
         message: "t1: work".into(),
         group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
+        title: "Task".into(),
+        agent: None,
+        reviewers: Vec::new(),
     };
     assert!(matches!(git.run(&finish).await, GitResult::Merged { .. }));
 }

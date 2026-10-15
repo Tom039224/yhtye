@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::event::DomainEvent;
 use super::types::{MessageOutcome, MessageVia, Role, TaskKind, ToolError};
+use crate::agents::AgentChoice;
 use crate::mcp::SessionBinding;
 use crate::mcp::tools::{CreateGroupArgs, CreateTaskArgs, MessageTaskArgs, ToolCall};
 
@@ -52,15 +53,26 @@ pub enum GitOp {
         group_branch: String,
         base_branch: String,
     },
-    /// `code`: commit leftovers, merge into the group branch, remove the worktree.
-    /// `investigate`: check that the tree is still clean.
+    /// `code`: commit leftovers, squash into the group branch as one commit,
+    /// remove the worktree. `investigate`: check that the tree is still clean.
     FinishTask {
         group: String,
         task: String,
         kind: TaskKind,
+        /// Message of the commit of what the agents left uncommitted.
         message: String,
         group_branch: String,
         base_branch: String,
+        /// The task's title: the squash commit's subject (empty in older ops).
+        #[serde(default)]
+        title: String,
+        /// The agent that implemented the task, as its session was started
+        /// (the runtime fills it in; `None`: unknown).
+        #[serde(default)]
+        agent: Option<AgentChoice>,
+        /// The agents of the task's review steps, oldest first, without repeats.
+        #[serde(default)]
+        reviewers: Vec<AgentChoice>,
     },
     /// A cancelled `code` task: commit leftovers to its branch, remove the worktree.
     RemoveWorkspace { group: String, task: String },
@@ -78,7 +90,23 @@ pub enum GitOp {
         /// orchestrator's inbox as `merge_result`.
         #[serde(default)]
         trigger: MergeTrigger,
+        /// The group's title and `finish_group`'s summary (empty: none), for
+        /// the merge commit's message.
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        summary: String,
+        /// The `code` tasks that were merged into the group (done ones).
+        #[serde(default)]
+        tasks: Vec<GroupTask>,
     },
+}
+
+/// A task of a group as the group's merge commit lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupTask {
+    pub id: String,
+    pub title: String,
 }
 
 /// Who started a group's merge into its base branch.

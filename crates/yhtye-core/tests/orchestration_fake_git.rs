@@ -124,14 +124,48 @@ async fn parallel_code_tasks_merge_and_land_on_the_base_branch() {
         review[0]
     );
     assert!(review[0].contains("git diff $(git merge-base yhtye/g1 HEAD)"));
+    // The group is one merge commit; each task is one squash commit named
+    // after the task, with the agents that worked on it as trailers.
     let subjects = r.git(&["log", "--format=%s", "main"]);
-    for needle in [
-        "Merge yhtye/g1 (g1) into main",
-        "Merge yhtye/g1--t1 (t1)",
-        "t2: b",
+    let subjects: Vec<&str> = subjects.lines().collect();
+    assert_eq!(subjects.len(), 4, "{subjects:?}");
+    assert_eq!(subjects[0], "Merge yhtye/g1 into main", "{subjects:?}");
+    assert!(
+        subjects.contains(&"a") && subjects.contains(&"b"),
+        "{subjects:?}"
+    );
+    let log = r.git(&["log", "--format=%B%x1e", "main"]);
+    let message_of = |needle: &str| {
+        log.split('\u{1e}')
+            .find(|m| m.contains(needle))
+            .unwrap_or_else(|| panic!("{needle} in {log}"))
+            .trim()
+            .to_string()
+    };
+    let merge = message_of("Merge yhtye/g1 into main");
+    for line in [
+        "work",
+        "done",
+        "- t1: a",
+        "- t2: b",
+        "♪ Created with Yhtye v0.0.0: github.com/Tom039224/yhtye",
     ] {
-        assert!(subjects.contains(needle), "{needle} in {subjects}");
+        assert!(merge.lines().any(|l| l == line), "{line} in {merge}");
     }
+    assert!(merge.ends_with("Yhtye-Group: g1"), "{merge}");
+    let t1 = message_of("Yhtye-Task: t1");
+    assert!(t1.starts_with("a\n"), "{t1}");
+    for line in [
+        "- t1: a",
+        "Yhtye-Group: g1",
+        "Yhtye-Agent: default",
+        "Yhtye-Reviewer: default",
+    ] {
+        assert!(t1.lines().any(|l| l == line), "{line} in {t1}");
+    }
+    let t2 = message_of("Yhtye-Task: t2");
+    assert!(t2.lines().any(|l| l == "Yhtye-Agent: default"), "{t2}");
+    assert!(!t2.contains("Yhtye-Reviewer"), "t2 had no review: {t2}");
     assert_persisted(&orch).await;
     assert_clean_finish(&r, orch, &events).await;
 }
