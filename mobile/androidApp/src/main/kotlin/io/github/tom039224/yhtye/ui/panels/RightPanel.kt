@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -228,8 +227,17 @@ private fun GroupBar(group: Group, state: State, sync: AppStore, onCancel: (Canc
                 groupChipColors(group.status),
                 labelTag = "group-status-${group.id}",
             )
-            Text(group.id, color = c.tx2, fontFamily = MonoFont, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = 8.dp))
-            Spacer(Modifier.weight(1f))
+            // 名前は 32 文字まで: 完了数とボタンを押し出さず省略記号で切る (読み上げは全体)
+            Text(
+                group.id,
+                color = c.tx2,
+                fontFamily = MonoFont,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 8.dp, end = 8.dp).testTag("group-id-${group.id}"),
+            )
             Row(
                 Modifier.semantics(mergeDescendants = true) { contentDescription = "${p.done}/${p.total} 完了" },
                 verticalAlignment = Alignment.CenterVertically,

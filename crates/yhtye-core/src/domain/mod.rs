@@ -14,6 +14,7 @@ mod git_rules;
 mod inbox;
 mod machine;
 mod message_rules;
+mod names;
 mod orch_rules;
 mod restart;
 mod state;
@@ -28,13 +29,14 @@ pub use chat_rules::{
     chat_of_session, check_target_branch, orchestrator_session,
 };
 pub use command::{
-    AgentRef, DomainCommand, Effect, GitOp, GitResult, MergeTrigger, OrchestratorResume,
+    AgentRef, DomainCommand, Effect, GitOp, GitResult, GroupTask, MergeTrigger, OrchestratorResume,
     Transition, TurnOutcome,
 };
 pub use event::DomainEvent;
 pub use inbox::{InboxItem, InboxKind, render_batch};
 pub use machine::{Machine, decide};
 pub use message_rules::{reported_detail, unavailable_hint};
+pub use names::{MAX_NAME_CHARS, is_valid_name, name_rule};
 pub use orch_rules::MAX_GROUP_FINISH_NUDGES;
 pub use restart::lost_session_note;
 pub use state::{

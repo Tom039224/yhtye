@@ -2,12 +2,12 @@
 
 use serde_json::json;
 
-use super::command::{Effect, GitOp, GitResult, MergeTrigger};
+use super::command::{Effect, GitOp, GitResult, GroupTask, MergeTrigger};
 use super::event::DomainEvent;
 use super::inbox::{InboxItem, InboxKind};
 use super::machine::Tx;
 use super::state::{GroupStatus, TaskStatus};
-use super::types::{HelpKind, ToolError};
+use super::types::{HelpKind, TaskKind, ToolError};
 
 impl Tx {
     pub(super) fn git_done(&mut self, op: GitOp, result: GitResult) {
@@ -191,6 +191,17 @@ impl Tx {
             group_branch: g.group_branch.clone(),
             base_branch: g.base_branch.clone(),
             trigger,
+            title: g.title.clone(),
+            summary: summary.clone(),
+            tasks: self
+                .state
+                .tasks_of(group)
+                .filter(|t| t.kind == TaskKind::Code && t.status == TaskStatus::Done)
+                .map(|t| GroupTask {
+                    id: t.id.clone(),
+                    title: t.title.clone(),
+                })
+                .collect(),
         };
         self.emit(DomainEvent::GroupFinishing {
             group: group.to_string(),

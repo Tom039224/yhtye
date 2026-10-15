@@ -163,7 +163,7 @@ async fn create_branch_refuses_bad_names_existing_branches_and_missing_starts() 
         "has space",
         "a..b",
         "-x",
-        "yhtye/G-9",
+        "yhtye/g9",
         "x.lock",
         "a~b",
         "@{-1}",
@@ -201,7 +201,7 @@ async fn a_start_point_git_cannot_even_look_up_is_a_failure_not_a_missing_one() 
 #[tokio::test]
 async fn list_branches_hides_yhtye_internal_branches() {
     let r = TempRepo::new();
-    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&["branch", "yhtye/g1"]);
     r.git(&["branch", "feature"]);
     let names: Vec<String> = list_branches(&r.repo)
         .await
@@ -214,28 +214,31 @@ async fn list_branches_hides_yhtye_internal_branches() {
 
 fn merge_group_into(worktree: &Path, base: &str) -> GitOp {
     GitOp::MergeGroup {
-        group: "G-1".into(),
+        group: "g1".into(),
         worktree: worktree.to_path_buf(),
-        group_branch: "yhtye/G-1".into(),
+        group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
         trigger: MergeTrigger::FinishGroup,
+        title: "Group".into(),
+        summary: String::new(),
+        tasks: Vec::new(),
     }
 }
 
-/// A group `G-1` on `base` with one file merged into its group branch.
+/// A group `g1` on `base` with one file merged into its group branch.
 async fn group_with_a_file(r: &TempRepo, base: &str) {
     let git = r.git_cli();
     let create = GitOp::CreateGroupBranch {
-        group: "G-1".into(),
-        group_branch: "yhtye/G-1".into(),
+        group: "g1".into(),
+        group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
     };
     assert_eq!(git.run(&create).await, GitResult::Done);
     let prepare = GitOp::PrepareWorkspace {
-        group: "G-1".into(),
-        task: "T-1".into(),
+        group: "g1".into(),
+        task: "t1".into(),
         kind: TaskKind::Code,
-        group_branch: "yhtye/G-1".into(),
+        group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
     };
     let GitResult::Workspace { path } = git.run(&prepare).await else {
@@ -243,12 +246,15 @@ async fn group_with_a_file(r: &TempRepo, base: &str) {
     };
     write_in(&path, "feature.txt", "feature\n");
     let finish = GitOp::FinishTask {
-        group: "G-1".into(),
-        task: "T-1".into(),
+        group: "g1".into(),
+        task: "t1".into(),
         kind: TaskKind::Code,
-        message: "T-1: work".into(),
-        group_branch: "yhtye/G-1".into(),
+        message: "t1: work".into(),
+        group_branch: "yhtye/g1".into(),
         base_branch: base.into(),
+        title: "Task".into(),
+        agent: None,
+        reviewers: Vec::new(),
     };
     assert!(matches!(git.run(&finish).await, GitResult::Merged { .. }));
 }
@@ -291,7 +297,7 @@ async fn a_dirty_branch_worktree_blocks_the_merge_and_a_clean_one_goes_through()
     assert!(matches!(result, GitResult::Merged { .. }), "{result:?}");
 }
 
-/// Merging `G-1` (made on `main`) in the main clone after `change` ran there:
+/// Merging `g1` (made on `main`) in the main clone after `change` ran there:
 /// it must be blocked without touching anything, with a detail naming `seen`.
 async fn blocked_after(change: &[&[&str]], seen: &str) {
     let r = TempRepo::new();
@@ -327,7 +333,7 @@ async fn a_detached_worktree_blocks_the_merge() {
     blocked_after(&[&["checkout", "-q", "--detach"]], "detached HEAD").await;
 }
 
-/// Merging `G-1` (made on `main`) in the main clone while someone checks out
+/// Merging `g1` (made on `main`) in the main clone while someone checks out
 /// `other` right after the checks: it must not count as merged into `main`,
 /// and the detail must say where the merge went.
 async fn switched_during_the_merge(other_at: &str) -> TempRepo {
@@ -348,7 +354,7 @@ async fn switched_during_the_merge(other_at: &str) -> TempRepo {
         "{detail}"
     );
     assert_eq!(r.git(&["rev-parse", "main"]), main, "main is untouched");
-    assert!(r.git_status(&["merge-base", "--is-ancestor", "yhtye/G-1", "other"]));
+    assert!(r.git_status(&["merge-base", "--is-ancestor", "yhtye/g1", "other"]));
     assert_eq!(
         r.extra_worktrees().len(),
         1,
@@ -367,7 +373,7 @@ async fn a_branch_switch_right_before_the_merge_is_reported_with_where_it_went()
 #[tokio::test]
 async fn a_switch_to_a_branch_that_has_the_group_is_not_taken_as_merged() {
     // `other` already contains the group branch: `HEAD` has it, `main` does not.
-    switched_during_the_merge("yhtye/G-1").await;
+    switched_during_the_merge("yhtye/g1").await;
 }
 
 #[tokio::test]

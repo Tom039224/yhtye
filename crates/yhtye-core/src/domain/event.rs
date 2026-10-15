@@ -210,6 +210,12 @@ impl State {
             .filter(|t| groups.contains(&t.group))
             .map(|t| t.id.clone())
             .collect();
+        // Names stay taken (numbered ids could never be given again anyway).
+        let names = groups
+            .iter()
+            .chain(&tasks)
+            .filter(|id| super::names::is_valid_name(id));
+        self.counters.retired_names.extend(names.cloned());
         self.chats.retain(|c| c.id != chat);
         self.groups.retain(|g| g.chat != chat);
         self.tasks.retain(|t| !groups.contains(&t.group));
@@ -220,7 +226,8 @@ impl State {
     fn apply_group(&mut self, event: &DomainEvent) {
         match event {
             DomainEvent::GroupCreated { group } => {
-                // The id may be past the counter (numbers taken in git).
+                // A numbered id (older Yhtye) may be past the counter (numbers
+                // taken in git); a named one just counts.
                 let number = group.id.strip_prefix("G-").and_then(|n| n.parse().ok());
                 self.counters.groups = number.map_or(self.counters.groups + 1, |n: u32| {
                     n.max(self.counters.groups + 1)
