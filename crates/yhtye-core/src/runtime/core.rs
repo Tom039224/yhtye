@@ -5,6 +5,7 @@
 //! `command` / `subscribe` to it.
 
 mod harnesses;
+mod order;
 mod settings;
 
 pub use harnesses::DetectionConfig;
@@ -128,6 +129,8 @@ struct Inner {
     opening: tokio::sync::Mutex<()>,
     /// Serializes the detections of the installed harnesses.
     detecting: tokio::sync::Mutex<()>,
+    /// Serializes the changes of the project and branch orders (`order.rs`).
+    order_lock: tokio::sync::Mutex<()>,
     /// Serializes the changes of the agent settings and the secrets, each from
     /// its validation to its last step (several clients may change them at once).
     settings_lock: tokio::sync::Mutex<()>,
@@ -186,6 +189,7 @@ impl Core {
                 open: Mutex::new(HashMap::new()),
                 opening: tokio::sync::Mutex::new(()),
                 detecting: tokio::sync::Mutex::new(()),
+                order_lock: tokio::sync::Mutex::new(()),
                 settings_lock: tokio::sync::Mutex::new(()),
                 settings_revision: AtomicU64::new(settings::initial_revision()),
                 events,
@@ -216,7 +220,16 @@ impl Core {
                 projects: self.list_projects().await?,
             }),
             ApiCommand::OpenProject { path } => Ok(ApiResponse::Project {
-                project: self.open_project(&path).await?,
+                project: self.open_project(&path, true).await?,
+            }),
+            ApiCommand::ReorderProjects { ids } => Ok(ApiResponse::Projects {
+                projects: self.reorder_projects(ids).await?,
+            }),
+            ApiCommand::GetBranchOrder { project } => Ok(ApiResponse::BranchOrder {
+                keys: self.branch_order(&project).await?,
+            }),
+            ApiCommand::ReorderBranches { project, keys } => Ok(ApiResponse::BranchOrder {
+                keys: self.reorder_branches(&project, keys).await?,
             }),
             ApiCommand::GetSnapshot { project } => Ok(ApiResponse::Snapshot {
                 snapshot: self.snapshot(&project).await?,
@@ -235,17 +248,19 @@ impl Core {
                     return Err(ApiError::invalid_argument("the message is empty"));
                 }
                 self.orchestration(&project)?
-                    .send_user_message(chat, text)
+                    .send_user_message(chat.clone(), text)
                     .await
                     .map_err(user_action_error)?;
+                self.touch_chat(&project, &chat).await;
                 Ok(ApiResponse::Accepted)
             }
             ApiCommand::OpenChat { project, chat } => {
                 let starting = self
                     .orchestration(&project)?
-                    .open_chat(chat)
+                    .open_chat(chat.clone())
                     .await
                     .map_err(user_action_error)?;
+                self.touch_chat(&project, &chat).await;
                 Ok(ApiResponse::ChatOpened { starting })
             }
             ApiCommand::CancelOrchestratorTurn { project, chat } => {
@@ -269,6 +284,15 @@ impl Core {
                     .map_err(user_action_error)?;
                 Ok(ApiResponse::Accepted)
             }
+            ApiCommand::SleepProject { project } => {
+                self.known_project(&project).await?;
+                // A project that is not open has no session up: already asleep.
+                let open = self.lock_open().get(&project).cloned();
+                if let Some(orch) = open {
+                    orch.sleep_project().await.map_err(user_action_error)?;
+                }
+                Ok(ApiResponse::Accepted)
+            }
             ApiCommand::ListChats { project } => {
                 self.known_project(&project).await?;
                 Ok(ApiResponse::Chats {
@@ -287,6 +311,7 @@ impl Core {
                     .create_chat_for(target)
                     .await
                     .map_err(user_action_error)?;
+                self.touch_new_chat(&project, &chat).await;
                 Ok(ApiResponse::Chat { chat })
             }
             ApiCommand::RenameChat {
@@ -319,6 +344,7 @@ impl Core {
                     .create_branch(name, from)
                     .await
                     .map_err(user_action_error)?;
+                self.touch_new_chat(&project, &chat).await;
                 Ok(ApiResponse::Chat { chat })
             }
             ApiCommand::CancelTask {
@@ -502,7 +528,7 @@ impl Core {
                 continue;
             }
             let path = r.path.display().to_string();
-            let result = self.open_project(&path).await;
+            let result = self.open_project(&path, false).await;
             match &result {
                 Ok(_) => tracing::info!("resumed project {} ({path})", r.id),
                 Err(e) => tracing::error!("could not resume project {} ({path}): {e}", r.id),
@@ -552,7 +578,7 @@ impl Core {
     }
 
     async fn list_projects(&self) -> Result<Vec<ProjectInfo>, ApiError> {
-        let records = self.inner.store.projects().await?;
+        let records = self.ordered_projects().await?;
         let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
         Ok(project_infos(&records, |r| {
             open.get(&r.id).map(|orch| activity(&r.id, orch))
@@ -560,7 +586,9 @@ impl Core {
         .await)
     }
 
-    async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
+    /// `used`: the user opened it (it moves to the front of the project order);
+    /// not when the app resumes unfinished work on its own.
+    async fn open_project(&self, path: &str, used: bool) -> Result<ProjectInfo, ApiError> {
         let dir = repository_root(path).await?;
         let _guard = self.inner.opening.lock().await;
         if self.inner.closed.load(Ordering::SeqCst) {
@@ -577,6 +605,9 @@ impl Core {
         };
         let already = self.lock_open().get(&record.id).cloned();
         if let Some(orch) = already {
+            if used {
+                self.touch_project(&record.id, true).await;
+            }
             let (running, awake) = activity(&record.id, &orch).await;
             return Ok(project_info(&record, true, running, awake));
         }
@@ -594,6 +625,9 @@ impl Core {
         self.lock_open()
             .insert(record.id.clone(), Arc::clone(&orch));
         // Registered, or open now: every client's project list changed.
+        if used {
+            self.touch_project(&record.id, false).await;
+        }
         let _ = self
             .inner
             .events

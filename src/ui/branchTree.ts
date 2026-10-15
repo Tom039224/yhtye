@@ -5,6 +5,7 @@
 
 import type { ChatInfo, GitOverview, GitWorktree } from "../api/generated";
 import { byRecency, isInternalBranch, orchestratorKey } from "../store/chats";
+import { sortByOrder } from "../store/order";
 import type { ProjectView } from "../store/project";
 
 export interface WorktreeNode {
@@ -91,22 +92,38 @@ function unreadNodes(chats: ChatInfo[]): WorktreeNode[] {
 }
 
 /**
+ * What the branch order (the core's list, most recently used first) calls a
+ * worktree node: its path. A local branch checked out nowhere is called by its name.
+ */
+export function nodeKey(node: WorktreeNode): string {
+  return node.path;
+}
+
+/**
  * `awaiting`: chats made after git was last read; one whose worktree the reading
  * does not list is shown under its directory, not as lost, until git is read again.
+ * `order`: the branch order; worktrees and the other branches come in it, those it
+ * does not name after them, in git's order.
  */
-export function buildTree(chats: ChatInfo[], overview: GitOverview | null, awaiting: string[] = []): BranchTree {
+export function buildTree(chats: ChatInfo[], overview: GitOverview | null, awaiting: string[] = [], order: readonly string[] = []): BranchTree {
   const sorted = byRecency(chats);
   const chatsOf = (path: string) => sorted.filter((c) => c.worktree === path);
   if (!overview) return { worktrees: unreadNodes(sorted), lost: [], otherBranches: [] };
-  const worktrees: WorktreeNode[] = overview.worktrees
-    .map((w) => ({ w, chats: chatsOf(w.path) }))
-    .filter(({ w, chats: c }) => isShown(w, c))
-    .map(({ w, chats: c }) => ({ path: w.path, label: worktreeLabel(w), isMain: w.is_main, missing: w.missing, chats: c }));
+  const worktrees: WorktreeNode[] = sortByOrder(
+    overview.worktrees
+      .map((w) => ({ w, chats: chatsOf(w.path) }))
+      .filter(({ w, chats: c }) => isShown(w, c))
+      .map(({ w, chats: c }): WorktreeNode => ({ path: w.path, label: worktreeLabel(w), isMain: w.is_main, missing: w.missing, chats: c })),
+    order,
+    nodeKey,
+  );
   const listed = new Set(overview.worktrees.map((w) => w.path));
   const checkedOut = new Set(overview.worktrees.map((w) => w.branch).filter((b): b is string => b !== null));
-  const otherBranches = overview.branches
-    .map((b) => b.name)
-    .filter((n) => !isInternalBranch(n) && !checkedOut.has(n));
+  const otherBranches = sortByOrder(
+    overview.branches.map((b) => b.name).filter((n) => !isInternalBranch(n) && !checkedOut.has(n)),
+    order,
+    (n) => n,
+  );
   const unlisted = sorted.filter((c) => !listed.has(c.worktree));
   const unread = unlisted.filter((c) => awaiting.includes(c.id));
   const lost = unlisted.filter((c) => !awaiting.includes(c.id));

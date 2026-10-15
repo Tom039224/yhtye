@@ -28,6 +28,7 @@ import type {
   UsageReport,
 } from "../api/generated";
 import { CommandError, type ConnectionStatus, Listeners, type Transport, toCommandError } from "../api/transport";
+import { sortByOrder, toFront } from "../store/order";
 
 type Handler = (cmd: ApiCommand) => ApiResponse | Promise<ApiResponse>;
 
@@ -87,6 +88,10 @@ export class FakeCore {
   info: ProjectInfo;
   /** Other projects the core knows (listed after `info`; `open_project` finds them by path). */
   others: ProjectInfo[] = [];
+  /** The project order (ids, most recently used first); `open_project` uses a project. */
+  projectOrder: string[] = [];
+  /** The branch order of the project (keys, most recently used first). */
+  branchOrder: string[] = [];
   /** Commands that should fail, by type. */
   failures = new Map<ApiCommand["type"], CommandError>();
   /** Largest page the fake returns (whatever the client asks for). */
@@ -164,6 +169,11 @@ export class FakeCore {
     return { type: "harnesses", harnesses };
   }
 
+  /** The projects as `list_projects` lists them: in the project order. */
+  private listing(): ProjectInfo[] {
+    return sortByOrder([this.info, ...this.others], this.projectOrder, (p) => p.id);
+  }
+
   handle(cmd: ApiCommand): ApiResponse {
     const failure = this.failures.get(cmd.type);
     if (failure) throw failure;
@@ -171,9 +181,25 @@ export class FakeCore {
       case "ping":
         return { type: "pong", host: this.host, version: "0.1.0" };
       case "list_projects":
-        return { type: "projects", projects: [this.info, ...this.others] };
-      case "open_project":
-        return { type: "project", project: { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true } };
+        return { type: "projects", projects: this.listing() };
+      case "open_project": {
+        const project = { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true };
+        this.projectOrder = toFront(this.projectOrder, project.id);
+        return { type: "project", project };
+      }
+      case "reorder_projects": {
+        const known = this.listing().map((p) => p.id);
+        const ids = cmd.ids.filter((id) => known.includes(id));
+        this.projectOrder = [...ids, ...this.projectOrder.filter((id) => !ids.includes(id))];
+        return { type: "projects", projects: this.listing() };
+      }
+      case "get_branch_order":
+        return { type: "branch_order", keys: [...this.branchOrder] };
+      case "reorder_branches": {
+        const keys = cmd.keys.filter((k, i) => k && cmd.keys.indexOf(k) === i);
+        this.branchOrder = [...keys, ...this.branchOrder.filter((k) => !keys.includes(k))];
+        return { type: "branch_order", keys: [...this.branchOrder] };
+      }
       case "get_snapshot":
         return { type: "snapshot", snapshot: this.snapshot };
       case "list_events": {

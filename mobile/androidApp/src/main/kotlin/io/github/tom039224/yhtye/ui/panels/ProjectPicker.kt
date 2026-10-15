@@ -2,7 +2,7 @@ package io.github.tom039224.yhtye.ui.panels
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +23,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -64,9 +66,13 @@ import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
+import io.github.tom039224.yhtye.shared.sync.ProjectView
 import io.github.tom039224.yhtye.shared.sync.RING_LABEL
 import io.github.tom039224.yhtye.shared.sync.backgroundProjects
+import io.github.tom039224.yhtye.shared.sync.canSleepProject
+import io.github.tom039224.yhtye.shared.sync.fillSlots
 import io.github.tom039224.yhtye.shared.sync.projectRing
+import io.github.tom039224.yhtye.ui.common.ReorderMenuItems
 import io.github.tom039224.yhtye.ui.common.RingMark
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
@@ -75,7 +81,9 @@ import kotlinx.coroutines.launch
 
 // 表示中のプロジェクトのドロップダウン (PC の ProjectPicker、モックの `.picker`): 知っているプロジェクトの一覧
 // (タップで切り替え) と、別のリポジトリを開く欄。その下に PC の BackgroundProjects (表示していないが開いている
-// プロジェクトのチップ。リングは PC の規則)。
+// プロジェクトのチップ。リングは PC の規則)。プロジェクトを長押しするとメニューが出て、スリープできる (PC の右クリック。
+// チップ・一覧の行・表示中のプロジェクトのボタンの 3 か所)。プロジェクトの順は新しく使った順 (コアが持つ) で、同じメニューの
+// 「上へ移動 / 下へ移動」で並べ替えられる。
 
 private val TRIGGER_SHAPE = RoundedCornerShape(12.dp)
 private val FIELD_SHAPE = RoundedCornerShape(8.dp)
@@ -100,8 +108,10 @@ fun ProjectPickerArea(app: AppState, sync: AppStore, below: @Composable ColumnSc
             SideLabel(YIcons.Folder, "Project")
             Trigger(
                 app,
+                sync,
                 open,
                 onToggle = { open = !open },
+                onSlept = { open = false },
                 modifier = Modifier.onGloballyPositioned { trigger ->
                     val bottom = area?.takeIf { it.isAttached }?.localPositionOf(trigger, Offset(0f, trigger.size.height.toFloat()))?.y
                     if (bottom != null) popupTop = bottom.toInt()
@@ -131,37 +141,87 @@ fun SideLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, text: Strin
 }
 
 @Composable
-private fun Trigger(app: AppState, open: Boolean, onToggle: () -> Unit, modifier: Modifier) {
+private fun Trigger(app: AppState, sync: AppStore, open: Boolean, onToggle: () -> Unit, onSlept: () -> Unit, modifier: Modifier) {
     val c = Yhtye.colors
+    val scope = rememberActionScope()
     val view = app.project
     val current = app.projects.find { it.id == view?.info?.id } ?: view?.info
     val label = current?.name ?: if (app.projects.isNotEmpty()) "プロジェクトを選択" else "プロジェクトを開く"
-    Row(
-        modifier
-            .padding(horizontal = 12.dp)
-            .fillMaxWidth()
-            .height(46.dp)
-            .clip(TRIGGER_SHAPE)
-            .border(1.dp, c.lineCard, TRIGGER_SHAPE)
-            .background(c.bgCard)
-            .clickable(role = Role.DropdownList, onClick = onToggle)
-            .semantics { stateDescription = if (open) "開いている" else "閉じている" }
-            .padding(horizontal = 12.dp)
-            .testTag("project-picker"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        if (current != null) RingMark(projectRing(current, view))
-        Text(
-            label,
-            color = if (current != null) c.tx else c.tx3,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).testTag("project-name"),
+    var menu by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            Modifier
+                .padding(horizontal = 12.dp)
+                .fillMaxWidth()
+                .height(46.dp)
+                .clip(TRIGGER_SHAPE)
+                .border(1.dp, c.lineCard, TRIGGER_SHAPE)
+                .background(c.bgCard)
+                .combinedClickable(
+                    role = Role.DropdownList,
+                    onLongClickLabel = if (current != null) "メニューを開く" else null,
+                    onLongClick = if (current != null) ({ menu = true }) else null,
+                    onClick = onToggle,
+                )
+                .semantics { stateDescription = if (open) "開いている" else "閉じている" }
+                .padding(horizontal = 12.dp)
+                .testTag("project-picker"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (current != null) RingMark(projectRing(current, view))
+            Text(
+                label,
+                color = if (current != null) c.tx else c.tx3,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).testTag("project-name"),
+            )
+            YIcon(YIcons.ChevronDown, c.tx4, 16.dp, Modifier.rotate(if (open) 180f else 0f))
+        }
+        if (current != null) {
+            val order = ProjectOrder(app.projects.map { it.id }, "project-move-${current.id}") { next -> scope.launch { sync.reorderProjects(next) } }
+            ProjectMenu(menu, current, view, sync, onDismiss = { menu = false }, onChosen = onSlept, order = order)
+        }
+    }
+}
+
+/** プロジェクトのメニューに足す「上へ / 下へ移動」: 画面に出ているプロジェクトの順 [keys] と、並べ替えた全体の順の受け手。 */
+private class ProjectOrder(val keys: List<String>, val tag: String, val onMove: (List<String>) -> Unit)
+
+/**
+ * プロジェクトの長押しメニュー (PC の右クリックのメニュー、チャットのメニューと同じ DropdownMenu): 「スリープ」はそのプロジェクトの
+ * すべてのチャットのオーケストレータを止める。起きているチャットがなければ (停止中)、どれかが作業中なら押せない。
+ */
+@Composable
+private fun ProjectMenu(
+    expanded: Boolean,
+    project: ProjectInfo,
+    view: ProjectView?,
+    sync: AppStore,
+    onDismiss: () -> Unit,
+    onChosen: () -> Unit = {},
+    order: ProjectOrder? = null,
+) {
+    val c = Yhtye.colors
+    // メニューを閉じても要求は最後まで進める
+    val scope = rememberActionScope()
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        // 並べ替えは一覧を開いたまま (スリープだけが一覧を閉じる)
+        if (order != null) ReorderMenuItems(onDismiss, order.keys, project.id, order.tag, order.onMove)
+        DropdownMenuItem(
+            text = { Text("スリープ") },
+            leadingIcon = { YIcon(YIcons.Moon, c.tx3, 18.dp) },
+            enabled = canSleepProject(project, view),
+            onClick = {
+                onDismiss()
+                scope.launch { sync.sleepProject(project.id) }
+                onChosen()
+            },
+            modifier = Modifier.testTag("menu-sleep-${project.id}"),
         )
-        YIcon(YIcons.ChevronDown, c.tx4, 16.dp, Modifier.rotate(if (open) 180f else 0f))
     }
 }
 
@@ -173,6 +233,9 @@ private fun Popup(app: AppState, sync: AppStore, onClose: () -> Unit, modifier: 
     val view = app.project
     val currentId = view?.info?.id
     val isBlocked = blocked(app)
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    val ids = app.projects.map { it.id }
+    val move = { next: List<String> -> scope.launch { sync.reorderProjects(next) }; Unit }
     val choose = { p: ProjectInfo ->
         if (!isBlocked) {
             if (p.id != currentId) scope.launch { sync.openProject(p.path) }
@@ -196,23 +259,37 @@ private fun Popup(app: AppState, sync: AppStore, onClose: () -> Unit, modifier: 
             Column(Modifier.heightIn(max = OPTIONS_MAX_HEIGHT).verticalScroll(rememberScrollState()).semantics { contentDescription = "プロジェクト" }) {
                 app.projects.forEach { p ->
                     val ring = projectRing(p, view)
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .clickable(enabled = !isBlocked, role = Role.Button) { choose(p) }
-                            .semantics {
-                                selected = p.id == currentId
-                                stateDescription = RING_LABEL.getValue(ring)
-                            }
-                            .padding(horizontal = 14.dp)
-                            .testTag("project-option-${p.id}"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        RingMark(ring)
-                        Text(p.name, color = c.txBody, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                        if (p.id == currentId) YIcon(YIcons.Check, c.accent, 16.dp)
+                    Box {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .combinedClickable(
+                                    enabled = !isBlocked,
+                                    role = Role.Button,
+                                    onLongClickLabel = "メニューを開く",
+                                    onLongClick = { menuFor = p.id },
+                                    onClick = { choose(p) },
+                                )
+                                .semantics {
+                                    selected = p.id == currentId
+                                    stateDescription = RING_LABEL.getValue(ring)
+                                }
+                                .padding(horizontal = 14.dp)
+                                .testTag("project-option-${p.id}"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            RingMark(ring)
+                            Text(p.name, color = c.txBody, fontSize = 14.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            if (p.id == currentId) YIcon(YIcons.Check, c.accent, 16.dp)
+                        }
+                        ProjectMenu(
+                            menuFor == p.id, p, view, sync,
+                            onDismiss = { menuFor = null },
+                            onChosen = onClose,
+                            order = ProjectOrder(ids, "project-move-${p.id}", move),
+                        )
                     }
                 }
             }
@@ -287,11 +364,14 @@ private fun OpenForm(app: AppState, isBlocked: Boolean, onOpen: (String) -> Unit
 @Composable
 fun BackgroundProjects(app: AppState, sync: AppStore) {
     val c = Yhtye.colors
-    val scope = rememberActionScope()
     val view = app.project
     val background = backgroundProjects(app.projects, view?.info?.id)
     if (background.isEmpty()) return
     val isBlocked = blocked(app)
+    val scope = rememberActionScope()
+    val shown = background.map { it.id }
+    // 出ているチップだけを並べ替える: 一覧の全体では、チップでないプロジェクトの場所は動かない
+    val move = { next: List<String> -> scope.launch { sync.reorderProjects(fillSlots(app.projects.map { it.id }, next)) }; Unit }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 10.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         YIcon(YIcons.Activity, c.doneBar, 14.dp, Modifier.padding(top = 10.dp).semantics { contentDescription = "バックグラウンドで動作中" })
         FlowRow(
@@ -299,26 +379,49 @@ fun BackgroundProjects(app: AppState, sync: AppStore) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            background.forEach { p ->
-                val ring = projectRing(p, view)
-                Row(
-                    Modifier
-                        .height(34.dp)
-                        .widthIn(max = 200.dp)
-                        .clip(CHIP_SHAPE)
-                        .border(1.dp, c.lineCard, CHIP_SHAPE)
-                        .background(c.bgChipDim)
-                        .clickable(enabled = !isBlocked, role = Role.Button) { scope.launch { sync.openProject(p.path) } }
-                        .semantics { contentDescription = "${p.name} に切り替え (${RING_LABEL.getValue(ring)})" }
-                        .padding(start = 10.dp, end = 12.dp)
-                        .testTag("bg-project-${p.id}"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    RingMark(ring)
-                    Text(p.name, color = c.tx2, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
+            background.forEach { p -> BackgroundChip(p, view, sync, isBlocked, shown, move) }
         }
+    }
+}
+
+/** バックグラウンドのチップ: タップで切り替え、長押しでメニュー (スリープ・上へ / 下へ移動)。 */
+@Composable
+private fun BackgroundChip(
+    p: ProjectInfo,
+    view: ProjectView?,
+    sync: AppStore,
+    isBlocked: Boolean,
+    shown: List<String>,
+    onMove: (List<String>) -> Unit,
+) {
+    val c = Yhtye.colors
+    val scope = rememberActionScope()
+    val ring = projectRing(p, view)
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .height(34.dp)
+                .widthIn(max = 200.dp)
+                .clip(CHIP_SHAPE)
+                .border(1.dp, c.lineCard, CHIP_SHAPE)
+                .background(c.bgChipDim)
+                .combinedClickable(
+                    enabled = !isBlocked,
+                    role = Role.Button,
+                    onLongClickLabel = "メニューを開く",
+                    onLongClick = { menu = true },
+                    onClick = { scope.launch { sync.openProject(p.path) } },
+                )
+                .semantics { contentDescription = "${p.name} に切り替え (${RING_LABEL.getValue(ring)})" }
+                .padding(start = 10.dp, end = 12.dp)
+                .testTag("bg-project-${p.id}"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            RingMark(ring)
+            Text(p.name, color = c.tx2, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        ProjectMenu(menu, p, view, sync, onDismiss = { menu = false }, order = ProjectOrder(shown, "bg-move-${p.id}", onMove))
     }
 }

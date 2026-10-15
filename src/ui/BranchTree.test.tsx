@@ -3,7 +3,7 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import App from "../App";
 import { CommandError } from "../api/transport";
@@ -429,5 +429,77 @@ describe("restoring the selection", () => {
     const { store } = setup({ prefs });
     await open(store);
     expect(screen.getByTestId("chat-title")).toHaveTextContent("Refactor checkout");
+  });
+});
+
+describe("BRANCHES order", () => {
+  /** The labels of the worktree rows, top to bottom. */
+  const rows = () => [...tree().querySelectorAll(".wt-head .branch-row .name")].map((n) => n.textContent);
+  /** A worktree row's button: its name ends with the branch (a status label may come before). */
+  const rowButton = (label: string) => within(tree()).getByRole("button", { name: (name) => name.endsWith(label), expanded: true });
+  const head = (label: string) => rowButton(label).closest(".wt-head") as HTMLElement;
+  const stubTransfer = () => ({ setData: vi.fn(), effectAllowed: "", dropEffect: "" });
+
+  it("lists the worktrees in the order the core keeps, the ones it does not name after them", async () => {
+    const { store, core } = setup();
+    core.branchOrder = [FEAT_WT];
+    await open(store);
+    await waitFor(() => expect(rows()).toEqual(["feat/x", "main"]));
+  });
+
+  it("moves a worktree from its right-click menu and shows the new order at once", async () => {
+    const { store, user, transport } = setup();
+    await open(store);
+    expect(rows()).toEqual(["main", "feat/x"]);
+    await user.pointer({ keys: "[MouseRight]", target: head("main") });
+    const menu = screen.getByRole("menu", { name: "main の操作" });
+    expect(within(menu).getByRole("menuitem", { name: "上へ移動" })).toBeDisabled();
+    await user.click(within(menu).getByRole("menuitem", { name: "下へ移動" }));
+    expect(transport.callsOf("reorder_branches").at(-1)).toMatchObject({ keys: [FEAT_WT, MAIN_WT] });
+    await waitFor(() => expect(rows()).toEqual(["feat/x", "main"]));
+  });
+
+  it("reorders by dragging a worktree onto another", async () => {
+    const { store, transport } = setup();
+    await open(store);
+    const feat = head("feat/x");
+    expect(feat).toHaveAttribute("draggable", "true");
+    const dataTransfer = stubTransfer();
+    fireEvent.dragStart(feat, { dataTransfer });
+    fireEvent.dragOver(head("main"), { dataTransfer });
+    expect(head("main")).toHaveAttribute("data-drop", "above");
+    fireEvent.drop(head("main"), { dataTransfer });
+    expect(transport.callsOf("reorder_branches").at(-1)).toMatchObject({ keys: [FEAT_WT, MAIN_WT] });
+    await waitFor(() => expect(rows()).toEqual(["feat/x", "main"]));
+  });
+
+  it("moves a worktree with Alt + arrow keys", async () => {
+    const { store, user, transport } = setup();
+    await open(store);
+    rowButton("feat/x").focus();
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    expect(transport.callsOf("reorder_branches").at(-1)).toMatchObject({ keys: [FEAT_WT, MAIN_WT] });
+    await waitFor(() => expect(rows()).toEqual(["feat/x", "main"]));
+  });
+
+  it("follows another client's reorder and a branch used elsewhere", async () => {
+    const { store, transport } = setup();
+    await open(store);
+    expect(rows()).toEqual(["main", "feat/x"]);
+    act(() => transport.emit(ev(0, { type: "branch_order_changed", project: PROJECT.id, keys: [FEAT_WT, MAIN_WT] }, true, "")));
+    await waitFor(() => expect(rows()).toEqual(["feat/x", "main"]));
+  });
+
+  it("orders the other branches too, and reorders them from their menu", async () => {
+    const { store, user, core, transport } = setup();
+    core.git = { ...CHAT_GIT, branches: [...CHAT_GIT.branches, { name: "topic", sha: "t".repeat(40) }, { name: "alpha", sha: "a".repeat(40) }] };
+    await open(store);
+    await user.click(within(tree()).getByRole("button", { name: "他のブランチ (2)" }));
+    const others = () => within(screen.getByRole("list", { name: "other branches" })).getAllByRole("button").map((b) => b.getAttribute("aria-label"));
+    expect(others()).toEqual(["topic の新しいチャット", "alpha の新しいチャット"]);
+    await user.pointer({ keys: "[MouseRight]", target: screen.getByRole("button", { name: "alpha の新しいチャット" }) });
+    await user.click(within(screen.getByRole("menu", { name: "alpha の操作" })).getByRole("menuitem", { name: "上へ移動" }));
+    expect(transport.callsOf("reorder_branches").at(-1)).toMatchObject({ keys: ["alpha", "topic"] });
+    await waitFor(() => expect(others()).toEqual(["alpha の新しいチャット", "topic の新しいチャット"]));
   });
 });

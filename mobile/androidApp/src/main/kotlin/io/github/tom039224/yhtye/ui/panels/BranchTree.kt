@@ -3,6 +3,7 @@ package io.github.tom039224.yhtye.ui.panels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +69,7 @@ import io.github.tom039224.yhtye.shared.sync.isInternalBranch
 import io.github.tom039224.yhtye.shared.sync.shortAge
 import io.github.tom039224.yhtye.shared.sync.statusLabel
 import io.github.tom039224.yhtye.shared.sync.statusOf
+import io.github.tom039224.yhtye.ui.common.ReorderMenu
 import io.github.tom039224.yhtye.ui.common.RingMark
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
@@ -117,7 +119,11 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
     val overview = git?.overview
     var formOpen by rememberSaveable(view?.info?.id) { mutableStateOf(false) }
     val ready = view != null && (view.phase == LoadPhase.Ready || view.state != null)
-    val tree = buildTree(view?.chats.orEmpty(), overview, git?.awaiting.orEmpty())
+    val order = app.branchOrder?.takeIf { view != null && it.project == view.info.id }?.keys.orEmpty()
+    val tree = buildTree(view?.chats.orEmpty(), overview, git?.awaiting.orEmpty(), order)
+    // 並べ替えは画面に出ている順を送る: 作業ツリーと、作業ツリーの無いブランチは別々の一覧
+    val worktreeKeys = tree.worktrees.map { it.path }
+    val moveBranches = { next: List<String> -> scope.launch { sync.reorderBranches(next) }; Unit }
     val newChat = { worktree: String?, branch: String? ->
         scope.launch { if (sync.createChat(worktree = worktree, branch = branch)) onChatChosen() }
         Unit
@@ -155,7 +161,11 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
         tree.worktrees.forEach { w ->
             val open = memory.isOpen(project, w)
             val branch = overview?.worktrees?.find { it.path == w.path }?.branch
-            WorktreeRow(w, open, branch, statuses, onToggle = { memory.toggle(project, w) }, onNewChat = { newChat(w.path, null) })
+            WorktreeRow(
+                w, open, branch, statuses, worktreeKeys, moveBranches,
+                onToggle = { memory.toggle(project, w) },
+                onNewChat = { newChat(w.path, null) },
+            )
             if (open) w.chats.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.lost.isNotEmpty()) {
@@ -172,7 +182,10 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
             tree.lost.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.otherBranches.isNotEmpty()) {
-            OtherBranches(tree.otherBranches, statuses, memory.othersOpen(project), onToggle = { memory.toggleOthers(project) }) { newChat(null, it) }
+            OtherBranches(
+                tree.otherBranches, statuses, memory.othersOpen(project), moveBranches,
+                onToggle = { memory.toggleOthers(project) },
+            ) { newChat(null, it) }
         }
     }
 }
@@ -229,16 +242,19 @@ private fun WorktreeRow(
     open: Boolean,
     branch: String?,
     statuses: BranchStatuses?,
+    keys: List<String>,
+    onMove: (List<String>) -> Unit,
     onToggle: () -> Unit,
     onNewChat: () -> Unit,
 ) {
     val c = Yhtye.colors
+    var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier
                 .weight(1f)
                 .heightIn(min = 40.dp)
-                .clickable(role = Role.Button, onClick = onToggle)
+                .combinedClickable(role = Role.Button, onLongClick = { menu = true }, onClick = onToggle)
                 .semantics {
                     stateDescription = if (open) "開いている" else "閉じている"
                     contentDescription = if (node.isMain) "${node.label} · メインクローン" else node.label
@@ -262,6 +278,7 @@ private fun WorktreeRow(
             if (node.missing) {
                 Box(Modifier.semantics { contentDescription = "作業ツリーが見つかりません" }) { YIcon(YIcons.Alert, c.handBar, 12.dp) }
             }
+            ReorderMenu(menu, { menu = false }, keys, node.path, "worktree-move-${node.path}", onMove)
         }
         if (!node.missing) {
             IconButton(
@@ -312,8 +329,16 @@ private fun ChatRow(view: ProjectView, chat: ChatInfo, now: Long, onChosen: () -
 
 /** 作業ツリーにチェックアウトされていない他のブランチ (そこへの新しいチャットは Yhtye が作業ツリーを作る)。 */
 @Composable
-private fun OtherBranches(names: List<String>, statuses: BranchStatuses?, open: Boolean, onToggle: () -> Unit, onNewChat: (String) -> Unit) {
+private fun OtherBranches(
+    names: List<String>,
+    statuses: BranchStatuses?,
+    open: Boolean,
+    onMove: (List<String>) -> Unit,
+    onToggle: () -> Unit,
+    onNewChat: (String) -> Unit,
+) {
     val c = Yhtye.colors
+    var menuFor by remember { mutableStateOf<String?>(null) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -339,7 +364,7 @@ private fun OtherBranches(names: List<String>, statuses: BranchStatuses?, open: 
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 1.dp)
                 .clip(ROW_SHAPE)
-                .clickable(role = Role.Button) { onNewChat(n) }
+                .combinedClickable(role = Role.Button, onLongClick = { menuFor = n }) { onNewChat(n) }
                 .semantics(mergeDescendants = true) { contentDescription = "$n の新しいチャット" }
                 .heightIn(min = 42.dp)
                 .padding(start = 30.dp, end = 10.dp)
@@ -350,6 +375,7 @@ private fun OtherBranches(names: List<String>, statuses: BranchStatuses?, open: 
             StatusIcon(n, statuses)
             YIcon(YIcons.MessagePlus, c.tx3, 16.dp)
             Text(n, color = c.tx2, fontFamily = MonoFont, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ReorderMenu(menuFor == n, { menuFor = null }, names, n, "other-move-$n", onMove)
         }
     }
 }

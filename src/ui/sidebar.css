@@ -115,6 +115,8 @@
   color: var(--text-muted); font-size: 12.5px; text-align: left; cursor: pointer;
 }
 .row-menu-item:hover, .row-menu-item:focus-visible { background: var(--surface-hover-strong); color: var(--text-primary); outline: none; }
+.row-menu-item:disabled { opacity: 0.45; cursor: default; }
+.row-menu-item:disabled:hover { background: none; color: var(--text-muted); }
 .row-menu-item.danger { color: var(--status-handling-fg); }
 .row-menu-item.danger:hover, .row-menu-item.danger:focus-visible { background: var(--status-handling-bg); color: var(--status-handling-fg); }
 
@@ -162,3 +164,11 @@
 .client-more:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .client-more .caret { transform: rotate(-90deg); }
 .client-more .caret.open { transform: none; }
+
+/* ---- reordering by drag ------------------------------------------------------ */
+
+[data-dragging] { opacity: 0.45; }
+[data-drop="above"] { box-shadow: 0 -2px 0 0 var(--accent); }
+[data-drop="below"] { box-shadow: 0 2px 0 0 var(--accent); }
+.bg-list [data-drop="above"] { box-shadow: -2px 0 0 0 var(--accent); }
+.bg-list [data-drop="below"] { box-shadow: 2px 0 0 0 var(--accent); }
