@@ -8,6 +8,8 @@ export interface RowMenuAction {
   icon: IconName;
   /** `danger` marks a destructive action. */
   tone?: "default" | "danger";
+  /** Shown but not choosable (the action does not apply right now). */
+  disabled?: boolean;
   onSelect: () => void;
 }
 
@@ -53,7 +55,8 @@ export function RowMenu({ id, label, anchor, actions, onClose }: RowMenuProps) {
   }, [anchor]);
 
   useEffect(() => {
-    items(menuRef.current)[0]?.focus();
+    // The menu itself takes the focus when every item is disabled (so Esc still closes it).
+    (items(menuRef.current)[0] ?? menuRef.current)?.focus();
   }, []);
 
   useEffect(() => {
@@ -102,6 +105,7 @@ export function RowMenu({ id, label, anchor, actions, onClose }: RowMenuProps) {
       className="row-menu"
       role="menu"
       aria-label={label}
+      tabIndex={-1}
       style={position ?? { visibility: "hidden" }}
       onKeyDown={onKeyDown}
     >
@@ -112,6 +116,8 @@ export function RowMenu({ id, label, anchor, actions, onClose }: RowMenuProps) {
           role="menuitem"
           tabIndex={-1}
           className={`row-menu-item ${a.tone === "danger" ? "danger" : ""}`}
+          disabled={a.disabled}
+          aria-disabled={a.disabled || undefined}
           onClick={() => {
             onClose(false);
             a.onSelect();
@@ -125,6 +131,7 @@ export function RowMenu({ id, label, anchor, actions, onClose }: RowMenuProps) {
   );
 }
 
+/** The items that can be chosen (a disabled one cannot take the focus). */
 function items(menu: HTMLElement | null): HTMLElement[] {
-  return menu ? [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]')] : [];
+  return menu ? [...menu.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)')] : [];
 }

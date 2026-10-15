@@ -7,7 +7,7 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
@@ -126,6 +126,18 @@ function longSessions(tasks: Task[]): SessionRecord[] {
   );
 }
 
+const BRANCH_STATES: BranchState[] = ["unmerged", "pr_open", "merged", "merged_with_changes", "unknown"];
+
+/** Every PR / merge state in turn over the branches, so each status icon is drawn. */
+function longBranchStatuses(git: GitOverview): BranchStatuses {
+  const statuses = git.branches.slice(1).map((b, i) => {
+    const state = BRANCH_STATES[i % BRANCH_STATES.length];
+    const pr = state === "unmerged" || state === "unknown" ? null : 100 + i;
+    return { branch: b.name, state, pr_number: pr, pr_url: pr == null ? null : `https://example.test/u/repo/pull/${pr}` };
+  });
+  return { default_branch: "main", statuses };
+}
+
 function longGit(ids: Ids): { git: GitOverview; chats: ChatInfo[]; chatStates: State["chats"] } {
   const sha = (c: string, i: number) => `${c}${i}`.padEnd(40, c);
   const branches = Array.from({ length: WORKTREES }, (_, i) => ({ name: i === 0 ? "main" : `feature/${NO_SPACES}${i}`, sha: sha("b", i) }));
@@ -210,6 +222,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const core = new FakeCore(PROJECT, snapshot);
     core.log = longLog(group, ids);
     core.git = git;
+    core.branchStatuses = longBranchStatuses(git);
     core.usage = {
       plan: "max",
       windows: [
@@ -229,7 +242,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
     }));
-    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false }));
+    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false, awake: false }));
     return { core, open: true };
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);

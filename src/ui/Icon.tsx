@@ -97,6 +97,8 @@ const GLYPHS = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   "chevron-down": <path d="M6.5 9.5l5.5 5.5 5.5-5.5" />,
   "chevrons-up": <path d="M7 11l5-5 5 5M7 18l5-5 5 5" />,
+  "arrow-up": <path d="M12 19V5M6 11l6-6 6 6" />,
+  "arrow-down": <path d="M12 5v14M6 13l6 6 6-6" />,
   "arrow-left": <path d="M19 12H5M11 6l-6 6 6 6" />,
   "arrow-right": <path d="M5 12h14M13 6l6 6-6 6" />,
   user: (
@@ -119,6 +121,7 @@ const GLYPHS = {
   ),
   flag: <path d="M6 20V4M6 5h11l-2.2 4 2.2 4H6" />,
   hourglass: <path d="M7 4.5h10M7 19.5h10M8 4.5c0 4.2 4 4.6 4 7.5s-4 3.3-4 7.5M16 4.5c0 4.2-4 4.6-4 7.5s4 3.3 4 7.5" />,
+  moon: <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5 7.5 7.5 0 1 0 19 14.5z" />,
   loader: <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5" />,
   activity: <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4" />,
   wrench: <path transform="rotate(45 12 12)" d="M13.37 3.24A4 4 0 0 1 13.4 10.75V18a1.4 1.4 0 0 1-2.8 0V10.75A4 4 0 0 1 10.63 3.24L12 6z" />,
@@ -144,6 +147,15 @@ const GLYPHS = {
       <circle cx="6" cy="18" r="2" />
       <circle cx="18" cy="12.5" r="2" />
       <path d="M6 8v8M8 6c6 0 10 2.5 10 4.5" />
+    </>
+  ),
+  // An open pull request (after Orca's / octicons' PR glyph: the head's line comes back into the base with an arrow).
+  "git-pull-request": (
+    <>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <path d="M6 8v8M18 16V9.5A2.5 2.5 0 0 0 15.5 7h-5M13 4.5L10.5 7 13 9.5" />
     </>
   ),
   folder: <path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H10l2 2.5h6.5A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,

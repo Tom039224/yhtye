@@ -3,6 +3,7 @@
 //! - [`acp`]: ACP client (agent processes and sessions)
 //! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
+//! - [`order`]: the recently-used order of projects and branches
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
 //! - [`api`]: the UI-facing event stream and snapshot
@@ -22,6 +23,7 @@ mod clock;
 pub mod domain;
 pub mod git;
 pub mod mcp;
+pub mod order;
 pub mod prompts;
 pub mod remote;
 pub mod remote_client;

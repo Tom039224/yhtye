@@ -1,6 +1,8 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.GroupStatus
@@ -84,17 +86,29 @@ private fun unreadNodes(chats: List<ChatInfo>): List<WorktreeNode> =
 /**
  * [awaiting]: git を最後に読んだ後に作られたチャット。その読み取りが作業ツリーを出していなければ、
  * 読み直すまでは失われたものではなくディレクトリ名の下に出す。
+ * [order]: ブランチの順 (コアのリスト)。作業ツリー (パスで) と他のブランチ (名前で) はこの順に、載っていないものはその後に git の順で。
  */
-fun buildTree(chats: List<ChatInfo>, overview: GitOverview?, awaiting: Collection<String> = emptyList()): BranchTree {
+fun buildTree(
+    chats: List<ChatInfo>,
+    overview: GitOverview?,
+    awaiting: Collection<String> = emptyList(),
+    order: List<String> = emptyList(),
+): BranchTree {
     val sorted = byRecency(chats)
     if (overview == null) return BranchTree(unreadNodes(sorted), lost = emptyList(), otherBranches = emptyList())
-    val worktrees = overview.worktrees
-        .map { w -> w to sorted.filter { it.worktree == w.path } }
-        .filter { (w, c) -> isShown(w, c) }
-        .map { (w, c) -> WorktreeNode(w.path, worktreeLabel(w), w.isMain, w.missing, c) }
+    val worktrees = sortByOrder(
+        overview.worktrees
+            .map { w -> w to sorted.filter { it.worktree == w.path } }
+            .filter { (w, c) -> isShown(w, c) }
+            .map { (w, c) -> WorktreeNode(w.path, worktreeLabel(w), w.isMain, w.missing, c) },
+        order,
+    ) { it.path }
     val listed = overview.worktrees.mapTo(HashSet()) { it.path }
     val checkedOut = overview.worktrees.mapNotNullTo(HashSet()) { it.branch }
-    val otherBranches = overview.branches.map { it.name }.filter { !isInternalBranch(it) && it !in checkedOut }
+    val otherBranches = sortByOrder(
+        overview.branches.map { it.name }.filter { !isInternalBranch(it) && it !in checkedOut },
+        order,
+    ) { it }
     val unlisted = sorted.filter { it.worktree !in listed }
     val (unread, lost) = unlisted.partition { it.id in awaiting }
     return BranchTree(worktrees + unreadNodes(unread), lost, otherBranches)
@@ -105,6 +119,25 @@ fun chatRing(view: ProjectView, chat: String): Ring {
     val s = view.sessions.find { it.sessionKey == orchestratorKey(chat) }
     if (s?.status != SessionStatus.Live) return Ring.Stopped
     return if (s.turnRunning) Ring.Running else Ring.Ready
+}
+
+/** ブランチの点の日本語ラベル (PR 番号があるときは付ける。PC の `statusLabel` と同じ文言)。 */
+fun statusLabel(state: BranchState, pr: Long?): String = when (state) {
+    BranchState.Unmerged -> "まだ取り込まれていません"
+    BranchState.PrOpen -> if (pr == null) "PR 作成済み" else "PR 作成済み (#$pr)"
+    BranchState.Merged -> if (pr == null) "取り込み済み" else "PR でマージ済み (#$pr)"
+    BranchState.MergedWithChanges -> if (pr == null) "取り込み済み・未マージの変更あり" else "PR でマージ済み・未マージの変更あり (#$pr)"
+    BranchState.Unknown, BranchState.Unrecognized -> "状態不明"
+}
+
+/**
+ * ブランチの点の状態と PR 番号 (`statuses` に載っていないブランチは `Unknown`。既定のブランチ自
+ * 身は点に状態を持たないので null: 呼び出し側は無地の点にする)。
+ */
+fun statusOf(branch: String?, statuses: BranchStatuses?): Pair<BranchState, Long?>? {
+    if (branch == null || branch == statuses?.defaultBranch) return null
+    val found = statuses?.statuses?.find { it.branch == branch }
+    return (found?.state ?: BranchState.Unknown) to found?.prNumber
 }
 
 /** [ms] からの経過 `3m` / `2h` / `4d` (1 分未満と未来は `now`)。 */

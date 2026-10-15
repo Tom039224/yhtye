@@ -423,6 +423,11 @@ mod tests {
             r#"{"type": "list_projects"}"#,
             r#"{"type": "set_secret_env", "name": "A", "value": "v"}"#,
             r#"{"type": "send_user_message", "project": "p", "chat": "c", "text": "t"}"#,
+            r#"{"type": "sleep_chat", "project": "p", "chat": "c"}"#,
+            r#"{"type": "sleep_project", "project": "p"}"#,
+            r#"{"type": "reorder_projects", "ids": ["p"]}"#,
+            r#"{"type": "get_branch_order", "project": "p"}"#,
+            r#"{"type": "reorder_branches", "project": "p", "keys": ["/w"]}"#,
             r#"{"type": "list_clients"}"#,
         ];
         for json in anyone {

@@ -15,7 +15,7 @@ use crate::agents::{
     HarnessModels, ModelEfforts, RoleSettings,
 };
 use crate::domain::{ErrorCode, ToolError};
-use crate::git::GitOverview;
+use crate::git::{BranchStatuses, GitOverview};
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
@@ -32,11 +32,15 @@ pub enum ApiCommand {
     /// A liveness check of the core: answers with the name of the machine it
     /// runs on (the host footer of the sidebar). The UI sends it periodically.
     Ping,
-    /// Every project known to the database, and whether it is open.
+    /// Every project known to the database, and whether it is open, most
+    /// recently used first (opening a project uses it; `reorder_projects` sets
+    /// the order by hand). Projects never used come last, in the order they were
+    /// registered.
     ListProjects,
     /// Opens (registering it on first use) the git repository at `path`: starts
     /// its orchestrator and resumes interrupted tasks. Opening an open project
-    /// returns it unchanged.
+    /// returns it unchanged. The project is used: it moves to the front of the
+    /// project order.
     OpenProject {
         path: String,
     },
@@ -86,6 +90,49 @@ pub enum ApiCommand {
     CompactChat {
         project: String,
         chat: String,
+    },
+    /// Stops the chat's orchestrator session (its process ends and its token is
+    /// revoked), so the chat rests until it is used again: the next message to
+    /// it starts the orchestrator again, restoring the stored session. Sessions
+    /// start lazily, so one that was never started is already asleep.
+    /// `not_found` for an unknown chat, `invalid_state` while its orchestrator
+    /// is working (starting or in a turn); stop or wait for the turn first.
+    /// Stopping an idle session reports `session_stopped`, like any other stop.
+    SleepChat {
+        project: String,
+        chat: String,
+    },
+    /// Puts the projects in the order the user made (a drag in the project list):
+    /// `ids` come first, in that order (unknown ones are ignored), then the
+    /// projects it does not name, in their order. Answers with the listing like
+    /// `list_projects`; every client re-reads it (`projects_changed`).
+    ReorderProjects {
+        ids: Vec<String>,
+    },
+    /// The order of the project's branches (BRANCHES tree), most recently used
+    /// first: the keys of its worktrees (the worktree's path) and of its local
+    /// branches that no worktree has checked out (the branch name). Items whose
+    /// key is not listed come after, in the tree's own order. Works for
+    /// projects that are not open.
+    GetBranchOrder {
+        project: String,
+    },
+    /// Puts the project's branches in the order the user made: `keys` come first
+    /// in that order, then the keys it does not name, as they were. Answers
+    /// with the order like `get_branch_order`; every client gets
+    /// `branch_order_changed`. Works for projects that are not open.
+    ReorderBranches {
+        project: String,
+        keys: Vec<String>,
+    },
+    /// Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
+    /// each): all its orchestrator sessions stop, so the project is no longer
+    /// awake. All or none: `invalid_state` (and nothing is stopped) while any
+    /// chat's orchestrator is working (starting or in a turn). A project that
+    /// is known but not open has nothing up, so it is already asleep:
+    /// accepted. `not_found` for an unknown project.
+    SleepProject {
+        project: String,
     },
     /// The project's chats, most recently used first. Works for projects that
     /// are not open.
@@ -169,6 +216,12 @@ pub enum ApiCommand {
         #[serde(default)]
         #[ts(optional)]
         limit: Option<u32>,
+    },
+    /// The PR / merge status of every local branch (the dots of the BRANCHES
+    /// tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+    /// for every branch). Works for projects that are not open.
+    GetBranchStatuses {
+        project: String,
     },
     /// Subscription usage / quota of the harness (5-hour and weekly windows,
     /// plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
@@ -336,6 +389,10 @@ pub struct ProjectInfo {
     /// running or merging (what the sidebar's turning ring shows). Always
     /// `false` while it is not open.
     pub running: bool,
+    /// One of its chats has an orchestrator session up (live): the project is
+    /// awake, so its ring is green (`ready`) even while no work is on. Always
+    /// `false` while it is not open.
+    pub awake: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
@@ -382,6 +439,7 @@ pub enum ApiResponse {
         #[serde(default)]
         headless: bool,
     },
+    /// Answer of `list_projects` and `reorder_projects`, in the project order.
     Projects {
         projects: Vec<ProjectInfo>,
     },
@@ -409,8 +467,15 @@ pub enum ApiResponse {
         /// The chat's orchestrator is being started (now, or by an earlier call).
         starting: bool,
     },
+    /// Answer of `get_branch_order` and `reorder_branches`.
+    BranchOrder {
+        keys: Vec<String>,
+    },
     GitOverview {
         git: GitOverview,
+    },
+    BranchStatuses {
+        statuses: BranchStatuses,
     },
     Usage {
         usage: UsageReport,

@@ -22,10 +22,10 @@ import { CHAT_LOG, chatSnapshot } from "./chats";
 import { FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
 
-export const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false };
+export const BETA: ProjectInfo = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false, awake: true };
 /** The remote host has a project whose id is the local one's (ids come from directory names). */
-export const FAR_REPO: ProjectInfo = { id: "repo", name: "repo", path: "/srv/repo", open: false, running: false };
-export const FAR_ONLY: ProjectInfo = { id: "server-only", name: "server-only", path: "/srv/server-only", open: false, running: false };
+export const FAR_REPO: ProjectInfo = { id: "repo", name: "repo", path: "/srv/repo", open: false, running: false, awake: false };
+export const FAR_ONLY: ProjectInfo = { id: "server-only", name: "server-only", path: "/srv/server-only", open: false, running: false, awake: false };
 
 export const CONNECTED: HostConnection = { state: "connected", session: 1 };
 export const COMPATIBLE: HostCompatibility = { type: "compatible" };

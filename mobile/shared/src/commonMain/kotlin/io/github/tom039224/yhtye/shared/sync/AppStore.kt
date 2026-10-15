@@ -78,6 +78,8 @@ class AppStore(
         val gitCommits: Long = 120,
         /** ドメインの変化の後に git を読み直すまでの間 (変化はまとまって来る)。 */
         val gitRefreshMs: Long = 400,
+        /** ブランチの PR / マージの状態を使い回す間 (`gh` はネットワークを使う)。 */
+        val branchStatusTtlMs: Long = 60_000,
         /** 表示していないプロジェクトで作業が始まった・終わった後にプロジェクト一覧を読み直すまでの間。 */
         val activityRefreshMs: Long = 200,
         /** 使用量を読み直す間隔 (つながっていて前面の間。コアは 1 分キャッシュする)。 */
@@ -124,6 +126,8 @@ class AppStore(
     private var pingTimer: Job? = null
     private var pinging = false
     private var clientsToken = 0L
+    /** 読み・ドラッグ・`branch_order_changed` ごとに進める: 最後のものだけを残す。 */
+    private var branchOrderToken = 0L
     private var foreground = true
     private var started = false
     private val background = BackgroundTurns()
@@ -170,12 +174,60 @@ class AppStore(
         }
     }
 
+    /**
+     * プロジェクトをユーザーが並べた順にする ([ids] は一覧の全部)。すぐ出し、コアの一覧に置き換える。断られたら
+     * コアの順に戻す。
+     */
+    suspend fun reorderProjects(ids: List<String>) {
+        onConfined {
+            val before = _state.value.projects
+            set { it.copy(projects = ids.flatMap { id -> before.filter { p -> p.id == id } }) }
+            val r = report<ApiResponse.Projects>(ApiCommand.ReorderProjects(ids))
+            if (r != null) set { it.copy(projects = r.projects) } else refreshProjects()
+        }
+    }
+
+    /**
+     * 表示中のプロジェクトのブランチをユーザーが並べた順にする: [keys] は画面に出ているものの順 (作業ツリーのパスと
+     * ブランチ名)。ほかのキーはコアがそのまま続ける。すぐ出す。
+     */
+    suspend fun reorderBranches(keys: List<String>) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val token = ++branchOrderToken
+            val known = _state.value.branchOrder?.takeIf { it.project == project }?.keys.orEmpty()
+            set { it.copy(branchOrder = BranchOrderView(project, mergeOrder(keys, known))) }
+            val r = report<ApiResponse.BranchOrder>(ApiCommand.ReorderBranches(project, keys))
+            if (r == null) refreshBranchOrder() else if (token == branchOrderToken) setBranchOrder(project, r.keys)
+        }
+    }
+
+    /** 表示中のプロジェクトのブランチの順を読み直す (失敗したら前のまま: 順は好みでしかない)。 */
+    suspend fun refreshBranchOrder() {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val token = ++branchOrderToken
+            val r = try {
+                core.expect<ApiResponse.BranchOrder>(ApiCommand.GetBranchOrder(project))
+            } catch (e: RpcException) {
+                return@onConfined
+            }
+            if (token == branchOrderToken) setBranchOrder(project, r.keys)
+        }
+    }
+
+    private fun setBranchOrder(project: String, keys: List<String>) {
+        if (_state.value.project?.info?.id != project) return
+        set { it.copy(branchOrder = BranchOrderView(project, keys)) }
+    }
+
     suspend fun openProject(path: String) {
         onConfined {
             set { it.copy(busy = it.busy.copy(opening = true)) }
             try {
                 val r = report<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs) ?: return@onConfined
-                set { it.copy(projects = upsertProject(it.projects, r.project)) }
+                // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
+                set { it.copy(projects = toFrontProject(it.projects, r.project)) }
                 load(r.project)
             } finally {
                 set { it.copy(busy = it.busy.copy(opening = false)) }
@@ -314,6 +366,28 @@ class AppStore(
         }
     }
 
+    /**
+     * チャットを眠らせる: オーケストレータのプロセスを止める (保存したセッションは残るので、次の文で戻ってくる)。
+     * 断られたら (ターンが動いている) エラーに出す。
+     */
+    suspend fun sleepChat(chat: String) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            report<ApiResponse.Accepted>(ApiCommand.SleepChat(project, chat))
+        }
+    }
+
+    /**
+     * プロジェクトのチャットをみな眠らせる (表示していないプロジェクトも): すべてのオーケストレータのプロセスを止めて、
+     * プロジェクトは動いていない扱いになる。一括で、断られたら (どれかのターンが動いている) 何も止めずエラーに出す。
+     * 表示していないプロジェクトの一覧は、コアの `session_stopped` を受けて更新する。
+     */
+    suspend fun sleepProject(project: String) {
+        onConfined {
+            report<ApiResponse.Accepted>(ApiCommand.SleepProject(project))
+        }
+    }
+
     /** タスクを中止する (そのエージェントを止める)。 */
     suspend fun cancelTask(task: String) {
         onConfined {
@@ -373,18 +447,42 @@ class AppStore(
             val project = _state.value.project?.info?.id ?: return@onConfined
             val token = ++gitToken
             val prev = _state.value.git?.takeIf { it.project == project }
-            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty())) }
+            val statuses = prev?.statuses
+            val statusesAt = prev?.statusesAt ?: 0
+            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty(), statuses = statuses, statusesAt = statusesAt)) }
             try {
                 val r = core.expect<ApiResponse.GitOverview>(ApiCommand.GetGitOverview(project, options.gitCommits))
                 if (token != gitToken) return@onConfined
                 // 待っていたチャットは全部作られた後に読んだ: その作業ツリーは載っている
-                set { it.copy(git = GitView(project, r.git)) }
+                set { it.copy(git = GitView(project, r.git, statuses = statuses, statusesAt = statusesAt)) }
+                refreshBranchStatuses()
             } catch (e: RpcException) {
                 if (token != gitToken) return@onConfined
                 set {
                     val git = it.git?.takeIf { g -> g.project == project } ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
                     it.copy(git = git.copy(error = describe(e), loading = false))
                 }
+            }
+        }
+    }
+
+    /**
+     * ブランチの PR / マージの状態を読み直す (BRANCHES の木の点)。最近読んだものは使い回す (`gh` はネット
+     * ワークを使う)。失敗したら前のまま (点は次の読み直しまで「不明」)。
+     */
+    suspend fun refreshBranchStatuses(force: Boolean = false) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val prev = _state.value.git?.takeIf { it.project == project }
+            if (!force && prev?.statuses != null && now() - prev.statusesAt < options.branchStatusTtlMs) return@onConfined
+            try {
+                val r = core.expect<ApiResponse.BranchStatuses>(ApiCommand.GetBranchStatuses(project))
+                if (_state.value.project?.info?.id != project) return@onConfined
+                val git = _state.value.git?.takeIf { it.project == project }
+                    ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
+                set { it.copy(git = git.copy(project = project, statuses = r.statuses, statusesAt = now())) }
+            } catch (_: RpcException) {
+                // 前のまま (上を見よ)。
             }
         }
     }
@@ -425,6 +523,7 @@ class AppStore(
         background.forget(info.id)
         prefs.set(LAST_PROJECT_KEY, info.path)
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
         try {
             val snap = core.expect<ApiResponse.Snapshot>(ApiCommand.GetSnapshot(info.id)).snapshot
             if (token != loadToken) return
@@ -552,12 +651,17 @@ class AppStore(
         scope.launch { refreshProjects() }
         scope.launch { resync(view.info) }
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
     }
 
     /** アプリ全体のイベント (プロジェクトが無い): 他のクライアントから、または追いつきのヒント。 */
     private fun onAppWide(body: ApiEventBody) {
         when (body) {
             is ApiEventBody.ProjectsChanged -> scope.launch { refreshProjects() }
+            is ApiEventBody.BranchOrderChanged -> {
+                branchOrderToken++ // 読んでいる途中の答えより新しい
+                setBranchOrder(body.project, body.keys)
+            }
             is ApiEventBody.SettingsChanged -> settings.notify(SettingsChange(body.kind, body.project, body.revision))
             ApiEventBody.Resync -> catchUpAll()
             is ApiEventBody.ClientsChanged -> {
@@ -579,6 +683,7 @@ class AppStore(
         if (_state.value.project?.phase != LoadPhase.Ready) return
         requestCatchUp()
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
         openSelectedChat()
     }
 
@@ -792,8 +897,8 @@ class AppStore(
     }
 }
 
-private fun upsertProject(list: List<ProjectInfo>, p: ProjectInfo): List<ProjectInfo> =
-    if (list.any { it.id == p.id }) list.map { if (it.id == p.id) p else it } else list + p
+/** [p] を先頭に (一覧に無ければ足す、あれば置き換える)。 */
+private fun toFrontProject(list: List<ProjectInfo>, p: ProjectInfo): List<ProjectInfo> = listOf(p) + list.filter { it.id != p.id }
 
 /** 保存されたイベント (`list_events`) を流れてくるイベントと同じ形に。 */
 internal fun toApiEvent(e: LoggedEvent): ApiEvent = ApiEvent(e.seq, e.tsMs, e.project, e.live, e.body)

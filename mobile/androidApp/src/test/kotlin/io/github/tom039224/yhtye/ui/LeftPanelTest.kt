@@ -6,24 +6,35 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
+import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatus
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.ClientKind
 import io.github.tom039224.yhtye.shared.api.generated.ClientServer
 import io.github.tom039224.yhtye.shared.api.generated.Clients
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
+import io.github.tom039224.yhtye.shared.api.generated.GitWorktree
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.YhtyeTheme
@@ -57,8 +68,8 @@ class LeftPanelTest {
     @After
     fun tearDown() = h.close()
 
-    private val other = ProjectInfo(id = "other", name = "other-repo", path = "/tmp/other", open = false, running = false)
-    private val busy = ProjectInfo(id = "busy", name = "busy-repo", path = "/tmp/busy", open = true, running = true)
+    private val other = ProjectInfo(id = "other", name = "other-repo", path = "/tmp/other", open = false, running = false, awake = false)
+    private val busy = ProjectInfo(id = "busy", name = "busy-repo", path = "/tmp/busy", open = true, running = true, awake = true)
 
     @Test
     fun `the picker lists the projects and a tap opens the chosen one`() {
@@ -103,6 +114,183 @@ class LeftPanelTest {
         rule.onNode(hasContentDescription("busy-repo に切り替え (実行中)")).assertExists()
         rule.onNodeWithTag("bg-project-${busy.id}").performClick()
         h.settle { h.sync.state.value.project?.info?.id == busy.id }
+    }
+
+    @Test
+    fun `the picker lists the project it opened first and a long press moves one`() {
+        h.open { projects = listOf(other, PROJECT) }
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performClick()
+        val ids = { h.sync.state.value.projects.map { it.id } }
+        // 開いたプロジェクトは使ったので先頭 (コアの一覧では other が先だった)
+        assertEquals(listOf(PROJECT.id, other.id), ids())
+
+        rule.onNodeWithTag("project-option-${other.id}").performTouchInput { longClick() }
+        // 下の項目は「下へ」が選べない
+        rule.onNodeWithTag("project-move-${other.id}-down").assertIsNotEnabled()
+        rule.onNodeWithTag("project-move-${other.id}-up").performClick()
+        h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
+        assertEquals(listOf(other.id, PROJECT.id), h.core.callsOf<ApiCommand.ReorderProjects>().single().ids)
+        h.settle { ids() == listOf(other.id, PROJECT.id) }
+        // 一覧は開いたまま
+        assertTrue(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `the background chips trade the places they have among all the projects`() {
+        val second = busy.copy(id = "busy2", name = "busy-two", path = "/tmp/busy2")
+        h.open { projects = listOf(PROJECT, busy, second, other) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${busy.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("bg-move-${busy.id}-up").assertIsNotEnabled()
+        rule.onNodeWithTag("bg-move-${busy.id}-down").performClick()
+        h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
+        // 開いていない other は動かない: busy と busy2 が入れ替わる
+        assertEquals(listOf(PROJECT.id, second.id, busy.id, other.id), h.core.callsOf<ApiCommand.ReorderProjects>().single().ids)
+    }
+
+    @Test
+    fun `worktrees follow the branch order and a long press moves one`() {
+        val feat = "/tmp/feat-x"
+        h.open {
+            git = git.copy(
+                branches = git.branches + GitBranch("feat/x", "f".repeat(40)),
+                worktrees = git.worktrees + GitWorktree(feat, "feat/x", "f".repeat(40), isMain = false, missing = false),
+            )
+            branchOrder = listOf(feat)
+        }
+        h.openLeft()
+        h.settle { h.sync.state.value.branchOrder?.keys == listOf(feat) }
+        val order = { h.sync.state.value.branchOrder?.keys }
+        // 作業ツリーの行は順どおり (feat/x が先)
+        val rows = rule.onAllNodes(SemanticsMatcher("a worktree row") { it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith("worktree-") == true })
+        rows[0].assert(hasTestTag("worktree-$feat"))
+
+        rule.onNodeWithTag("worktree-$feat").performTouchInput { longClick() }
+        rule.onNodeWithTag("worktree-move-$feat-up").assertIsNotEnabled()
+        rule.onNodeWithTag("worktree-move-$feat-down").performClick()
+        h.settle { h.core.callsOf<ApiCommand.ReorderBranches>().isNotEmpty() }
+        assertEquals(listOf(h.core.worktree, feat), h.core.callsOf<ApiCommand.ReorderBranches>().single().keys)
+        h.settle { order() == listOf(h.core.worktree, feat) }
+    }
+
+    @Test
+    fun `other branches reorder from their long-press menu and follow another client`() {
+        h.open {
+            git = git.copy(branches = git.branches + listOf(GitBranch("topic", "t".repeat(40)), GitBranch("alpha", "a".repeat(40))))
+        }
+        h.openLeft()
+        rule.onNodeWithTag("other-branches").performClick()
+        rule.onNodeWithTag("other-branch-alpha").performTouchInput { longClick() }
+        rule.onNodeWithTag("other-move-alpha-down").assertIsNotEnabled()
+        rule.onNodeWithTag("other-move-alpha-up").performClick()
+        h.settle { h.core.callsOf<ApiCommand.ReorderBranches>().isNotEmpty() }
+        assertEquals(listOf("alpha", "topic"), h.core.callsOf<ApiCommand.ReorderBranches>().single().keys)
+        // 他のクライアントの並べ替えも反映される
+        h.core.emit(appWide(ApiEventBody.BranchOrderChanged(PROJECT.id, listOf("topic", "alpha"))))
+        h.settle { h.sync.state.value.branchOrder?.keys == listOf("topic", "alpha") }
+    }
+
+    @Test
+    fun `the project menu holds the move entries and sleep together`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("bg-move-${awake.id}-up").assertIsNotEnabled()
+        rule.onNodeWithTag("bg-move-${awake.id}-down").assertIsNotEnabled()
+        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled()
+        // 一覧の行でも同じ: 並べ替えは一覧を開いたまま、スリープは閉じる
+        rule.onNodeWithTag("project-picker").performClick()
+        rule.onNodeWithTag("project-option-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("project-move-${awake.id}-up").performClick()
+        h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
+        assertTrue(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `a long press on a background chip opens a menu that sleeps the project`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        // 切り替えは起きない (メニューを開いただけ)
+        assertEquals(listOf(PROJECT.path), h.core.callsOf<ApiCommand.OpenProject>().map { it.path })
+        assertFalse(h.exists("menu-sleep-${awake.id}"))
+    }
+
+    @Test
+    fun `sleep is disabled for a background project while a chat of it works`() {
+        h.open { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        rule.onNodeWithTag("bg-project-${busy.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${busy.id}").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `a background chip leaves once the core says its orchestrators stopped`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake) }
+        h.openLeft()
+        assertTrue(h.exists("bg-project-${awake.id}"))
+        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        h.core.projects = listOf(PROJECT, awake.copy(awake = false))
+        h.core.emit(ApiEvent(1, 0, awake.id, false, ApiEventBody.SessionStopped("orchestrator:C-1", suspended = false)))
+        h.settle { !h.exists("bg-project-${awake.id}") }
+    }
+
+    @Test
+    fun `a long press on a row of the picker sleeps that project and closes the list`() {
+        val awake = busy.copy(running = false)
+        h.open { projects = listOf(PROJECT, awake, other) }
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performClick()
+        rule.onNodeWithTag("project-option-${other.id}").performTouchInput { longClick() }
+        // 開いていないプロジェクトには眠らせるものが無い
+        rule.onNodeWithTag("menu-sleep-${other.id}").assertIsNotEnabled()
+        rule.onNodeWithTag("project-option-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        assertEquals(listOf(PROJECT.path), h.core.callsOf<ApiCommand.OpenProject>().map { it.path })
+        assertFalse(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `the project on screen sleeps from a long press on the picker button`() {
+        h.open()
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        // 開いたままのプロジェクトはオーケストレータが上がっているので眠らせられる
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsEnabled().performClick()
+        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        assertEquals(listOf(ApiCommand.SleepProject(PROJECT.id)), h.core.callsOf<ApiCommand.SleepProject>())
+        assertFalse(h.exists("project-popup"))
+    }
+
+    @Test
+    fun `sleep is disabled for the project on screen while its chats all sleep`() {
+        val orchestrator = "orchestrator:C-1"
+        val end = h.recording.end
+        h.open(end.copy(sessions = end.sessions.filter { it.sessionKey != orchestrator }))
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
+    }
+
+    @Test
+    fun `sleep is disabled for the project on screen while its orchestrator works`() {
+        val orchestrator = "orchestrator:C-1"
+        val end = h.recording.end
+        h.open(end.copy(sessions = end.sessions.map { if (it.sessionKey == orchestrator) it.copy(turnRunning = true) else it }))
+        h.openLeft()
+        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
     }
 
     @Test
@@ -178,6 +366,63 @@ class LeftPanelTest {
         rule.onNodeWithTag("other-branch-feat/x").performClick()
         h.settle { h.core.callsOf<ApiCommand.CreateChat>().isNotEmpty() }
         assertEquals("feat/x", h.core.callsOf<ApiCommand.CreateChat>().single().branch)
+    }
+
+    @Test
+    fun `branch rows show the PR merge status as an icon with its Japanese label`() {
+        h.open {
+            git = git.copy(
+                branches = git.branches + listOf("feat/x", "ship", "redo", "old").map { GitBranch(it, it.first().toString().repeat(40)) },
+                worktrees = git.worktrees + listOf("feat/x", "ship", "redo").map {
+                    GitWorktree("/tmp/$it", it, it.first().toString().repeat(40), isMain = false, missing = false)
+                },
+            )
+            branchStatuses = BranchStatuses(
+                "main",
+                listOf(
+                    BranchStatus("feat/x", BranchState.PrOpen, 7, "https://example.test/u/repo/pull/7"),
+                    BranchStatus("ship", BranchState.Merged, 9, "https://example.test/u/repo/pull/9"),
+                    BranchStatus("redo", BranchState.MergedWithChanges, 8, "https://example.test/u/repo/pull/8"),
+                    BranchStatus("old", BranchState.Unmerged, null, null),
+                ),
+            )
+        }
+        h.openLeft()
+        h.settle { h.sync.state.value.git?.statuses != null }
+        // 既定のブランチはラベルの無いブランチのアイコンのまま
+        rule.onNodeWithTag("main-clone", useUnmergedTree = true)
+            .assertExists()
+            .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
+        // 開いた PR は PR のアイコン、マージ済みはマージのアイコン (その後の変更があれば点も)
+        assertStatusIcon("PR 作成済み (#7)", "pullRequest")
+        assertStatusIcon("PR でマージ済み (#9)", "merge")
+        assertStatusIcon("PR でマージ済み・未マージの変更あり (#8)", "merge")
+        rule.onAllNodesWithTag("branch-status-badge", useUnmergedTree = true).assertCountEquals(1)
+        rule.onNode(
+            hasTestTag("branch-status-badge") and hasAnyAncestor(hasContentDescription("PR でマージ済み・未マージの変更あり (#8)")),
+            useUnmergedTree = true,
+        ).assertExists()
+        // 作業ツリーの無いブランチにもアイコンが出る
+        rule.onNodeWithTag("other-branches").performClick()
+        assertStatusIcon("まだ取り込まれていません", "branch")
+    }
+
+    /** [label] の付いた状態のアイコンが [icon] (YIcons の名前) の形で出ている。 */
+    private fun assertStatusIcon(label: String, icon: String) {
+        rule.onNode(hasTestTag("branch-icon-$icon") and hasAnyAncestor(hasContentDescription(label)), useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `a branch without an entry reads unknown and the statuses are reused`() {
+        h.open {
+            git = git.copy(
+                worktrees = git.worktrees + GitWorktree("/tmp/mystery", "mystery", "m".repeat(40), isMain = false, missing = false),
+            )
+        }
+        h.openLeft()
+        h.settle { h.sync.state.value.git?.statuses != null }
+        assertStatusIcon("状態不明", "help")
+        assertEquals(1, h.core.callsOf<ApiCommand.GetBranchStatuses>().size)
     }
 
     @Test

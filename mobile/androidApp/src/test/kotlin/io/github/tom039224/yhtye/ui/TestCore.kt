@@ -12,6 +12,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.Candidate
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
@@ -33,6 +34,7 @@ import io.github.tom039224.yhtye.shared.client.ApiException
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.CoreConnection
 import io.github.tom039224.yhtye.shared.sync.of
+import io.github.tom039224.yhtye.shared.sync.sortByOrder
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
 import java.io.File
@@ -61,7 +63,7 @@ fun readRecording(name: String = "fake-run.json"): Recording {
 /** アプリ全体のイベント (コアが送る形: プロジェクトなし・seq 0・live)。 */
 fun appWide(body: ApiEventBody): ApiEvent = ApiEvent(0, 0, "", true, body)
 
-val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false)
+val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false, awake = false)
 
 /**
  * 画面のテスト用のコア (共通モジュールのテストの `FakeCore` の小さい版)。記録のスナップショットとログに答え、
@@ -83,6 +85,12 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
     /** `list_projects` の答え (`open_project` はパスが合うものを返す)。 */
     var projects: List<ProjectInfo> = listOf(PROJECT)
 
+    /** プロジェクトの順 (id。新しく使った順)。`open_project` は使ったことにする。 */
+    var projectOrder: List<String> = emptyList()
+
+    /** プロジェクトのブランチの順 (キー。新しく使った順)。 */
+    var branchOrder: List<String> = emptyList()
+
     val worktree = snapshot.chats.firstOrNull()?.worktree ?: "/tmp/repo"
     var git = GitOverview(
         head = "main",
@@ -92,6 +100,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         commits = emptyList(),
         truncated = false,
     )
+
+    /** `get_branch_statuses` の答え。 */
+    var branchStatuses = BranchStatuses("main", emptyList())
 
     /** ペアリング済みの端末 (`list_clients`)。 */
     var devices: List<ClientDevice> = emptyList()
@@ -138,8 +149,23 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         return when (command) {
             ApiCommand.Ping -> ApiResponse.Pong("test-host", hostVersion, hostHeadless)
             ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer("test-host"), devices))
-            ApiCommand.ListProjects -> ApiResponse.Projects(projects)
-            is ApiCommand.OpenProject -> ApiResponse.Project(projects.find { it.path == command.path } ?: PROJECT)
+            ApiCommand.ListProjects -> ApiResponse.Projects(sortByOrder(projects, projectOrder) { it.id })
+            is ApiCommand.OpenProject -> {
+                val project = projects.find { it.path == command.path } ?: PROJECT
+                projectOrder = listOf(project.id) + projectOrder.filter { it != project.id }
+                ApiResponse.Project(project)
+            }
+            is ApiCommand.ReorderProjects -> {
+                val ids = command.ids.filter { id -> projects.any { it.id == id } }.distinct()
+                projectOrder = ids + projectOrder.filter { it !in ids }
+                ApiResponse.Projects(sortByOrder(projects, projectOrder) { it.id })
+            }
+            is ApiCommand.GetBranchOrder -> ApiResponse.BranchOrder(branchOrder)
+            is ApiCommand.ReorderBranches -> {
+                val keys = command.keys.filter { it.isNotEmpty() }.distinct()
+                branchOrder = keys + branchOrder.filter { it !in keys }
+                ApiResponse.BranchOrder(branchOrder)
+            }
             is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)
             is ApiCommand.ListEvents -> {
                 val after = log.filter { !it.live && it.seq > command.afterSeq }
@@ -147,6 +173,7 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
                 ApiResponse.Events(page.map { LoggedEvent(it.seq, it.tsMs, it.project, false, it.body) }, more = after.size > page.size)
             }
             is ApiCommand.GetGitOverview -> ApiResponse.GitOverview(git)
+            is ApiCommand.GetBranchStatuses -> ApiResponse.BranchStatuses(branchStatuses)
             is ApiCommand.OpenChat -> ApiResponse.ChatOpened(false)
             is ApiCommand.RenameChat -> {
                 val chat = snapshot.chats.first { it.id == command.chat }

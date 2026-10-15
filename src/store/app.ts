@@ -19,7 +19,7 @@
 //   keys this store saves under and the keys the UI makes from a project id carry
 //   the host's `keyScope` ("" for the local core, "host:<id>:" for a remote one).
 
-import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
 import type { HostCompatibility } from "../api/remoteHosts";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
@@ -53,6 +53,8 @@ export const HISTORY_PAGE = 400;
 export const GIT_COMMITS = 120;
 /** Delay before re-reading git after a domain change (changes come in bursts). */
 export const GIT_REFRESH_MS = 400;
+/** How long the branch PR / merge statuses are reused before `gh` is asked again. */
+export const BRANCH_STATUS_TTL_MS = 60_000;
 /** Delay before the project list is re-read after work started or ended in a project not on screen. */
 export const ACTIVITY_REFRESH_MS = 200;
 /** Preference key: path of the project opened last (reopened after a reload). */
@@ -79,6 +81,17 @@ export interface GitView {
    * in a new worktree): not shown as "not found" until git is read again.
    */
   awaiting: string[];
+  /** PR / merge status per branch (the dots of the BRANCHES tree). */
+  statuses: BranchStatuses | null;
+  /** When `statuses` was last read (ms since the epoch). */
+  statusesAt: number;
+}
+
+/** The order of the open project's branches (the core's list, most recently used first). */
+export interface BranchOrderView {
+  project: string;
+  /** Worktree paths and branch names; see `branchTree.ts`. */
+  keys: string[];
 }
 
 /** Subscription usage for the status bar (read from the harness by the core). */
@@ -141,6 +154,8 @@ export interface AppState {
   errors: AppError[];
   busy: { opening: boolean; sending: boolean; compacting: boolean };
   git: GitView | null;
+  /** The branch order of the open project (`null` until it was read). */
+  branchOrder: BranchOrderView | null;
   usage: UsageView;
   host: HostView;
   /** The paired devices (the core's `list_clients`), as the core ordered them. */
@@ -167,6 +182,8 @@ export class AppStore extends SettingsCommands {
   private pinging = false;
   /** Bumped by every read and `clients_changed`: only the newest one is kept. */
   private clientsToken = 0;
+  /** Bumped by every read, drag and `branch_order_changed`: only the newest answer is kept. */
+  private branchOrderToken = 0;
   /** Per-device preferences; the UI keeps its own small ones (panel sizes) here too. */
   readonly prefs: Prefs;
   /** Unsent composer text per chat (kept while another chat or project is shown). */
@@ -193,6 +210,7 @@ export class AppStore extends SettingsCommands {
       errors: [],
       busy: { opening: false, sending: false, compacting: false },
       git: null,
+      branchOrder: null,
       usage: { report: null, error: null, loading: false },
       host: { name: null, version: null, compatibility: null, headless: false, lastPingAt: null },
       clients: [],
@@ -260,11 +278,41 @@ export class AppStore extends SettingsCommands {
     try {
       const r = await this.run({ type: "open_project", path }, "project");
       if (!r) return;
-      this.set({ projects: upsertProject(this.state.projects, r.project) });
+      // Opening a project uses it: it is first now (the core says so too).
+      this.set({ projects: toFrontProject(this.state.projects, r.project) });
       await this.load(r.project);
     } finally {
       this.set({ busy: { ...this.state.busy, opening: false } });
     }
+  }
+
+  /**
+   * Puts the projects in the order the user made (`ids` is the whole list).
+   * Shown at once; the core's listing replaces it, and a refusal puts the
+   * order back as the core has it.
+   */
+  async reorderProjects(ids: string[]): Promise<void> {
+    const before = this.state.projects;
+    this.set({ projects: ids.flatMap((id) => before.filter((p) => p.id === id)) });
+    const r = await this.run({ type: "reorder_projects", ids }, "projects");
+    if (r) this.set({ projects: r.projects });
+    else void this.refreshProjects();
+  }
+
+  /**
+   * Puts the open project's branches in the order the user made: `keys` is the
+   * order of the items on screen (worktree paths and branch names); the core
+   * keeps the others where they were. Shown at once.
+   */
+  async reorderBranches(keys: string[]): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (!project) return;
+    const token = ++this.branchOrderToken;
+    const known = this.state.branchOrder?.project === project ? this.state.branchOrder.keys : [];
+    this.set({ branchOrder: { project, keys: mergeKeys(keys, known) } });
+    const r = await this.run({ type: "reorder_branches", project, keys }, "branch_order");
+    if (!r) return void this.refreshBranchOrder();
+    if (token === this.branchOrderToken) this.setBranchOrder(project, r.keys);
   }
 
   /** Returns whether the message was accepted (the composer keeps it otherwise). */
@@ -398,6 +446,28 @@ export class AppStore extends SettingsCommands {
     this.updateChats((v) => removeChatNow(v, chat));
   }
 
+  /**
+   * Puts a chat to sleep: stops its orchestrator process (its stored session
+   * is kept, so the next message brings it back). Refusals (a turn is running)
+   * are shown as errors.
+   */
+  async sleepChat(chat: string): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (!project) return;
+    await this.run({ type: "sleep_chat", project, chat }, "accepted");
+  }
+
+  /**
+   * Puts every chat of a project to sleep (any project, not only the one on
+   * screen): stops all their orchestrator processes, so the project is no
+   * longer awake. All or nothing: a refusal (a turn is running in one of the
+   * chats) is shown as an error. The project list follows the `session_stopped`
+   * events of a project that is not on screen.
+   */
+  async sleepProject(project: string): Promise<void> {
+    await this.run({ type: "sleep_project", project }, "accepted");
+  }
+
   async cancelTask(task: string): Promise<void> {
     const project = this.state.project?.info.id;
     if (project) await this.run({ type: "cancel_task", project, task }, "accepted");
@@ -447,6 +517,24 @@ export class AppStore extends SettingsCommands {
     }
   }
 
+  /** Reads the open project's branch order again (a failure keeps the last one). */
+  async refreshBranchOrder(): Promise<void> {
+    const project = this.state.project?.info.id;
+    if (!project) return;
+    const token = ++this.branchOrderToken;
+    try {
+      const r = await this.invoke({ type: "get_branch_order", project }, "branch_order");
+      if (token === this.branchOrderToken) this.setBranchOrder(project, r.keys);
+    } catch {
+      // Kept as it was: an order is only a preference.
+    }
+  }
+
+  private setBranchOrder(project: string, keys: string[]): void {
+    if (this.state.project?.info.id !== project) return;
+    this.set({ branchOrder: { project, keys } });
+  }
+
   /** Re-reads the open project's branches and commit graph. */
   async refreshGit(): Promise<void> {
     const view = this.state.project;
@@ -455,16 +543,42 @@ export class AppStore extends SettingsCommands {
     const token = ++this.gitToken;
     const prev = this.state.git?.project === project ? this.state.git : null;
     const awaiting = prev?.awaiting ?? [];
-    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true, awaiting } });
+    const statuses = prev?.statuses ?? null;
+    const statusesAt = prev?.statusesAt ?? 0;
+    this.set({ git: { project, overview: prev?.overview ?? null, error: null, loading: true, awaiting, statuses, statusesAt } });
     try {
       const r = await this.invoke({ type: "get_git_overview", project, limit: GIT_COMMITS }, "git_overview");
       if (token !== this.gitToken) return;
       // Read after every chat it was waiting for was made: their worktrees are in it.
-      this.set({ git: { project, overview: r.git, error: null, loading: false, awaiting: [] } });
+      this.set({ git: { project, overview: r.git, error: null, loading: false, awaiting: [], statuses, statusesAt } });
+      void this.refreshBranchStatuses();
     } catch (e) {
       if (token !== this.gitToken) return;
       const error = toCommandError(e).message;
-      this.set({ git: { ...(this.state.git ?? { project, overview: null, awaiting }), project, error, loading: false } });
+      this.set({ git: { ...(this.state.git ?? { project, overview: null, awaiting, statuses, statusesAt }), project, error, loading: false } });
+    }
+  }
+
+  /**
+   * Re-reads the branches' PR / merge statuses (the dots of the BRANCHES
+   * tree), unless they were read recently: `gh` uses the network. A failure
+   * keeps the last ones (the dots then read "unknown" until the next read).
+   */
+  async refreshBranchStatuses(force = false): Promise<void> {
+    const view = this.state.project;
+    if (!view) return;
+    const project = view.info.id;
+    const prev = this.state.git?.project === project ? this.state.git : null;
+    if (!force && prev?.statuses && Date.now() - prev.statusesAt < BRANCH_STATUS_TTL_MS) return;
+    try {
+      const r = await this.invoke({ type: "get_branch_statuses", project }, "branch_statuses");
+      if (this.state.project?.info.id !== project) return;
+      const git = this.state.git?.project === project
+        ? this.state.git
+        : { project, overview: null, error: null, loading: false, awaiting: [] as string[], statuses: null as BranchStatuses | null, statusesAt: 0 };
+      this.set({ git: { ...git, project, statuses: r.statuses, statusesAt: Date.now() } });
+    } catch {
+      // Kept as they were (see above).
     }
   }
 
@@ -506,6 +620,7 @@ export class AppStore extends SettingsCommands {
     if (left) this.scheduleActivityRefresh();
     this.prefs.set(this.keyScope + LAST_PROJECT_KEY, info.path);
     void this.refreshGit();
+    void this.refreshBranchOrder();
     try {
       const snap = await this.invoke({ type: "get_snapshot", project: info.id }, "snapshot");
       if (token !== this.loadToken) return;
@@ -619,6 +734,7 @@ export class AppStore extends SettingsCommands {
       void this.refreshProjects();
       void this.resync(view.info);
       void this.refreshGit();
+      void this.refreshBranchOrder();
     } else if (this.reopenOnConnect) {
       void this.reopenLast();
     } else {
@@ -631,6 +747,10 @@ export class AppStore extends SettingsCommands {
     switch (body.type) {
       case "projects_changed":
         void this.refreshProjects();
+        return;
+      case "branch_order_changed":
+        this.branchOrderToken++; // newer than a read on its way
+        this.setBranchOrder(body.project, body.keys);
         return;
       case "settings_changed":
         this.settingsChanges.emit({ kind: body.kind, project: body.project ?? null, revision: body.revision ?? null });
@@ -660,6 +780,7 @@ export class AppStore extends SettingsCommands {
     if (view?.phase !== "ready") return;
     this.requestCatchUp();
     void this.refreshGit();
+    void this.refreshBranchOrder();
     this.openSelectedChat();
   }
 
@@ -861,6 +982,12 @@ export class AppStore extends SettingsCommands {
   }
 }
 
-function upsertProject(list: ProjectInfo[], p: ProjectInfo): ProjectInfo[] {
-  return list.some((x) => x.id === p.id) ? list.map((x) => (x.id === p.id ? p : x)) : [...list, p];
+/** `p` first, replacing its entry (or added when the list did not have it). */
+function toFrontProject(list: ProjectInfo[], p: ProjectInfo): ProjectInfo[] {
+  return [p, ...list.filter((x) => x.id !== p.id)];
+}
+
+/** `keys`, then the ones of `rest` they do not name (what the core stores for a reorder). */
+function mergeKeys(keys: string[], rest: string[]): string[] {
+  return [...keys, ...rest.filter((k) => !keys.includes(k))];
 }

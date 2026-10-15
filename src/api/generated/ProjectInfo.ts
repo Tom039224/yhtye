@@ -17,4 +17,10 @@ open: boolean,
  * running or merging (what the sidebar's turning ring shows). Always
  * `false` while it is not open.
  */
-running: boolean, };
+running: boolean, 
+/**
+ * One of its chats has an orchestrator session up (live): the project is
+ * awake, so its ring is green (`ready`) even while no work is on. Always
+ * `false` while it is not open.
+ */
+awake: boolean, };

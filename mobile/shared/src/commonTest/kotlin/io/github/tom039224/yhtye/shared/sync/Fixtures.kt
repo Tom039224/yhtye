@@ -47,7 +47,7 @@ val CANCEL_RUN: Recording by lazy { recording("fake-cancel.json") }
 /** オーケストレータが落ち着いたグループを開けたままにし、Yhtye が催促してから終える (Stage 7a)。 */
 val UNFINISHED_RUN: Recording by lazy { recording("fake-unfinished.json") }
 
-val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false)
+val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false, awake = false)
 
 fun durable(r: Recording): List<ApiEvent> = r.events.filter { !it.live }
 

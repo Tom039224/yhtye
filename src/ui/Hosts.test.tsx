@@ -116,11 +116,12 @@ describe("the project pull-down across hosts", () => {
     expect(t.localTransport.callsOf("open_project")).toEqual([]);
 
     // The list is still every host's, the open one is marked, and so is the pull-down itself.
+    // Opening a project uses it (T-103), so within its host's rows it is the first.
     const trigger = screen.getByRole("button", { name: /^server-only/ });
     expect(marks(trigger)).toHaveLength(1);
     await user.click(trigger);
     const options = screen.getAllByRole("option");
-    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["false", "false", "false", "true"]);
+    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["false", "false", "true", "false"]);
   });
 
   it("keeps the same project of another host apart from the one on screen", async () => {
@@ -153,6 +154,47 @@ describe("the project pull-down across hosts", () => {
   });
 });
 
+describe("sleeping and moving projects in the pull-down across hosts", () => {
+  it("offers the menu and the drag on the rows of this PC only while this PC is on screen", async () => {
+    const user = mount(<Sidebar />);
+    await started();
+    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
+    const options = screen.getAllByRole("option");
+    // repo, beta (this PC's), then repo, server-only (the host's).
+    expect(options.map((o) => o.getAttribute("draggable"))).toEqual(["true", "true", null, null]);
+
+    await user.pointer({ keys: "[MouseRight]", target: options[3] });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    await user.pointer({ keys: "[MouseRight]", target: options[1] });
+    const menu = screen.getByRole("menu", { name: "beta の操作" });
+    await user.click(within(menu).getByRole("menuitem", { name: "上へ移動" }));
+    expect(t.localTransport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["beta", "repo"]);
+    expect(t.fars.get("sid-1")?.transport.callsOf("reorder_projects")).toEqual([]);
+  });
+
+  it("sends the move of a remote host's project to that host, and leaves this PC's rows alone", async () => {
+    const user = mount(<Sidebar />);
+    await started();
+    await showRemote();
+    await user.click(screen.getByRole("button", { name: /^server-only/ }));
+    const options = screen.getAllByRole("option");
+    // The host's own rows are the ones that can be moved now.
+    expect(options.map((o) => o.getAttribute("draggable"))).toEqual([null, null, "true", "true"]);
+
+    await user.pointer({ keys: "[MouseRight]", target: options[0] });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    // Opening server-only used it: it is the host's first.
+    await user.pointer({ keys: "[MouseRight]", target: options[2] });
+    const menu = screen.getByRole("menu", { name: "server-only の操作" });
+    expect(within(menu).getByRole("menuitem", { name: "上へ移動" })).toBeDisabled();
+    await user.click(within(menu).getByRole("menuitem", { name: "下へ移動" }));
+    expect(t.fars.get("sid-1")?.transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["repo", "server-only"]);
+    expect(t.localTransport.callsOf("reorder_projects")).toEqual([]);
+  });
+});
+
 describe("the projects running in the background", () => {
   it("carry the mark when they are a remote host's, and not otherwise", async () => {
     mount(<Sidebar />);
@@ -162,7 +204,7 @@ describe("the projects running in the background", () => {
     expect(screen.queryAllByRole("img", { name: /^リモート/ })).toEqual([]);
 
     const far = t.fars.get("sid-1")!;
-    far.core.others = [{ ...FAR_ONLY, open: true }];
+    far.core.others = [{ ...FAR_ONLY, open: true, awake: true }];
     await act(() => far.store.refreshProjects());
     await act(() => t.registry.selectProject("sid-1", FAR_REPO));
     const chip = await screen.findByRole("button", { name: /^server-only に切り替え/ });

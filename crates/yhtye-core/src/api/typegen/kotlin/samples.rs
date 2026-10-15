@@ -21,7 +21,9 @@ use crate::api::{
     WsServerMessage,
 };
 use crate::domain::{DomainEvent, Role, ToolError};
-use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
+use crate::git::{
+    BranchState, BranchStatus, BranchStatuses, GitBranch, GitCommit, GitOverview, GitWorktree,
+};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{
     ClientKind, Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError,
@@ -107,6 +109,27 @@ fn commands() -> Vec<Sample> {
             json!({"type": "compact_chat", "project": "repo", "chat": "C-1"}),
         ),
         (
+            "sleep_chat",
+            json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
+        ),
+        (
+            "reorder_projects",
+            json!({"type": "reorder_projects", "ids": ["repo", "beta"]}),
+        ),
+        (
+            "get_branch_order",
+            json!({"type": "get_branch_order", "project": "repo"}),
+        ),
+        (
+            "reorder_branches",
+            json!({"type": "reorder_branches", "project": "repo",
+                "keys": ["/home/u/repo", "feat/x"]}),
+        ),
+        (
+            "sleep_project",
+            json!({"type": "sleep_project", "project": "repo"}),
+        ),
+        (
             "list_chats",
             json!({"type": "list_chats", "project": "repo"}),
         ),
@@ -149,6 +172,10 @@ fn commands() -> Vec<Sample> {
         (
             "get_git_overview",
             json!({"type": "get_git_overview", "project": "repo", "limit": 120}),
+        ),
+        (
+            "get_branch_statuses",
+            json!({"type": "get_branch_statuses", "project": "repo"}),
         ),
         ("get_usage", json!({"type": "get_usage", "refresh": true})),
         ("get_usage/default", json!({"type": "get_usage"})),
@@ -278,6 +305,7 @@ fn project_info(open: bool) -> ProjectInfo {
         path: "/home/u/repo".into(),
         open,
         running: open,
+        awake: open,
     }
 }
 
@@ -617,6 +645,12 @@ fn responses() -> Vec<Sample> {
             },
         ),
         (
+            "branch_order",
+            ApiResponse::BranchOrder {
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
+            },
+        ),
+        (
             "snapshot",
             ApiResponse::Snapshot {
                 snapshot: snapshot(),
@@ -644,6 +678,46 @@ fn responses() -> Vec<Sample> {
         ),
         ("chat_opened", ApiResponse::ChatOpened { starting: true }),
         ("git_overview", ApiResponse::GitOverview { git }),
+        (
+            "branch_statuses",
+            ApiResponse::BranchStatuses {
+                statuses: BranchStatuses {
+                    default_branch: Some("main".into()),
+                    statuses: vec![
+                        BranchStatus {
+                            branch: "feature/a".into(),
+                            state: BranchState::Unmerged,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                        BranchStatus {
+                            branch: "feature/b".into(),
+                            state: BranchState::PrOpen,
+                            pr_number: Some(123),
+                            pr_url: Some("https://github.com/u/repo/pull/123".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/c".into(),
+                            state: BranchState::Merged,
+                            pr_number: Some(122),
+                            pr_url: Some("https://github.com/u/repo/pull/122".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/d".into(),
+                            state: BranchState::MergedWithChanges,
+                            pr_number: Some(121),
+                            pr_url: Some("https://github.com/u/repo/pull/121".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/e".into(),
+                            state: BranchState::Unknown,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                    ],
+                },
+            },
+        ),
         ("usage", ApiResponse::Usage { usage }),
         (
             "agent_settings",
@@ -1230,6 +1304,13 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             "projects_changed".into(),
             ApiEventBody::ProjectsChanged {
                 project: "repo".into(),
+            },
+        ),
+        (
+            "branch_order_changed".into(),
+            ApiEventBody::BranchOrderChanged {
+                project: "repo".into(),
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (

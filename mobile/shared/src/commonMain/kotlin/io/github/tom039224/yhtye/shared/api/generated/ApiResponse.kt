@@ -31,6 +31,9 @@ sealed interface ApiResponse {
         val headless: Boolean = false,
     ) : ApiResponse
 
+    /**
+     * Answer of `list_projects` and `reorder_projects`, in the project order.
+     */
     @Serializable
     data class Projects(
         val projects: List<ProjectInfo>,
@@ -82,9 +85,22 @@ sealed interface ApiResponse {
         val starting: Boolean,
     ) : ApiResponse
 
+    /**
+     * Answer of `get_branch_order` and `reorder_branches`.
+     */
+    @Serializable
+    data class BranchOrder(
+        val keys: List<String>,
+    ) : ApiResponse
+
     @Serializable
     data class GitOverview(
         val git: io.github.tom039224.yhtye.shared.api.generated.GitOverview,
+    ) : ApiResponse
+
+    @Serializable
+    data class BranchStatuses(
+        val statuses: io.github.tom039224.yhtye.shared.api.generated.BranchStatuses,
     ) : ApiResponse
 
     @Serializable
@@ -176,7 +192,9 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("chats", Chats.serializer()) { it is Chats },
             TaggedVariant<ApiResponse>("chat", Chat.serializer()) { it is Chat },
             TaggedVariant<ApiResponse>("chat_opened", ChatOpened.serializer()) { it is ChatOpened },
+            TaggedVariant<ApiResponse>("branch_order", BranchOrder.serializer()) { it is BranchOrder },
             TaggedVariant<ApiResponse>("git_overview", GitOverview.serializer()) { it is GitOverview },
+            TaggedVariant<ApiResponse>("branch_statuses", BranchStatuses.serializer()) { it is BranchStatuses },
             TaggedVariant<ApiResponse>("usage", Usage.serializer()) { it is Usage },
             TaggedVariant<ApiResponse>("agent_settings", AgentSettings.serializer()) { it is AgentSettings },
             TaggedVariant<ApiResponse>("harness_models", HarnessModels.serializer()) { it is HarnessModels },

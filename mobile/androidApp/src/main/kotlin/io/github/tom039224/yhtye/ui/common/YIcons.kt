@@ -47,6 +47,8 @@ object YIcons {
     val Send = lineIcon("send", "M12 19V5", "M5 12l7-7 7 7")
     val ChevronRight = lineIcon("chevR", "M9 18l6-6-6-6")
     val ChevronDown = lineIcon("chevD", "M6 9l6 6 6-6")
+    val ArrowUp = lineIcon("arrowU", "M12 19V5", "M6 11l6-6 6 6")
+    val ArrowDown = lineIcon("arrowD", "M12 5v14", "M6 13l6 6 6-6")
     val ChevronsUp = lineIcon("chevronsUp", "m17 11-5-5-5 5", "m17 18-5-5-5 5")
     val Plus = lineIcon("plus", "M12 5v14", "M5 12h14")
     val MessagePlus = lineIcon(
@@ -58,6 +60,8 @@ object YIcons {
     val Message = lineIcon("message", "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z")
     val Branch = lineIcon("branch", "M6 3v12", "M18 9a9 9 0 0 1-9 9", circle(18f, 6f, 3f), circle(6f, 18f, 3f))
     val Merge = lineIcon("merge", circle(18f, 18f, 3f), circle(6f, 6f, 3f), "M6 21V9a9 9 0 0 0 9 9")
+    /** 開いた PR (lucide の git-pull-request-arrow。PC の git-pull-request と同じく矢印で戻る形)。 */
+    val PullRequest = lineIcon("pullRequest", circle(5f, 6f, 3f), "M5 9v12", circle(19f, 18f, 3f), "m15 9-3-3 3-3", "M12 6h5a2 2 0 0 1 2 2v7")
     val Check = lineIcon("check", "M20 6 9 17l-5-5")
     val X = lineIcon("x", "M18 6 6 18", "M6 6l12 12")
     val Loader = lineIcon("loader", "M21 12a9 9 0 1 1-6.2-8.56")
@@ -80,6 +84,7 @@ object YIcons {
         "M17 22v-4.17a2 2 0 0 0-.59-1.42L12 12l-4.41 4.41A2 2 0 0 0 7 17.83V22",
         "M7 2v4.17a2 2 0 0 0 .59 1.42L12 12l4.41-4.41A2 2 0 0 0 17 6.17V2",
     )
+    val Moon = lineIcon("moon", "M19 14.5A7.5 7.5 0 0 1 9.5 5A7.5 7.5 0 1 0 19 14.5Z")
     val Code = lineIcon("code", "M16 18l6-6-6-6", "M8 6l-6 6 6 6")
     val Eye = lineIcon("eye", "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z", circle(12f, 12f, 3f))
     val Search = lineIcon("search", circle(11f, 11f, 7f), "M21 21l-4.3-4.3")

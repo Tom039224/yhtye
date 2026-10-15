@@ -9,8 +9,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::chats::{
-    Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, new_chat, none, repo_config,
-    said, say, settle, start, started, wait,
+    Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, is_stopped, new_chat, none,
+    repo_config, said, say, settle, start, started, wait,
 };
 use common::fake_harness;
 use common::orch::{
@@ -18,10 +18,11 @@ use common::orch::{
 };
 use common::repo::{PROJECT, TempRepo};
 use serde_json::{Value, json};
+use yhtye_core::acp::AgentEvent;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::domain::{DomainEvent, GroupStatus, orchestrator_session};
+use yhtye_core::domain::{DomainEvent, ErrorCode, GroupStatus, orchestrator_session};
 use yhtye_core::git::worktree_root;
-use yhtye_core::runtime::Orchestration;
+use yhtye_core::runtime::{Orchestration, UserActionError};
 use yhtye_core::store::SessionStatus;
 
 #[tokio::test]
@@ -404,6 +405,19 @@ fn started_of(e: &ApiEvent, session: &str) -> Vec<()> {
     }
 }
 
+/// The error sleeping `chat` gives (`panic` if it was accepted).
+async fn sleep_error(orch: &Orchestration, chat: &str) -> ErrorCode {
+    match orch.sleep_chat(chat).await {
+        Ok(()) => panic!("sleeping {chat} was accepted"),
+        Err(UserActionError::Rejected(e)) => e.code,
+        Err(e) => panic!("unexpected {e:?}"),
+    }
+}
+
+fn orch_turn_ended(e: &ApiEvent) -> bool {
+    matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(_) } if session == "orchestrator:C-1")
+}
+
 #[tokio::test]
 async fn a_chat_whose_stored_session_cannot_be_loaded_gets_a_new_one_and_a_summary() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -696,5 +710,214 @@ async fn a_branch_whose_chat_could_not_be_made_is_rolled_back_so_a_retry_works()
     let again = orch.create_branch("topic", None).await;
     let text = format!("{again:?}");
     assert!(!text.contains("already exists"), "{text}");
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleep_stops_the_orchestrator_and_a_message_starts_it_again_with_its_session() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [
+        {"match": "first", "actions": [{"message": "hi"}]},
+        {"match": "second", "actions": [{"message": "back"}]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
+    let chat = new_chat(&orch, "main").await;
+
+    // A chat that never started is already asleep; an unknown chat is not found.
+    orch.sleep_chat(&chat).await.expect("sleeping an idle chat");
+    settle(&mut rx, &mut events).await;
+    assert!(
+        started(&events, "orchestrator:C-1").is_empty(),
+        "nothing started"
+    );
+    assert_eq!(sleep_error(&orch, "C-9").await, ErrorCode::NotFound);
+
+    say(&orch, &chat, "first").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-1", "hi")).await;
+    wait(&mut rx, &mut events, orch_turn_ended).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, true),
+        "up but idle"
+    );
+
+    orch.sleep_chat(&chat).await.expect("sleep");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, false),
+        "asleep"
+    );
+    // Sleeping again changes nothing.
+    orch.sleep_chat(&chat).await.expect("sleeping again");
+    settle(&mut rx, &mut events).await;
+
+    say(&orch, &chat, "second").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-1", "back")).await;
+    let starts = started(&events, "orchestrator:C-1");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(
+        starts[1].1,
+        "the stored session was loaded again: {starts:?}"
+    );
+    assert_persisted(&orch).await;
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleep_is_refused_while_the_orchestrator_is_working() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [{"match": "work", "actions": ["wait_cancel"]}]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, json!({"turns": []}))).await;
+    let chat = new_chat(&orch, "main").await;
+    say(&orch, &chat, "work").await;
+    wait(&mut rx, &mut events, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "orchestrator:C-1")
+    })
+    .await;
+
+    assert_eq!(sleep_error(&orch, &chat).await, ErrorCode::InvalidState);
+
+    // Once the turn is stopped the chat sleeps.
+    orch.cancel_orchestrator_turn(&chat).await.expect("cancel");
+    wait(&mut rx, &mut events, orch_turn_ended).await;
+    orch.sleep_chat(&chat).await.expect("sleep after the turn");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    assert_eq!(
+        prompts_to(&events, "orchestrator:C-1").len(),
+        1,
+        "nothing was sent"
+    );
+    shutdown_and_check(orch, &events).await;
+}
+
+/// The error sleeping the whole project gives (`panic` if it was accepted).
+async fn sleep_project_error(orch: &Orchestration) -> ErrorCode {
+    match orch.sleep_project().await {
+        Ok(()) => panic!("sleeping the project was accepted"),
+        Err(UserActionError::Rejected(e)) => e.code,
+        Err(e) => panic!("unexpected {e:?}"),
+    }
+}
+
+fn turn_ended_of(e: &ApiEvent, session: &str) -> bool {
+    matches!(&e.body, ApiEventBody::Agent { session: s, event: AgentEvent::TurnEnded(_) } if s == session)
+}
+
+#[tokio::test]
+async fn sleeping_the_project_stops_every_chats_orchestrator_and_a_message_wakes_one_again() {
+    let r = TempRepo::new();
+    r.git(&["branch", "feature"]);
+    let script = json!({"turns": [
+        {"match": "first", "actions": [{"message": "hi"}]},
+        {"match": "second", "actions": [{"message": "back"}]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
+    let main = new_chat(&orch, "main").await;
+    let feature = new_chat(&orch, "feature").await;
+    let _unused = new_chat(&orch, "main").await;
+    assert_eq!(
+        (main.as_str(), feature.as_str()),
+        ("C-1", "C-2"),
+        "the chats the test talks to"
+    );
+
+    // Nothing is up yet: the project already sleeps.
+    orch.sleep_project()
+        .await
+        .expect("sleeping a sleeping project");
+    settle(&mut rx, &mut events).await;
+    assert!(
+        started(&events, "orchestrator:C-1").is_empty(),
+        "nothing started"
+    );
+
+    say(&orch, &main, "first").await;
+    say(&orch, &feature, "first").await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-1")
+    })
+    .await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-2")
+    })
+    .await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, true),
+        "up but idle"
+    );
+
+    orch.sleep_project().await.expect("sleep the project");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-2")).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, false),
+        "asleep"
+    );
+    // Sleeping again changes nothing.
+    orch.sleep_project().await.expect("sleeping again");
+    settle(&mut rx, &mut events).await;
+
+    // A message wakes only its own chat, with its stored session.
+    say(&orch, &feature, "second").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-2", "back")).await;
+    let starts = started(&events, "orchestrator:C-2");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(
+        starts[1].1,
+        "the stored session was loaded again: {starts:?}"
+    );
+    assert_eq!(
+        started(&events, "orchestrator:C-1").len(),
+        1,
+        "the other chat sleeps on"
+    );
+    assert_persisted(&orch).await;
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleeping_the_project_is_refused_while_any_orchestrator_is_working_and_stops_none() {
+    let r = TempRepo::new();
+    r.git(&["branch", "feature"]);
+    let script = json!({"turns": [
+        {"match": "idle", "actions": [{"message": "hi"}]},
+        {"match": "work", "actions": ["wait_cancel"]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, json!({"turns": []}))).await;
+    let idle = new_chat(&orch, "main").await;
+    let busy = new_chat(&orch, "feature").await;
+    say(&orch, &idle, "idle").await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-1")
+    })
+    .await;
+    say(&orch, &busy, "work").await;
+    wait(&mut rx, &mut events, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "orchestrator:C-2")
+    })
+    .await;
+
+    // The idle chat could sleep, but the project sleeps all or none.
+    assert_eq!(sleep_project_error(&orch).await, ErrorCode::InvalidState);
+    settle(&mut rx, &mut events).await;
+    assert!(
+        !events.iter().any(|e| is_stopped(e, "orchestrator:C-1")),
+        "the idle chat was stopped by a refused sleep"
+    );
+    assert_eq!(orch.activity().await.expect("activity"), (true, true));
+
+    // Once the turn is stopped the project sleeps.
+    orch.cancel_orchestrator_turn(&busy).await.expect("cancel");
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-2")
+    })
+    .await;
+    orch.sleep_project().await.expect("sleep after the turn");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-2")).await;
+    assert_eq!(orch.activity().await.expect("activity"), (false, false));
     shutdown_and_check(orch, &events).await;
 }
