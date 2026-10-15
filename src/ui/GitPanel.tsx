@@ -2,6 +2,7 @@ import { type ReactNode, useMemo } from "react";
 
 import type { GitCommit, GitOverview, Group, State } from "../api/generated";
 import { scopeState } from "../store/chats";
+import { parseYhtyeBranch } from "../store/names";
 import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { placeOf } from "./branchTree";
@@ -31,19 +32,23 @@ interface BranchLabel {
   icon?: IconName;
 }
 
-/** `yhtye/G-1-T-2` → T-2's tone; `yhtye/G-1` → the group; the base branch → base. */
+/**
+ * A task branch (`yhtye/<group>--<task>`, older `yhtye/G-1-T-2`) → the task's tone; a group
+ * branch (`yhtye/<group>`) → the group; the base branch → base. The badge text may be cut short
+ * (names are up to 32 characters); `title` keeps the whole.
+ */
 function branchLabel(name: string, state: State | null, base: string | null): BranchLabel {
   if (name === base) return { text: name, tone: "base", title: name };
-  const task = /^yhtye\/(G-\d+)-(T-\d+)$/.exec(name);
-  if (task && state) {
-    const t = state.tasks.find((x) => x.id === task[2]);
+  const parsed = parseYhtyeBranch(name);
+  if (parsed?.kind === "task" && state) {
+    const { task } = parsed;
+    const t = state.tasks.find((x) => x.id === task);
     if (t) {
       const tone = taskTone(t);
       return { text: t.id, tone, title: `${t.id} ${TONE_LABEL[tone]}`, icon: toneIcon(tone, t.kind) };
     }
   }
-  const group = /^yhtye\/(G-\d+)$/.exec(name);
-  if (group) return { text: group[1], tone: "other", title: name };
+  if (parsed?.kind === "group") return { text: parsed.group, tone: "other", title: name };
   return { text: name, tone: "other", title: name };
 }
 
@@ -221,7 +226,7 @@ function Badges({ commit, isHead, state, base, head }: { commit: GitCommit; isHe
         return (
           <span key={b} className={`git-badge ${cls}`} title={label.title}>
             {label.icon ? <Icon name={label.icon} size={10} /> : null}
-            {label.text}
+            <span className="git-badge-text">{label.text}</span>
           </span>
         );
       })}

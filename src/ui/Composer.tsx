@@ -125,9 +125,8 @@ export function Composer({
                 onClick={() => onRemoveMention(m.task)}
               >
                 <Icon name="at" size={12} className="at" />
-                <span className="label">
-                  {m.task} {m.title}
-                </span>
+                <span className="mention-id">{m.task}</span>
+                <span className="label">{m.title}</span>
                 <Icon name="x" size={10} className="x" />
               </button>
             ))}
