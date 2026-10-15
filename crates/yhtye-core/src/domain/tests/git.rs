@@ -25,33 +25,30 @@ fn merge_conflict_raises_help_and_retries_after_a_fix_step() {
     });
     sim.group();
     sim.task(json!({}));
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-1"), TaskStatus::Handling);
-    let help = sim.state.open_help("T-1").expect("help").clone();
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t1"), TaskStatus::Handling);
+    let help = sim.state.open_help("t1").expect("help").clone();
     assert_eq!(help.kind, HelpKind::MergeConflict);
     assert!(help.message.contains("README.md"));
     assert_eq!(
-        sim.t("T-1").steps[1].status,
+        sim.t("t1").steps[1].status,
         StepStatus::Pending,
         "done reset"
     );
 
     let (reply, _) = sim.orch_ok(
         ToolName::ModifySteps,
-        json!({"task_id": "T-1", "steps": [{"kind": "implement", "instruction": "merge the group branch and resolve"}]}),
+        json!({"task_id": "t1", "steps": [{"kind": "implement", "instruction": "merge the group branch and resolve"}]}),
     );
     assert_eq!(reply["steps"].as_array().map(Vec::len), Some(3));
     let (_, chain) = sim.orch_ok(
         ToolName::AnswerHelp,
         json!({"help_id": help.id, "action": "resume"}),
     );
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 1)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 1)]);
     assert!(prompt_of(&chain).contains("merge the group branch and resolve"));
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -60,12 +57,12 @@ fn resume_without_changes_retries_the_merge() {
     sim.git = finish_once(GitResult::Conflict { files: vec![] });
     sim.group();
     sim.task(json!({}));
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     sim.orch_ok(
         ToolName::AnswerHelp,
         json!({"help_id": "H-1", "action": "resume"}),
     );
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -76,8 +73,8 @@ fn dirty_investigate_tree_raises_help() {
     });
     sim.group();
     sim.task(json!({"kind": "investigate"}));
-    sim.report("T-1", Role::Implementer, None);
-    let help = sim.state.open_help("T-1").expect("help");
+    sim.report("t1", Role::Implementer, None);
+    let help = sim.state.open_help("t1").expect("help");
     assert_eq!(help.kind, HelpKind::DirtyReadonlyTree);
 }
 
@@ -95,17 +92,14 @@ fn workspace_failure_raises_git_failed_and_resume_retries() {
     let chain = sim.task(json!({}));
     assert!(run_steps(&chain).is_empty());
     assert_eq!(
-        sim.state.open_help("T-1").map(|h| h.kind),
+        sim.state.open_help("t1").map(|h| h.kind),
         Some(HelpKind::GitFailed)
     );
     let (_, chain) = sim.orch_ok(
         ToolName::AnswerHelp,
         json!({"help_id": "H-1", "action": "resume"}),
     );
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 0)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 0)]);
 }
 
 #[test]
@@ -123,7 +117,7 @@ fn group_branch_failure_cancels_the_group_and_fails_the_call() {
     let err = chain.reply.expect("reply").expect_err("error reply");
     assert_eq!(err.code, ErrorCode::Internal);
     assert_eq!(
-        sim.state.group("G-1").map(|g| g.status),
+        sim.state.group("g1").map(|g| g.status),
         Some(GroupStatus::Cancelled)
     );
 }
@@ -140,7 +134,7 @@ fn blocked_group_merge_is_merge_blocked_and_can_be_cancelled() {
     sim.group();
     let (reply, _) = sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "nothing"}),
+        json!({"group_id": "g1", "summary": "nothing"}),
     );
     assert_eq!(reply["status"], json!("merge_blocked"));
     assert_eq!(
@@ -150,7 +144,7 @@ fn blocked_group_merge_is_merge_blocked_and_can_be_cancelled() {
     // A merge_blocked group does not block a new one, and can be cancelled.
     sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "drop"}),
+        json!({"group_id": "g1", "reason": "drop"}),
     );
     sim.group();
 }
@@ -162,7 +156,7 @@ fn cancelling_a_group_removes_its_integration_worktree_after_the_tasks() {
     sim.task(json!({}));
     let (_, chain) = sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "drop"}),
+        json!({"group_id": "g1", "reason": "drop"}),
     );
     let git: Vec<&GitOp> = chain
         .effects
@@ -202,17 +196,15 @@ fn retrying_a_blocked_merge_merges_and_tells_the_orchestrator() {
     sim.group();
     sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "did it"}),
+        json!({"group_id": "g1", "summary": "did it"}),
     );
     sim.deliver_inbox();
-    let retry = || DomainCommand::RetryGroupMerge {
-        group: "G-1".into(),
-    };
+    let retry = || DomainCommand::RetryGroupMerge { group: "g1".into() };
 
     // Still blocked: merge_blocked again, and the orchestrator hears about it.
     sim.run(retry()).expect("retry runs");
     assert_eq!(
-        sim.state.group("G-1").map(|g| g.status),
+        sim.state.group("g1").map(|g| g.status),
         Some(GroupStatus::MergeBlocked)
     );
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::MergeResult]);
@@ -220,7 +212,7 @@ fn retrying_a_blocked_merge_merges_and_tells_the_orchestrator() {
 
     unblocked.set(true);
     let chain = sim.run(retry()).expect("retry runs");
-    let g = sim.state.group("G-1").expect("group");
+    let g = sim.state.group("g1").expect("group");
     assert_eq!(g.status, GroupStatus::Done);
     assert_eq!(g.finish_summary.as_deref(), Some("did it"), "summary kept");
     assert!(has_effect(&chain, |e| matches!(
@@ -240,12 +232,12 @@ fn only_a_blocked_merge_can_be_retried_and_not_while_another_group_is_open() {
     let mut sim = Sim::new();
     let retry = |g: &str| DomainCommand::RetryGroupMerge { group: g.into() };
     assert_eq!(
-        sim.run(retry("G-9")).map(|_| ()).unwrap_err().code,
+        sim.run(retry("g9")).map(|_| ()).unwrap_err().code,
         ErrorCode::NotFound
     );
     sim.group();
     assert_eq!(
-        sim.run(retry("G-1")).map(|_| ()).unwrap_err().code,
+        sim.run(retry("g1")).map(|_| ()).unwrap_err().code,
         ErrorCode::InvalidState
     );
     sim.git = Box::new(|op| match op {
@@ -256,11 +248,11 @@ fn only_a_blocked_merge_can_be_retried_and_not_while_another_group_is_open() {
     });
     sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "s"}),
+        json!({"group_id": "g1", "summary": "s"}),
     );
-    sim.group(); // G-2 is active now
+    sim.group(); // g2 is active now
     assert_eq!(
-        sim.run(retry("G-1")).map(|_| ()).unwrap_err().code,
+        sim.run(retry("g1")).map(|_| ()).unwrap_err().code,
         ErrorCode::Conflict
     );
 }

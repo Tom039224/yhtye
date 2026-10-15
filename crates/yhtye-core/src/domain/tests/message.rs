@@ -33,7 +33,7 @@ fn a_running_step_gets_the_message_through_the_runtime() {
     let mut sim = running();
     let before = sim.state.clone();
     let chain = sim
-        .tool(orch(), ToolName::MessageTask, message("T-1", "use tabs"))
+        .tool(orch(), ToolName::MessageTask, message("t1", "use tabs"))
         .expect("accepted");
     assert!(
         chain.reply.is_none(),
@@ -41,12 +41,12 @@ fn a_running_step_gets_the_message_through_the_runtime() {
     );
     assert_eq!(
         deliveries(&chain),
-        vec![(agent("T-1", Role::Implementer, 0), "use tabs".into())]
+        vec![(agent("t1", Role::Implementer, 0), "use tabs".into())]
     );
     assert_eq!(
         chain.events,
         vec![DomainEvent::TaskMessageSent {
-            task: "T-1".into(),
+            task: "t1".into(),
             step: 0,
             text: "use tabs".into(),
         }]
@@ -67,7 +67,7 @@ fn the_runtime_settling_a_message_answers_the_call() {
     ] {
         let chain = sim
             .run(DomainCommand::MessageResolved {
-                task: "T-1".into(),
+                task: "t1".into(),
                 step: 0,
                 outcome,
                 via,
@@ -77,12 +77,12 @@ fn the_runtime_settling_a_message_answers_the_call() {
         let reply = chain.reply.expect("reply").expect("ok reply");
         assert_eq!(
             reply,
-            json!({"task_id": "T-1", "step": 0, "outcome": outcome, "via": via, "detail": detail})
+            json!({"task_id": "t1", "step": 0, "outcome": outcome, "via": via, "detail": detail})
         );
         assert_eq!(
             chain.events,
             vec![DomainEvent::TaskMessageResolved {
-                task: "T-1".into(),
+                task: "t1".into(),
                 step: 0,
                 outcome,
                 via,
@@ -98,21 +98,18 @@ fn a_review_step_can_be_messaged_too() {
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
     sim.deliver_inbox();
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.t("T-1").current, 1);
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.t("t1").current, 1);
     let chain = sim
         .tool(
             orch(),
             ToolName::MessageTask,
-            message("T-1", "also check the docs"),
+            message("t1", "also check the docs"),
         )
         .expect("accepted");
     assert_eq!(
         deliveries(&chain),
-        vec![(
-            agent("T-1", Role::Reviewer, 1),
-            "also check the docs".into()
-        )]
+        vec![(agent("t1", Role::Reviewer, 1), "also check the docs".into())]
     );
 }
 
@@ -120,7 +117,7 @@ fn a_review_step_can_be_messaged_too() {
 fn a_step_that_already_reported_gets_the_message_back_at_once() {
     let mut sim = running();
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::ReportStepDone,
         json!({"result": "done"}),
     );
@@ -128,7 +125,7 @@ fn a_step_that_already_reported_gets_the_message_back_at_once() {
         .tool(
             orch(),
             ToolName::MessageTask,
-            message("T-1", "one more thing"),
+            message("t1", "one more thing"),
         )
         .expect("answered");
     assert!(deliveries(&chain).is_empty());
@@ -160,13 +157,13 @@ fn a_step_that_has_not_started_gets_the_message_back_at_once() {
     let create = sim.tool_cmd(
         orch(),
         ToolName::CreateTask,
-        json!({"group_id": "G-1", "title": "t", "kind": "code",
+        json!({"group_id": "g1", "title": "t", "kind": "code",
                "steps": [{"kind": "implement"}], "instruction": "do it"}),
     );
     sim.step(create).expect("created");
-    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+    assert_eq!(sim.status("t1"), TaskStatus::Running);
     let chain = sim
-        .tool(orch(), ToolName::MessageTask, message("T-1", "hi"))
+        .tool(orch(), ToolName::MessageTask, message("t1", "hi"))
         .expect("answered");
     let reply = chain.reply.expect("reply").expect("ok reply");
     assert_eq!(reply["outcome"], "returned");
@@ -183,7 +180,7 @@ fn the_text_must_not_be_empty() {
     let mut sim = running();
     for text in ["", "  \n"] {
         assert_eq!(
-            sim.orch_err(ToolName::MessageTask, message("T-1", text)),
+            sim.orch_err(ToolName::MessageTask, message("t1", text)),
             ErrorCode::InvalidArgument
         );
     }
@@ -193,12 +190,12 @@ fn the_text_must_not_be_empty() {
 fn unknown_tasks_and_other_chats_are_refused() {
     let mut sim = running();
     assert_eq!(
-        sim.orch_err(ToolName::MessageTask, message("T-9", "hi")),
+        sim.orch_err(ToolName::MessageTask, message("t9", "hi")),
         ErrorCode::NotFound
     );
     let other = sim.chat("feature");
     let err = sim
-        .tool(orch_of(&other), ToolName::MessageTask, message("T-1", "hi"))
+        .tool(orch_of(&other), ToolName::MessageTask, message("t1", "hi"))
         .expect_err("another chat's task");
     assert_eq!(err.code, ErrorCode::Forbidden);
 }
@@ -208,7 +205,7 @@ fn a_second_message_while_one_is_being_delivered_conflicts() {
     let mut sim = running();
     let call = parse_call(
         ToolName::MessageTask,
-        message("T-1", "again").as_object().cloned(),
+        message("t1", "again").as_object().cloned(),
     )
     .expect("args");
     let crate::mcp::ToolCall::MessageTask(args) = call else {
@@ -250,30 +247,30 @@ fn other_states_say_what_to_do_instead() {
         match status {
             "handling" => {
                 sim.sub_ok(
-                    sub("T-1", Role::Implementer, 0),
+                    sub("t1", Role::Implementer, 0),
                     ToolName::Help,
                     json!({"kind": "question", "message": "?"}),
                 );
             }
             "done" => {
-                sim.report("T-1", Role::Implementer, None);
+                sim.report("t1", Role::Implementer, None);
             }
             "cancelled" => {
                 sim.orch_ok(
                     ToolName::CancelTask,
-                    json!({"task_id": "T-1", "reason": "r"}),
+                    json!({"task_id": "t1", "reason": "r"}),
                 );
             }
             _ => {}
         }
         let err = sim
-            .tool(orch(), ToolName::MessageTask, message("T-1", "hi"))
+            .tool(orch(), ToolName::MessageTask, message("t1", "hi"))
             .expect_err("not running");
         assert_eq!(err.code, ErrorCode::InvalidState, "{status}");
         assert!(err.message.contains(hint), "{status}: {}", err.message);
         assert!(
             err.message
-                .contains(&format!("is {}", sim.status("T-1").as_str()))
+                .contains(&format!("is {}", sim.status("t1").as_str()))
         );
     }
 }

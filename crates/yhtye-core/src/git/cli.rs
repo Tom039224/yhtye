@@ -2,8 +2,9 @@
 //! (`orchestration-model.md` §6, `core-design.md` §7).
 //!
 //! Layout: the group branch is checked out in the group's integration worktree
-//! `<root>/<groupId>/_group` (task branches are merged there, `investigate` tasks
-//! read there); each `code` task has `<root>/<groupId>/<taskId>`. `<root>` is
+//! `<root>/<group>/_group` (task branches are merged there, `investigate` tasks
+//! read there); each `code` task has `<root>/<group>/<task>` (ids: names, or
+//! the numbered `G-<n>` / `T-<n>` of older projects). `<root>` is
 //! outside the repository ([`worktree_root`]), so the user's tree stays clean.
 //! Every operation accepts the results of an earlier, interrupted run of itself.
 
@@ -57,11 +58,42 @@ struct Branches<'a> {
 
 type Step<T> = Result<T, String>;
 
-/// `3` of `G-3` and of `G-3-T-1` (a group branch, a task branch, a directory).
-fn group_number(name: &str) -> Option<u32> {
-    let rest = name.strip_prefix("G-")?;
-    let digits = rest.split(|c: char| !c.is_ascii_digit()).next()?;
-    digits.parse().ok()
+/// The branch (of `yhtye_branches`: the names after `yhtye/`) that already uses
+/// the name of group `group` (`task: None`) or of task `task`, if any: the group
+/// branch or one of the group's task branches; any task branch of that task
+/// name. Compared ignoring case, since refs may live on a case-insensitive
+/// file system.
+fn branch_using_name<'a>(
+    yhtye_branches: &'a [String],
+    group: &str,
+    task: Option<&str>,
+) -> Option<&'a str> {
+    let group = group.to_ascii_lowercase();
+    let uses = |branch: &str| match task {
+        None => {
+            branch == group
+                || branch
+                    .strip_prefix(group.as_str())
+                    .is_some_and(|rest| rest.starts_with("--") || rest.starts_with('/'))
+        }
+        Some(task) => branch
+            .split_once("--")
+            .is_some_and(|(_, t)| t.eq_ignore_ascii_case(task)),
+    };
+    yhtye_branches
+        .iter()
+        .find(|b| uses(&b.to_ascii_lowercase()))
+        .map(String::as_str)
+}
+
+/// The entry of directory `dir` named `name` (ignoring case), if any.
+fn entry_named(dir: &Path, name: &str) -> Option<PathBuf> {
+    // A missing directory just means no worktree was made there.
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(name))
+        .map(|e| e.path())
 }
 
 impl GitCli {
@@ -497,28 +529,25 @@ impl GitService for GitCli {
         branches::discard(&self.repo, name).await
     }
 
-    async fn highest_group_number(&self) -> Result<u32, String> {
+    async fn name_in_git(&self, group: &str, task: Option<&str>) -> Result<Option<String>, String> {
         let refs = git_ok(
             &self.repo,
             &["for-each-ref", "--format=%(refname)", "refs/heads/yhtye/"],
         )
         .await?;
-        let mut highest = refs
+        let branches: Vec<String> = refs
             .lines()
             .filter_map(|r| r.strip_prefix("refs/heads/yhtye/"))
-            .filter_map(group_number)
-            .max()
-            .unwrap_or(0);
-        // A missing worktree root just means no group had a worktree.
-        if let Ok(entries) = std::fs::read_dir(&self.root) {
-            let dirs = entries
-                .flatten()
-                .filter_map(|e| e.file_name().into_string().ok());
-            highest = dirs
-                .filter_map(|d| group_number(&d))
-                .fold(highest, u32::max);
+            .map(str::to_string)
+            .collect();
+        if let Some(branch) = branch_using_name(&branches, group, task) {
+            return Ok(Some(format!("git already has the branch yhtye/{branch}")));
         }
-        Ok(highest)
+        let dir = match task {
+            None => entry_named(&self.root, group),
+            Some(task) => entry_named(&self.root.join(group), task),
+        };
+        Ok(dir.map(|d| format!("the worktree directory {} already exists", d.display())))
     }
 
     async fn run(&self, op: &GitOp) -> GitResult {
@@ -541,5 +570,42 @@ impl GitService for GitCli {
             Err(_) => group_branch.to_string(),
         };
         repo::changes_since(workdir, &base, MAX_CHANGES).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn branches(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| (*n).to_string()).collect()
+    }
+
+    #[test]
+    fn a_group_name_is_used_by_its_branch_or_its_task_branches() {
+        let b = branches(&["G-1", "G-1-T-2", "api", "web--login", "old/x"]);
+        assert_eq!(branch_using_name(&b, "api", None), Some("api"));
+        assert_eq!(branch_using_name(&b, "web", None), Some("web--login"));
+        assert_eq!(branch_using_name(&b, "old", None), Some("old/x"));
+        assert_eq!(
+            branch_using_name(&b, "g-1", None),
+            Some("G-1"),
+            "ignoring case"
+        );
+        for free in ["ap", "api-v2", "we", "login", "g-1-t-2x"] {
+            assert_eq!(branch_using_name(&b, free, None), None, "{free}");
+        }
+    }
+
+    #[test]
+    fn a_task_name_is_used_by_a_task_branch_of_any_group() {
+        let b = branches(&["G-1", "G-1-T-2", "api", "web--login"]);
+        assert_eq!(
+            branch_using_name(&b, "api", Some("login")),
+            Some("web--login")
+        );
+        for free in ["web", "api", "T-2", "t-2", "log"] {
+            assert_eq!(branch_using_name(&b, "api", Some(free)), None, "{free}");
+        }
     }
 }

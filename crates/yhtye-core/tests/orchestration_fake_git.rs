@@ -28,10 +28,19 @@ fn task(title: &str, steps: Value, instruction: &str) -> Value {
         "steps": steps, "instruction": instruction}}})
 }
 
+/// `create_task` action `task` with `name`.
+fn named(mut task: Value, name: &str) -> Value {
+    task["mcp_call"]["args"]["name"] = json!(name);
+    task
+}
+
+/// The planning turn: group `g1`, then `tasks` named `t1`, `t2`, ... in order.
 fn plan(tasks: Vec<Value>) -> Value {
-    let mut actions =
-        vec![json!({"mcp_call": {"tool": "create_group", "args": {"title": "work"}}})];
-    actions.extend(tasks);
+    let mut actions = vec![
+        json!({"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "work"}}}),
+    ];
+    let named_tasks = tasks.into_iter().enumerate();
+    actions.extend(named_tasks.map(|(i, t)| named(t, &format!("t{}", i + 1))));
     actions.push(json!({"message": "planned"}));
     json!({"match": "[yhtye:user_message]", "actions": actions})
 }
@@ -86,8 +95,8 @@ async fn parallel_code_tasks_merge_and_land_on_the_base_branch() {
         finish_turn()
     ]});
     let impl_script = json!({"turns": [
-        write_turn("write-a", "a.txt", "from T-1\n"),
-        write_turn("write-b", "b.txt", "from T-2\n")
+        write_turn("write-a", "a.txt", "from t1\n"),
+        write_turn("write-b", "b.txt", "from t2\n")
     ]});
     let reviewer_script = json!({"turns": [{"match": "[yhtye:step]", "actions": [
         {"mcp_call": {"tool": "report_step_done", "args": {"result": "fine", "verdict": "approve"}}}
@@ -105,21 +114,21 @@ async fn parallel_code_tasks_merge_and_land_on_the_base_branch() {
         "{}",
         finish_reply(&events)
     );
-    assert_eq!(r.read("a.txt"), "from T-1\n");
-    assert_eq!(r.read("b.txt"), "from T-2\n");
-    let review = prompts_to(&events, "T-1/review-1");
+    assert_eq!(r.read("a.txt"), "from t1\n");
+    assert_eq!(r.read("b.txt"), "from t2\n");
+    let review = prompts_to(&events, "t1/review-1");
     assert_eq!(review.len(), 1, "one review");
     assert!(
-        review[0].contains("task branch `yhtye/G-1-T-1`"),
+        review[0].contains("task branch `yhtye/g1--t1`"),
         "{}",
         review[0]
     );
-    assert!(review[0].contains("git diff $(git merge-base yhtye/G-1 HEAD)"));
+    assert!(review[0].contains("git diff $(git merge-base yhtye/g1 HEAD)"));
     let subjects = r.git(&["log", "--format=%s", "main"]);
     for needle in [
-        "Merge yhtye/G-1 (G-1) into main",
-        "Merge yhtye/G-1-T-1 (T-1)",
-        "T-2: b",
+        "Merge yhtye/g1 (g1) into main",
+        "Merge yhtye/g1--t1 (t1)",
+        "t2: b",
     ] {
         assert!(subjects.contains(needle), "{needle} in {subjects}");
     }
@@ -145,7 +154,7 @@ async fn conflicting_edits_raise_merge_conflict_and_merge_after_the_fix() {
     ]});
     let impl_script = json!({"turns": [
         {"match": "resolve-merge", "actions": [
-            {"run": ["git", "merge", "-q", "yhtye/G-1"]},
+            {"run": ["git", "merge", "-q", "yhtye/g1"]},
             {"write_file": {"path": "README.md", "text": "# resolved\n"}},
             {"mcp_call": {"tool": "report_step_done", "args": {"result": "resolved"}}}
         ]},
@@ -206,13 +215,13 @@ async fn a_dirty_base_tree_makes_the_group_merge_blocked() {
     assert_eq!(r.read("README.md"), "# the user's unsaved edit\n");
     assert!(!r.repo.join("c.txt").exists());
     assert_eq!(
-        r.show("yhtye/G-1", "c.txt"),
+        r.show("yhtye/g1", "c.txt"),
         "c\n",
         "the work is on the group branch"
     );
     let snap = orch.snapshot().await.expect("snapshot");
     assert_eq!(
-        snap.state.group("G-1").map(|g| g.status),
+        snap.state.group("g1").map(|g| g.status),
         Some(GroupStatus::MergeBlocked)
     );
     shutdown_and_check(orch, &events).await;
@@ -241,7 +250,7 @@ async fn a_blocked_group_merge_is_retried_after_the_user_cleans_the_tree() {
     assert!(finish_reply(&events).contains("merge_blocked"));
 
     r.git(&["checkout", "--", "README.md"]);
-    let reply = orch.retry_group_merge("G-1").await.expect("retry");
+    let reply = orch.retry_group_merge("g1").await.expect("retry");
     assert_eq!(reply["merge"]["ok"], json!(true), "{reply}");
     assert_eq!(r.read("c.txt"), "c\n");
     assert!(r.extra_worktrees().is_empty(), "{:?}", r.extra_worktrees());
@@ -252,11 +261,11 @@ async fn a_blocked_group_merge_is_retried_after_the_user_cleans_the_tree() {
     let told = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
         told.iter()
-            .any(|p| p.contains("[yhtye:merge_result] group=G-1 ok=true")),
+            .any(|p| p.contains("[yhtye:merge_result] group=g1 ok=true")),
         "{told:?}"
     );
     // Another retry (a second client's) finds it merged: accepted, nothing runs.
-    orch.retry_group_merge("G-1")
+    orch.retry_group_merge("g1")
         .await
         .expect("merged already: accepted");
     let results = |events: &[ApiEvent]| {
@@ -274,8 +283,8 @@ async fn a_restarted_step_in_a_new_session_is_shown_the_work_already_done() {
     let r = TempRepo::new();
     // First run: the implementer writes part of the work, then Yhtye "quits".
     let orch_script = json!({"turns": [{"match": "[yhtye:user_message]", "actions": [
-        {"mcp_call": {"tool": "create_group", "args": {"title": "work"}}},
-        task("d", json!([{"kind": "implement"}]), "write-d"),
+        {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "work"}}},
+        named(task("d", json!([{"kind": "implement"}]), "write-d"), "t1"),
         "wait_cancel"
     ]}]});
     let impl_script = json!({"turns": [{"match": "write-d", "actions": [
@@ -293,7 +302,7 @@ async fn a_restarted_step_in_a_new_session_is_shown_the_work_already_done() {
     let mut first = Vec::new();
     common::orch::send(&orch, "do the work").await;
     until(&mut rx, &mut first, TIMEOUT, |e| {
-        is_message(e, "T-1/implementer", "working on it")
+        is_message(e, "t1/implementer", "working on it")
     })
     .await;
     shutdown_and_check(orch, &first).await;
@@ -314,7 +323,7 @@ async fn a_restarted_step_in_a_new_session_is_shown_the_work_already_done() {
     let mut events = Vec::new();
     until(&mut rx, &mut events, TIMEOUT, finished).await;
 
-    let prompts = prompts_to(&events, "T-1/implementer");
+    let prompts = prompts_to(&events, "t1/implementer");
     assert_eq!(prompts.len(), 1, "{prompts:?}");
     assert!(
         prompts[0].contains("Changes already in the working directory"),

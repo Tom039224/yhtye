@@ -17,7 +17,9 @@ use yhtye_core::api::{ApiEvent, ApiEventBody};
 use yhtye_core::domain::{DomainEvent, TaskStatus};
 use yhtye_core::runtime::Orchestration;
 
-const IMPLEMENTER: &str = "T-1/implementer";
+/// The task the request asks for by name (the orchestrator names tasks).
+const TASK: &str = "append-line";
+const IMPLEMENTER: &str = "append-line/implementer";
 const LINE: &str = "hello after restart";
 
 fn started(events: &[ApiEvent], session: &str) -> Vec<(String, bool)> {
@@ -56,7 +58,7 @@ fn task_statuses(events: &[ApiEvent]) -> Vec<TaskStatus> {
         .filter_map(|e| match &e.body {
             ApiEventBody::Domain {
                 event: DomainEvent::TaskStatusChanged { task, status },
-            } if task == "T-1" => Some(*status),
+            } if task == TASK => Some(*status),
             _ => None,
         })
         .collect()
@@ -70,14 +72,14 @@ async fn run_until_quit(dir: &std::path::Path) -> Vec<ApiEvent> {
     let mut events = Vec::new();
     common::orch::send(
         &orch,
-        format!("Create a task that appends the line `{LINE}` to README.md."),
+        format!("Create a task named `{TASK}` that appends the line `{LINE}` to README.md."),
     )
     .await;
     // Quit once the implementer is working on its step (mid-turn).
     until(&mut rx, &mut events, REAL_TIMEOUT, prompted_implementer).await;
     until(&mut rx, &mut events, REAL_TIMEOUT, implementer_turn_output).await;
     eprintln!(
-        "quitting; T-1 statuses so far: {:?}",
+        "quitting; {TASK} statuses so far: {:?}",
         task_statuses(&events)
     );
     assert_persisted(&orch).await;
@@ -132,7 +134,10 @@ async fn real_restart_restores_the_sub_agent_session_and_completes_the_task() {
         "orchestrator prompts: {:#?}",
         prompts_to(&events, ORCHESTRATOR_SESSION)
     );
-    eprintln!("T-1 statuses after restart: {:?}", task_statuses(&events));
+    eprintln!(
+        "{TASK} statuses after restart: {:?}",
+        task_statuses(&events)
+    );
     let msgs = summary(&events);
     eprintln!(
         "messages: {:#?}",
@@ -154,7 +159,7 @@ async fn real_restart_restores_the_sub_agent_session_and_completes_the_task() {
     );
     let impl_prompts = prompts_to(&events, IMPLEMENTER);
     assert!(
-        impl_prompts[0].starts_with("[yhtye:resume] task=T-1"),
+        impl_prompts[0].starts_with(&format!("[yhtye:resume] task={TASK}")),
         "{impl_prompts:?}"
     );
     let calls = tool_calls(&events);

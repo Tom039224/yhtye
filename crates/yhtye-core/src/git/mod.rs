@@ -93,11 +93,13 @@ pub trait GitService: Send + Sync + 'static {
         Ok(())
     }
 
-    /// The highest number `n` of a `yhtye/G-<n>` branch or a `G-<n>` worktree
-    /// directory git has (0: none). A new group is numbered past it, so leftovers
-    /// of a wiped database do not collide with it.
-    async fn highest_group_number(&self) -> Result<u32, String> {
-        Ok(0)
+    /// What in git already uses the name of a new group `group` (`task: None`)
+    /// or of a new task `task` of `group`, if anything (e.g. a branch or
+    /// worktree directory left by a wiped database): such a name is refused,
+    /// never adjusted.
+    async fn name_in_git(&self, group: &str, task: Option<&str>) -> Result<Option<String>, String> {
+        let _ = (group, task);
+        Ok(None)
     }
 
     /// Runs `op`. Expected outcomes (conflicts, dirty trees) are results, not errors:
