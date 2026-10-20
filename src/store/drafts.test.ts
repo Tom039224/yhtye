@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { memoryDrafts } from "./drafts";
+import { type DraftAttachment, memoryDrafts } from "./drafts";
 
 describe("memoryDrafts", () => {
   it("is empty for a chat that has no draft", () => {
@@ -42,5 +42,44 @@ describe("memoryDrafts", () => {
     const a = memoryDrafts();
     a.set("repo", "C-1", "mine");
     expect(memoryDrafts().get("repo", "C-1")).toBe("");
+  });
+});
+
+describe("draft attachments", () => {
+  const item = (key: string): DraftAttachment => ({ key, name: `${key}.txt`, kind: "text", preview: null, status: "uploading", meta: null, error: null });
+
+  it("keeps attachments per chat and tells subscribers when they change", () => {
+    const drafts = memoryDrafts();
+    const seen = vi.fn();
+    const unsubscribe = drafts.subscribe(seen);
+    expect(drafts.attachments("repo", "C-1")).toEqual([]);
+    drafts.updateAttachments("repo", "C-1", (list) => [...list, item("a")]);
+    drafts.updateAttachments("repo", "C-1", (list) => [...list, item("b")]);
+    expect(drafts.attachments("repo", "C-1").map((a) => a.key)).toEqual(["a", "b"]);
+    expect(drafts.attachments("repo", "C-2")).toEqual([]);
+    expect(seen).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    drafts.updateAttachments("repo", "C-1", () => []);
+    expect(seen).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the same array until it changes, and does not notify for no change", () => {
+    const drafts = memoryDrafts();
+    const seen = vi.fn();
+    drafts.subscribe(seen);
+    drafts.updateAttachments("repo", "C-1", (list) => [...list, item("a")]);
+    const first = drafts.attachments("repo", "C-1");
+    drafts.updateAttachments("repo", "C-1", (list) => list);
+    expect(drafts.attachments("repo", "C-1")).toBe(first);
+    expect(seen).toHaveBeenCalledTimes(1);
+  });
+
+  it("forgets a chat's text and attachments together", () => {
+    const drafts = memoryDrafts();
+    drafts.set("repo", "C-1", "text");
+    drafts.updateAttachments("repo", "C-1", () => [item("a")]);
+    drafts.clear("repo", "C-1");
+    expect(drafts.get("repo", "C-1")).toBe("");
+    expect(drafts.attachments("repo", "C-1")).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -106,6 +106,22 @@ describe("App", () => {
     await user.type(box, "again{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("orchestration has stopped");
     expect(box).toHaveValue("again");
+  });
+
+  it("stages a pasted image as a tile, sends it with the message and keeps it in the chat's draft meanwhile", async () => {
+    const { user, store, transport, core } = setup();
+    core.attachmentDelivery = "path";
+    await openProject(store);
+    const box = screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
+    const image = new File([new Uint8Array([0x89, 0x50])], "image.png", { type: "image/png" });
+    fireEvent.paste(box, { clipboardData: { files: [image], getData: () => "" } });
+    const tiles = await screen.findByRole("list", { name: "添付ファイル" });
+    await within(tiles).findByRole("img", { name: /パスで渡す/ });
+    expect(transport.callsOf("stage_attachment")[0]).toMatchObject({ project: "repo", chat: "C-1", name: "image.png", mime: "image/png" });
+    await user.click(screen.getByRole("button", { name: "送信" }));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "添付ファイル" })).not.toBeInTheDocument());
+    const [id] = core.attachments.keys();
+    expect(transport.callsOf("send_user_message")[0]).toEqual({ type: "send_user_message", project: "repo", chat: "C-1", text: "", attachments: [id] });
   });
 
   it("shows the orchestrator's context below the composer and compacts it on request", async () => {

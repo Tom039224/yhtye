@@ -212,6 +212,34 @@ describe("commands", () => {
     ]);
   });
 
+  it("sends the chat's staged attachments with the message, and only then takes them out of the draft", async () => {
+    const s = newStore();
+    await open(s);
+    const file = (name: string) => new File(["hi"], name, { type: "text/plain" });
+    await s.attachments.attach(PROJECT.id, "C-2", [file("a.txt"), file("b.txt")]);
+    await s.attachments.attach(PROJECT.id, "C-1", [file("other.txt")]);
+    const ids = s.drafts.attachments(PROJECT.id, "C-2").map((a) => a.meta?.id);
+    core.failures.set("send_user_message", new CommandError("unavailable", "stopped"));
+    expect(await s.sendMessage("")).toBe(false);
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toHaveLength(2);
+    core.failures.clear();
+    expect(await s.sendMessage("")).toBe(true);
+    expect(transport.callsOf("send_user_message").at(-1)).toEqual({ type: "send_user_message", project: "repo", chat: "C-2", text: "", attachments: ids });
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toEqual([]);
+    // Another chat's draft stays.
+    expect(s.drafts.attachments(PROJECT.id, "C-1")).toHaveLength(1);
+  });
+
+  it("forgets a deleted chat's draft attachments", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set(PROJECT.id, "C-2", "unsent");
+    await s.attachments.attach(PROJECT.id, "C-2", [new File(["x"], "x.txt", { type: "text/plain" })]);
+    await s.deleteChat("C-2");
+    expect(s.drafts.get(PROJECT.id, "C-2")).toBe("");
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toEqual([]);
+  });
+
   it("creates a chat in a worktree, or in a branch's, and selects it", async () => {
     const s = newStore();
     await open(s);

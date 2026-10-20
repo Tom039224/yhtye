@@ -1655,7 +1655,7 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 
 ## 20. チャットの添付ファイル (`crates/yhtye-core/src/attachments/`)
 
-ユーザーがオーケストレータへのメッセージにファイルを付けて送る。UI (PC・Android) は別タスク。コアは「保存 → 配送方式の判定 → ACP 送信」と API まで。
+ユーザーがオーケストレータへのメッセージにファイルを付けて送る。PC の UI は §20.5、Android は別タスク。コアは「保存 → 配送方式の判定 → ACP 送信」と API まで。
 
 ### 20.1 配送方式 (`AttachmentDelivery`)
 
@@ -1711,3 +1711,16 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
   (`acp/session.rs` は先頭にテキストブロックを足すだけ) のどれでも添付は失われない。
 - 偽エージェント: シナリオの `prompt_capabilities` (`image` / `audio` / `embedded_context`) を `initialize` で返し、アクション `report_blocks` で受け取ったブロックを
   `blocks:[…]` として報告する。テストは `tests/attachments_fake.rs`。
+
+### 20.5 デスクトップの UI (`src/store/attachments.ts`、`src/ui/AttachmentTile.tsx`)
+
+- 入力欄の左の + (隠した `input[type=file]`、複数可。Tauri でも WebView が OS のファイル選択を出す)、テキスト欄への画像の貼り付け
+  (`clipboardData.files`。プレーンテキストも入ったコピーはテキストとして貼る)、入力欄へのドロップで添付する
+  (Tauri はウィンドウの `dragDropEnabled: false` で HTML のドロップを WebView に渡す)。
+- 添付した時点で `stage_attachment` し、入力欄の上に同じ大きさの正方形タイルで並べる (画像はサムネイル、ほかは種類のアイコンと拡張子)。
+  左上に配送方式 (`native` はモデルに直接・`path` はパスで渡す。入力欄では予測)、右上の × で `discard_attachment`。アップロード中・失敗も表示し、
+  どちらかがある間は送れない。本文が空でも添付があれば送れる。
+- 添付はチャットごとの下書き (`Drafts`、本文と同じく別のチャットを見ても残る) に持つ。送信が受け付けられたら下書きから外す。チャットを消すと下書きごと消える。
+- トランスクリプトはユーザーメッセージの本文の下に同じタイル (× なし) を出す。配送方式は `prompted` の `attachments` の確定値
+  (古い履歴のページにあるメッセージの分は、そのページを読んだときに当てる)。画像は `get_attachment` で読み (送ったばかりのものは手元の内容)、
+  最近の 64 件をキャッシュし、クリックで拡大表示する。CSP が `blob:` を許さないので画像は `data:` URL で出す。
