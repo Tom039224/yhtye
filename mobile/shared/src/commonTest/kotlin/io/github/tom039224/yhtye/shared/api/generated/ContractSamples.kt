@@ -220,6 +220,30 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "get_usage_stats",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_usage_stats\",\"days\":90,\"tz_offset_min\":540,\"refresh\":true}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_usage_stats/default",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_usage_stats\",\"days\":null,\"tz_offset_min\":null,\"refresh\":null}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "list_directory",
+        ApiCommand.Serializer,
+        "{\"type\":\"list_directory\",\"path\":\"/home/u\",\"show_hidden\":true}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "list_directory/home",
+        ApiCommand.Serializer,
+        "{\"type\":\"list_directory\",\"path\":null,\"show_hidden\":null}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "get_agent_settings",
         ApiCommand.Serializer,
         "{\"type\":\"get_agent_settings\",\"project\":\"repo\"}",
@@ -451,6 +475,18 @@ internal val contractSamples: List<ContractSample> = listOf(
         "usage",
         ApiResponse.Serializer,
         "{\"type\":\"usage\",\"usage\":{\"plan\":\"Max\",\"windows\":[{\"kind\":\"five_hour\",\"label\":\"5-hour limit\",\"percent\":42.5,\"resets_at_ms\":1790770000000},{\"kind\":\"week\",\"label\":\"Weekly · all models\",\"percent\":7.0,\"resets_at_ms\":null},{\"kind\":\"other\",\"label\":\"Weekly · Opus\",\"percent\":100.0,\"resets_at_ms\":null}],\"fetched_at_ms\":1790766538443}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "usage_stats",
+        ApiResponse.Serializer,
+        "{\"type\":\"usage_stats\",\"stats\":{\"generated_at_ms\":1790766538443,\"period_days\":2,\"tz_offset_min\":540,\"sources\":[{\"harness\":\"claude-code\",\"found\":true,\"files\":12},{\"harness\":\"codex\",\"found\":false,\"files\":0}],\"totals\":{\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3},\"days\":[{\"date\":\"2026-10-19\",\"tokens\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0,\"total\":0},\"sessions\":0,\"harnesses\":[]},{\"date\":\"2026-10-20\",\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3,\"harnesses\":[{\"harness\":\"claude-code\",\"tokens\":642600,\"sessions\":3}]}],\"by_model\":[{\"name\":\"claude-opus-5-5\",\"tokens\":{\"input\":1000,\"output\":3000,\"cache_read\":500000,\"cache_creation\":70000,\"total\":574000},\"sessions\":2,\"other\":false},{\"name\":\"other\",\"tokens\":{\"input\":200,\"output\":400,\"cache_read\":60000,\"cache_creation\":8000,\"total\":68600},\"sessions\":1,\"other\":true}],\"by_harness\":[{\"name\":\"claude-code\",\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3,\"other\":false}],\"by_project\":[{\"name\":\"repo\",\"project\":\"repo\",\"tokens\":{\"input\":1000,\"output\":3000,\"cache_read\":500000,\"cache_creation\":70000,\"total\":574000},\"sessions\":2,\"other\":false},{\"name\":\"scratch\",\"project\":null,\"tokens\":{\"input\":200,\"output\":400,\"cache_read\":60000,\"cache_creation\":8000,\"total\":68600},\"sessions\":1,\"other\":false}]}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "directory",
+        ApiResponse.Serializer,
+        "{\"type\":\"directory\",\"directory\":{\"path\":\"/home/u\",\"parent\":\"/home\",\"home\":\"/home/u\",\"is_git_repo\":false,\"entries\":[{\"name\":\"repo\",\"path\":\"/home/u/repo\",\"is_git_repo\":true},{\"name\":\"Documents\",\"path\":\"/home/u/Documents\",\"is_git_repo\":false}]}}",
     ),
     ContractSample(
         "ApiResponse",

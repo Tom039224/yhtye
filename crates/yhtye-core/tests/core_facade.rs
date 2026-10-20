@@ -940,3 +940,308 @@ async fn ping_tells_whether_the_core_runs_headless() {
     assert!(headless);
     core.shutdown().await;
 }
+
+// ---- usage statistics (`get_usage_stats`) and the host's folders (`list_directory`)
+
+/// An RFC 3339 UTC timestamp `hours_ago` hours before now.
+fn iso_ago(hours_ago: u64) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs()
+        - hours_ago * 3600;
+    let (days, rest) = (secs / 86_400, secs % 86_400);
+    // civil_from_days (Howard Hinnant)
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + u64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.000Z",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    )
+}
+
+fn write_file(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    std::fs::write(path, text).expect("write");
+}
+
+/// One assistant line of a Claude Code log.
+fn claude_line(id: &str, session: &str, cwd: &str, hours_ago: u64, output: u64) -> String {
+    json!({
+        "type": "assistant", "timestamp": iso_ago(hours_ago), "cwd": cwd,
+        "sessionId": session, "isSidechain": false,
+        "message": {"id": id, "model": "claude-opus-5-5", "role": "assistant",
+            "content": [{"type": "text", "text": "ok"}],
+            "usage": {"input_tokens": 10, "output_tokens": output,
+                "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000}}
+    })
+    .to_string()
+        + "\n"
+}
+
+fn codex_rollout(cwd: &str, hours_ago: u64) -> String {
+    let line = |v: Value| v.to_string() + "\n";
+    let usage = json!({"input_tokens": 500, "cached_input_tokens": 300, "output_tokens": 50});
+    line(
+        json!({"timestamp": iso_ago(hours_ago), "type": "session_meta",
+        "payload": {"id": "cx-1", "cwd": cwd}}),
+    ) + &line(
+        json!({"timestamp": iso_ago(hours_ago), "type": "turn_context",
+            "payload": {"model": "gpt-5-codex", "cwd": cwd}}),
+    ) + &line(json!({"timestamp": iso_ago(hours_ago), "type": "event_msg",
+            "payload": {"type": "token_count", "info": {
+                "last_token_usage": usage, "total_token_usage": usage}}}))
+}
+
+async fn usage_stats(
+    core: &Core,
+    days: Option<u32>,
+    refresh: bool,
+) -> yhtye_core::stats::UsageStats {
+    match run(
+        core,
+        ApiCommand::GetUsageStats {
+            days,
+            tz_offset_min: Some(0),
+            refresh: Some(refresh),
+        },
+    )
+    .await
+    {
+        ApiResponse::UsageStats { stats } => stats,
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn usage_statistics_are_read_from_the_agents_logs_and_attributed_to_projects() {
+    use yhtye_core::git::worktree_root;
+    use yhtye_core::stats::StatsSources;
+
+    let r = TempRepo::new();
+    let logs = tempfile::tempdir().expect("logs");
+    let claude = logs.path().join("claude/projects");
+    let codex = logs.path().join("codex/sessions");
+    let mut cfg = core_config(&r, json!({}), json!({}), json!({}));
+    cfg.stats_sources = StatsSources {
+        claude_projects: Some(claude.clone()),
+        codex_dirs: vec![codex.clone()],
+        opencode_db: Some(logs.path().join("opencode/opencode.db")),
+    };
+    let core = Core::start(cfg).await.expect("core");
+    let project = open(&core, &r.repo).await;
+    let worktree = worktree_root(&r.data, &project.id).join("branches/feat");
+
+    // A session in the repository (its response is written three times while
+    // streaming), one in a Yhtye worktree of it, one elsewhere, and a probe.
+    let repo_log = claude_line("msg_1", "s-repo", &project.path, 30, 5)
+        + &claude_line("msg_1", "s-repo", &project.path, 30, 5)
+        + &claude_line("msg_1", "s-repo", &project.path, 30, 40)
+        + &claude_line("msg_2", "s-repo", &project.path, 2, 7);
+    write_file(&claude.join("-repo/s-repo.jsonl"), &repo_log);
+    write_file(
+        &claude.join("-wt/s-wt.jsonl"),
+        &claude_line("msg_3", "s-wt", &worktree.display().to_string(), 3, 11),
+    );
+    write_file(
+        &claude.join("-scratch/s-out.jsonl"),
+        &claude_line("msg_4", "s-out", "/somewhere/else/scratch", 4, 13),
+    );
+    let probe = json!({"type": "user", "message": {"role": "user", "content":
+        "<command-name>/usage</command-name>"}})
+    .to_string()
+        + "\n"
+        + &claude_line("msg_5", "s-probe", "/tmp/probe", 1, 99);
+    write_file(&claude.join("-probe/s-probe.jsonl"), &probe);
+    write_file(
+        &codex.join("2026/10/01/rollout-cx.jsonl"),
+        &codex_rollout("/somewhere/else/scratch", 5),
+    );
+
+    let stats = usage_stats(&core, Some(7), false).await;
+    assert_eq!(stats.period_days, 7);
+    assert_eq!(stats.days.len(), 7);
+    // Output: 40 (the last snapshot of msg_1) + 7 + 11 + 13 + 50 (Codex); the probe counts nothing.
+    assert_eq!(stats.totals.tokens.output, 40 + 7 + 11 + 13 + 50);
+    assert_eq!(stats.totals.sessions, 4);
+    // Codex: 500 input of which 300 cached.
+    assert_eq!(stats.totals.tokens.cache_read, 4 * 1000 + 300);
+    assert_eq!(stats.totals.tokens.input, 4 * 10 + 200);
+    assert_eq!(stats.totals.tokens.cache_creation, 4 * 100);
+    assert_eq!(
+        stats.totals.tokens.total,
+        stats.days.iter().map(|d| d.tokens.total).sum::<u64>()
+    );
+    let by_project: Vec<(&str, Option<&str>, u64)> = stats
+        .by_project
+        .iter()
+        .map(|p| (p.name.as_str(), p.project.as_deref(), p.sessions))
+        .collect();
+    assert_eq!(
+        by_project,
+        [("repo", Some(project.id.as_str()), 2), ("scratch", None, 2),]
+    );
+    let harnesses: Vec<(&str, u64)> = stats
+        .by_harness
+        .iter()
+        .map(|b| (b.name.as_str(), b.sessions))
+        .collect();
+    assert_eq!(harnesses, [("claude-code", 3), ("codex", 1)]);
+    let found: Vec<(&str, bool)> = stats
+        .sources
+        .iter()
+        .map(|s| (s.harness.as_str(), s.found))
+        .collect();
+    assert_eq!(
+        found,
+        [("claude-code", true), ("codex", true), ("opencode", false)]
+    );
+
+    // A second call answers from what was read; a grown log is read again.
+    assert_eq!(
+        usage_stats(&core, Some(7), false).await.totals,
+        stats.totals
+    );
+    let mut grown = repo_log;
+    grown.push_str(&claude_line("msg_6", "s-repo", &project.path, 1, 100));
+    write_file(&claude.join("-repo/s-repo.jsonl"), &grown);
+    let after = usage_stats(&core, Some(7), false).await;
+    assert_eq!(after.totals.tokens.output, stats.totals.tokens.output + 100);
+    assert_eq!(after.totals.sessions, 4);
+    // A refresh reads everything again and finds the same.
+    assert_eq!(usage_stats(&core, Some(7), true).await.totals, after.totals);
+    // A shorter period leaves out what is older: msg_1 was written 30 hours ago.
+    let one_day = usage_stats(&core, Some(1), false).await;
+    assert!(one_day.totals.tokens.output < after.totals.tokens.output);
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn usage_statistics_check_their_arguments_and_are_for_remote_clients_too() {
+    let r = TempRepo::new();
+    let mut cfg = core_config(&r, json!({}), json!({}), json!({}));
+    cfg.stats_sources = yhtye_core::stats::StatsSources::none();
+    let core = Core::start(cfg).await.expect("core");
+    for (days, tz) in [(Some(0), 0), (Some(367), 0), (Some(30), 24 * 60 + 1)] {
+        let cmd = ApiCommand::GetUsageStats {
+            days,
+            tz_offset_min: Some(tz),
+            refresh: None,
+        };
+        assert_eq!(error_code(&core, cmd).await, ApiErrorCode::InvalidArgument);
+    }
+    // Defaults: 30 days in UTC; nothing found is not an error.
+    let ApiResponse::UsageStats { stats } = run(
+        &core,
+        ApiCommand::GetUsageStats {
+            days: None,
+            tz_offset_min: None,
+            refresh: None,
+        },
+    )
+    .await
+    else {
+        panic!("usage stats");
+    };
+    assert_eq!(
+        (stats.period_days, stats.days.len(), stats.tz_offset_min),
+        (30, 30, 0)
+    );
+    assert_eq!(stats.totals.tokens.total, 0);
+    assert!(stats.sources.iter().all(|s| !s.found));
+
+    let stats_cmd = ApiCommand::GetUsageStats {
+        days: None,
+        tz_offset_min: None,
+        refresh: None,
+    };
+    let list_cmd = ApiCommand::ListDirectory {
+        path: None,
+        show_hidden: None,
+    };
+    assert!(!stats_cmd.is_local_only() && !list_cmd.is_local_only());
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_hosts_folders_can_be_listed_for_a_remote_client() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, json!({}), json!({}), json!({})))
+        .await
+        .expect("core");
+    let dir = tempfile::tempdir().expect("dir");
+    let base = dir.path().canonicalize().expect("canonical");
+    for d in ["Beta", "alpha", "proj/.git", ".hidden"] {
+        std::fs::create_dir_all(base.join(d)).expect("mkdir");
+    }
+    std::fs::write(base.join("file.txt"), "x").expect("file");
+    let list = |path: Option<String>, show_hidden: Option<bool>| ApiCommand::ListDirectory {
+        path,
+        show_hidden,
+    };
+
+    let ApiResponse::Directory { directory } =
+        run(&core, list(Some(base.display().to_string()), None)).await
+    else {
+        panic!("a directory");
+    };
+    assert_eq!(directory.path, base.display().to_string());
+    assert_eq!(
+        directory.parent.as_deref(),
+        base.parent().and_then(Path::to_str)
+    );
+    let entries: Vec<(&str, bool)> = directory
+        .entries
+        .iter()
+        .map(|e| (e.name.as_str(), e.is_git_repo))
+        .collect();
+    assert_eq!(entries, [("alpha", false), ("Beta", false), ("proj", true)]);
+    assert_eq!(
+        directory.entries[2].path,
+        base.join("proj").display().to_string()
+    );
+
+    let ApiResponse::Directory { directory } =
+        run(&core, list(Some(base.display().to_string()), Some(true))).await
+    else {
+        panic!("a directory");
+    };
+    assert_eq!(directory.entries[0].name, ".hidden");
+
+    // No path: the home directory of the user the core runs as.
+    if let Some(home) = std::env::var_os("HOME").filter(|h| Path::new(h).is_dir()) {
+        let ApiResponse::Directory { directory } = run(&core, list(None, None)).await else {
+            panic!("a directory");
+        };
+        assert_eq!(Path::new(&directory.home), Path::new(&home));
+        assert_eq!(
+            Path::new(&directory.path),
+            Path::new(&home).canonicalize().expect("home")
+        );
+    }
+
+    for (path, code) in [
+        (
+            base.join("missing").display().to_string(),
+            ApiErrorCode::NotFound,
+        ),
+        (
+            base.join("file.txt").display().to_string(),
+            ApiErrorCode::InvalidArgument,
+        ),
+        ("relative/dir".to_string(), ApiErrorCode::InvalidArgument),
+    ] {
+        assert_eq!(error_code(&core, list(Some(path), None)).await, code);
+    }
+    core.shutdown().await;
+}

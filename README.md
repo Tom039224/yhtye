@@ -198,6 +198,10 @@ pnpm tauri dev
 
 画面デザインは Claude Design で起こした。原本と仕様は [`docs/design/`](docs/design/) にある。
 
+## 謝辞
+
+利用統計 (トークン使用量のダッシュボード) は [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC) に着想を得ている。エージェントのセッションログの場所と読み方を参考にし、実装は Rust で独自に書いた。
+
 ## ライセンス
 
 BSD-3-Clause。[`LICENSE`](LICENSE) を参照。

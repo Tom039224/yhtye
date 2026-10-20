@@ -15,10 +15,12 @@ use crate::agents::{
     HarnessModels, ModelEfforts, RoleSettings,
 };
 use crate::attachments::AttachmentMeta;
+use crate::directory::DirectoryListing;
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::{BranchStatuses, GitOverview};
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
+use crate::stats::UsageStats;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
 
@@ -276,6 +278,41 @@ pub enum ApiCommand {
         #[ts(optional)]
         refresh: Option<bool>,
     },
+    /// Token usage of the coding agents on the host — Claude Code, Codex and
+    /// OpenCode — for the last `days` days (default 30, at most 366; the UI
+    /// offers 7, 30, 90 and 365) ending today: per day, model, harness and
+    /// project, read from the agents' own session logs (all sessions, not only
+    /// those Yhtye started). `tz_offset_min` is the client's UTC offset in
+    /// minutes (default 0) and decides where a day begins. The first call reads
+    /// the logs and may take a while; later ones answer from what was read
+    /// (changed files are read again). `refresh` forgets it all first.
+    /// `invalid_argument` for `days` outside 1–366 or an offset beyond ±24 h.
+    GetUsageStats {
+        #[serde(default)]
+        #[ts(optional)]
+        days: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        tz_offset_min: Option<i32>,
+        #[serde(default)]
+        #[ts(optional)]
+        refresh: Option<bool>,
+    },
+    /// The folders of the host (not files), to browse them when adding a
+    /// project from a client on another machine. `path` absent or empty is the
+    /// home directory of the user the core runs as (`~` and `~/…` also start
+    /// there); otherwise it is an absolute path. Hidden folders (`.name`) are
+    /// left out unless `show_hidden`. `not_found` for a path that does not
+    /// exist, `invalid_argument` for one that is not an absolute path to a
+    /// directory, `forbidden` when it cannot be read.
+    ListDirectory {
+        #[serde(default)]
+        #[ts(optional)]
+        path: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        show_hidden: Option<bool>,
+    },
     /// The harness × model settings of every role (Stage 7b): registered
     /// harnesses, the global layer and, with `project`, its layer and the
     /// settings in effect there (the project must be registered, not open).
@@ -532,6 +569,14 @@ pub enum ApiResponse {
     },
     Usage {
         usage: UsageReport,
+    },
+    /// Answer of `get_usage_stats`.
+    UsageStats {
+        stats: UsageStats,
+    },
+    /// Answer of `list_directory`.
+    Directory {
+        directory: DirectoryListing,
     },
     AgentSettings {
         settings: Box<AgentSettingsView>,

@@ -256,6 +256,10 @@ first start.
 
 The UI design originated in Claude Design; the original and the spec are in [`docs/design/`](docs/design/).
 
+## Acknowledgements
+
+The usage statistics (the token usage dashboard) are inspired by [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC). Where the agents keep their session logs and how to read them follows its parsers; the implementation is our own, in Rust.
+
 ## License
 
 BSD-3-Clause. See [`LICENSE`](LICENSE).

@@ -4,6 +4,7 @@ import type { AttachmentMeta } from "./AttachmentMeta";
 import type { BranchStatuses } from "./BranchStatuses";
 import type { ChatInfo } from "./ChatInfo";
 import type { Clients } from "./Clients";
+import type { DirectoryListing } from "./DirectoryListing";
 import type { GitOverview } from "./GitOverview";
 import type { HarnessDetection } from "./HarnessDetection";
 import type { HarnessModels } from "./HarnessModels";
@@ -15,6 +16,7 @@ import type { RemoteDevice } from "./RemoteDevice";
 import type { RemoteStatus } from "./RemoteStatus";
 import type { Snapshot } from "./Snapshot";
 import type { UsageReport } from "./UsageReport";
+import type { UsageStats } from "./UsageStats";
 
 export type ApiResponse = { "type": "pong", host: string, 
 /**
@@ -35,4 +37,4 @@ more: boolean, } | { "type": "accepted" } | { "type": "attachment_staged", attac
 /**
  * The chat's orchestrator is being started (now, or by an earlier call).
  */
-starting: boolean, } | { "type": "branch_order", keys: Array<string>, } | { "type": "git_overview", git: GitOverview, } | { "type": "branch_statuses", statuses: BranchStatuses, } | { "type": "usage", usage: UsageReport, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, } | { "type": "remote_status", status: RemoteStatus, } | { "type": "pairing_code", pairing: PairingCode, } | { "type": "remote_devices", devices: Array<RemoteDevice>, } | { "type": "clients", clients: Clients, };
+starting: boolean, } | { "type": "branch_order", keys: Array<string>, } | { "type": "git_overview", git: GitOverview, } | { "type": "branch_statuses", statuses: BranchStatuses, } | { "type": "usage", usage: UsageReport, } | { "type": "usage_stats", stats: UsageStats, } | { "type": "directory", directory: DirectoryListing, } | { "type": "agent_settings", settings: AgentSettingsView, } | { "type": "harness_models", models: HarnessModels, } | { "type": "model_efforts", efforts: ModelEfforts, } | { "type": "secret_env", names: Array<string>, } | { "type": "harnesses", harnesses: Array<HarnessDetection>, } | { "type": "remote_status", status: RemoteStatus, } | { "type": "pairing_code", pairing: PairingCode, } | { "type": "remote_devices", devices: Array<RemoteDevice>, } | { "type": "clients", clients: Clients, };

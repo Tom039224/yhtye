@@ -127,6 +127,22 @@ sealed interface ApiResponse {
         val usage: UsageReport,
     ) : ApiResponse
 
+    /**
+     * Answer of `get_usage_stats`.
+     */
+    @Serializable
+    data class UsageStats(
+        val stats: io.github.tom039224.yhtye.shared.api.generated.UsageStats,
+    ) : ApiResponse
+
+    /**
+     * Answer of `list_directory`.
+     */
+    @Serializable
+    data class Directory(
+        val directory: DirectoryListing,
+    ) : ApiResponse
+
     @Serializable
     data class AgentSettings(
         val settings: AgentSettingsView,
@@ -217,6 +233,8 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("git_overview", GitOverview.serializer()) { it is GitOverview },
             TaggedVariant<ApiResponse>("branch_statuses", BranchStatuses.serializer()) { it is BranchStatuses },
             TaggedVariant<ApiResponse>("usage", Usage.serializer()) { it is Usage },
+            TaggedVariant<ApiResponse>("usage_stats", UsageStats.serializer()) { it is UsageStats },
+            TaggedVariant<ApiResponse>("directory", Directory.serializer()) { it is Directory },
             TaggedVariant<ApiResponse>("agent_settings", AgentSettings.serializer()) { it is AgentSettings },
             TaggedVariant<ApiResponse>("harness_models", HarnessModels.serializer()) { it is HarnessModels },
             TaggedVariant<ApiResponse>("model_efforts", ModelEfforts.serializer()) { it is ModelEfforts },

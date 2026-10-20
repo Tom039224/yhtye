@@ -355,6 +355,41 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * Token usage of the coding agents on the host — Claude Code, Codex and
+     * OpenCode — for the last `days` days (default 30, at most 366; the UI
+     * offers 7, 30, 90 and 365) ending today: per day, model, harness and
+     * project, read from the agents' own session logs (all sessions, not only
+     * those Yhtye started). `tz_offset_min` is the client's UTC offset in
+     * minutes (default 0) and decides where a day begins. The first call reads
+     * the logs and may take a while; later ones answer from what was read
+     * (changed files are read again). `refresh` forgets it all first.
+     * `invalid_argument` for `days` outside 1–366 or an offset beyond ±24 h.
+     */
+    @Serializable
+    data class GetUsageStats(
+        val days: Long? = null,
+        @SerialName("tz_offset_min")
+        val tzOffsetMin: Int? = null,
+        val refresh: Boolean? = null,
+    ) : ApiCommand
+
+    /**
+     * The folders of the host (not files), to browse them when adding a
+     * project from a client on another machine. `path` absent or empty is the
+     * home directory of the user the core runs as (`~` and `~/…` also start
+     * there); otherwise it is an absolute path. Hidden folders (`.name`) are
+     * left out unless `show_hidden`. `not_found` for a path that does not
+     * exist, `invalid_argument` for one that is not an absolute path to a
+     * directory, `forbidden` when it cannot be read.
+     */
+    @Serializable
+    data class ListDirectory(
+        val path: String? = null,
+        @SerialName("show_hidden")
+        val showHidden: Boolean? = null,
+    ) : ApiCommand
+
+    /**
      * The harness × model settings of every role (Stage 7b): registered
      * harnesses, the global layer and, with `project`, its layer and the
      * settings in effect there (the project must be registered, not open).
@@ -550,6 +585,8 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("get_git_overview", GetGitOverview.serializer()) { it is GetGitOverview },
             TaggedVariant<ApiCommand>("get_branch_statuses", GetBranchStatuses.serializer()) { it is GetBranchStatuses },
             TaggedVariant<ApiCommand>("get_usage", GetUsage.serializer()) { it is GetUsage },
+            TaggedVariant<ApiCommand>("get_usage_stats", GetUsageStats.serializer()) { it is GetUsageStats },
+            TaggedVariant<ApiCommand>("list_directory", ListDirectory.serializer()) { it is ListDirectory },
             TaggedVariant<ApiCommand>("get_agent_settings", GetAgentSettings.serializer()) { it is GetAgentSettings },
             TaggedVariant<ApiCommand>("set_agent_settings", SetAgentSettings.serializer()) { it is SetAgentSettings },
             TaggedVariant<ApiCommand>("list_harness_models", ListHarnessModels.serializer()) { it is ListHarnessModels },

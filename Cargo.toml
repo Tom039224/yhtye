@@ -39,6 +39,8 @@ tokio-tungstenite = "0.29"
 # Stage 7e: secret environment variables in the OS keyring (Secret Service on Linux), Codex config.toml
 keyring = { version = "3.6", default-features = false }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }
+# Usage statistics (`stats`): a fast substring prefilter over the agents' session logs (gigabytes of JSONL).
+memchr = "2"
 # SQLite persistence (Stage 3b). `query_as` + `FromRow` only (no compile-time DB); migrations embedded with `migrate!`.
 # TypeScript bindings for the UI API (Stage 4). Generated into src/api/generated/ by a test.
 ts-rs = { version = "12.0", features = ["serde-json-impl", "no-serde-warnings"] }

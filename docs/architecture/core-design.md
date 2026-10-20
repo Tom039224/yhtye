@@ -1950,3 +1950,77 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 - トランスクリプトはユーザーメッセージの本文の下に同じタイル (× なし) を出す。配送方式は `prompted` の `attachments` の確定値
   (古い履歴のページにあるメッセージの分は、そのページを読んだときに当てる)。画像は `get_attachment` で読み (送ったばかりのものは手元の内容)、
   最近の 64 件をキャッシュし、クリックで拡大表示する。CSP が `blob:` を許さないので画像は `data:` URL で出す。
+
+## 21. 利用統計 (`get_usage_stats`) とホストのフォルダ (`list_directory`) (`crates/yhtye-core/src/stats/`、`directory.rs`)
+
+プロジェクトのダッシュボード (Issue #18) の土台。UI は別タスク。着想は [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC)。
+ログの場所と読み方は参考にしたが、実装は Rust で独自に書いた。**§14 の購読メーター (`get_usage`、`usage/`) とは別物** (あちらは Claude Code の `/usage` が返すプランの残量、こちらはセッションログから数えた実績)。
+
+### 21.1 計算はホストで、ホストの全セッションを数える
+
+統計は**コアが動いているマシン**のエージェントのセッションログから数える (Yhtye が起動したセッションに限らない)。別ホストに接続した PC や Android は、そのホストの数字を見る。
+どちらのコマンドも `is_local_only()` ではない (ペアリング済みのリモートも呼べる)。
+
+| ハーネス (`by_harness` / `sources` の id) | 読む場所 (環境変数の上書き。agentsview と同じ) | 1 行が 1 応答 |
+|---|---|---|
+| `claude-code` | `~/.claude/projects/**/*.jsonl` (`CLAUDE_PROJECTS_DIR`、なければ `CLAUDE_CONFIG_DIR/projects`)。サブエージェントは `<session>/subagents/agent-*.jsonl` | `type:"assistant"` の行: `timestamp`, `cwd`, `sessionId`, `message.{id, model, usage}` |
+| `codex` | `~/.codex/sessions/**/rollout-*.jsonl` と `archived_sessions` (`CODEX_SESSIONS_DIR`、`CODEX_HOME`) | `event_msg` の `token_count` の `info.last_token_usage` |
+| `opencode` | `~/.local/share/opencode/opencode.db` (`OPENCODE_DIR`)。SQLite を**読み取り専用**で開く | `message` (旧) と `session_message` (新、`session_v2`) の assistant 行の `data.tokens` |
+
+存在しない場所はエラーではなく、そのハーネスが何も出さないだけ (`sources[].found = false`)。読めない行は捨てる。
+
+- **Claude Code**: 1 応答がコンテンツブロックごとに複数行で書かれ、同じ `message.id` と使用量が付く → `message.id` で**まとめて最後の行を採る** (ファイル内)。ファイルをまたいで同じ id があれば (再開で履歴が複製される)
+  1 回だけ、`output_tokens` が大きい方を採る。サブエージェントの行 (`isSidechain`) は行の `sessionId` (親のセッション) の分として数える。`<synthetic>` モデルと全部 0 の行は捨てる。
+  **`/usage` だけを実行したセッション** (Yhtye 自身のプローブなど。ユーザーの発話がなく `/usage` コマンドだけがある) はファイルごと数えない。
+- **Codex**: 入力は `input_tokens − cached_input_tokens` (キャッシュ書き込み `cache_write_input_tokens` があればそれも引いて `cache_creation`)、`cached_input_tokens` が `cache_read`、`output_tokens` がそのまま出力。
+  `session_meta` に `forked_from_id` があるロールアウトは親の行を複製しているので**丸ごと捨てる**。`turn_context.model` がモデル。`total_token_usage` が前のイベントと同じなら (レート制限の更新などの再送) 数えない。
+- **OpenCode**: `tokens.{input, output, cache.{read, write}}`。新旧の両方の表にある行は新しい方だけ。サブセッション (`parent_id`) は親の分。cwd はセッションの `directory`。
+
+セッション = (ハーネス, セッション id)。1 つでも応答が期間にあれば 1 件。日またぎのセッションは両方の日に数える。
+
+### 21.2 速度: ファイルごとに 1 回だけ読む
+
+実機 (1673 ファイル / 6.2 GB の Claude ログ) で、release ビルドで 30 日が初回 6.7 秒、2 回目以降 約 35 ms、`refresh` で全部読み直して約 1 秒 (ページキャッシュあり)。
+
+- `StatsService` が**パース済みのファイルを (パス, サイズ, 更新時刻) で覚える** (`scan::FileCache`)。再度の呼び出しは一覧と `stat` だけで、変わったファイルだけ読み直す。消えたファイルは忘れる。
+- **更新時刻が期間より (1 日の余裕を足して) 古いファイルは読まない** (ファイルの最後の行はその更新時刻より新しくならない)。7 / 30 日は古い大量のログに触れない。長い期間を求めたときだけ古い分を足して読む。
+- 読むのは最大 8 スレッドの `spawn_blocking`。行は `memchr` の部分文字列検索で絞ってから `serde_json` で読む (数 GB の JSONL なので全行をパースしない)。
+- 呼び出しは単一実行 (`scanning` ロック)。同時に呼ばれたら 2 つ目は 1 つ目を待ち、覚えた結果を使う。
+- アプリ (`CoreConfig::installed`) は起動直後に 30 日分を**バックグラウンドで先読み** (`stats_warm_up`)。テスト用の設定 (`claude_code`) は先読みしない。ログの場所は `stats_sources` で差し替えられる (テストは一時ディレクトリを指す)。
+
+### 21.3 API
+
+```jsonc
+// 要求。days は既定 30 (1〜366。UI は 7 / 30 / 90 / 365)、tz_offset_min は UTC からの分 (既定 0。日の区切りに使う。範囲外は invalid_argument)
+{"type": "get_usage_stats", "days": 30, "tz_offset_min": 540, "refresh": false}
+// 応答
+{"type": "usage_stats", "stats": {
+  "generated_at_ms": 1792000000000, "period_days": 30, "tz_offset_min": 540,
+  "sources": [{"harness": "claude-code", "found": true, "files": 12}, …],     // claude-code / codex / opencode
+  "totals": {"tokens": {"input", "output", "cache_read", "cache_creation", "total"}, "sessions": 3},
+  "days": [{"date": "2026-10-20", "tokens": {…}, "sessions": 2,
+            "harnesses": [{"harness": "claude-code", "tokens": 642600, "sessions": 2}]}, …],   // 期間の全日、古い順。使用のない日は 0 と空の harnesses
+  "by_model":   [{"name": "claude-opus-5-5", "tokens": {…}, "sessions": 2, "other": false}, …],  // トークンの多い順。20 件まで、残りは name "other" / other true に合算
+  "by_harness": [{"name": "claude-code", …}, …],
+  "by_project": [{"name": "repo", "project": "repo", "tokens": {…}, "sessions": 2, "other": false}, …]  // project: 登録済みプロジェクトの id、なければ null
+}}
+```
+
+`total` = `input + output + cache_read + cache_creation` (キャッシュ読み出しを含む。実績ではキャッシュ読み出しが大半を占める)。数値はすべて `u64` (ts-rs は `number`、Kotlin は `Long`)。
+
+**プロジェクトへの対応づけ**: セッションの cwd (最も早い応答のもの) が、登録済みプロジェクトのパスの中か、その Yhtye の作業ツリーのディレクトリ (`worktree_root(data_dir, project_id)`) の中なら、そのプロジェクト
+(複数に当たれば最も深いルート)。どれにも当たらなければ cwd の**最後のディレクトリ名**を名前にする (`project: null`)。同じ名前は 1 つにまとまる。
+
+### 21.4 ホストのフォルダ (`list_directory`)
+
+別ホストに接続した PC や Android がプロジェクトを追加するとき、手元のファイルマネージャーはホストでは意味のないパスを返す。ホストのフォルダを選ぶための API。
+
+```jsonc
+{"type": "list_directory", "path": "/home/u", "show_hidden": false}      // path 省略/空/"~" はホストのユーザーのホーム、"~/x" も使える。相対パスは invalid_argument
+{"type": "directory", "directory": {"path": "/home/u", "parent": "/home", "home": "/home/u", "is_git_repo": false,
+   "entries": [{"name": "repo", "path": "/home/u/repo", "is_git_repo": true}, …]}}
+```
+
+`path` は正規化 (シンボリックリンクを解決) した絶対パス。ディレクトリだけ (リンク先がディレクトリのシンボリックリンクも含む)、読めないものは除く、大文字小文字を無視して並べる、`.` で始まるものは `show_hidden` のときだけ。
+`is_git_repo` は `.git` (ディレクトリでも、作業ツリーのファイルでも) がある。UTF-8 でない名前は往復できないので出さない。エラーは `not_found` (無い)、`invalid_argument` (ディレクトリでない / 絶対パスでない)、`forbidden` (権限がない)。
+ペアリング済みのリモートは、すでにホストでエージェントを動かせるので、フォルダ名の一覧も出してよいとした。
