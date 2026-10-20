@@ -13,15 +13,19 @@ use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::OrchestrationConfig;
+use super::prompt::Prompt;
+use crate::acp::schema::{ContentBlock, TextContent};
 use crate::acp::{AgentError, AgentEvent, AgentHandle, SteerOutcome};
 use crate::agents::StartScope;
 use crate::api::ApiEventBody;
+use crate::attachments::prompt::PromptEnv;
+use crate::attachments::{AttachmentStore, PromptCaps};
 use crate::domain::{AgentRef, Role};
 use crate::mcp::{McpHost, McpToken, SessionBinding};
 
 /// The prompts to send first: the queued ones, with the fallback in front if
 /// the stored session was to be restored but was not (`session/load` unsupported).
-fn first_queue(starting: Starting, resumed: bool) -> VecDeque<String> {
+fn first_queue(starting: Starting, resumed: bool) -> VecDeque<Prompt> {
     let mut queued = starting.queued;
     if !resumed && let Some(fallback) = starting.fallback {
         replace_first(&mut queued, fallback);
@@ -59,7 +63,7 @@ struct Live {
     token: McpToken,
     binding: SessionBinding,
     /// Prompts waiting for the current turn to end.
-    queued: VecDeque<String>,
+    queued: VecDeque<Prompt>,
     /// Turns whose end the loop has not processed yet: a prompt was sent and its
     /// `TurnEnded` is still to come. The agent's own turn flag clears as soon as
     /// the agent answers, while the turn's last outputs and its `TurnEnded` may
@@ -69,11 +73,16 @@ struct Live {
 }
 
 impl Live {
-    /// Starts a turn with `text`.
-    fn start_turn(&mut self, text: impl Into<String>) -> Result<(), AgentError> {
-        self.handle.prompt_text(text)?;
+    /// Starts a turn with `blocks`.
+    fn start_turn(&mut self, blocks: Vec<ContentBlock>) -> Result<(), AgentError> {
+        self.handle.prompt(blocks)?;
         self.open_turns += 1;
         Ok(())
+    }
+
+    /// What the process accepts in a prompt (as it said in `initialize`).
+    fn prompt_caps(&self) -> PromptCaps {
+        PromptCaps::from(&self.handle.info().capabilities.prompt_capabilities)
     }
 
     /// Whether a turn is running or its end is still to be processed.
@@ -99,9 +108,9 @@ pub(super) enum Route {
 pub(super) struct Starting {
     pub(super) launch: u64,
     pub(super) token: McpToken,
-    pub(super) queued: VecDeque<String>,
+    pub(super) queued: VecDeque<Prompt>,
     /// Replaces the first queued prompt if the stored session is not restored.
-    pub(super) fallback: Option<String>,
+    pub(super) fallback: Option<Prompt>,
     /// The stored ACP session this start restores with `session/load`.
     pub(super) resume: Option<StoredSession>,
     /// Restores of `resume` that failed before this one (tried with a new process).
@@ -140,6 +149,8 @@ pub(super) struct Spawned {
 
 pub(super) struct Sessions {
     pub(super) cfg: Arc<OrchestrationConfig>,
+    /// The files attached to user messages, read when a prompt is sent.
+    attachments: AttachmentStore,
     host: Option<McpHost>,
     pub(super) emit: Emitter,
     pub(super) agent_tx: mpsc::UnboundedSender<AgentMsg>,
@@ -168,6 +179,7 @@ impl Sessions {
     ) -> Self {
         let start_slots = cfg.agents.start_slots().scope();
         Self {
+            attachments: cfg.attachment_store(),
             cfg,
             host: Some(host),
             emit,
@@ -218,17 +230,17 @@ impl Sessions {
                 }
                 live.binding = binding;
             }
-            live.queued.push_back(text);
+            live.queued.push_back(text.into());
             return self.deliver(&key);
         }
         if let Some(starting) = self.starting.get_mut(&key) {
             if let Some(host) = &self.host {
                 host.registry().rebind(&starting.token, binding);
             }
-            return starting.queued.push_back(text);
+            return starting.queued.push_back(text.into());
         }
         let first = FirstPrompts {
-            queued: VecDeque::from([text]),
+            queued: VecDeque::from([text.into()]),
             fallback: None,
         };
         self.start(binding, cwd, first, pick);
@@ -249,8 +261,8 @@ impl Sessions {
             return self.prompt(binding, cwd, prompt, pick);
         }
         let first = FirstPrompts {
-            queued: VecDeque::from([prompt]),
-            fallback: Some(fallback),
+            queued: VecDeque::from([prompt.into()]),
+            fallback: Some(fallback.into()),
         };
         self.start(binding, cwd, first, pick);
     }
@@ -316,6 +328,9 @@ impl Sessions {
             replaced: starting.agent.replaced.clone(),
             cwd: Some(starting.cwd.display().to_string()),
             lost_acp_session_id: starting.lost_session(handle.info().resumed),
+            prompt_caps: Some(PromptCaps::from(
+                &handle.info().capabilities.prompt_capabilities,
+            )),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {
@@ -361,17 +376,24 @@ impl Sessions {
         if live.in_turn() {
             return;
         }
-        let Some(text) = live.queued.pop_front() else {
+        let Some(prompt) = live.queued.pop_front() else {
             return;
         };
-        match live.start_turn(text.clone()) {
+        // Decided now, with what this process accepts, not when it was queued.
+        let built = prompt.build(PromptEnv {
+            store: &self.attachments,
+            project: &self.cfg.project,
+            caps: live.prompt_caps(),
+        });
+        match live.start_turn(built.blocks) {
             Ok(()) => self.emit.send(ApiEventBody::Prompted {
                 session: key.to_string(),
-                text,
+                text: built.text,
+                attachments: built.delivered,
             }),
             Err(e) => {
                 tracing::warn!("prompt to {key} failed: {e}");
-                live.queued.push_front(text);
+                live.queued.push_front(prompt);
             }
         }
     }
@@ -387,18 +409,19 @@ impl Sessions {
             return Err(AgentError::Busy);
         }
         let live = self.live.get_mut(key).ok_or(AgentError::Closed)?;
-        live.start_turn(text)?;
+        live.start_turn(vec![ContentBlock::Text(TextContent::new(text))])?;
         self.emit.send(ApiEventBody::Prompted {
             session: key.to_string(),
             text: text.to_string(),
+            attachments: Vec::new(),
         });
         Ok(())
     }
 
-    /// Queues `text` for the live session `key` and sends it if it is idle.
-    pub(super) fn queue_and_deliver(&mut self, key: &str, text: String) {
+    /// Queues `prompt` for the live session `key` and sends it if it is idle.
+    pub(super) fn queue_and_deliver(&mut self, key: &str, prompt: impl Into<Prompt>) {
         match self.live.get_mut(key) {
-            Some(live) => live.queued.push_back(text),
+            Some(live) => live.queued.push_back(prompt.into()),
             None => return tracing::warn!("no session {key}; prompt dropped"),
         }
         self.deliver(key);
@@ -411,7 +434,7 @@ impl Sessions {
         let Some(live) = self.live.get_mut(key) else {
             return false;
         };
-        live.queued.push_back(text);
+        live.queued.push_back(text.into());
         true
     }
 
@@ -451,6 +474,7 @@ impl Sessions {
         self.emit.send(ApiEventBody::Prompted {
             session: key.to_string(),
             text: text.to_string(),
+            attachments: Vec::new(),
         });
     }
 

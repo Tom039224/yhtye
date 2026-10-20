@@ -12,6 +12,9 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentDelivery
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentKind
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentMeta
 import io.github.tom039224.yhtye.shared.api.generated.Candidate
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
@@ -37,6 +40,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.jsonObject
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.io.encoding.Base64
 import kotlin.reflect.KClass
 
 /** 偽エージェントで本物のコアを動かした記録 (PC の vitest と同じ `src/test/fixtures/fake-run.json`)。 */
@@ -95,6 +99,9 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
 
     /** `create_chat` / `create_branch` が作るチャットの ID。 */
     var nextChat = "C-9"
+
+    /** コアが保存している添付 (`stage_attachment` で増え、`discard_attachment` で減る)。 */
+    val attachments = LinkedHashMap<String, Pair<AttachmentMeta, ByteArray>>()
 
     // ---- 設定画面のコマンド用のメモリ上の設定 ----
 
@@ -177,6 +184,27 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
             is ApiCommand.DeleteSecretEnv -> {
                 secrets -= command.name
                 ApiResponse.SecretEnv(secrets.toList())
+            }
+            is ApiCommand.StageAttachment -> {
+                val data = Base64.decode(command.dataBase64)
+                val mime = command.mime ?: "application/octet-stream"
+                val kind = when {
+                    mime.startsWith("image/") -> AttachmentKind.Image
+                    mime.startsWith("text/") -> AttachmentKind.Text
+                    else -> AttachmentKind.File
+                }
+                val delivery = if (kind == AttachmentKind.File) AttachmentDelivery.Path else AttachmentDelivery.Native
+                val meta = AttachmentMeta("att-${attachments.size + 1}", command.name, mime, data.size.toLong(), kind, delivery)
+                attachments[meta.id] = meta to data
+                ApiResponse.AttachmentStaged(meta)
+            }
+            is ApiCommand.DiscardAttachment -> {
+                attachments.remove(command.id) ?: throw ApiException(ApiError(ApiErrorCode.NotFound, "no attachment ${command.id}"))
+                ApiResponse.Accepted
+            }
+            is ApiCommand.GetAttachment -> {
+                val (meta, data) = attachments[command.id] ?: throw ApiException(ApiError(ApiErrorCode.NotFound, "no attachment ${command.id}"))
+                ApiResponse.Attachment(meta, Base64.encode(data))
             }
             is ApiCommand.CreateChat ->
                 ApiResponse.Chat(ChatInfo(nextChat, command.worktree ?: "/tmp/wt/${command.branch}", null, createdMs = 0, lastUsedMs = 0))

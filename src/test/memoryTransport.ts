@@ -2,6 +2,8 @@
 // constructed event log. Never used on app runtime paths.
 
 import type {
+  AttachmentDelivery,
+  AttachmentMeta,
   AgentChoice,
   AgentRole,
   AgentSettingsLayer,
@@ -118,6 +120,10 @@ export class FakeCore {
   host = "test-host";
   /** Chats `open_chat` reports as starting (their orchestrator had something to resume). */
   starting = new Set<string>();
+  /** The delivery `stage_attachment` predicts. */
+  attachmentDelivery: AttachmentDelivery = "native";
+  /** Staged and sent attachments with their content (`stage_attachment` adds them). */
+  attachments = new Map<string, { meta: AttachmentMeta; data: string }>();
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -193,6 +199,22 @@ export class FakeCore {
         if (!title) throw new CommandError("invalid_argument", "the title must not be empty");
         return { type: "chat", chat: { ...chat, title } };
       }
+      case "stage_attachment": {
+        const id = `a${this.attachments.size + 1}`.padEnd(16, "0");
+        const mime = cmd.mime ?? "application/octet-stream";
+        const kind = mime.startsWith("image/") ? "image" : mime.startsWith("text/") ? "text" : "file";
+        const meta: AttachmentMeta = { id, name: cmd.name, mime, size: atob(cmd.data_base64).length, kind, delivery: this.attachmentDelivery };
+        this.attachments.set(id, { meta, data: cmd.data_base64 });
+        return { type: "attachment_staged", attachment: meta };
+      }
+      case "get_attachment": {
+        const found = this.attachments.get(cmd.id);
+        if (!found) throw new CommandError("not_found", `no attachment ${cmd.id}`);
+        return { type: "attachment", attachment: found.meta, data_base64: found.data };
+      }
+      case "discard_attachment":
+        if (!this.attachments.delete(cmd.id)) throw new CommandError("not_found", `no attachment ${cmd.id}`);
+        return { type: "accepted" };
       case "delete_chat":
         if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
         return { type: "accepted" };

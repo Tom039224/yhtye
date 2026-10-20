@@ -244,6 +244,29 @@ async function tabThrough(page, count) {
   return problems;
 }
 
+/** Picks files with the composer's + button: staged ones as tiles, then one the core refuses. */
+async function attachFiles(page) {
+  const png = Buffer.from(await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 120;
+    canvas.height = 80;
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#6a8fd0";
+    g.fillRect(0, 0, 120, 80);
+    return canvas.toDataURL("image/png").split(",")[1];
+  }), "base64");
+  const input = page.getByTestId("attach-input");
+  await input.setInputFiles([
+    { name: "screenshot.png", mimeType: "image/png", buffer: png },
+    { name: "design.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4") },
+    { name: `${"very-long-file-name-".repeat(6)}.log`, mimeType: "text/plain", buffer: Buffer.from("log line\n") },
+  ]);
+  await page.locator(".composer-attachments .attachment-delivery").nth(2).waitFor();
+  await page.evaluate(() => window.__yhtye.failCommand("stage_attachment", "the file could not be saved"));
+  await input.setInputFiles([{ name: "broken.bin", mimeType: "application/octet-stream", buffer: Buffer.from([0, 1, 2]) }]);
+  await page.locator(".attachment-tile-failed").waitFor();
+}
+
 async function failSendThreeTimes(page) {
   await page.evaluate(() => {
     window.__yhtye.failCommand("send_user_message", "the project's orchestration has stopped, and this is a long message to see how the banner wraps");
@@ -306,6 +329,7 @@ const STATES = [
   }, verify: bottomTabs({ tasks: 8, active: null }) },
   { name: "long: 30 lines typed in the composer", scenario: "long", interactive: true, run: (page) => page.getByRole("textbox", { name: "オーケストレータへのメッセージ" }).fill(Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")) },
   { name: "long: error banners and a lost connection", scenario: "long", interactive: true, run: failSendThreeTimes },
+  { name: "long: attachments in the composer (image, files, a long name, a failed one)", scenario: "long", interactive: true, run: attachFiles },
   { name: "long: right panel and git panel dragged to their limits", scenario: "long", interactive: true, run: async (page) => {
     for (const [label, keys] of [["右パネルの幅", ["End", "Home"]], ["git パネルの高さ", ["Home", "End"]], ["サイドバーの幅", ["End", "Home"]]]) {
       await page.getByRole("separator", { name: label }).focus();

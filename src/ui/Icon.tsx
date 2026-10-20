@@ -125,6 +125,14 @@ const GLYPHS = {
   bolt: <path d="M13 4L6.5 13.5H12L11 20l6.5-9.5H12z" />,
   bell: <path d="M7 16.5V11a5 5 0 0 1 10 0v5.5l1.5 1.5h-13zM10.4 20.5a1.8 1.8 0 0 0 3.2 0" />,
   "file-text": <path d="M7 4h7l4 4v12H7zM14 4v4h4M9.7 12.5h5M9.7 15.8h5" />,
+  file: <path d="M7 4h7l4 4v12H7zM14 4v4h4" />,
+  image: (
+    <>
+      <rect x="4.5" y="5" width="15" height="14" rx="2" />
+      <circle cx="9.5" cy="10" r="1.5" />
+      <path d="M19.5 15l-4-4-9 8" />
+    </>
+  ),
   message: <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4 3.5V16H6.5A1.5 1.5 0 0 1 5 14.5z" />,
   "message-plus": (
     <>

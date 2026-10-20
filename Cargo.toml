@@ -30,6 +30,9 @@ async-trait = "0.1"
 getrandom = "0.3"
 # Remote access (Android client): SHA-256 of device tokens (only the hash is stored).
 sha2 = "0.10"
+# Chat attachments: base64 in the API and in ACP image blocks, `file://` URIs of the saved files.
+base64 = "0.22"
+url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
 # Stage 7e: secret environment variables in the OS keyring (Secret Service on Linux), Codex config.toml
 keyring = { version = "3.6", default-features = false }

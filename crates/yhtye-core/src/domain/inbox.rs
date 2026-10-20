@@ -4,6 +4,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::attachments::AttachmentMeta;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxKind {
@@ -38,6 +40,12 @@ pub struct InboxItem {
     pub kind: InboxKind,
     pub attrs: Vec<(String, String)>,
     pub body: String,
+    /// Files the user attached to a `user_message` (their content is not part of
+    /// the event: it is read from disk when the prompt is sent). Their
+    /// `delivery` is the prediction made when they were staged; the final one is
+    /// in the `prompted` event.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 impl InboxItem {
@@ -50,6 +58,7 @@ impl InboxItem {
                 .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
                 .collect(),
             body: body.into(),
+            attachments: Vec::new(),
         }
     }
 
@@ -58,7 +67,18 @@ impl InboxItem {
         Self::new(InboxKind::UserMessage, &[], text)
     }
 
+    /// A `user_message` with attached files.
+    #[must_use]
+    pub fn user_message_with(text: impl Into<String>, attachments: Vec<AttachmentMeta>) -> Self {
+        Self {
+            attachments,
+            ..Self::user_message(text)
+        }
+    }
+
     /// `[yhtye:<type>] key=value ...` followed by the body on the next lines.
+    /// The attachments are not part of it: their lines depend on how they are
+    /// delivered ([`crate::attachments::prompt::build_inbox_prompt`]).
     #[must_use]
     pub fn render(&self) -> String {
         let mut head = format!("[yhtye:{}]", self.kind.as_str());

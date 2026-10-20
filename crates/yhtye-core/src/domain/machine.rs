@@ -116,7 +116,11 @@ pub fn decide(state: &State, cmd: DomainCommand) -> Result<(State, Transition), 
             via,
             detail,
         } => tx.message_resolved(&task, step, outcome, via, &detail),
-        DomainCommand::UserMessage { chat, text } => tx.user_message(&chat, text)?,
+        DomainCommand::UserMessage {
+            chat,
+            text,
+            attachments,
+        } => tx.user_message(&chat, text, attachments)?,
         DomainCommand::OrchestratorTurnEnded {
             chat,
             outcome,

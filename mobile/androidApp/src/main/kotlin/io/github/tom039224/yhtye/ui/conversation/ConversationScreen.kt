@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -46,14 +48,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.ThisApp
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.attachments.UriAttachments
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.Place
+import io.github.tom039224.yhtye.shared.sync.of
 import io.github.tom039224.yhtye.shared.version.AppVersion
 import io.github.tom039224.yhtye.shared.version.Compatibility
 import io.github.tom039224.yhtye.shared.version.compatibility
@@ -90,6 +95,9 @@ fun ConversationScreen(
 ) {
     val model = conversationModel(app)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val uriAttachments = remember(context) { UriAttachments(context.contentResolver) }
+    val drafts by sync.attachments.state.collectAsStateWithLifecycle()
     val chat = model.chat
     val project = model.project
     Column(modifier.fillMaxSize().background(Yhtye.colors.bgCenter)) {
@@ -106,13 +114,19 @@ fun ConversationScreen(
                 chat == null -> EmptyState(YIcons.MessagePlus, NO_CHAT_HINT, Modifier.align(Alignment.Center), testTag = "no-chat")
                 model.isEmpty -> EmptyState(YIcons.Message, EMPTY_CONVERSATION, Modifier.align(Alignment.Center))
                 else -> key(project.info.id, chat.id) {
-                    TranscriptList(model, onLoadOlder = { scope.launch { sync.loadOlderHistory() } }, Modifier.fillMaxSize())
+                    TranscriptList(
+                        model,
+                        onLoadOlder = { scope.launch { sync.loadOlderHistory() } },
+                        Modifier.fillMaxSize(),
+                        loadAttachment = rememberLoadAttachment(sync, project.info.id, chat.id),
+                    )
                 }
             }
         }
         model.wait?.let { WaitBannerView(it, onClick = onOpenRight) }
         if (project != null && chat != null) {
-            key(project.info.id, chat.id) {
+            val projectId = project.info.id
+            key(projectId, chat.id) {
                 Composer(
                     initialText = sync.drafts.get(project.info.id, chat.id),
                     onTextChange = { sync.drafts.set(project.info.id, chat.id, it) },
@@ -129,6 +143,10 @@ fun ConversationScreen(
                     },
                     onCancel = { scope.launch { sync.cancelTurn() } },
                     modifier = Modifier.windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
+                    attachments = drafts.of(projectId, chat.id),
+                    loadAttachment = rememberLoadAttachment(sync, projectId, chat.id),
+                    onAddFiles = { uris -> scope.launch { uriAttachments.addTo(sync.attachments, projectId, chat.id, uris) } },
+                    onRemoveAttachment = { sync.attachments.remove(projectId, chat.id, it) },
                 )
             }
         } else {
@@ -136,6 +154,11 @@ fun ConversationScreen(
         }
     }
 }
+
+/** [chat] の添付の中身を同期層のキャッシュから取る (会話の画像・コンポーザのサムネイル)。 */
+@Composable
+private fun rememberLoadAttachment(sync: AppStore, project: String, chat: String): LoadAttachment =
+    remember(sync, project, chat) { LoadAttachment { sync.attachmentPreviews.load(project, chat, it) } }
 
 @Composable
 private fun TopBar(

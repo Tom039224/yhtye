@@ -6589,6 +6589,7 @@ dependencies = [
  "agent-client-protocol",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "futures",
  "gethostname",
  "getrandom 0.3.4",
@@ -6610,6 +6611,7 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "ts-rs",
+ "url",
 ]
 
 [[package]]
