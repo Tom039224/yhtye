@@ -65,8 +65,9 @@ import kotlin.math.roundToInt
 // 左パネル (PC のアイコンレール + サイドバー + ステータスバーの使用量、モックの `#left`): 左端のレール (`Rail.kt`) で
 // ダッシュボード / 開いているプロジェクト / コーディング / 履歴を切り替え、一番下に設定。レールは左パネルが開いているときの
 // もう 1 回の左→右のスワイプで広がり、プロジェクトの名前が出る (`RailExpansion.kt`)。その右にプロジェクトの名前と
-// ブランチとチャットの木 (コーディング・ダッシュボード)。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、
-// `HostFooter.kt`) とプラン・使用量 (PC のステータスバー)。
+// ブランチとチャットの木 (コーディングのときだけ。PC もダッシュボードと履歴ではサイドバーを隠す。ダッシュボードはレールだけ、
+// 履歴は PC の RunsView と同じ空の状態)。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`。
+// サイドバーと同じくコーディングのときだけ) とプラン・使用量 (PC のステータスバー。どのビューでも出す)。
 
 private val METER_SHAPE = RoundedCornerShape(2.dp)
 
@@ -119,7 +120,8 @@ fun LeftPanel(
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         when (view) {
                             MainView.Runs -> EmptyState(YIcons.History, RUNS_EMPTY, Modifier.align(Alignment.Center), testTag = "runs-empty")
-                            MainView.Work, MainView.Dashboard -> WorkSide(app, sync, now, memory, onChatChosen)
+                            MainView.Work -> WorkSide(app, sync, now, memory, onChatChosen)
+                            MainView.Dashboard -> Unit // レールだけ (PC のダッシュボードにサイドバーは無い)
                         }
                     }
                 }
@@ -127,7 +129,7 @@ fun LeftPanel(
             }
         }
         HorizontalDivider(color = c.line)
-        Footer(app, sync, now, selfId)
+        Footer(app, sync, now, selfId, showHosts = view == MainView.Work)
     }
 }
 
@@ -163,7 +165,7 @@ private fun RailOverlay(
     )
 }
 
-/** コーディング (とダッシュボード) のパネルの中身: 表示中のプロジェクトの名前と、ブランチとチャットの木。 */
+/** コーディングのパネルの中身: 表示中のプロジェクトの名前と、ブランチとチャットの木。 */
 @Composable
 private fun WorkSide(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory, onChatChosen: () -> Unit) {
     ProjectPickerArea(app) {
@@ -171,9 +173,9 @@ private fun WorkSide(app: AppState, sync: AppStore, now: Long, memory: LeftPanel
     }
 }
 
-/** 下端: サーバー (コアのホストと最後の ping からの経過) と端末の一覧、プランと使用量 (タップで取り直す)。 */
+/** 下端: サーバー (コアのホストと最後の ping からの経過) と端末の一覧 ([showHosts] のときだけ)、プランと使用量 (タップで取り直す)。 */
 @Composable
-private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?) {
+private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?, showHosts: Boolean) {
     val c = Yhtye.colors
     val scope = rememberActionScope()
     Column(
@@ -184,7 +186,7 @@ private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?) {
             .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        HostAndClients(app, selfId)
+        if (showHosts) HostAndClients(app, selfId)
         val report = app.usage.report
         val enabled = app.connection is ConnectionState.Connected && !app.usage.loading
         FlowRow(

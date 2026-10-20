@@ -43,6 +43,7 @@ import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
 import io.github.tom039224.yhtye.shared.sync.HostView
 import io.github.tom039224.yhtye.ui.panels.Dimmed
 import io.github.tom039224.yhtye.ui.panels.HostAndClients
+import io.github.tom039224.yhtye.ui.panels.MainView
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -359,6 +360,7 @@ class LeftPanelTest {
         // 左の中身と中央の両方が PC の RunsView と同じ空の状態
         rule.onAllNodesWithText("現状は何もありません", useUnmergedTree = true).assertCountEquals(2)
         assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host")) // PC の履歴にもサイドバー (のフッタ) は無い
         rule.onNodeWithTag("panel-shield").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("runs-center").assertExists()
@@ -370,6 +372,46 @@ class LeftPanelTest {
         rule.onNodeWithTag("rail-work").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("current-project").assertExists()
+    }
+
+    @Test
+    fun `the dashboard hides the project and branch side and leaves the rail, as on the PC`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        // レールはそのまま: ダッシュボード・コーディング・履歴・設定のボタンとプロジェクトのドット
+        listOf("rail-dashboard", "rail-work", "rail-runs", "rail-settings", "rail-project-${PROJECT.id}", "rail-project-${busy.id}")
+            .forEach { assertTrue(h.exists(it), it) }
+        // 表示中のプロジェクトの名前・ブランチの木・サーバーと端末の一覧は無い
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("project-name"))
+        assertFalse(h.exists("main-clone"))
+        assertFalse(h.exists("new-branch"))
+        assertFalse(h.exists("other-branches"))
+        assertFalse(h.exists("host"))
+        assertFalse(h.exists("runs-empty"))
+        // PC のステータスバーと同じ、プランと使用量は残る
+        assertTrue(h.exists("usage"))
+        rule.onNodeWithTag("usage-5h", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("usage-week", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `the project side and the host footer come back with the work view`() {
+        h.open(view = MainView.Dashboard)
+        h.openLeft()
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host"))
+        rule.onNodeWithTag("rail-work").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("current-project").assertExists()
+        rule.onNodeWithTag("main-clone", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("host").assertExists()
+        rule.onNodeWithTag("usage").assertExists()
+        // ダッシュボードに戻ればまた隠れる
+        rule.onNodeWithTag("rail-dashboard").performClick()
+        rule.waitForIdle()
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host"))
     }
 
     @Test
