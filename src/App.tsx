@@ -6,7 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useHostsRegistry, useHostsState } from "./store/useHosts";
 import { useAppState, useStore } from "./store/useStore";
 import { ConnectionBanner } from "./ui/ConnectionBanner";
+import { Dashboard } from "./ui/Dashboard";
 import { EmptyState } from "./ui/EmptyState";
+import { Icon } from "./ui/Icon";
 import { IconRail, type View } from "./ui/IconRail";
 import { sidebarBounds } from "./ui/layout";
 import type { PairLinkRequest } from "./ui/HostsSettingsSection";
@@ -34,13 +36,16 @@ function useGitOnFocus(): void {
   }, [store]);
 }
 
-/** The Claude Design layout (docs/design/orchestrator-desktop.md §2), driven by the store. */
-function App() {
+/**
+ * The Claude Design layout (docs/design/orchestrator-desktop.md §2), driven by the store.
+ * The app starts on the dashboard (§10); the store may reopen the last project behind it.
+ */
+function App({ initialView = "dashboard" }: { initialView?: View }) {
   const store = useStore();
   const hosts = useHostsRegistry();
   const project = useAppState((s) => s.project);
   useGitOnFocus();
-  const [view, setView] = useState<View>("work");
+  const [view, setView] = useState<View>(initialView);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // A pairing link that arrived (a click on a `yhtye://pair?…` link): the settings open on "接続先" with it in the box.
   const [pairLink, setPairLink] = useState<PairLinkRequest | null>(null);
@@ -63,7 +68,9 @@ function App() {
       <ConnectionBanner />
       <div className="body" ref={body} style={sizeVar(SIDEBAR_WIDTH, sizes.sidebar)}>
         <IconRail view={view} onChange={setView} settingsOpen={settingsOpen} onOpenSettings={() => setSettingsOpen(true)} />
-        {view === "runs" ? (
+        {view === "dashboard" ? (
+          <Dashboard onOpenWork={() => setView("work")} />
+        ) : view === "runs" ? (
           <RunsView />
         ) : (
           <>
@@ -82,6 +89,10 @@ function App() {
             ) : (
               <div className="main-empty">
                 <EmptyState icon="folder" text="プロジェクト (git リポジトリ) を開いてください。" />
+                <button type="button" className="main-empty-action" onClick={() => setView("dashboard")}>
+                  <Icon name="dashboard" size={14} />
+                  ダッシュボードで開く
+                </button>
               </div>
             )}
           </>

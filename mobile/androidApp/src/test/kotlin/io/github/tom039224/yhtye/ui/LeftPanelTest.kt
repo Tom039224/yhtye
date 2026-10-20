@@ -43,6 +43,7 @@ import io.github.tom039224.yhtye.shared.sync.CLIENTS_SHOWN
 import io.github.tom039224.yhtye.shared.sync.HostView
 import io.github.tom039224.yhtye.ui.panels.Dimmed
 import io.github.tom039224.yhtye.ui.panels.HostAndClients
+import io.github.tom039224.yhtye.ui.panels.MainView
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -54,8 +55,8 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
- * 左パネル: ビューの切り替え、プロジェクトのドロップダウン・バックグラウンドのチップ、ブランチとチャットの木、新しい
- * チャット・ブランチ、設定の入口。本物の同期層を偽のコアの上で動かし、操作がコアへの要求になることを確かめる。
+ * 左パネル: ビューの切り替え、表示中のプロジェクト、レールのプロジェクトのメニュー、ブランチとチャットの木、新しい
+ * チャット・ブランチ、設定の入口 (レールの表示と展開は RailTest)。本物の同期層を偽のコアの上で動かし、操作がコアへの要求になることを確かめる。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w400dp-h800dp")
@@ -72,81 +73,27 @@ class LeftPanelTest {
     private val busy = ProjectInfo(id = "busy", name = "busy-repo", path = "/tmp/busy", open = true, running = true, awake = true)
 
     @Test
-    fun `the picker lists the projects and a tap opens the chosen one`() {
+    fun `the side shows the project on screen by name and path, without a list or a path field`() {
         h.open { projects = listOf(PROJECT, other) }
         h.openLeft()
         rule.onNodeWithTag("project-name", useUnmergedTree = true).assertTextEquals(PROJECT.name)
-        rule.onNodeWithTag("project-picker").performClick()
-        rule.onNodeWithTag("project-option-${other.id}").performClick()
-        // 一覧は閉じても、開く要求は最後まで進む (プロジェクトが替わる)
-        h.settle { h.sync.state.value.project?.info?.id == other.id }
-        assertFalse(h.exists("project-popup"))
-    }
-
-    @Test
-    fun `the picker opens a repository by its path`() {
-        h.open()
-        h.openLeft()
-        rule.onNodeWithTag("project-picker").performClick()
-        rule.onNodeWithTag("open-path").performTextInput("/home/me/new-repo")
-        rule.onNodeWithTag("open-submit").performClick()
-        h.settle { h.core.callsOf<ApiCommand.OpenProject>().any { it.path == "/home/me/new-repo" } }
-    }
-
-    @Test
-    fun `a tap outside the open list closes it`() {
-        h.open()
-        h.openLeft()
-        rule.onNodeWithTag("project-picker").performClick()
-        assertTrue(h.exists("project-popup"))
-        rule.onNodeWithTag("project-popup-scrim").performClick()
-        rule.waitForIdle()
-        assertFalse(h.exists("project-popup"))
-    }
-
-    @Test
-    fun `projects running in the background show as chips with the ring and a tap switches`() {
-        h.open { projects = listOf(PROJECT, other, busy) }
-        h.openLeft()
-        // 開いていない other は出ない、表示中の repo も出ない
+        rule.onNode(hasText(PROJECT.path), useUnmergedTree = true).assertExists()
+        // 選ぶのはレールとダッシュボード: ドロップダウン・パスの欄・バックグラウンドのチップは無い
+        assertFalse(h.exists("project-picker"))
+        assertFalse(h.exists("open-path"))
         assertFalse(h.exists("bg-project-${other.id}"))
-        assertFalse(h.exists("bg-project-${PROJECT.id}"))
-        rule.onNode(hasContentDescription("busy-repo に切り替え (実行中)")).assertExists()
-        rule.onNodeWithTag("bg-project-${busy.id}").performClick()
-        h.settle { h.sync.state.value.project?.info?.id == busy.id }
     }
 
     @Test
-    fun `the picker lists the project it opened first and a long press moves one`() {
-        h.open { projects = listOf(other, PROJECT) }
-        h.openLeft()
-        rule.onNodeWithTag("project-picker").performClick()
-        val ids = { h.sync.state.value.projects.map { it.id } }
-        // 開いたプロジェクトは使ったので先頭 (コアの一覧では other が先だった)
-        assertEquals(listOf(PROJECT.id, other.id), ids())
-
-        rule.onNodeWithTag("project-option-${other.id}").performTouchInput { longClick() }
-        // 下の項目は「下へ」が選べない
-        rule.onNodeWithTag("project-move-${other.id}-down").assertIsNotEnabled()
-        rule.onNodeWithTag("project-move-${other.id}-up").performClick()
-        h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
-        assertEquals(listOf(other.id, PROJECT.id), h.core.callsOf<ApiCommand.ReorderProjects>().single().ids)
-        h.settle { ids() == listOf(other.id, PROJECT.id) }
-        // 一覧は開いたまま
-        assertTrue(h.exists("project-popup"))
-    }
-
-    @Test
-    fun `the background chips trade the places they have among all the projects`() {
+    fun `the rail menu moves a project among the rows it shows`() {
         val second = busy.copy(id = "busy2", name = "busy-two", path = "/tmp/busy2")
-        h.open { projects = listOf(PROJECT, busy, second, other) }
+        h.open { projects = listOf(PROJECT, busy, other, second) }
         h.openLeft()
-        rule.onNodeWithTag("bg-project-${busy.id}").performTouchInput { longClick() }
-        rule.onNodeWithTag("bg-move-${busy.id}-up").assertIsNotEnabled()
-        rule.onNodeWithTag("bg-move-${busy.id}-down").performClick()
+        rule.onNodeWithTag("rail-project-${busy.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-move-${busy.id}-down").performClick()
         h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
         // 開いていない other は動かない: busy と busy2 が入れ替わる
-        assertEquals(listOf(PROJECT.id, second.id, busy.id, other.id), h.core.callsOf<ApiCommand.ReorderProjects>().single().ids)
+        assertEquals(listOf(PROJECT.id, second.id, other.id, busy.id), h.core.callsOf<ApiCommand.ReorderProjects>().single().ids)
     }
 
     @Test
@@ -196,24 +143,18 @@ class LeftPanelTest {
         val awake = busy.copy(running = false)
         h.open { projects = listOf(PROJECT, awake) }
         h.openLeft()
-        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
-        rule.onNodeWithTag("bg-move-${awake.id}-up").assertIsNotEnabled()
-        rule.onNodeWithTag("bg-move-${awake.id}-down").assertIsNotEnabled()
+        rule.onNodeWithTag("rail-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-move-${awake.id}-up").assertIsEnabled()
+        rule.onNodeWithTag("rail-move-${awake.id}-down").assertIsNotEnabled()
         rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled()
-        // 一覧の行でも同じ: 並べ替えは一覧を開いたまま、スリープは閉じる
-        rule.onNodeWithTag("project-picker").performClick()
-        rule.onNodeWithTag("project-option-${awake.id}").performTouchInput { longClick() }
-        rule.onNodeWithTag("project-move-${awake.id}-up").performClick()
-        h.settle { h.core.callsOf<ApiCommand.ReorderProjects>().isNotEmpty() }
-        assertTrue(h.exists("project-popup"))
     }
 
     @Test
-    fun `a long press on a background chip opens a menu that sleeps the project`() {
+    fun `a long press on a rail project opens a menu that sleeps it without switching`() {
         val awake = busy.copy(running = false)
         h.open { projects = listOf(PROJECT, awake) }
         h.openLeft()
-        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-project-${awake.id}").performTouchInput { longClick() }
         rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
         h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
         assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
@@ -223,54 +164,38 @@ class LeftPanelTest {
     }
 
     @Test
-    fun `sleep is disabled for a background project while a chat of it works`() {
+    fun `sleep is disabled for a project of the rail while a chat of it works`() {
         h.open { projects = listOf(PROJECT, busy) }
         h.openLeft()
-        rule.onNodeWithTag("bg-project-${busy.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-project-${busy.id}").performTouchInput { longClick() }
         rule.onNodeWithTag("menu-sleep-${busy.id}").assertIsNotEnabled()
     }
 
     @Test
-    fun `a background chip leaves once the core says its orchestrators stopped`() {
+    fun `a slept project stays on the rail with a hollow dot`() {
         val awake = busy.copy(running = false)
         h.open { projects = listOf(PROJECT, awake) }
         h.openLeft()
-        assertTrue(h.exists("bg-project-${awake.id}"))
-        rule.onNodeWithTag("bg-project-${awake.id}").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-dot-${awake.id}", useUnmergedTree = true).assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "待機中"))
+        rule.onNodeWithTag("rail-project-${awake.id}").performTouchInput { longClick() }
         rule.onNodeWithTag("menu-sleep-${awake.id}").performClick()
         h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
+        // 眠っても開いたまま (PC と同じ): レールに残り、ドットは停止
         h.core.projects = listOf(PROJECT, awake.copy(awake = false))
         h.core.emit(ApiEvent(1, 0, awake.id, false, ApiEventBody.SessionStopped("orchestrator:C-1", suspended = false)))
-        h.settle { !h.exists("bg-project-${awake.id}") }
+        h.settle { h.sync.state.value.projects.find { it.id == awake.id }?.awake == false }
+        rule.onNodeWithTag("rail-dot-${awake.id}", useUnmergedTree = true).assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "停止"))
     }
 
     @Test
-    fun `a long press on a row of the picker sleeps that project and closes the list`() {
-        val awake = busy.copy(running = false)
-        h.open { projects = listOf(PROJECT, awake, other) }
-        h.openLeft()
-        rule.onNodeWithTag("project-picker").performClick()
-        rule.onNodeWithTag("project-option-${other.id}").performTouchInput { longClick() }
-        // 開いていないプロジェクトには眠らせるものが無い
-        rule.onNodeWithTag("menu-sleep-${other.id}").assertIsNotEnabled()
-        rule.onNodeWithTag("project-option-${awake.id}").performTouchInput { longClick() }
-        rule.onNodeWithTag("menu-sleep-${awake.id}").assertIsEnabled().performClick()
-        h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
-        assertEquals(listOf(ApiCommand.SleepProject(awake.id)), h.core.callsOf<ApiCommand.SleepProject>())
-        assertEquals(listOf(PROJECT.path), h.core.callsOf<ApiCommand.OpenProject>().map { it.path })
-        assertFalse(h.exists("project-popup"))
-    }
-
-    @Test
-    fun `the project on screen sleeps from a long press on the picker button`() {
+    fun `the project on screen sleeps from a long press on its rail row`() {
         h.open()
         h.openLeft()
-        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-project-${PROJECT.id}").performTouchInput { longClick() }
         // 開いたままのプロジェクトはオーケストレータが上がっているので眠らせられる
         rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsEnabled().performClick()
         h.settle { h.core.callsOf<ApiCommand.SleepProject>().isNotEmpty() }
         assertEquals(listOf(ApiCommand.SleepProject(PROJECT.id)), h.core.callsOf<ApiCommand.SleepProject>())
-        assertFalse(h.exists("project-popup"))
     }
 
     @Test
@@ -279,7 +204,7 @@ class LeftPanelTest {
         val end = h.recording.end
         h.open(end.copy(sessions = end.sessions.filter { it.sessionKey != orchestrator }))
         h.openLeft()
-        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-project-${PROJECT.id}").performTouchInput { longClick() }
         rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
     }
 
@@ -289,7 +214,7 @@ class LeftPanelTest {
         val end = h.recording.end
         h.open(end.copy(sessions = end.sessions.map { if (it.sessionKey == orchestrator) it.copy(turnRunning = true) else it }))
         h.openLeft()
-        rule.onNodeWithTag("project-picker").performTouchInput { longClick() }
+        rule.onNodeWithTag("rail-project-${PROJECT.id}").performTouchInput { longClick() }
         rule.onNodeWithTag("menu-sleep-${PROJECT.id}").assertIsNotEnabled()
     }
 
@@ -434,7 +359,8 @@ class LeftPanelTest {
         rule.onNodeWithTag("runs-empty").assertExists()
         // 左の中身と中央の両方が PC の RunsView と同じ空の状態
         rule.onAllNodesWithText("現状は何もありません", useUnmergedTree = true).assertCountEquals(2)
-        assertFalse(h.exists("project-picker"))
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host")) // PC の履歴にもサイドバー (のフッタ) は無い
         rule.onNodeWithTag("panel-shield").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag("runs-center").assertExists()
@@ -445,7 +371,47 @@ class LeftPanelTest {
         h.openLeft()
         rule.onNodeWithTag("rail-work").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag("project-picker").assertExists()
+        rule.onNodeWithTag("current-project").assertExists()
+    }
+
+    @Test
+    fun `the dashboard hides the project and branch side and leaves the rail, as on the PC`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        // レールはそのまま: ダッシュボード・コーディング・履歴・設定のボタンとプロジェクトのドット
+        listOf("rail-dashboard", "rail-work", "rail-runs", "rail-settings", "rail-project-${PROJECT.id}", "rail-project-${busy.id}")
+            .forEach { assertTrue(h.exists(it), it) }
+        // 表示中のプロジェクトの名前・ブランチの木・サーバーと端末の一覧は無い
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("project-name"))
+        assertFalse(h.exists("main-clone"))
+        assertFalse(h.exists("new-branch"))
+        assertFalse(h.exists("other-branches"))
+        assertFalse(h.exists("host"))
+        assertFalse(h.exists("runs-empty"))
+        // PC のステータスバーと同じ、プランと使用量は残る
+        assertTrue(h.exists("usage"))
+        rule.onNodeWithTag("usage-5h", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("usage-week", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `the project side and the host footer come back with the work view`() {
+        h.open(view = MainView.Dashboard)
+        h.openLeft()
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host"))
+        rule.onNodeWithTag("rail-work").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("current-project").assertExists()
+        rule.onNodeWithTag("main-clone", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("host").assertExists()
+        rule.onNodeWithTag("usage").assertExists()
+        // ダッシュボードに戻ればまた隠れる
+        rule.onNodeWithTag("rail-dashboard").performClick()
+        rule.waitForIdle()
+        assertFalse(h.exists("current-project"))
+        assertFalse(h.exists("host"))
     }
 
     @Test

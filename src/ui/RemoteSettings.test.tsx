@@ -27,7 +27,7 @@ async function setup(configure?: (core: FakeCore) => void, timers = false) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   await act(() => store.openProject(PROJECT.path));

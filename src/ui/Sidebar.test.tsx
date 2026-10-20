@@ -46,12 +46,45 @@ afterEach(() => {
 });
 
 describe("section labels", () => {
-  it("names the project pull-down and the branch tree", async () => {
+  it("names the project and the branch tree", async () => {
     mount();
     await advance(0);
     const sidebar = screen.getByRole("complementary", { name: "projects" });
     expect(within(sidebar).getByText("Project")).toBeInTheDocument();
     expect(within(sidebar).getByText("Branch")).toBeInTheDocument();
+  });
+});
+
+describe("the open project", () => {
+  const sidebar = () => screen.getByRole("complementary", { name: "projects" });
+  const openRepo = async () => {
+    await act(async () => {
+      await store.openProject(PROJECT.path);
+    });
+    await advance(0);
+  };
+
+  it("is only its name: projects are chosen in the rail, so there is no pull-down and no path form", async () => {
+    mount();
+    await advance(0);
+    expect(within(sidebar()).getByText("プロジェクトが開かれていません")).toBeInTheDocument();
+    await openRepo();
+    const current = sidebar().querySelector(".project-current") as HTMLElement;
+    expect(current).toHaveTextContent("repo");
+    expect(current).toHaveAttribute("title", "/tmp/repo · 停止");
+    expect(within(current).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(sidebar()).queryByRole("listbox")).not.toBeInTheDocument();
+    expect(within(sidebar()).queryByRole("textbox", { name: /開くリポジトリのパス/ })).not.toBeInTheDocument();
+    expect(within(sidebar()).queryByRole("list", { name: "バックグラウンドで動作中のプロジェクト" })).not.toBeInTheDocument();
+  });
+
+  it("carries the project's ring: hollow while its chats sleep, turning while work is on", async () => {
+    mount((c) => {
+      c.snapshot = { ...c.snapshot, sessions: [{ session_key: "orchestrator:C-1", role: "orchestrator", task: null, acp_session_id: "acp", status: "live", turn_running: true, agent: null, cwd: null }] };
+    });
+    await advance(0);
+    await openRepo();
+    expect(screen.getByTestId("current-ring")).toHaveClass("ring", "ring-running");
   });
 });
 

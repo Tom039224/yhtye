@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -80,6 +81,7 @@ private const val MILLIS_PER_SECOND = 1_000L
  * @param onOpenLeft ☰ (左パネル)。[showPanelButtons] が false (左右のパネルを常時表示) のときは出さない。
  * @param onOpenRight グループ (右パネル) の入口と、待機バナーのタップ。
  * @param appVersion このアプリの版 (PC の版と合わなければ接続のバナーと同じ場所に知らせる)。
+ * @param onOpenDashboard プロジェクトが開いていないときの「ダッシュボードで開く」(PC と同じ)。
  */
 @Composable
 fun ConversationScreen(
@@ -92,6 +94,7 @@ fun ConversationScreen(
     onReconnect: () -> Unit,
     modifier: Modifier = Modifier,
     appVersion: AppVersion = ThisApp.version,
+    onOpenDashboard: () -> Unit = {},
 ) {
     val model = conversationModel(app)
     val scope = rememberCoroutineScope()
@@ -109,7 +112,7 @@ fun ConversationScreen(
                     if (app.busy.opening) {
                         EmptyState(YIcons.Loader, "読み込み中…", Modifier.align(Alignment.Center))
                     } else {
-                        EmptyState(YIcons.Folder, NO_PROJECT_HINT, Modifier.align(Alignment.Center), testTag = "no-project")
+                        NoProject(onOpenDashboard, Modifier.align(Alignment.Center))
                     }
                 chat == null -> EmptyState(YIcons.MessagePlus, NO_CHAT_HINT, Modifier.align(Alignment.Center), testTag = "no-chat")
                 model.isEmpty -> EmptyState(YIcons.Message, EMPTY_CONVERSATION, Modifier.align(Alignment.Center))
@@ -360,5 +363,18 @@ private fun Alert(icon: androidx.compose.ui.graphics.vector.ImageVector, text: S
         YIcon(icon, c.handBar, 14.dp)
         Text(text, color = c.tx, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp))
         action()
+    }
+}
+
+/** プロジェクトが開いていない: 案内と、その下の「ダッシュボードで開く」(PC の `.main-empty`)。 */
+@Composable
+private fun NoProject(onOpenDashboard: () -> Unit, modifier: Modifier) {
+    val c = Yhtye.colors
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        EmptyState(YIcons.Folder, NO_PROJECT_HINT, testTag = "no-project")
+        TextButton(onClick = onOpenDashboard, modifier = Modifier.testTag("open-dashboard")) {
+            YIcon(YIcons.Dashboard, c.accent, 16.dp)
+            Text("ダッシュボードで開く", color = c.accent, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp))
+        }
     }
 }

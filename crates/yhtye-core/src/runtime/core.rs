@@ -33,11 +33,16 @@ use crate::api::{
 };
 use crate::attachments::AttachmentStore;
 use crate::clock::now_ms;
+use crate::directory::{home_dir, list_directory};
 use crate::domain::DomainConfig;
 use crate::git::{self, BranchStatuses, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
 use crate::remote_client::{RemoteHosts, TokenVault};
 use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
+use crate::stats::{
+    DEFAULT_PERIOD_DAYS, MAX_PERIOD_DAYS, MAX_TZ_OFFSET_MIN, ProjectRoots, StatsService,
+    StatsSources,
+};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
@@ -88,6 +93,12 @@ pub struct CoreConfig {
     /// The host runs without a GUI (`yhtye --headless`); `Ping` tells the
     /// clients, which show another icon for it.
     pub headless: bool,
+    /// Where the agents' session logs are read for `GetUsageStats` (tests
+    /// point it at temporary directories).
+    pub stats_sources: StatsSources,
+    /// Read those logs in the background when the core starts, so the first
+    /// `GetUsageStats` is quick (the app does; tests do not).
+    pub stats_warm_up: bool,
 }
 
 impl CoreConfig {
@@ -107,6 +118,8 @@ impl CoreConfig {
             secret_backend: Arc::new(KeyringBackend::new()),
             tailscale: Arc::new(TailscaleCli),
             headless: false,
+            stats_sources: StatsSources::from_env(),
+            stats_warm_up: false,
         }
     }
 
@@ -118,6 +131,7 @@ impl CoreConfig {
     pub fn installed(data_dir: impl Into<PathBuf>, model: &str) -> Self {
         let mut cfg = Self::claude_code(data_dir, model);
         cfg.detection = Some(DetectionConfig::from_process(model));
+        cfg.stats_warm_up = true;
         cfg
     }
 }
@@ -145,6 +159,8 @@ struct Inner {
     settings_revision: AtomicU64,
     events: broadcast::Sender<ApiEvent>,
     usage: UsageService,
+    /// Token statistics of the agents on this machine (`GetUsageStats`).
+    stats: StatsService,
     agents: Arc<AgentCatalog>,
     models: ModelService,
     secrets: Arc<Secrets>,
@@ -197,7 +213,9 @@ impl Core {
         // The device tokens of the hosts go where the secret environment variables do.
         let remote_hosts =
             RemoteHosts::new(store.clone(), TokenVault::new(cfg.secret_backend.clone()));
-        Ok(Self {
+        let stats = StatsService::new(cfg.stats_sources.clone());
+        let warm_up = cfg.stats_warm_up;
+        let core = Self {
             inner: Arc::new(Inner {
                 cfg,
                 store,
@@ -209,6 +227,7 @@ impl Core {
                 settings_revision: AtomicU64::new(settings::initial_revision()),
                 events,
                 usage,
+                stats,
                 agents,
                 models,
                 secrets,
@@ -218,7 +237,12 @@ impl Core {
                 remote_hosts,
                 closed: AtomicBool::new(false),
             }),
-        })
+        };
+        if warm_up {
+            let warming = core.clone();
+            tokio::spawn(async move { warming.inner.stats.warm_up().await });
+        }
+        Ok(core)
     }
 
     /// The Yhtye hosts this one uses as a client (`core-design.md` §18.9): pair,
@@ -441,6 +465,40 @@ impl Core {
                     .map_err(|e| ApiError::unavailable(format!("usage: {e}")))?;
                 Ok(ApiResponse::Usage { usage })
             }
+            ApiCommand::GetUsageStats {
+                days,
+                tz_offset_min,
+                refresh,
+            } => {
+                let days = days.unwrap_or(DEFAULT_PERIOD_DAYS);
+                if !(1..=MAX_PERIOD_DAYS).contains(&days) {
+                    return Err(ApiError::invalid_argument(format!(
+                        "days must be between 1 and {MAX_PERIOD_DAYS}"
+                    )));
+                }
+                let tz_offset_min = tz_offset_min.unwrap_or(0);
+                if tz_offset_min.abs() > MAX_TZ_OFFSET_MIN {
+                    return Err(ApiError::invalid_argument(
+                        "tz_offset_min must be within 24 hours of UTC",
+                    ));
+                }
+                let projects = self.stats_projects().await?;
+                let stats = self
+                    .inner
+                    .stats
+                    .get(days, tz_offset_min, refresh.unwrap_or(false), projects)
+                    .await;
+                Ok(ApiResponse::UsageStats { stats })
+            }
+            ApiCommand::ListDirectory { path, show_hidden } => {
+                let show_hidden = show_hidden.unwrap_or(false);
+                let directory = tokio::task::spawn_blocking(move || {
+                    list_directory(path.as_deref(), show_hidden, home_dir().as_deref())
+                })
+                .await
+                .map_err(|e| ApiError::internal(format!("could not list the folder: {e}")))??;
+                Ok(ApiResponse::Directory { directory })
+            }
             ApiCommand::GetAgentSettings { project } => Ok(ApiResponse::AgentSettings {
                 settings: Box::new(self.agent_settings(project).await?),
             }),
@@ -545,6 +603,24 @@ impl Core {
         if !self.inner.closed.load(Ordering::SeqCst) {
             self.inner.remote.start_if_enabled(self).await;
         }
+    }
+
+    /// The registered projects with the directories whose sessions belong to
+    /// them: the repository and its Yhtye worktrees.
+    async fn stats_projects(&self) -> Result<Vec<ProjectRoots>, ApiError> {
+        let data_dir = &self.inner.cfg.data_dir;
+        Ok(self
+            .inner
+            .store
+            .projects()
+            .await?
+            .into_iter()
+            .map(|r| ProjectRoots {
+                name: dir_name(&r.path),
+                roots: vec![r.path, worktree_root(data_dir, &r.id)],
+                id: r.id,
+            })
+            .collect())
     }
 
     async fn known_project(&self, project: &str) -> Result<ProjectRecord, ApiError> {

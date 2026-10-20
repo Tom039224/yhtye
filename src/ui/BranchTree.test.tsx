@@ -31,7 +31,7 @@ function setup(opts: { prefs?: Prefs; empty?: boolean } = {}) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   return { transport, core, store, prefs, user: userEvent.setup() };

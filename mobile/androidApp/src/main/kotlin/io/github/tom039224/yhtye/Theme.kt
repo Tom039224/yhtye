@@ -73,6 +73,10 @@ data class YhtyeColors(
     val usageWeek: Color,
     /** 積み重ねた画面 (タスク詳細・設定) の下を暗くする幕 (`--sheet-scrim`)。 */
     val sheetScrim: Color,
+    /** 利用統計のハーネスの色 (`--chart-series-0` … `-5`。同じ番号 = 同じハーネス。最後は中立)。 */
+    val chartSeries: List<Color>,
+    /** 利用統計のヒートマップの段 (`--heat-0` … `-4`。0 = 使用なし、1–4 = 琥珀の単色の段階)。 */
+    val heat: List<Color>,
 ) {
     /** `accent` の 14% (メンションのチップ・エージェントの印の地)。 */
     val accentSoft: Color get() = accent.copy(alpha = 0.14f)
@@ -145,6 +149,10 @@ val DarkYhtyeColors = YhtyeColors(
     usage5h = Color(0xFFE0843E),
     usageWeek = Color(0xFF6FB880),
     sheetScrim = Color(0x80000000),
+    // oklch(0.7 0.11 250) / (0.72 0.11 185) / (0.7 0.11 300) / (0.7 0.13 20) / (0.8 0.11 95) / --text-muted
+    chartSeries = listOf(Color(0xFF67A3E0), Color(0xFF3DBBAE), Color(0xFFA98ED9), Color(0xFFE47B7C), Color(0xFFD4BD67), Color(0xFF9A948A)),
+    // #2b2825 に accent を 28% / 50% / 74% 混ぜる
+    heat = listOf(Color(0xFF2B2825), Color(0xFF5C4A37), Color(0xFF826446), Color(0xFFAC8155), Color(0xFFD9A066)),
 )
 
 /**
@@ -204,6 +212,10 @@ val LightYhtyeColors = YhtyeColors(
     usage5h = Color(0xFFC86A22),
     usageWeek = Color(0xFF3E9A5A),
     sheetScrim = Color(0x40000000),
+    // ダークと同じ色相で明度だけ下げた (oklch(0.55 C H)、黄は 0.62)
+    chartSeries = listOf(Color(0xFF3A75AF), Color(0xFF008479), Color(0xFF7C61A8), Color(0xFFB14D51), Color(0xFF9B852B), Color(0xFF6B655D)),
+    // bgChip に accent を 28% / 50% / 74% 混ぜる
+    heat = listOf(Color(0xFFE9E5DE), Color(0xFFD7C2AC), Color(0xFFC9A784), Color(0xFFBA8959), Color(0xFFA9692A)),
 )
 
 val LocalYhtyeColors = staticCompositionLocalOf { DarkYhtyeColors }

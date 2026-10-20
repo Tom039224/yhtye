@@ -100,6 +100,8 @@ object YIcons {
         "folder",
         "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
     )
+    /** ダッシュボード (PC の `dashboard`: 上に広いパネル、下に小さな 2 枚)。 */
+    val Dashboard = lineIcon("dashboard", rect(4f, 4f, 16f, 7f, 1.5f), rect(4f, 14f, 7f, 6f, 1.5f), rect(14f, 14f, 6f, 6f, 1.5f))
     val Clock = lineIcon("clock", circle(12f, 12f, 10f), "M12 6v6l4 2")
     val Trash = lineIcon("trash", "M3 6h18", "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2")
     val Info = lineIcon("info", circle(12f, 12f, 10f), "M12 16v-4", "M12 8h.01")

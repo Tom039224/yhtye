@@ -4,7 +4,7 @@ import type { ProjectInfo, SessionRecord, Task, TaskStatus } from "../api/genera
 import { emptyState } from "../store/domain";
 import { newProjectView, type ProjectView } from "../store/project";
 import { FULL_RUN } from "../test/fixtures";
-import { backgroundProjects, canSleepProject, projectRing } from "./projectActivity";
+import { canSleepProject, projectRing } from "./projectActivity";
 
 const info = (id: string, open = true, running = false, awake = false): ProjectInfo => ({ id, name: id, path: `/work/${id}`, open, running, awake });
 
@@ -78,32 +78,6 @@ describe("projectRing", () => {
     const shown = viewOf(info("b"), { sessions: [session({ turn_running: true })] });
     expect(projectRing(info("a"), shown)).toBe("stopped");
     expect(projectRing(info("a", true, false, true), shown)).toBe("ready");
-  });
-});
-
-describe("backgroundProjects", () => {
-  // a: awake, b: working, c: not open (its flags never set), d: awake, e: open but every chat sleeps.
-  const list = [info("a", true, false, true), info("b", true, true), info("c", false), info("d", true, false, true), info("e")];
-
-  it("lists the open projects with something up other than the one on screen, in order", () => {
-    expect(backgroundProjects(list, "a").map((p) => p.id)).toEqual(["b", "d"]);
-  });
-
-  it("lists every such project when none is on screen", () => {
-    expect(backgroundProjects(list, null).map((p) => p.id)).toEqual(["a", "b", "d"]);
-  });
-
-  it("leaves out a project whose chats all sleep, and is empty when nothing else runs", () => {
-    expect(backgroundProjects([info("e")], null)).toEqual([]);
-    expect(backgroundProjects([info("a"), info("c", false)], "a")).toEqual([]);
-    expect(backgroundProjects([], null)).toEqual([]);
-  });
-
-  it("drops a project once it was put to sleep", () => {
-    const awake = [info("a", true, false, true), info("b", true, false, true)];
-    expect(backgroundProjects(awake, "a").map((p) => p.id)).toEqual(["b"]);
-    const slept = awake.map((p) => (p.id === "b" ? { ...p, awake: false } : p));
-    expect(backgroundProjects(slept, "a")).toEqual([]);
   });
 });
 

@@ -21,6 +21,7 @@ use crate::api::{
     WsServerMessage,
 };
 use crate::attachments::{AttachmentDelivered, AttachmentDelivery, PromptCaps};
+use crate::directory::{DirectoryEntry, DirectoryListing};
 use crate::domain::{DomainEvent, Role, ToolError};
 use crate::git::{
     BranchState, BranchStatus, BranchStatuses, GitBranch, GitCommit, GitOverview, GitWorktree,
@@ -29,6 +30,10 @@ use crate::mcp::ToolCallRecord;
 use crate::remote::{
     ClientKind, Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError,
     RemoteStatus,
+};
+use crate::stats::{
+    StatsBucket, StatsDay, StatsDayHarness, StatsProject, StatsSource, StatsTokens, StatsTotals,
+    UsageStats,
 };
 use crate::store::{ChatInfo, SessionRecord, SessionStatus};
 use crate::usage::{UsageReport, UsageWindow, UsageWindowKind};
@@ -205,6 +210,19 @@ fn commands() -> Vec<Sample> {
         ),
         ("get_usage", json!({"type": "get_usage", "refresh": true})),
         ("get_usage/default", json!({"type": "get_usage"})),
+        (
+            "get_usage_stats",
+            json!({"type": "get_usage_stats", "days": 90, "tz_offset_min": 540, "refresh": true}),
+        ),
+        (
+            "get_usage_stats/default",
+            json!({"type": "get_usage_stats"}),
+        ),
+        (
+            "list_directory",
+            json!({"type": "list_directory", "path": "/home/u", "show_hidden": true}),
+        ),
+        ("list_directory/home", json!({"type": "list_directory"})),
         (
             "get_agent_settings",
             json!({"type": "get_agent_settings", "project": "repo"}),
@@ -634,6 +652,106 @@ fn responses() -> Vec<Sample> {
         ],
         fetched_at_ms: 1_790_766_538_443,
     };
+    let tokens = |input, output, cache_read, cache_creation| StatsTokens {
+        input,
+        output,
+        cache_read,
+        cache_creation,
+        total: input + output + cache_read + cache_creation,
+    };
+    let usage_stats = UsageStats {
+        generated_at_ms: 1_790_766_538_443,
+        period_days: 2,
+        tz_offset_min: 540,
+        sources: vec![
+            StatsSource {
+                harness: "claude-code".into(),
+                found: true,
+                files: 12,
+            },
+            StatsSource {
+                harness: "codex".into(),
+                found: false,
+                files: 0,
+            },
+        ],
+        totals: StatsTotals {
+            tokens: tokens(1_200, 3_400, 560_000, 78_000),
+            sessions: 3,
+        },
+        days: vec![
+            StatsDay {
+                date: "2026-10-19".into(),
+                tokens: StatsTokens::default(),
+                sessions: 0,
+                harnesses: vec![],
+            },
+            StatsDay {
+                date: "2026-10-20".into(),
+                tokens: tokens(1_200, 3_400, 560_000, 78_000),
+                sessions: 3,
+                harnesses: vec![StatsDayHarness {
+                    harness: "claude-code".into(),
+                    tokens: 642_600,
+                    sessions: 3,
+                }],
+            },
+        ],
+        by_model: vec![
+            StatsBucket {
+                name: "claude-opus-5-5".into(),
+                tokens: tokens(1_000, 3_000, 500_000, 70_000),
+                sessions: 2,
+                other: false,
+            },
+            StatsBucket {
+                name: "other".into(),
+                tokens: tokens(200, 400, 60_000, 8_000),
+                sessions: 1,
+                other: true,
+            },
+        ],
+        by_harness: vec![StatsBucket {
+            name: "claude-code".into(),
+            tokens: tokens(1_200, 3_400, 560_000, 78_000),
+            sessions: 3,
+            other: false,
+        }],
+        by_project: vec![
+            StatsProject {
+                name: "repo".into(),
+                project: Some("repo".into()),
+                tokens: tokens(1_000, 3_000, 500_000, 70_000),
+                sessions: 2,
+                other: false,
+            },
+            StatsProject {
+                name: "scratch".into(),
+                project: None,
+                tokens: tokens(200, 400, 60_000, 8_000),
+                sessions: 1,
+                other: false,
+            },
+        ],
+    };
+    let directory = DirectoryListing {
+        path: "/home/u".into(),
+        parent: Some("/home".into()),
+        home: "/home/u".into(),
+        is_git_repo: false,
+        entries: vec![
+            DirectoryEntry {
+                name: "repo".into(),
+                path: "/home/u/repo".into(),
+                is_git_repo: true,
+            },
+            DirectoryEntry {
+                name: "Documents".into(),
+                path: "/home/u/Documents".into(),
+                is_git_repo: false,
+            },
+        ],
+    };
     let models = HarnessModels {
         harness: "claude-code".into(),
         models: vec![
@@ -772,6 +890,11 @@ fn responses() -> Vec<Sample> {
             },
         ),
         ("usage", ApiResponse::Usage { usage }),
+        (
+            "usage_stats",
+            ApiResponse::UsageStats { stats: usage_stats },
+        ),
+        ("directory", ApiResponse::Directory { directory }),
         (
             "agent_settings",
             ApiResponse::AgentSettings {
