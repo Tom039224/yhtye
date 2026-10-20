@@ -11,11 +11,13 @@ use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async_with_config};
 
 use super::address::url_host;
 use crate::remote::RemoteError;
+use crate::ws::MAX_MESSAGE_BYTES;
 
 /// Path of the host's WebSocket (`core-design.md` §18.4).
 const WS_PATH: &str = "/ws";
@@ -115,7 +117,13 @@ impl TungsteniteTransport {
             .map_err(|_| TransportError::Failed("the device token is not usable".into()))?;
         auth.set_sensitive(true);
         request.headers_mut().insert("authorization", auth);
-        match tokio::time::timeout(HOST_TIMEOUT, connect_async(request)).await {
+        // The host lifts its own limits for attached files (see `MAX_MESSAGE_BYTES`),
+        // so the reply to `get_attachment` can be far over the library's defaults.
+        let config = WebSocketConfig::default()
+            .max_message_size(Some(MAX_MESSAGE_BYTES))
+            .max_frame_size(Some(MAX_MESSAGE_BYTES));
+        let connect = connect_async_with_config(request, Some(config), false);
+        match tokio::time::timeout(HOST_TIMEOUT, connect).await {
             Err(_) => Err(TransportError::Failed(format!("{host}: timed out"))),
             Ok(Ok((ws, _))) => Ok(TungsteniteLink { ws }),
             Ok(Err(e)) => Err(handshake_error(host, e)),

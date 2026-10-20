@@ -11,6 +11,7 @@
 //! - Agent sessions (ACP session ids for `session/load`) are kept in
 //!   `agent_sessions`, updated from the session events in the same transaction.
 
+mod caps;
 mod chats;
 mod codec;
 mod events;
@@ -29,6 +30,7 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 
 use crate::agents::{AgentRole, RoleSettings};
 use crate::api::ApiEvent;
+use crate::attachments::PromptCaps;
 use crate::domain::{DomainConfig, State};
 
 pub use chats::ChatInfo;
@@ -202,6 +204,11 @@ impl Store {
         chats::list(&self.pool, project).await
     }
 
+    /// What each harness last said it accepts in a prompt (by harness id).
+    pub async fn harness_prompt_caps(&self) -> Result<HashMap<String, PromptCaps>, StoreError> {
+        caps::list(&self.pool).await
+    }
+
     /// Every agent session recorded for `project`.
     pub async fn sessions(&self, project: &str) -> Result<Vec<SessionRecord>, StoreError> {
         sessions::list(&self.pool, project).await
@@ -305,6 +312,7 @@ async fn write_events(
         events::insert(tx, event).await?;
         sessions::apply(tx, event).await?;
         chats::apply(tx, event).await?;
+        caps::apply(tx, event).await?;
     }
     Ok(())
 }

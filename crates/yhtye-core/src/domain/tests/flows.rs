@@ -369,6 +369,7 @@ fn user_message_is_queued_and_delivered() {
         .run(DomainCommand::UserMessage {
             chat: "C-1".into(),
             text: "hi".into(),
+            attachments: vec![],
         })
         .expect("ok");
     assert!(has_effect(&chain, |e| matches!(
@@ -382,6 +383,7 @@ fn user_message_is_queued_and_delivered() {
     sim.run(DomainCommand::UserMessage {
         chat: "C-1".into(),
         text: "again".into(),
+        attachments: vec![],
     })
     .expect("ok");
     assert_eq!(

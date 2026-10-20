@@ -7,7 +7,7 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, AttachmentMeta, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
@@ -182,13 +182,42 @@ function longModels(): HarnessModels {
 
 const WIDE_TABLE = `| ${Array.from({ length: 8 }, (_, i) => `column ${i}`).join(" | ")} |\n| ${Array.from({ length: 8 }, () => "---").join(" | ")} |\n| ${Array.from({ length: 8 }, () => NO_SPACES).join(" | ")} |`;
 
+/** A small picture drawn in the page (a real browser), as base64 PNG. */
+function pictureBase64(): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = 160;
+  canvas.height = 100;
+  const g = canvas.getContext("2d");
+  if (g) {
+    const fill = g.createLinearGradient(0, 0, 160, 100);
+    fill.addColorStop(0, "#d9a066");
+    fill.addColorStop(1, "#3b5b8c");
+    g.fillStyle = fill;
+    g.fillRect(0, 0, 160, 100);
+  }
+  return canvas.toDataURL("image/png").split(",")[1] ?? "";
+}
+
+/** The attachments of the long conversation's last message: an image and files, one with a long name. */
+const LONG_ATTACHMENTS: AttachmentMeta[] = [
+  { id: "a000000000000001", name: "screenshot.png", mime: "image/png", size: 48_213, kind: "image", delivery: "native" },
+  { id: "a000000000000002", name: "report.pdf", mime: "application/pdf", size: 1_204_000, kind: "file", delivery: "path" },
+  { id: "a000000000000003", name: `${NO_SPACES}.log`, mime: "text/plain", size: 912, kind: "text", delivery: "native" },
+];
+
 function longLog(group: Group, ids: Ids): ApiEvent[] {
   const orchestrator = orchestratorKey(CHAT_ID);
   const log: ApiEvent[] = [];
   let seq = 1;
   const push = (make: (seq: number) => ApiEvent) => void log.push(make(seq++));
   for (let i = 1; i <= EXCHANGES; i++) {
-    push((n) => userMessage(n, i, `${i} 件目の依頼です。\n${PARAGRAPH}\n${NO_SPACES}`, CHAT_ID));
+    push((n) => {
+      const message = userMessage(n, i, `${i} 件目の依頼です。\n${PARAGRAPH}\n${NO_SPACES}`, CHAT_ID);
+      if (i === EXCHANGES && message.body.type === "domain" && message.body.event.type === "inbox_queued") {
+        message.body.event.entry.item.attachments = LONG_ATTACHMENTS;
+      }
+      return message;
+    });
     push((n) => delivered(n, i, CHAT_ID));
     push((n) => agentText(n, orchestrator, `考えています (${i})。`, "thought"));
     push((n) => ev(n, { type: "agent", session: orchestrator, event: { type: "output", data: { kind: "tool_call", update: { toolCallId: `t${i}`, title: `Read ${NO_SPACES}${i}`, kind: "read" } } } }));
@@ -221,6 +250,8 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats, starting: [] };
     const core = new FakeCore(PROJECT, snapshot);
     core.log = longLog(group, ids);
+    const picture = pictureBase64();
+    for (const meta of LONG_ATTACHMENTS) core.attachments.set(meta.id, { meta, data: meta.kind === "image" ? picture : "" });
     core.git = git;
     core.branchStatuses = longBranchStatuses(git);
     core.usage = {

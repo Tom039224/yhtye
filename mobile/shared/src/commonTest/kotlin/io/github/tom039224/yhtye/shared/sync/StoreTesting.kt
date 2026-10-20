@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.fail
 
 /** テストの [AppStore]。使用量と ping は既定で止める ([foreground] = false。前面の間だけ読むため)。 */
@@ -14,7 +15,7 @@ import kotlin.test.fail
 fun TestScope.newStore(
     core: FakeCore,
     prefs: ClientPrefs = MemoryPrefs(),
-    options: AppStore.Options = AppStore.Options(),
+    options: AppStore.Options = AppStore.Options(workContext = EmptyCoroutineContext),
     foreground: Boolean = false,
 ): AppStore {
     val store = AppStore(core, backgroundScope, prefs, options = options, now = { currentTime })

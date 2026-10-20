@@ -4,6 +4,7 @@
 //! stream. The Tauri command and the WebSocket bridge (Stage 5) only forward
 //! `command` / `subscribe` to it.
 
+mod attachments;
 mod harnesses;
 mod order;
 mod settings;
@@ -30,6 +31,7 @@ use crate::api::{
     ApiCommand, ApiError, ApiEvent, ApiEventBody, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
+use crate::attachments::AttachmentStore;
 use crate::clock::now_ms;
 use crate::domain::DomainConfig;
 use crate::git::{self, BranchStatuses, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
@@ -147,6 +149,8 @@ struct Inner {
     models: ModelService,
     secrets: Arc<Secrets>,
     remote: RemoteService,
+    /// The files attached to user messages.
+    attachments: AttachmentStore,
     /// The PR / merge statuses by project id with when they were read (see
     /// [`Core::branch_statuses`]).
     status_cache: tokio::sync::Mutex<HashMap<String, (std::time::Instant, BranchStatuses)>>,
@@ -160,6 +164,7 @@ impl Core {
     /// Opens the database. Projects are started by [`ApiCommand::OpenProject`].
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
+        let cfg_data_dir = cfg.data_dir.clone();
         // Before any agent of this run exists: kill those a previous run left behind.
         crate::acp::start_process_registry(&cfg.data_dir).await;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
@@ -208,6 +213,7 @@ impl Core {
                 models,
                 secrets,
                 remote,
+                attachments: AttachmentStore::for_data_dir(&cfg_data_dir),
                 status_cache: tokio::sync::Mutex::new(HashMap::new()),
                 remote_hosts,
                 closed: AtomicBool::new(false),
@@ -262,16 +268,41 @@ impl Core {
                 project,
                 chat,
                 text,
+                attachments,
             } => {
-                if text.trim().is_empty() {
+                if text.trim().is_empty() && attachments.is_empty() {
                     return Err(ApiError::invalid_argument("the message is empty"));
                 }
-                self.orchestration(&project)?
-                    .send_user_message(chat.clone(), text)
+                let orch = self.orchestration(&project)?;
+                let taken = self.take_attachments(&project, &chat, &attachments).await?;
+                let sent = orch
+                    .send_user_message_with(chat.clone(), text, taken.clone())
                     .await
-                    .map_err(user_action_error)?;
+                    .map_err(user_action_error);
+                if sent.is_err() {
+                    self.release_attachments(&project, &chat, &taken).await;
+                }
+                sent?;
                 self.touch_chat(&project, &chat).await;
                 Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::StageAttachment {
+                project,
+                chat,
+                name,
+                mime,
+                data_base64,
+            } => Ok(ApiResponse::AttachmentStaged {
+                attachment: self
+                    .stage_attachment(&project, &chat, name, mime, data_base64)
+                    .await?,
+            }),
+            ApiCommand::DiscardAttachment { project, chat, id } => {
+                self.discard_attachment(&project, &chat, &id).await?;
+                Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::GetAttachment { project, chat, id } => {
+                self.get_attachment(&project, &chat, &id).await
             }
             ApiCommand::OpenChat { project, chat } => {
                 let starting = self

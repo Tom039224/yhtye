@@ -26,6 +26,7 @@ fn user_message(sim: &mut Sim, chat: &str, text: &str) -> Result<Chain, ToolErro
     sim.run(DomainCommand::UserMessage {
         chat: chat.into(),
         text: text.into(),
+        attachments: vec![],
     })
 }
 

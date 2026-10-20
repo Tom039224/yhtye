@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -90,6 +91,8 @@ class AppStore(
         val pingTimeoutMs: Long = 5_000,
         /** プロジェクトを開く・ブランチを作る・マージなど時間の掛かる要求の待ち時間。 */
         val longCallTimeoutMs: Long = 180_000,
+        /** 添付の base64 の変換など、大きなデータの処理の実行先。テストは呼び出し元のまま ([EmptyCoroutineContext])。 */
+        val workContext: CoroutineContext = Dispatchers.Default,
     )
 
     private val confined: CoroutineDispatcher =
@@ -103,6 +106,19 @@ class AppStore(
 
     /** 設定画面のコマンドと、設定が変わった知らせ。 */
     val settings: SettingsCommands = SettingsCommands(core)
+
+    /** 会話の添付の画像のメモリキャッシュ ([TranscriptItem.User.attachments] の中身を取る)。 */
+    val attachmentPreviews: AttachmentPreviews =
+        AttachmentPreviews(core, this.scope, AttachmentPreviews.Options(workContext = options.workContext))
+
+    /** チャットごとの入力中の添付 (ステージ・破棄と状態)。送るのは [sendMessage]。 */
+    val attachments: AttachmentComposer =
+        AttachmentComposer(
+            core,
+            this.scope,
+            attachmentPreviews,
+            AttachmentComposer.Options(stageTimeoutMs = options.longCallTimeoutMs, workContext = options.workContext),
+        )
 
     private val _usersTurns = MutableSharedFlow<UsersTurn>(
         extraBufferCapacity = USERS_TURN_BUFFER,
@@ -235,13 +251,26 @@ class AppStore(
         }
     }
 
-    /** 選択中のチャットに送る。受け付けられたか (受け付けられなければコンポーザは文を残す)。 */
+    /**
+     * 選択中のチャットに送る。入力中の添付 ([attachments]) のステージ済みのものも付ける (本文が空でも添付があれば送れる。
+     * [canSendMessage])。受け付けられたか (受け付けられなければコンポーザは文と添付を残す)。アップロード中・失敗した添付が
+     * あるときは送らずエラーにする。
+     */
     suspend fun sendMessage(text: String): Boolean = onConfined {
         val view = _state.value.project
         val chat = view?.selectedChat ?: return@onConfined false
+        val project = view.info.id
+        val pending = attachments.pending(project, chat)
+        if (!pending.isSettled()) {
+            pushError("send_user_message failed: wait for the attachments to be uploaded (or remove the ones that failed)")
+            return@onConfined false
+        }
+        val ids = pending.stagedIds()
         set { it.copy(busy = it.busy.copy(sending = true)) }
         try {
-            report<ApiResponse.Accepted>(ApiCommand.SendUserMessage(view.info.id, chat, text)) != null
+            val accepted = report<ApiResponse.Accepted>(ApiCommand.SendUserMessage(project, chat, text, ids)) != null
+            if (accepted) attachments.markSent(project, chat, ids)
+            accepted
         } finally {
             set { it.copy(busy = it.busy.copy(sending = false)) }
         }
@@ -360,7 +389,7 @@ class AppStore(
         onConfined {
             val project = _state.value.project?.info?.id ?: return@onConfined
             core.expect<ApiResponse.Accepted>(ApiCommand.DeleteChat(project, chat))
-            drafts.set(project, chat, "")
+            forgetComposer(project, chat)
             if (_state.value.project?.info?.id != project) return@onConfined
             updateChats { removeChatNow(it, chat) }
         }
@@ -862,7 +891,7 @@ class AppStore(
     }
 
     /**
-     * チャットを増やす・減らすかもしれない変更 (他のクライアントのものも) 用の [updateProject]: 消えたチャットの下書きを
+     * チャットを増やす・減らすかもしれない変更 (他のクライアントのものも) 用の [updateProject]: 消えたチャットの下書き・入力中の添付を
      * 消し、表示中のチャットが変わったら (消された、またはチャットの無いプロジェクトに作られた) ユーザーが選んだのと
      * 同じく覚えて開く。
      */
@@ -873,11 +902,18 @@ class AppStore(
         if (before == null || after == null || before.info.id != after.info.id || before.chats == after.chats) return
         val project = after.info.id
         val remaining = after.chats.mapTo(HashSet()) { it.id }
-        before.chats.filter { it.id !in remaining }.forEach { drafts.set(project, it.id, "") }
+        before.chats.filter { it.id !in remaining }.forEach { forgetComposer(project, it.id) }
         val next = after.selectedChat
         if (next == before.selectedChat) return
         prefs.set(chatPrefKey(project), next)
         if (next != null && after.phase == LoadPhase.Ready) scope.launch { openChat(project, next) }
+    }
+
+    /** 消えたチャットのコンポーザが持っていたもの: 下書き・入力中の添付・添付のプレビュー。 */
+    private fun forgetComposer(project: String, chat: String) {
+        drafts.set(project, chat, "")
+        attachments.forgetChat(project, chat)
+        attachmentPreviews.forgetChat(project, chat)
     }
 
     private fun updateProject(f: (ProjectView) -> ProjectView) {

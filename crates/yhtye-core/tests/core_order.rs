@@ -188,6 +188,7 @@ async fn using_a_chat_moves_its_worktree_to_the_front_and_a_reorder_is_stored() 
         project: project.clone(),
         chat: topic_chat.id.clone(),
         text: "hello".into(),
+        attachments: vec![],
     };
     run(&core, send).await;
     let order = branch_order(&core, &project).await;

@@ -5,6 +5,7 @@ import type { TranscriptItem } from "../store/transcript";
 import { Icon, type IconName } from "./Icon";
 import { formatTime, taskTone } from "./labels";
 import { Markdown } from "./Markdown";
+import { type LoadAttachment, SentAttachments } from "./SentAttachments";
 import { ToolStatus, toneIcon } from "./statusIcons";
 
 interface Props {
@@ -18,16 +19,25 @@ interface Props {
   state?: State | null;
   /** Shown first (e.g. the button that loads older history). */
   before?: ReactNode;
+  /** Reads the images the user attached (the conversation's chat). */
+  loadAttachment?: LoadAttachment;
 }
 
-export function TranscriptView({ items, streaming, agentLabel, queued, state, before }: Props) {
+export function TranscriptView({ items, streaming, agentLabel, queued, state, before, loadAttachment }: Props) {
   return (
     <div className="transcript">
       {before}
       {items.map((item) => (
         // Items are appended, or prepended when older history loads; a durable
         // event yields at most one item per session, so seq identifies it.
-        <Item key={`${item.seq}-${item.kind}`} item={item} agentLabel={agentLabel} queued={queued} state={state ?? null} />
+        <Item
+          key={`${item.seq}-${item.kind}`}
+          item={item}
+          agentLabel={agentLabel}
+          queued={queued}
+          state={state ?? null}
+          loadAttachment={loadAttachment}
+        />
       ))}
       {streaming?.thought ? <Thought text={streaming.thought} streaming /> : null}
       {streaming?.message ? (
@@ -105,33 +115,52 @@ function Item({
   agentLabel,
   queued,
   state,
+  loadAttachment,
 }: {
   item: TranscriptItem;
   agentLabel: string;
   queued?: ReadonlySet<number>;
   state: State | null;
+  loadAttachment?: LoadAttachment;
 }) {
   switch (item.kind) {
     case "group":
       return <GroupCard id={item.groupId} title={item.title} state={state} />;
     case "user": {
       const waiting = queued?.has(item.inboxId) ?? false;
+      const mark = waiting ? (
+        <span className="queued" title="待機中 (オーケストレータの手が空いたら届く)">
+          <Icon name="clock" size={12} />
+          <span className="sr-only">待機中</span>
+        </span>
+      ) : null;
+      const files = item.attachments.length > 0;
+      // The text's bubble, then the attachments below it (a message may be attachments only).
+      const bubble =
+        item.text !== "" || !files ? (
+          <div className="msg-body">
+            {item.text}
+            {mark}
+          </div>
+        ) : null;
       return (
         <div className="msg msg-user">
           <Mark icon="user" label="あなた" time={item.ts} />
-          <div className="msg-body">
-            {item.text}
-            {waiting ? (
-              <span className="queued" title="待機中 (オーケストレータの手が空いたら届く)">
-                <Icon name="clock" size={12} />
-                <span className="sr-only">待機中</span>
-              </span>
-            ) : null}
-          </div>
+          {files ? (
+            <div className="msg-user-stack">
+              {bubble}
+              <SentAttachments attachments={item.attachments} load={loadAttachment} />
+              {bubble ? null : mark}
+            </div>
+          ) : (
+            bubble
+          )}
           <Time ts={item.ts} />
         </div>
       );
     }
+    case "delivered":
+      return null;
     case "notice":
       return (
         <div className="notice" title={`yhtye → ${agentLabel}`}>

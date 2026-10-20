@@ -23,6 +23,7 @@ import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, C
 import type { HostCompatibility } from "../api/remoteHosts";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
+import { Attachments, stagedIds } from "./attachments";
 import { upsertChat } from "./chats";
 import { type Drafts, memoryDrafts } from "./drafts";
 import { changesGit, endsOrchestratorTurn, EVERYTHING, isAppWide, withTimeout } from "./eventRules";
@@ -188,6 +189,8 @@ export class AppStore extends SettingsCommands {
   readonly prefs: Prefs;
   /** Unsent composer text per chat (kept while another chat or project is shown). */
   readonly drafts: Drafts;
+  /** The draft's attachments (staged as they are added) and the previews of sent ones. */
+  readonly attachments: Attachments;
   /** See {@link AppStoreOptions.keyScope}. */
   readonly keyScope: string;
   private readonly reopenOnConnect: boolean;
@@ -202,6 +205,7 @@ export class AppStore extends SettingsCommands {
     this.reopenOnConnect = options.reopenLast ?? true;
     this.historyWindow = options.historyWindow ?? HISTORY_WINDOW;
     this.historyPage = options.historyPage ?? HISTORY_PAGE;
+    this.attachments = new Attachments(transport, this.drafts, (message) => this.pushError(message));
     this.state = {
       connection: { state: "connecting" },
       transport: { kind: transport.kind, target: transport.target },
@@ -315,15 +319,22 @@ export class AppStore extends SettingsCommands {
     if (token === this.branchOrderToken) this.setBranchOrder(project, r.keys);
   }
 
-  /** Returns whether the message was accepted (the composer keeps it otherwise). */
+  /**
+   * Sends `text` with the chat's staged draft attachments; returns whether it
+   * was accepted (the composer keeps the text and the attachments otherwise).
+   */
   async sendMessage(text: string): Promise<boolean> {
     const view = this.state.project;
     if (!view?.selectedChat) return false;
     const chat = view.selectedChat;
     const project = view.info.id;
+    const files = this.drafts.attachments(project, chat).filter((a) => a.status === "staged");
+    const ids = stagedIds(files);
     this.set({ busy: { ...this.state.busy, sending: true } });
     try {
-      const r = await this.run({ type: "send_user_message", project, chat, text }, "accepted");
+      const cmd: ApiCommand = { type: "send_user_message", project, chat, text, ...(ids.length > 0 ? { attachments: ids } : {}) };
+      const r = await this.run(cmd, "accepted");
+      if (r !== null) this.attachments.sent(project, chat, files);
       return r !== null;
     } finally {
       this.set({ busy: { ...this.state.busy, sending: false } });
@@ -441,7 +452,7 @@ export class AppStore extends SettingsCommands {
     const project = this.state.project?.info.id;
     if (!project) return;
     await this.invoke({ type: "delete_chat", project, chat }, "accepted");
-    this.drafts.set(project, chat, "");
+    this.drafts.clear(project, chat);
     if (this.state.project?.info.id !== project) return;
     this.updateChats((v) => removeChatNow(v, chat));
   }
@@ -957,7 +968,7 @@ export class AppStore extends SettingsCommands {
     if (!before || !after || before.info.id !== after.info.id || before.chats === after.chats) return;
     const project = after.info.id;
     for (const c of before.chats) {
-      if (!after.chats.some((x) => x.id === c.id)) this.drafts.set(project, c.id, "");
+      if (!after.chats.some((x) => x.id === c.id)) this.drafts.clear(project, c.id);
     }
     const next = after.selectedChat;
     if (next === before.selectedChat) return;

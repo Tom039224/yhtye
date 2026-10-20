@@ -61,12 +61,66 @@ sealed interface ApiCommand {
      * idle). Starts that orchestrator if it is not running (Stage 8: lazily,
      * restoring the chat's stored session if there is one). `not_found` for an
      * unknown chat, `invalid_state` when the chat's worktree no longer exists.
+     * `attachments` are files staged with `stage_attachment` for this chat; the
+     * text may be empty when there is at least one (`invalid_argument` if there
+     * is neither). `not_found` for an attachment that does not exist,
+     * `invalid_argument` for one that was sent before.
      */
     @Serializable
     data class SendUserMessage(
         val project: String,
         val chat: String,
         val text: String,
+        /**
+         * Ids from `attachment_staged`, in the order to show them (a client
+         * without attachments leaves it out).
+         */
+        val attachments: List<String> = emptyList(),
+    ) : ApiCommand
+
+    /**
+     * Saves a file the user wants to attach to a message of `chat` (the project
+     * must be registered, the chat must exist). `data_base64` is the whole file,
+     * of any size (a transport may limit it). `name` is made safe to save under
+     * (directory parts are dropped); `mime` is the client's claim, corrected by
+     * the content. Answers `attachment_staged`: its id for `send_user_message`,
+     * its kind, and how it is expected to be delivered to the chat's
+     * orchestrator (`delivery`): `native` when the harness it runs accepts that
+     * kind (images, or text as embedded context), else `path`. The final choice
+     * is made when the message is sent, with the orchestrator actually running;
+     * the `prompted` event says what it was. `invalid_argument` for bad base64.
+     */
+    @Serializable
+    data class StageAttachment(
+        val project: String,
+        val chat: String,
+        val name: String,
+        val mime: String? = null,
+        @SerialName("data_base64")
+        val dataBase64: String,
+    ) : ApiCommand
+
+    /**
+     * Deletes a staged attachment that was not sent. `not_found` if there is
+     * none, `invalid_state` once a message was sent with it.
+     */
+    @Serializable
+    data class DiscardAttachment(
+        val project: String,
+        val chat: String,
+        val id: String,
+    ) : ApiCommand
+
+    /**
+     * A staged or sent attachment with its content (previews in the
+     * conversation, also on remote devices). `not_found` if it does not exist
+     * (or its chat was deleted).
+     */
+    @Serializable
+    data class GetAttachment(
+        val project: String,
+        val chat: String,
+        val id: String,
     ) : ApiCommand
 
     /**
@@ -474,6 +528,9 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("get_snapshot", GetSnapshot.serializer()) { it is GetSnapshot },
             TaggedVariant<ApiCommand>("list_events", ListEvents.serializer()) { it is ListEvents },
             TaggedVariant<ApiCommand>("send_user_message", SendUserMessage.serializer()) { it is SendUserMessage },
+            TaggedVariant<ApiCommand>("stage_attachment", StageAttachment.serializer()) { it is StageAttachment },
+            TaggedVariant<ApiCommand>("discard_attachment", DiscardAttachment.serializer()) { it is DiscardAttachment },
+            TaggedVariant<ApiCommand>("get_attachment", GetAttachment.serializer()) { it is GetAttachment },
             TaggedVariant<ApiCommand>("open_chat", OpenChat.serializer()) { it is OpenChat },
             TaggedVariant<ApiCommand>("cancel_orchestrator_turn", CancelOrchestratorTurn.serializer()) { it is CancelOrchestratorTurn },
             TaggedVariant<ApiCommand>("compact_chat", CompactChat.serializer()) { it is CompactChat },

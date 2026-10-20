@@ -94,6 +94,7 @@ fn send(project: &str, chat: &str, text: &str) -> ApiCommand {
         project: project.into(),
         chat: chat.into(),
         text: text.into(),
+        attachments: vec![],
     }
 }
 

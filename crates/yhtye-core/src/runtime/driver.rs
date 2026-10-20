@@ -25,6 +25,7 @@ use crate::acp::schema::StopReason;
 use crate::acp::{AgentError, AgentEvent};
 use crate::agents::AgentRole;
 use crate::api::{ApiEventBody, Snapshot};
+use crate::attachments::AttachmentMeta;
 use crate::domain::{
     AgentRef, Chat, DomainCommand, Effect, Role, State, TaskStatus, ToolError, TurnOutcome,
     chat_of_session, decide, orchestrator_session,
@@ -40,7 +41,12 @@ pub const USER_SESSION: &str = "user";
 #[allow(clippy::large_enum_variant)] // `UserTool` carries a `create_task`-sized call
 pub(super) enum Cmd {
     /// A message from the user to the orchestrator of a chat.
-    UserMessage(String, String, oneshot::Sender<Result<(), ToolError>>),
+    UserMessage(
+        String,
+        String,
+        Vec<AttachmentMeta>,
+        oneshot::Sender<Result<(), ToolError>>,
+    ),
     /// Cancels the running turn of a chat's orchestrator (`not_found`: no such chat).
     CancelOrchestrator(String, oneshot::Sender<Result<(), ToolError>>),
     /// The user opened a chat: its orchestrator is started (restored) if it has
@@ -241,8 +247,8 @@ impl Driver {
     /// Returns `false` when the loop must end.
     async fn on_cmd(&mut self, cmd: Option<Cmd>) -> bool {
         match cmd {
-            Some(Cmd::UserMessage(chat, text, tx)) => {
-                let _ = tx.send(self.user_message(chat, text).await);
+            Some(Cmd::UserMessage(chat, text, attachments, tx)) => {
+                let _ = tx.send(self.user_message(chat, text, attachments).await);
             }
             Some(Cmd::CancelOrchestrator(chat, tx)) => {
                 let reply = match self.state.chat(&chat) {
@@ -377,8 +383,12 @@ impl Driver {
             },
         });
         if let (Ok(_), Some(text), Some(chat)) = (&reply, note, chat) {
-            self.execute(DomainCommand::UserMessage { chat, text })
-                .await;
+            self.execute(DomainCommand::UserMessage {
+                chat,
+                text,
+                attachments: Vec::new(),
+            })
+            .await;
         }
         reply
     }

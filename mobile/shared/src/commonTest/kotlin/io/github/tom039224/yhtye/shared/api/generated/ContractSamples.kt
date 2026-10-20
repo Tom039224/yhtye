@@ -54,7 +54,37 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiCommand",
         "send_user_message",
         ApiCommand.Serializer,
-        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"Fix \\\"the\\\" bug\\nin \$HOME \\\\ path ✓\"}",
+        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"Fix \\\"the\\\" bug\\nin \$HOME \\\\ path ✓\",\"attachments\":[]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "send_user_message/attachments",
+        ApiCommand.Serializer,
+        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"\",\"attachments\":[\"0123456789abcdef\",\"fedcba9876543210\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "stage_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"stage_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"data_base64\":\"iVBORw0KGgo=\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "stage_attachment/no_mime",
+        ApiCommand.Serializer,
+        "{\"type\":\"stage_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"name\":\"notes.txt\",\"mime\":null,\"data_base64\":\"\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "discard_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"discard_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"id\":\"0123456789abcdef\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"id\":\"0123456789abcdef\"}",
     ),
     ContractSample(
         "ApiCommand",
@@ -360,7 +390,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "snapshot",
         ApiResponse.Serializer,
-        "{\"type\":\"snapshot\",\"snapshot\":{\"seq\":42,\"state\":{\"project\":\"repo\",\"config\":{\"max_review_rounds\":2},\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\"},{\"id\":\"C-2\",\"worktree\":\"/home/u/wt\",\"title\":null}],\"groups\":[{\"id\":\"G-1\",\"chat\":\"C-1\",\"title\":\"Group G-1\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-1\",\"status\":\"active\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-2\",\"chat\":\"C-1\",\"title\":\"Group G-2\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-2\",\"status\":\"finishing\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-3\",\"chat\":\"C-1\",\"title\":\"Group G-3\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-3\",\"status\":\"done\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-4\",\"chat\":\"C-1\",\"title\":\"Group G-4\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-4\",\"status\":\"cancelled\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-5\",\"chat\":\"C-2\",\"title\":\"Merge\",\"summary\":\"a summary\",\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-5\",\"status\":\"merge_blocked\",\"finish_summary\":\"done\",\"detail\":\"conflict in a.rs\",\"finish_nudges\":1}],\"tasks\":[{\"id\":\"T-1\",\"group\":\"G-1\",\"title\":\"Implement\",\"kind\":\"code\",\"depends_on\":[],\"instruction\":\"Do it\",\"steps\":[{\"kind\":\"implement\",\"instruction\":null,\"status\":\"done\",\"result\":\"ok\",\"verdict\":null,\"note\":\"first\",\"nudges\":1},{\"kind\":\"review\",\"instruction\":\"Review it\",\"status\":\"running\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"checkpoint\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"done\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"running\",\"review_rounds\":0,\"workdir\":\"/home/u/wt/T-1\",\"cancel_reason\":null,\"agent\":{\"harness\":\"codex\",\"model\":null,\"effort\":null},\"review_agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":null}},{\"id\":\"T-2\",\"group\":\"G-1\",\"title\":\"Look\",\"kind\":\"investigate\",\"depends_on\":[\"T-1\"],\"instruction\":null,\"steps\":[{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fine\",\"verdict\":\"approve\",\"note\":null,\"nudges\":0},{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fix\",\"verdict\":\"needs_changes\",\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"done\",\"review_rounds\":1,\"workdir\":null,\"cancel_reason\":null}],\"helps\":[{\"id\":\"H-1\",\"task\":\"T-1\",\"step\":0,\"kind\":\"blocked\",\"message\":\"stuck\",\"source\":{\"by\":\"agent\",\"role\":\"implementer\"},\"state\":\"open\",\"agent_lost\":false,\"reply\":null},{\"id\":\"H-2\",\"task\":\"T-1\",\"step\":1,\"kind\":\"merge_conflict\",\"message\":\"x\",\"source\":{\"by\":\"yhtye\"},\"state\":\"answered\",\"agent_lost\":true,\"reply\":\"go on\"},{\"id\":\"H-3\",\"task\":\"T-2\",\"step\":0,\"kind\":\"question\",\"message\":\"?\",\"source\":{\"by\":\"agent\",\"role\":\"reviewer\"},\"state\":\"closed\",\"agent_lost\":false,\"reply\":null}],\"inbox\":[{\"id\":4,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[[\"from\",\"user\"],[\"chat\",\"C-1\"]],\"body\":\"hello\"}}],\"counters\":{\"chats\":2,\"groups\":5,\"tasks\":2,\"helps\":3,\"inbox\":4}},\"sessions\":[{\"session_key\":\"orchestrator-C-1\",\"role\":\"orchestrator\",\"task\":null,\"acp_session_id\":\"acp-orchestrator-C-1\",\"status\":\"live\",\"turn_running\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/0\",\"status\":\"stopped\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/1\",\"role\":\"reviewer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/1\",\"status\":\"suspended\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-old\"},{\"session_key\":\"T-2/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-2/0\",\"status\":\"interrupted\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"}],\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\",\"created_ms\":1790766538443,\"last_used_ms\":1790766600000},{\"id\":\"C-2\",\"worktree\":\"/home/u/repo\",\"title\":null,\"created_ms\":1790766538443,\"last_used_ms\":1790766600000}],\"starting\":[\"orchestrator:C-2\"]}}",
+        "{\"type\":\"snapshot\",\"snapshot\":{\"seq\":42,\"state\":{\"project\":\"repo\",\"config\":{\"max_review_rounds\":2},\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\"},{\"id\":\"C-2\",\"worktree\":\"/home/u/wt\",\"title\":null}],\"groups\":[{\"id\":\"G-1\",\"chat\":\"C-1\",\"title\":\"Group G-1\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-1\",\"status\":\"active\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-2\",\"chat\":\"C-1\",\"title\":\"Group G-2\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-2\",\"status\":\"finishing\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-3\",\"chat\":\"C-1\",\"title\":\"Group G-3\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-3\",\"status\":\"done\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-4\",\"chat\":\"C-1\",\"title\":\"Group G-4\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-4\",\"status\":\"cancelled\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-5\",\"chat\":\"C-2\",\"title\":\"Merge\",\"summary\":\"a summary\",\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-5\",\"status\":\"merge_blocked\",\"finish_summary\":\"done\",\"detail\":\"conflict in a.rs\",\"finish_nudges\":1}],\"tasks\":[{\"id\":\"T-1\",\"group\":\"G-1\",\"title\":\"Implement\",\"kind\":\"code\",\"depends_on\":[],\"instruction\":\"Do it\",\"steps\":[{\"kind\":\"implement\",\"instruction\":null,\"status\":\"done\",\"result\":\"ok\",\"verdict\":null,\"note\":\"first\",\"nudges\":1},{\"kind\":\"review\",\"instruction\":\"Review it\",\"status\":\"running\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"checkpoint\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"done\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"running\",\"review_rounds\":0,\"workdir\":\"/home/u/wt/T-1\",\"cancel_reason\":null,\"agent\":{\"harness\":\"codex\",\"model\":null,\"effort\":null},\"review_agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":null}},{\"id\":\"T-2\",\"group\":\"G-1\",\"title\":\"Look\",\"kind\":\"investigate\",\"depends_on\":[\"T-1\"],\"instruction\":null,\"steps\":[{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fine\",\"verdict\":\"approve\",\"note\":null,\"nudges\":0},{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fix\",\"verdict\":\"needs_changes\",\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"done\",\"review_rounds\":1,\"workdir\":null,\"cancel_reason\":null}],\"helps\":[{\"id\":\"H-1\",\"task\":\"T-1\",\"step\":0,\"kind\":\"blocked\",\"message\":\"stuck\",\"source\":{\"by\":\"agent\",\"role\":\"implementer\"},\"state\":\"open\",\"agent_lost\":false,\"reply\":null},{\"id\":\"H-2\",\"task\":\"T-1\",\"step\":1,\"kind\":\"merge_conflict\",\"message\":\"x\",\"source\":{\"by\":\"yhtye\"},\"state\":\"answered\",\"agent_lost\":true,\"reply\":\"go on\"},{\"id\":\"H-3\",\"task\":\"T-2\",\"step\":0,\"kind\":\"question\",\"message\":\"?\",\"source\":{\"by\":\"agent\",\"role\":\"reviewer\"},\"state\":\"closed\",\"agent_lost\":false,\"reply\":null}],\"inbox\":[{\"id\":4,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[[\"from\",\"user\"],[\"chat\",\"C-1\"]],\"body\":\"hello\"}},{\"id\":5,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[],\"body\":\"\",\"attachments\":[{\"id\":\"0123456789abcdef\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"size\":1234,\"kind\":\"image\",\"delivery\":\"native\"},{\"id\":\"0123456789abcdef\",\"name\":\"report.pdf\",\"mime\":\"application/pdf\",\"size\":1234,\"kind\":\"file\",\"delivery\":\"path\"}]}}],\"counters\":{\"chats\":2,\"groups\":5,\"tasks\":2,\"helps\":3,\"inbox\":4}},\"sessions\":[{\"session_key\":\"orchestrator-C-1\",\"role\":\"orchestrator\",\"task\":null,\"acp_session_id\":\"acp-orchestrator-C-1\",\"status\":\"live\",\"turn_running\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/0\",\"status\":\"stopped\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/1\",\"role\":\"reviewer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/1\",\"status\":\"suspended\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-old\"},{\"session_key\":\"T-2/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-2/0\",\"status\":\"interrupted\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"}],\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\",\"created_ms\":1790766538443,\"last_used_ms\":1790766600000},{\"id\":\"C-2\",\"worktree\":\"/home/u/repo\",\"title\":null,\"created_ms\":1790766538443,\"last_used_ms\":1790766600000}],\"starting\":[\"orchestrator:C-2\"]}}",
     ),
     ContractSample(
         "ApiResponse",
@@ -373,6 +403,18 @@ internal val contractSamples: List<ContractSample> = listOf(
         "accepted",
         ApiResponse.Serializer,
         "{\"type\":\"accepted\"}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "attachment_staged",
+        ApiResponse.Serializer,
+        "{\"type\":\"attachment_staged\",\"attachment\":{\"id\":\"0123456789abcdef\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"size\":1234,\"kind\":\"image\",\"delivery\":\"native\"}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "attachment",
+        ApiResponse.Serializer,
+        "{\"type\":\"attachment\",\"attachment\":{\"id\":\"0123456789abcdef\",\"name\":\"notes.txt\",\"mime\":\"text/plain\",\"size\":1234,\"kind\":\"text\",\"delivery\":\"native\"},\"data_base64\":\"aGVsbG8=\"}",
     ),
     ContractSample(
         "ApiResponse",
@@ -882,7 +924,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "session_started",
         ApiEvent.serializer(),
-        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\"}}",
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\",\"prompt_caps\":{\"image\":true,\"embedded_context\":false}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -931,6 +973,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "prompted",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"prompted\",\"session\":\"orchestrator-C-1\",\"text\":\"<user_message>hi</user_message>\"}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "prompted/attachments",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"prompted\",\"session\":\"orchestrator:C-1\",\"text\":\"[yhtye:user_message]\\n[yhtye:attachment] name=shot.png\",\"attachments\":[{\"inbox_id\":5,\"id\":\"0123456789abcdef\",\"delivery\":\"native\"},{\"inbox_id\":5,\"id\":\"fedcba9876543210\",\"delivery\":\"path\"}]}}",
     ),
     ContractSample(
         "ApiEvent",

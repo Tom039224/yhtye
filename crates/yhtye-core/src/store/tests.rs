@@ -8,6 +8,7 @@ use crate::acp::AgentEvent;
 use crate::acp::schema::StopReason;
 use crate::agents::AgentChoice;
 use crate::api::{ApiEventBody, TextKind};
+use crate::attachments::{AttachmentDelivery, AttachmentKind, AttachmentMeta, PromptCaps};
 use crate::domain::{
     Chat, DomainEvent, Group, GroupStatus, Help, HelpKind, HelpSource, HelpState, InboxEntry,
     InboxItem, InboxKind, Role, Step, StepKind, StepStatus, Task, TaskKind, TaskStatus, Verdict,
@@ -160,7 +161,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 11);
+    assert_eq!(applied, 12);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -176,6 +177,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
             "chats",
             "events",
             "harness_paths",
+            "harness_prompt_caps",
             "helps",
             "inbox",
             "projects",
@@ -196,7 +198,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 11);
+    assert_eq!(applied, 12);
 }
 
 #[tokio::test]
@@ -314,6 +316,7 @@ async fn replay_rebuilds_the_state_from_domain_events() {
             ApiEventBody::Prompted {
                 session: "orchestrator:C-1".into(),
                 text: "x".into(),
+                attachments: Vec::new(),
             },
         ),
         event(2, ApiEventBody::Domain { event: domain }),
@@ -352,6 +355,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             replaced: None,
             cwd: Some("/work/tree".into()),
             lost_acp_session_id: None,
+            prompt_caps: None,
         },
     )
 }
@@ -380,6 +384,7 @@ async fn session_events_keep_the_agent_sessions_table() {
             ApiEventBody::Prompted {
                 session: key.into(),
                 text: "go".into(),
+                attachments: Vec::new(),
             },
         ),
         event(
@@ -668,6 +673,7 @@ async fn chats_keep_their_times_from_the_event_log() {
             ApiEventBody::Prompted {
                 session: "orchestrator:C-1".into(),
                 text: "x".into(),
+                attachments: Vec::new(),
             },
         ),
         event(4, ApiEventBody::Domain { event: title }),
@@ -998,6 +1004,142 @@ async fn remote_devices_and_app_settings_are_stored() {
         store.app_setting("k").await.expect("get").as_deref(),
         Some("c")
     );
+}
+
+fn attachment(id: &str, name: &str, kind: AttachmentKind) -> AttachmentMeta {
+    AttachmentMeta {
+        id: id.into(),
+        name: name.into(),
+        mime: "image/png".into(),
+        size: 12,
+        kind,
+        delivery: AttachmentDelivery::Native,
+    }
+}
+
+#[tokio::test]
+async fn inbox_attachments_survive_a_restart_and_a_replay() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let empty = State::new("P-1", DomainConfig::default());
+    store
+        .create_project(&empty, dir.path())
+        .await
+        .expect("create");
+    let mut item = InboxItem::user_message("see");
+    item.attachments = vec![
+        attachment("0123456789abcdef", "shot.png", AttachmentKind::Image),
+        attachment("fedcba9876543210", "notes ✓.txt", AttachmentKind::Text),
+    ];
+    let entries = [
+        InboxEntry {
+            id: 1,
+            chat: "C-1".into(),
+            item,
+        },
+        InboxEntry {
+            id: 2,
+            chat: "C-1".into(),
+            item: InboxItem::user_message("plain"),
+        },
+    ];
+    let mut after = empty.clone();
+    let mut events = Vec::new();
+    for (seq, entry) in (1..).zip(entries) {
+        let domain = DomainEvent::InboxQueued { entry };
+        after.apply(&domain);
+        events.push(event(seq, ApiEventBody::Domain { event: domain }));
+    }
+    store.commit(&events, &empty, &after).await.expect("commit");
+
+    let loaded = store
+        .load_state("P-1")
+        .await
+        .expect("load")
+        .expect("project");
+    assert_eq!(loaded, after);
+    assert_eq!(loaded.inbox[0].item.attachments.len(), 2);
+    assert!(loaded.inbox[1].item.attachments.is_empty());
+    let replayed = store
+        .replay_state("P-1", DomainConfig::default())
+        .await
+        .expect("replay");
+    assert_eq!(replayed, after);
+
+    // The log has the metadata, an entry without attachments does not even have the key.
+    let stored = store.events_after("P-1", 0, 10).await.expect("events");
+    let item = |at: usize| stored[at].body["event"]["entry"]["item"].clone();
+    assert_eq!(item(0)["attachments"][1]["name"], "notes ✓.txt");
+    assert_eq!(item(0)["attachments"][0]["kind"], "image");
+    assert!(item(1).get("attachments").is_none(), "{}", item(1));
+}
+
+#[tokio::test]
+async fn an_inbox_row_written_before_attachments_existed_reads_back_without_any() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    let empty = State::new("P-1", DomainConfig::default());
+    store
+        .create_project(&empty, dir.path())
+        .await
+        .expect("create");
+    sqlx::query(
+        "INSERT INTO inbox (project_id, id, chat_id, kind, attrs, body) \
+         VALUES ('P-1', 1, 'C-1', 'user_message', '[]', 'old')",
+    )
+    .execute(&store.pool)
+    .await
+    .expect("old row");
+    let loaded = store.load_state("P-1").await.expect("load").expect("some");
+    assert_eq!(loaded.inbox.len(), 1);
+    assert!(loaded.inbox[0].item.attachments.is_empty());
+}
+
+#[tokio::test]
+async fn the_last_prompt_capabilities_of_each_harness_are_kept() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (store, _) = stored_rich(dir.path()).await;
+    assert!(store.harness_prompt_caps().await.expect("caps").is_empty());
+
+    let started = |seq: u64, harness: &str, caps: Option<PromptCaps>| {
+        let mut e = session_started(seq, "orchestrator:C-1", "acp");
+        if let ApiEventBody::SessionStarted {
+            agent, prompt_caps, ..
+        } = &mut e.body
+        {
+            *agent = Some(AgentChoice::new(harness, None));
+            *prompt_caps = caps;
+        }
+        e
+    };
+    let image_only = PromptCaps {
+        image: true,
+        embedded_context: false,
+    };
+    store
+        .append(&[
+            started(2, "claude-code", Some(PromptCaps::ALL)),
+            started(3, "opencode", Some(image_only)),
+            // A session that said nothing (an older log) records nothing.
+            started(4, "devin", None),
+        ])
+        .await
+        .expect("append");
+    let caps = store.harness_prompt_caps().await.expect("caps");
+    assert_eq!(caps.len(), 2, "{caps:?}");
+    assert_eq!(caps["claude-code"], PromptCaps::ALL);
+    assert_eq!(caps["opencode"], image_only);
+
+    // The latest start wins, and it is kept across a reopen.
+    store
+        .append(&[started(5, "claude-code", Some(PromptCaps::default()))])
+        .await
+        .expect("append");
+    drop(store);
+    let store = Store::open(&db(dir.path())).await.expect("reopen");
+    let caps = store.harness_prompt_caps().await.expect("caps");
+    assert_eq!(caps["claude-code"], PromptCaps::default());
+    assert_eq!(caps["opencode"], image_only);
 }
 
 #[tokio::test]

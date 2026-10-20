@@ -20,6 +20,7 @@ use crate::api::{
     LoggedEvent, ProjectInfo, SettingsKind, Snapshot, TextKind, WsReply, WsRequest,
     WsServerMessage,
 };
+use crate::attachments::{AttachmentDelivered, AttachmentDelivery, PromptCaps};
 use crate::domain::{DomainEvent, Role, ToolError};
 use crate::git::{
     BranchState, BranchStatus, BranchStatuses, GitBranch, GitCommit, GitOverview, GitWorktree,
@@ -95,6 +96,31 @@ fn commands() -> Vec<Sample> {
             "send_user_message",
             json!({"type": "send_user_message", "project": "repo", "chat": "C-1",
                 "text": "Fix \"the\" bug\nin $HOME \\ path ✓"}),
+        ),
+        (
+            "send_user_message/attachments",
+            json!({"type": "send_user_message", "project": "repo", "chat": "C-1",
+                "text": "", "attachments": ["0123456789abcdef", "fedcba9876543210"]}),
+        ),
+        (
+            "stage_attachment",
+            json!({"type": "stage_attachment", "project": "repo", "chat": "C-1",
+                "name": "shot.png", "mime": "image/png", "data_base64": "iVBORw0KGgo="}),
+        ),
+        (
+            "stage_attachment/no_mime",
+            json!({"type": "stage_attachment", "project": "repo", "chat": "C-1",
+                "name": "notes.txt", "data_base64": ""}),
+        ),
+        (
+            "discard_attachment",
+            json!({"type": "discard_attachment", "project": "repo", "chat": "C-1",
+                "id": "0123456789abcdef"}),
+        ),
+        (
+            "get_attachment",
+            json!({"type": "get_attachment", "project": "repo", "chat": "C-1",
+                "id": "0123456789abcdef"}),
         ),
         (
             "open_chat",
@@ -394,10 +420,23 @@ fn state() -> Value {
         ],
         "inbox": [
             {"id": 4, "chat": "C-1", "item": {"kind": "user_message",
-                "attrs": [["from", "user"], ["chat", "C-1"]], "body": "hello"}}
+                "attrs": [["from", "user"], ["chat", "C-1"]], "body": "hello"}},
+            {"id": 5, "chat": "C-1", "item": {"kind": "user_message", "attrs": [], "body": "",
+                "attachments": [attachment("shot.png", "image"), attachment("report.pdf", "file")]}}
         ],
         "counters": {"chats": 2, "groups": 5, "tasks": 2, "helps": 3, "inbox": 4}
     })
+}
+
+/// An attachment's metadata as the API writes it (`kind`: `image`, `text` or `file`).
+fn attachment(name: &str, kind: &str) -> Value {
+    let (mime, delivery) = match kind {
+        "image" => ("image/png", "native"),
+        "text" => ("text/plain", "native"),
+        _ => ("application/pdf", "path"),
+    };
+    json!({"id": "0123456789abcdef", "name": name, "mime": mime, "size": 1234,
+        "kind": kind, "delivery": delivery})
 }
 
 fn snapshot() -> Snapshot {
@@ -622,6 +661,7 @@ fn responses() -> Vec<Sample> {
     let prompted = ApiEventBody::Prompted {
         session: "orchestrator-C-1".into(),
         text: "hello".into(),
+        attachments: Vec::new(),
     };
     let cases = [
         (
@@ -664,6 +704,19 @@ fn responses() -> Vec<Sample> {
             },
         ),
         ("accepted", ApiResponse::Accepted),
+        (
+            "attachment_staged",
+            ApiResponse::AttachmentStaged {
+                attachment: de(attachment("shot.png", "image")),
+            },
+        ),
+        (
+            "attachment",
+            ApiResponse::Attachment {
+                attachment: de(attachment("notes.txt", "text")),
+                data_base64: "aGVsbG8=".into(),
+            },
+        ),
         (
             "chats",
             ApiResponse::Chats {
@@ -1235,6 +1288,10 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
         replaced: full.then(|| de(json!({"harness": "gone", "model": null, "effort": null}))),
         cwd: full.then(|| "/home/u/repo".into()),
         lost_acp_session_id: full.then(|| "acp-0".into()),
+        prompt_caps: full.then_some(PromptCaps {
+            image: true,
+            embedded_context: false,
+        }),
     };
     let mut out: Vec<(String, ApiEventBody)> = domain_events()
         .into_iter()
@@ -1292,6 +1349,26 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             ApiEventBody::Prompted {
                 session: "orchestrator-C-1".into(),
                 text: "<user_message>hi</user_message>".into(),
+                attachments: Vec::new(),
+            },
+        ),
+        (
+            "prompted/attachments".into(),
+            ApiEventBody::Prompted {
+                session: "orchestrator:C-1".into(),
+                text: "[yhtye:user_message]\n[yhtye:attachment] name=shot.png".into(),
+                attachments: vec![
+                    AttachmentDelivered {
+                        inbox_id: 5,
+                        id: "0123456789abcdef".into(),
+                        delivery: AttachmentDelivery::Native,
+                    },
+                    AttachmentDelivered {
+                        inbox_id: 5,
+                        id: "fedcba9876543210".into(),
+                        delivery: AttachmentDelivery::Path,
+                    },
+                ],
             },
         ),
         (

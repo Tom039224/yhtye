@@ -6,6 +6,9 @@ import io.github.tom039224.yhtye.shared.api.generated.AgentEvent
 import io.github.tom039224.yhtye.shared.api.generated.AgentOutput
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentDelivered
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentDelivery
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentMeta
 import io.github.tom039224.yhtye.shared.api.generated.DomainEvent
 import io.github.tom039224.yhtye.shared.api.generated.InboxKind
 import io.github.tom039224.yhtye.shared.api.generated.ResultOfAnyValueOrToolError
@@ -30,8 +33,17 @@ sealed interface TranscriptItem {
     val seq: Long
     val ts: Long
 
-    /** ユーザーの発言 (受信箱の `user_message`)。 */
-    data class User(override val seq: Long, override val ts: Long, val inboxId: Long, val text: String) : TranscriptItem
+    /**
+     * ユーザーの発言 (受信箱の `user_message`)。[attachments] は付けたファイル (中身は無い。画像は
+     * [AttachmentPreviews] で取る)。その `delivery` は送り方の予測で、エージェントに送られたら (`prompted`) 最終の判定に変わる。
+     */
+    data class User(
+        override val seq: Long,
+        override val ts: Long,
+        val inboxId: Long,
+        val text: String,
+        val attachments: List<AttachmentMeta> = emptyList(),
+    ) : TranscriptItem
 
     /** 受信箱の通知 (help・グループの完了など。PC の破線の控えめな行)。 */
     data class Notice(
@@ -115,6 +127,22 @@ private fun Transcripts.upsertTool(session: String, seq: Long, ts: Long, update:
     return this + (session to items.mapIndexed { n, i -> if (n == at) merged else i })
 }
 
+/**
+ * `prompted` が運ぶ添付の最終の送り方を、その発言 (`inbox_id`) の添付に写す。発言が読み込んだ履歴の外 (前のページ) にあるときは
+ * 予測のまま (前のページを読むときに、あとのページのこのイベントは見直さない)。知らない送り方 (新しい PC) は予測を残す。
+ */
+private fun Transcripts.settleDeliveries(session: String, delivered: List<AttachmentDelivered>): Transcripts {
+    if (delivered.isEmpty()) return this
+    val items = this[session] ?: return this
+    val byMessage = delivered.filter { it.delivery != AttachmentDelivery.Unrecognized }.groupBy { it.inboxId }
+    val settled = items.map { item ->
+        if (item !is TranscriptItem.User) return@map item
+        val ofMessage = byMessage[item.inboxId] ?: return@map item
+        item.copy(attachments = item.attachments.map { a -> ofMessage.find { it.id == a.id }?.let { a.copy(delivery = it.delivery) } ?: a })
+    }
+    return this + (session to settled)
+}
+
 private fun choiceText(c: AgentChoice): String = if (c.model.isNullOrEmpty()) c.harness else "${c.harness}/${c.model}"
 
 private const val SHORT_DETAIL_CHARS = 300
@@ -154,7 +182,7 @@ fun applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state: State? = null): Tr
                 val entry = event.entry
                 val item = entry.item
                 val row = if (item.kind == InboxKind.UserMessage) {
-                    TranscriptItem.User(seq, ts, entry.id, item.body)
+                    TranscriptItem.User(seq, ts, entry.id, item.body, item.attachments)
                 } else {
                     TranscriptItem.Notice(seq, ts, entry.id, item.kind, item.attrs, item.body)
                 }
@@ -176,7 +204,7 @@ fun applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state: State? = null): Tr
                 )
             }
             body.text == COMPACT_PROMPT -> t.push(body.session, TranscriptItem.Compact(seq, ts))
-            else -> t
+            else -> t.settleDeliveries(body.session, body.attachments)
         }
         is ApiEventBody.AgentText -> t.push(body.session, TranscriptItem.Text(seq, ts, body.kind, body.text))
         is ApiEventBody.ToolCalled -> {

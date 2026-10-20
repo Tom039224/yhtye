@@ -248,6 +248,7 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
             project: project.clone(),
             chat: "C-1".into(),
             text: "go".into(),
+            attachments: vec![],
         },
     )
     .await;
@@ -383,12 +384,13 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
             project: project.clone(),
             chat: "C-1".into(),
             text: "first".into(),
+            attachments: vec![],
         },
     )
     .await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, text }
+        matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
             if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:checkpoint_reached]"))
     })
     .await;
@@ -410,6 +412,7 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
             project: project.clone(),
             chat: "C-1".into(),
             text: "second".into(),
+            attachments: vec![],
         },
     )
     .await;
@@ -473,6 +476,7 @@ async fn a_restored_session_keeps_the_agent_it_ran() {
             project: project.clone(),
             chat: "C-1".into(),
             text: "go".into(),
+            attachments: vec![],
         },
     )
     .await;
@@ -801,6 +805,7 @@ async fn a_vanished_harness_is_replaced_and_reported() {
             project,
             chat: "C-1".into(),
             text: "go".into(),
+            attachments: vec![],
         },
     )
     .await;
@@ -969,6 +974,7 @@ async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
             project: project.clone(),
             chat: "C-1".into(),
             text: "go".into(),
+            attachments: vec![],
         },
     )
     .await;

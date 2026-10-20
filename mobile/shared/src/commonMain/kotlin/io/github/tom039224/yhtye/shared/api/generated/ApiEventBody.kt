@@ -57,6 +57,13 @@ sealed interface ApiEventBody {
         @SerialName("lost_acp_session_id")
         @EncodeDefault(EncodeDefault.Mode.NEVER)
         val lostAcpSessionId: String? = null,
+        /**
+         * What the agent said it accepts in a prompt (`initialize`): the last
+         * one seen for a harness is what predicts the delivery of attachments.
+         */
+        @SerialName("prompt_caps")
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val promptCaps: PromptCaps? = null,
     ) : ApiEventBody
 
     /**
@@ -123,11 +130,19 @@ sealed interface ApiEventBody {
 
     /**
      * A prompt was sent to a session (for the orchestrator: an inbox batch).
+     * `text` is the text block; images and text files delivered natively are
+     * further blocks that are not part of it.
      */
     @Serializable
     data class Prompted(
         val session: String,
         val text: String,
+        /**
+         * How each attachment of the batch's user messages was delivered, the
+         * final decision (the `inbox_queued` entry has the prediction).
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val attachments: List<AttachmentDelivered> = emptyList(),
     ) : ApiEventBody
 
     /**

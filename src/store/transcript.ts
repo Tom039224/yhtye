@@ -3,7 +3,7 @@
 // separately in `Streaming` and replaced by the coalesced `agent_text`.
 
 import { chunkText, toolCallInfo } from "../api/acp";
-import type { ApiEvent, InboxKind, State, TextKind } from "../api/generated";
+import type { ApiEvent, AttachmentDelivered, AttachmentMeta, InboxKind, State, TextKind } from "../api/generated";
 import { chatOfUserCall, isOrchestratorKey, orchestratorKey } from "./chats";
 import { parseOrchestratorMessage } from "./orchestratorMessage";
 
@@ -19,7 +19,8 @@ interface Base {
 }
 
 export type TranscriptItem =
-  | (Base & { kind: "user"; inboxId: number; text: string })
+  /** `attachments`: the predicted delivery until the `prompted` event of its batch gives the final one. */
+  | (Base & { kind: "user"; inboxId: number; text: string; attachments: AttachmentMeta[] })
   | (Base & { kind: "notice"; inboxId: number; inboxKind: InboxKind; attrs: [string, string][]; body: string })
   | (Base & { kind: "prompt"; text: string })
   /** The orchestrator's `message_task` message to a task's agent (a prompt, read for its text). */
@@ -39,7 +40,12 @@ export type TranscriptItem =
   | (Base & { kind: "yhtye_tool"; tool: string; by: string; ok: boolean; detail: string })
   | (Base & { kind: "group"; groupId: string; title: string })
   | (Base & { kind: "turn"; outcome: string; error: boolean })
-  | (Base & { kind: "lifecycle"; text: string; error: boolean });
+  | (Base & { kind: "lifecycle"; text: string; error: boolean })
+  /**
+   * Not shown: how attachments were finally delivered, for user messages of an
+   * older history page (not loaded when the `prompted` event was folded).
+   */
+  | (Base & { kind: "delivered"; deliveries: AttachmentDelivered[] });
 
 export type Transcripts = Record<string, TranscriptItem[]>;
 
@@ -104,7 +110,7 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
       const { id, item, chat } = body.event.entry;
       const key = orchestratorKey(chat);
       return item.kind === "user_message"
-        ? push(t, key, { ...base, kind: "user", inboxId: id, text: item.body })
+        ? push(t, key, { ...base, kind: "user", inboxId: id, text: item.body, attachments: item.attachments ?? [] })
         : push(t, key, {
             ...base,
             kind: "notice",
@@ -121,7 +127,8 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
         const message = parseOrchestratorMessage(body.text);
         return push(t, body.session, message ? { ...base, kind: "orchestrator_message", ...message } : { ...base, kind: "prompt", text: body.text });
       }
-      return body.text === COMPACT_PROMPT ? push(t, body.session, { ...base, kind: "compact" }) : t;
+      if (body.text === COMPACT_PROMPT) return push(t, body.session, { ...base, kind: "compact" });
+      return body.attachments?.length ? applyDeliveries(t, body.session, base, body.attachments) : t;
     case "agent_text":
       return push(t, body.session, { ...base, kind: "text", textKind: body.kind, text: body.text });
     case "tool_called": {
@@ -228,6 +235,27 @@ function applyAgentEvent(
   }
 }
 
+/** Puts the final delivery of attachments on their user messages (`items`); `null` if none is among them. */
+function deliverIn(items: TranscriptItem[], deliveries: AttachmentDelivered[]): TranscriptItem[] | null {
+  let found = false;
+  const out = items.map((i) => {
+    if (i.kind !== "user" || !deliveries.some((d) => d.inbox_id === i.inboxId)) return i;
+    found = true;
+    const attachments = i.attachments.map((a) => {
+      const d = deliveries.find((x) => x.inbox_id === i.inboxId && x.id === a.id);
+      return d && d.delivery !== a.delivery ? { ...a, delivery: d.delivery } : a;
+    });
+    return { ...i, attachments };
+  });
+  return found ? out : null;
+}
+
+function applyDeliveries(t: Transcripts, session: string, base: Base, deliveries: AttachmentDelivered[]): Transcripts {
+  const items = deliverIn(t[session] ?? [], deliveries);
+  // Its messages are in older history: kept until that page is loaded (`prependTranscripts`).
+  return items ? { ...t, [session]: items } : push(t, session, { ...base, kind: "delivered", deliveries });
+}
+
 /** Text being streamed per session (live chunks since the last `agent_text`). */
 export type Streaming = Record<string, { message: string; thought: string }>;
 
@@ -298,8 +326,10 @@ export function prependTranscripts(older: Transcripts, newer: Transcripts): Tran
         calls: update.calls.length > 0 ? update.calls : item.calls,
       };
     });
+    const deliveries = after.flatMap((i) => (i.kind === "delivered" ? i.deliveries : []));
+    const delivered = deliveries.length > 0 ? (deliverIn(merged, deliveries) ?? merged) : merged;
     const moved = new Set(before.flatMap((i) => (i.kind === "tool" && updates.has(i.id) ? [i.id] : [])));
-    out[session] = [...merged, ...after.filter((i) => !(i.kind === "tool" && moved.has(i.id)))];
+    out[session] = [...delivered, ...after.filter((i) => !(i.kind === "tool" && moved.has(i.id)))];
   }
   return out;
 }

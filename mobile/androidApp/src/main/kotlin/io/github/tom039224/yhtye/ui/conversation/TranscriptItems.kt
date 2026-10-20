@@ -85,12 +85,12 @@ private const val CARET_BLINK_MS = 1_000
 /** 半分は点き、半分は消える (モックの `caret` の `steps(1)`)。 */
 private val BLINK = Easing { if (it < 0.5f) 0f else 1f }
 
-/** 1 行。[queued] は受信箱でまだ届いていない発言。 */
+/** 1 行。[queued] は受信箱でまだ届いていない発言。[loadAttachment] はユーザーの発言の添付の画像を取る。 */
 @Composable
-fun TranscriptRow(item: TranscriptItem, queued: Set<Long>, state: State?) {
+fun TranscriptRow(item: TranscriptItem, queued: Set<Long>, state: State?, loadAttachment: LoadAttachment? = null) {
     val pad = Modifier.fillMaxWidth().padding(horizontal = ROW_PADDING, vertical = 4.dp)
     when (item) {
-        is TranscriptItem.User -> UserBubble(item.text, item.inboxId in queued)
+        is TranscriptItem.User -> UserMessage(item, item.inboxId in queued, loadAttachment)
         is TranscriptItem.Text ->
             if (item.textKind == TextKind.Thought) {
                 Box(pad) { ThoughtFold(item.text, streaming = false) }
@@ -187,32 +187,52 @@ private fun Caret() {
     Box(Modifier.padding(top = 4.dp).size(8.dp, 16.dp).alpha(alpha).background(Yhtye.colors.accent))
 }
 
+/** ユーザーの発言: 本文の吹き出し、その下に添付のタイル (添付だけの発言もある)。どちらも右寄せ。 */
 @Composable
-private fun UserBubble(text: String, queued: Boolean) {
-    val c = Yhtye.colors
+private fun UserMessage(item: TranscriptItem.User, queued: Boolean, loadAttachment: LoadAttachment?) {
+    val files = item.attachments.isNotEmpty()
+    val bubble = item.text.isNotEmpty() || !files
     BoxWithConstraints(
         Modifier.fillMaxWidth().padding(start = ROW_PADDING, end = ROW_PADDING, top = 14.dp, bottom = 4.dp),
         contentAlignment = Alignment.CenterEnd,
     ) {
-        Row(
-            Modifier
-                .widthIn(max = maxWidth * BUBBLE_MAX_SHARE)
-                .clip(BUBBLE_SHAPE)
-                .background(c.bubbleBg)
-                .border(1.dp, c.bubbleLine, BUBBLE_SHAPE)
-                .padding(horizontal = 13.dp, vertical = 9.dp)
-                .testTag("user-bubble"),
-            verticalAlignment = Alignment.Bottom,
+        Column(
+            Modifier.widthIn(max = maxWidth * BUBBLE_MAX_SHARE),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            SelectionContainer(Modifier.weight(1f, fill = false)) {
-                Text(text, color = c.tx, fontSize = 15.sp, lineHeight = 24.sp)
-            }
-            if (queued) {
-                Box(Modifier.padding(start = 6.dp).semantics { contentDescription = "待機中" }) {
-                    YIcon(YIcons.Clock, c.tx3, size = 14.dp)
-                }
+            if (bubble) UserBubble(item.text, queued)
+            if (files) {
+                SentAttachments(item.attachments, loadAttachment)
+                if (!bubble && queued) QueuedMark()
             }
         }
+    }
+}
+
+@Composable
+private fun UserBubble(text: String, queued: Boolean) {
+    val c = Yhtye.colors
+    Row(
+        Modifier
+            .clip(BUBBLE_SHAPE)
+            .background(c.bubbleBg)
+            .border(1.dp, c.bubbleLine, BUBBLE_SHAPE)
+            .padding(horizontal = 13.dp, vertical = 9.dp)
+            .testTag("user-bubble"),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        SelectionContainer(Modifier.weight(1f, fill = false)) {
+            Text(text, color = c.tx, fontSize = 15.sp, lineHeight = 24.sp)
+        }
+        if (queued) QueuedMark(Modifier.padding(start = 6.dp))
+    }
+}
+
+@Composable
+private fun QueuedMark(modifier: Modifier = Modifier) {
+    Box(modifier.semantics { contentDescription = "待機中" }) {
+        YIcon(YIcons.Clock, Yhtye.colors.tx3, size = 14.dp)
     }
 }
 

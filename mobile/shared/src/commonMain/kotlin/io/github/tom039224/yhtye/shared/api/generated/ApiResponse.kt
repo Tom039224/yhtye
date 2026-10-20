@@ -6,6 +6,7 @@ package io.github.tom039224.yhtye.shared.api.generated
 import io.github.tom039224.yhtye.shared.api.TaggedSerializer
 import io.github.tom039224.yhtye.shared.api.TaggedVariant
 import io.github.tom039224.yhtye.shared.api.UnrecognizedVariant
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -63,6 +64,24 @@ sealed interface ApiResponse {
      */
     @Serializable
     data object Accepted : ApiResponse
+
+    /**
+     * Answer of `stage_attachment`.
+     */
+    @Serializable
+    data class AttachmentStaged(
+        val attachment: AttachmentMeta,
+    ) : ApiResponse
+
+    /**
+     * Answer of `get_attachment`.
+     */
+    @Serializable
+    data class Attachment(
+        val attachment: AttachmentMeta,
+        @SerialName("data_base64")
+        val dataBase64: String,
+    ) : ApiResponse
 
     @Serializable
     data class Chats(
@@ -189,6 +208,8 @@ sealed interface ApiResponse {
             TaggedVariant<ApiResponse>("snapshot", Snapshot.serializer()) { it is Snapshot },
             TaggedVariant<ApiResponse>("events", Events.serializer()) { it is Events },
             TaggedVariant<ApiResponse>("accepted", Accepted.serializer()) { it is Accepted },
+            TaggedVariant<ApiResponse>("attachment_staged", AttachmentStaged.serializer()) { it is AttachmentStaged },
+            TaggedVariant<ApiResponse>("attachment", Attachment.serializer()) { it is Attachment },
             TaggedVariant<ApiResponse>("chats", Chats.serializer()) { it is Chats },
             TaggedVariant<ApiResponse>("chat", Chat.serializer()) { it is Chat },
             TaggedVariant<ApiResponse>("chat_opened", ChatOpened.serializer()) { it is ChatOpened },

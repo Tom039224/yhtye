@@ -111,7 +111,7 @@ async fn real_restart_restores_the_sub_agent_session_and_completes_the_task() {
         .unwrap_or_else(|e| panic!("{e}"));
     let mut events = Vec::new();
     until(&mut rx, &mut events, REAL_TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, text }
+        matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
             if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))
     })
     .await;

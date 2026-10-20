@@ -10,6 +10,7 @@ use super::inbox::InboxItem;
 use super::machine::{Tx, non_empty};
 use super::state::{Chat, GroupStatus};
 use super::types::ToolError;
+use crate::attachments::AttachmentMeta;
 
 /// Longest chat title made from the first message, in characters.
 pub const MAX_TITLE_CHARS: usize = 40;
@@ -118,14 +119,23 @@ impl Tx {
         Ok(())
     }
 
-    /// The user's message: it is titled from the chat's first message, then queued.
-    pub(super) fn user_message(&mut self, chat: &str, text: String) -> Result<(), ToolError> {
+    /// The user's message: it is titled from the chat's first message (the name
+    /// of its first attachment if it has no text), then queued.
+    pub(super) fn user_message(
+        &mut self,
+        chat: &str,
+        text: String,
+        attachments: Vec<AttachmentMeta>,
+    ) -> Result<(), ToolError> {
         let c = self
             .state
             .chat(chat)
             .ok_or_else(|| ToolError::not_found(format!("no chat {chat}")))?;
         if c.title.is_none() {
-            let title = title_of(&text);
+            let title = match title_of(&text) {
+                t if t.is_empty() => attachments.first().map_or(t, |a| title_of(&a.name)),
+                t => t,
+            };
             if !title.is_empty() {
                 self.emit(DomainEvent::ChatTitled {
                     chat: chat.to_string(),
@@ -133,7 +143,7 @@ impl Tx {
                 });
             }
         }
-        self.queue_inbox(chat, InboxItem::user_message(text));
+        self.queue_inbox(chat, InboxItem::user_message_with(text, attachments));
         Ok(())
     }
 }

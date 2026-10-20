@@ -761,6 +761,7 @@ fn send(project: &str) -> ApiCommand {
         project: project.into(),
         chat: "C-1".into(),
         text: "go".into(),
+        attachments: vec![],
     }
 }
 

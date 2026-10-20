@@ -1755,7 +1755,7 @@ Android の共通モジュール (`mobile/shared`) の `PairingTarget.kt` / `Pai
 | `address.rs` | 接続先の判定。**Tailscale のアドレスだけ**許す (100.64.0.0/10、fd7a:115c:a1e0::/48、`*.ts.net`)。通信は平文の HTTP / WS (暗号化は WireGuard) なので、コードやトークンを他所へ送らないための歯止めはここ。全角→半角・括弧・末尾の `.`・小文字化の正規化。`HostPolicy::AnyHost` は loopback のホストを使うテスト専用 |
 | `target.rs` | ペアリング URI (`yhtye://pair?v=1&host=&ip=&port=&code=&sid=`、QR・ディープリンク) と手入力 (ホスト / IP・ポート・コード) の解析 → `PairingTarget`。コードの正規化 (全角→半角、空白と `-` の除去、大文字化、8 文字・許可文字のみ。文字種はサーバーと同じ定数)、端末名の正規化。誤りは `InvalidPairingInput` |
 | `pair.rs` | `POST /pair` (`kind: "desktop"`)。候補ホストを順に 10 秒ずつ試し、HTTP の応答が返った先で確定する (別の候補を試してもコードの試行回数を使うだけ)。失敗は `PairingFailure` (401 `CodeRejected` / 403 `OtherUser` / 400 `BadRequest` / 届かない `Unreachable` / QR の `sid` と応答の `server_id` が違う `WrongServer` (トークンは捨てる。ホストには端末が登録されてしまうので、その Yhtye で外してもらう) / `ServerError`)。プロキシとリダイレクトは使わない |
-| `transport.rs` | `WsTransport` / `WsLink` (テストでは偽物に差し替える) と、本物の `TungsteniteTransport` (`GET /ws` + `Authorization: Bearer`。前回つながった候補が先)。ハンドシェイクの HTTP 状態で 401 → `Refusal::Unauthorized` / 403 → `Forbidden` を区別し、それ以外は再試行する失敗 |
+| `transport.rs` | `WsTransport` / `WsLink` (テストでは偽物に差し替える) と、本物の `TungsteniteTransport` (`GET /ws` + `Authorization: Bearer`。前回つながった候補が先)。ハンドシェイクの HTTP 状態で 401 → `Refusal::Unauthorized` / 403 → `Forbidden` を区別し、それ以外は再試行する失敗。メッセージ・フレームの上限はホストの WS と同じ `ws::MAX_MESSAGE_BYTES` に上げてある (添付ファイルの返信、§20.3) |
 | `connection.rs` | `RemoteConnection` = 1 つのホストへの接続。状態 `Idle` / `Connecting` / `Connected { session }` / `WaitingToReconnect` / `Revoked` (401。再接続しない) / `Rejected` (403。止まる。`start` でやり直す)。再接続は 1 秒から倍々で 30 秒まで (`Backoff`)。要求 `{id, cmd}` の id と応答 `{id, ok\|err}` の対応付け (応答は順不同)、180 秒のタイムアウト (`src/api/ws.ts` と同じ。接続を待つ時間を含む)、イベント `{event}` のブロードキャスト。WS の ping を 15 秒ごとに送り、60 秒何も届かない接続は死んだとして張り直す (サーバーは 20 秒ごとに ping する)。応答とイベントは **JSON の値**で扱う (API の応答型は Rust では書く側で `Deserialize` が無く、アプリはどのみち UI へ JSON のまま渡す) |
 | `credentials.rs` | `TokenVault`: 端末トークンを **OS のキーリング** (`secrets::KeyringBackend` と同じ keyring crate、サービス `yhtye`、アカウント `remote-host:<serverId>`) に入れる。キーリングが使えないときは**そのプロセスの間だけメモリに保持** (再起動でホストの記録は残るがトークンは消え、ペアリングし直し) し、`TokenPlace::MemoryOnly { reason }` で知らせる。平文のファイルには書かない |
 | `version.rs` | ホストの版 (`ping` の `version`) とこのアプリの版の互換性 (`Compatibility.kt` と同じ規則: 0.x の間は `0.<minor>` が同じなら互換、1.0 以降はメジャーが同じでホストのマイナーが以上。パッチとプレリリースは見ない。版が分からなければ `Unknown` で警告しない) |
@@ -1793,6 +1793,10 @@ Android の共通モジュール (`mobile/shared`) の `PairingTarget.kt` / `Pai
 - **スリープと並べ替え** (§17.12、§17.13): `sleep_project` / `reorder_projects` / `reorder_branches` / `get_branch_order` はローカル専用ではなく、リモートのホストにも通る
   (`ApiCommand::is_local_only` は上の 5 つだけ。`ws.rs` のテストが固定している)。プロジェクトのプルダウンは全ホストのプロジェクトを混ぜて出すが、右クリックのメニュー・ドラッグ・Alt+↑/↓ は
   **画面を描いているホストの行だけ**に付く (画面のストアはそのホスト 1 つにしか話せない)。別のホストの行は、選んでそのホストに切り替えてから同じ操作をする。
+- **添付ファイル** (§20): `stage_attachment` / `discard_attachment` / `get_attachment` と、添付付きの `send_user_message` もローカル専用ではなく、リモートのホストにも通る。
+  ファイルはホストの `<データディレクトリ>/attachments/` に入る (PC 側には残らない)。WS の上限はホストと PC のクライアントの両方で 2 GiB に上げてある
+  (`tests/remote_client.rs` が 16 MiB 超のファイルを往復させて固定している)。スリープ中のチャットへ添付付きで送ると、保存済みのセッションでオーケストレータが起きて添付が届く
+  (`tests/attachments_fake.rs`)。
 - **確認した実機の経路** (Tailscale の 2 台分を 1 台で: `remote_server` の example をホストに、Xvfb 上の GUI をクライアントに、`XDG_*` を一時ディレクトリにして):
   2 つ目の `yhtye <リンク>` が既存の GUI にリンクを渡して終了コード 0、確認ダイアログ → ペアリング (ホストの端末一覧に `desktop`)、プロジェクト一覧にホストのプロジェクト、
   選ぶとホストのブランチ・git が出る、GUI の再起動で自動接続 (キーリングあり)、終了でホスト側が「未接続」、`--data-dir` を付けた 2 つ目のアプリは並んで動く、
@@ -1875,3 +1879,74 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
   片方でプロジェクトを開く・設定 (エージェントとハーネスのパス) を変える・チャットを作る/削除する・タスクを中止する・両方で同時に中止する、
   をしてもう片方が追従し、エラーが出ないことを確かめた (T-65)。
 
+## 20. チャットの添付ファイル (`crates/yhtye-core/src/attachments/`)
+
+ユーザーがオーケストレータへのメッセージにファイルを付けて送る。PC の UI は §20.5、Android は別タスク。コアは「保存 → 配送方式の判定 → ACP 送信」と API まで。
+
+### 20.1 配送方式 (`AttachmentDelivery`)
+
+添付 1 件ごとに `native` か `path` を決める。
+
+| 種類 (`AttachmentKind`) | 判定 (`classify`) | `native` になる条件 | `native` の送り方 |
+|---|---|---|---|
+| `image` | 中身が PNG / JPEG / GIF / WebP の署名で始まる (クライアントの MIME が違っても中身が勝つ。エージェント API は種類の食い違いを拒む) | `promptCapabilities.image` | `ContentBlock::Image` (base64 + `mimeType`、`uri` は保存先の `file://`) |
+| `text` | UTF-8 として正しく NUL を含まない、かつ MIME が `text/*`・`application/json` 等・`+json` / `+xml` か、既知のテキスト拡張子・ファイル名 | `promptCapabilities.embeddedContext` | `ContentBlock::Resource` (`TextResourceContents`、`uri` は `file://`、`mimeType`) |
+| `file` | 上のどれでもない (PDF・バイナリ・BMP / HEIC など) | 無し (常に `path`) | — |
+
+- `path`: ファイルを保存するだけ。プロンプトのテキストに `[yhtye:attachment] name=… mime=… size=… delivery=path path=<絶対パス>` の行を足し、
+  エージェントが自分のツールで読む。**`native` でも同じ行を足す** (`delivery=native`。サブエージェントのタスクに渡せるよう
+  パスを知らせ、複数メッセージのバッチで中身のブロックと対応が取れるようにする)。値に空白・`"` があれば JSON 文字列で囲む。
+- ブロックは「テキストブロック (バッチ全体)、そのあと `native` の添付のブロックをメッセージ順に」。添付が無いバッチは従来どおりテキストブロック 1 つ。
+- 大きさ・枚数の上限は無い (ネイティブ送信で読めないファイルは `path` に落とす)。**ネイティブの画像・テキストはループ上で同期読み込み**する
+  (ローカルのディスクから送信直前に 1 回)。
+- **最終判定は送信時**、実際に動いているオーケストレータの `initialize` の `promptCapabilities` で行う (`Sessions::deliver` が `Prompt::build` に
+  `AgentHandle::info().capabilities` を渡す)。ステージ時の `delivery` は予測。結果は `prompted` イベントの `attachments`
+  (`{inbox_id, id, delivery}`) に記録する (トランスクリプトの表示はこちらを使う)。送信時にファイルが読めなければ `path` に落ちる。
+
+### 20.2 `promptCapabilities` の予測
+
+- 起動したセッションが `initialize` で返した値を `SessionStarted.prompt_caps` に載せ、store がハーネスごとの「最後に観測した値」
+  (`harness_prompt_caps` テーブル、マイグレーション `0012_attachments.sql`) に書く。再起動後も残る。
+- 観測が無いハーネスは `HarnessPreset::prompt_caps` (カタログの既定値): `claude-code` と `codex` は画像 + 埋め込みコンテキストあり、他は無し (全部 `path`)。
+- 予測 (`Core::predicted_prompt_caps`): チャットのオーケストレータが前に動いたハーネス (保存されたセッションの `agent`)、無ければ今のオーケストレータ役の設定が選ぶハーネスの、
+  観測値 → 既定値の順。UI は `stage_attachment` の応答の `delivery` で予測を知る (ハーネス一覧に別途は出さない)。
+
+### 20.3 保存と API
+
+- ファイル: `<データディレクトリ>/attachments/<project>/<chat>/<id>/<名前>`、メタデータは隣の `<id>.json` (最後に書く)。`<id>` は 16 桁の 16 進 (乱数)。
+  名前は `sanitize_file_name` で必ず安全化する (ディレクトリ部を落とす・制御文字と `/ \ : * ? " < > |` を `_`・末尾の `.` と空白を落とす・Windows の予約名に `_`・200 バイトまで)。
+  project / chat / id は ID として正しいものだけ受ける (`..` などで外へ出られない)。
+- コマンド (`api/command.rs`、WS・Tauri 共通。リモートの端末も使える):
+  - `stage_attachment { project, chat, name, mime?, data_base64 }` → `attachment_staged { attachment: AttachmentMeta }`。`not_found` (プロジェクト・チャット)、`invalid_argument` (base64)。
+  - `discard_attachment { project, chat, id }` → `accepted`。送信済みは `invalid_state`、無ければ `not_found`。
+  - `get_attachment { project, chat, id }` → `attachment { attachment, data_base64 }` (トランスクリプトのプレビュー用)。
+  - `send_user_message { …, attachments?: string[] }`: ステージ済みの id。本文が空でも添付があれば送れる (どちらも無ければ `invalid_argument`)。
+    存在しなければ `not_found`、送信済みの id や重複は `invalid_argument`。送ると「送信済み」になる (拒まれたら戻す)。
+- `AttachmentMeta { id, name, mime, size, kind: image|text|file, delivery: native|path }`。ユーザーメッセージ (`inbox_queued` の `item.attachments`) に載り、
+  受信箱のテーブル (`inbox.attachments`、JSON) にも保存される。**ファイルの中身はイベントログにも DB にも入れない。**
+- チャットを消すと `attachments/<project>/<chat>/` も消す (`Driver::delete_chat`)。
+- WS: メッセージとフレームの上限をライブラリの既定 (64 / 16 MiB) から 2 GiB に上げた (`ws::accept_large_messages`、アクセス確認を通った接続だけ。別ホストへ接続する PC のクライアント (§18.9) も同じ上限で読む)。
+  ファイルは 1 つのコマンドで丸ごと送る。注意: メッセージが丸ごと届くまで 1 件も読めないので、回線が遅くて 1 メッセージに `IDLE_TIMEOUT` (60 秒) 以上かかると切れる。
+  Android の OkHttp は送信待ちキューが 16 MiB までで、それを超える `send` は失敗する (大きいファイルはクライアント側で扱いを決める)。
+
+### 20.4 経路と実装
+
+- 受信箱の項目 (`InboxItem`) が添付のメタデータを持ち、キュー (`Starting.queued` / `Live.queued`、`FirstPrompts`) は文字列ではなく `runtime::prompt::Prompt`
+  (`Text` か `Inbox(entries)`) を持つ。ブロックは**送るときに**作る (起動中のセッションは能力がまだ分からないため)。
+  複数メッセージをまとめた受信箱のバッチ、起動時の最初のプロンプト、復元できなかったときの `restarted` + 受信箱 (fallback)、`session/new` の system prompt の前置き
+  (`acp/session.rs` は先頭にテキストブロックを足すだけ) のどれでも添付は失われない。
+- 偽エージェント: シナリオの `prompt_capabilities` (`image` / `audio` / `embedded_context`) を `initialize` で返し、アクション `report_blocks` で受け取ったブロックを
+  `blocks:[…]` として報告する。テストは `tests/attachments_fake.rs`。
+
+### 20.5 デスクトップの UI (`src/store/attachments.ts`、`src/ui/AttachmentTile.tsx`)
+
+- 入力欄の左の + (隠した `input[type=file]`、複数可。Tauri でも WebView が OS のファイル選択を出す)、テキスト欄への画像の貼り付け
+  (`clipboardData.files`。プレーンテキストも入ったコピーはテキストとして貼る)、入力欄へのドロップで添付する
+  (Tauri はウィンドウの `dragDropEnabled: false` で HTML のドロップを WebView に渡す)。
+- 添付した時点で `stage_attachment` し、入力欄の上に同じ大きさの正方形タイルで並べる (画像はサムネイル、ほかは種類のアイコンと拡張子)。
+  左上に配送方式 (`native` はモデルに直接・`path` はパスで渡す。入力欄では予測)、右上の × で `discard_attachment`。アップロード中・失敗も表示し、
+  どちらかがある間は送れない。本文が空でも添付があれば送れる。
+- 添付はチャットごとの下書き (`Drafts`、本文と同じく別のチャットを見ても残る) に持つ。送信が受け付けられたら下書きから外す。チャットを消すと下書きごと消える。
+- トランスクリプトはユーザーメッセージの本文の下に同じタイル (× なし) を出す。配送方式は `prompted` の `attachments` の確定値
+  (古い履歴のページにあるメッセージの分は、そのページを読んだときに当てる)。画像は `get_attachment` で読み (送ったばかりのものは手元の内容)、
+  最近の 64 件をキャッシュし、クリックで拡大表示する。CSP が `blob:` を許さないので画像は `data:` URL で出す。

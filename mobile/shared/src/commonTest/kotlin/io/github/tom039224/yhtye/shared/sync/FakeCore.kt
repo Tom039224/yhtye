@@ -10,6 +10,9 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiError
 import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentDelivery
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentKind
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentMeta
 import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
@@ -33,6 +36,7 @@ import io.github.tom039224.yhtye.shared.client.CoreConnection
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.yield
+import kotlin.io.encoding.Base64
 import kotlin.reflect.KClass
 
 /**
@@ -99,6 +103,12 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     val modelEfforts = HashMap<String, List<EffortOption>>()
     var detections: List<HarnessDetection> = emptyList()
     val secrets = mutableListOf<String>()
+
+    /** コアが保存している添付 (`stage_attachment` で増え、`discard_attachment` で減る)。 */
+    val stored = LinkedHashMap<String, Pair<AttachmentMeta, ByteArray>>()
+
+    /** `stage_attachment` が画像・テキストに予測する送り方 (それ以外のファイルは常に `path`)。 */
+    var predictedDelivery = AttachmentDelivery.Native
 
     /** 答える前に呼ぶ (押し込むイベントを挟む・応答を止める)。 */
     var before: (suspend (ApiCommand) -> Unit)? = null
@@ -219,6 +229,31 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
                 if (it.id == command.harness) it.copy(overridePath = command.path, installed = command.path != null || it.installed) else it
             }
             ApiResponse.Harnesses(detections)
+        }
+        is ApiCommand.StageAttachment -> {
+            val data = try {
+                Base64.decode(command.dataBase64)
+            } catch (e: IllegalArgumentException) {
+                refuse(ApiErrorCode.InvalidArgument, "data_base64 is not valid base64")
+            }
+            val mime = command.mime ?: "application/octet-stream"
+            val kind = when {
+                mime.startsWith("image/") -> AttachmentKind.Image
+                mime.startsWith("text/") -> AttachmentKind.Text
+                else -> AttachmentKind.File
+            }
+            val delivery = if (kind == AttachmentKind.File) AttachmentDelivery.Path else predictedDelivery
+            val meta = AttachmentMeta("att-${stored.size + 1}", command.name, mime, data.size.toLong(), kind, delivery)
+            stored[meta.id] = meta to data
+            ApiResponse.AttachmentStaged(meta)
+        }
+        is ApiCommand.DiscardAttachment -> {
+            stored.remove(command.id) ?: refuse(ApiErrorCode.NotFound, "no attachment ${command.id}")
+            ApiResponse.Accepted
+        }
+        is ApiCommand.GetAttachment -> {
+            val (meta, data) = stored[command.id] ?: refuse(ApiErrorCode.NotFound, "no attachment ${command.id}")
+            ApiResponse.Attachment(meta, Base64.encode(data))
         }
         ApiCommand.ListSecretEnv -> ApiResponse.SecretEnv(secrets.toList())
         is ApiCommand.SetSecretEnv -> {

@@ -228,7 +228,9 @@ YHTYE_LAYOUT_ONLY="task tabs" pnpm check:layout           # 名前に文字列�
 新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す (はみ出し以外の検査は `verify` に書く)。
 
 CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロントエンドのビルドとテスト、
-`pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)。
+`pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)、
+Android クライアントの `./gradlew build` (`android` ジョブ。ユニットテスト・lint・debug/release のビルド。署名鍵は使わず release は未署名、
+本物の PC 側サーバーが要るテストは飛ばす。失敗したときはレポートをアーティファクト `android-reports` に残す (7 日))。
 `layout` ジョブは ubuntu-latest に入っている Google Chrome を `YHTYE_CHROMIUM=/usr/bin/google-chrome` で使う
 (playwright-core は CDP で動かすだけなので、`playwright install` のダウンロードと apt のパッケージが要らない)。
 ヘッドレスでディスプレイは無く、Vite のポートは空きから自動で選ぶ。失敗したときは全状態のスクリーンショットを

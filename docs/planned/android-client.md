@@ -524,6 +524,48 @@ T-69 の仮の設定画面を本番に替え、裏での常駐 (Foreground Servi
     オフラインのグレーは実機では確かめていない (別の新しいサーバーにペアリングし直すとユーザーのペアリングが置き換わるため、しなかった)。デスクトップアプリを T-73 以降に
     更新すれば出る。確認中は `svc power stayon usb`、終わったら `stayon false` に戻し、ホーム画面に戻した (アプリのデータ・ペアリングはそのまま)。
 
+### 実装で決めたこと (添付ファイルの仕組み: UI は別タスク)
+
+コアの添付 (`stage_attachment` / `discard_attachment` / `get_attachment` / `send_user_message` の `attachments`、core-design §20) を扱う、画面に依らない部分。
+Compose の画面 (添付ボタン・チップ・会話の表示) は後続のタスク。
+
+- **入力中の添付** (`AttachmentComposer`、`AppStore.attachments`): `state: StateFlow<AttachmentDrafts>` (チャットごと = `ChatRef(project, chat)`、追加した順。`.of(project, chat)` で引く)。
+  1 件は `PendingAttachment` (`localId` / `name` / `mime` / `size` / `upload`)、`upload` は `Uploading` → `Staged(meta)` (`meta.delivery` はコアの予測) か `Failed(message, retryable)`。
+  `stage(project, chat, name, mime, bytes)` (または読み方 `AttachmentSource` を渡す形。順番が来てから読む)・`remove(…, localId)` (ステージ済みならコアも消す。アップロード中に外したものは、
+  できた後でコアから消す)・`retry(…, localId)`。ステージは**1 ファイルずつ順に**読んで送る (読んだ中身・base64・JSON・フレームで同時にメモリを使うので並行にしない)。
+- **大きさの上限**: `MAX_ATTACHMENT_BYTES` = 10 MiB。OkHttp の送信待ちが 16 MiB までで、base64 (4/3 倍) + 枠に収まる大きさ。超えるものは送らず `Failed(retryable = false)`
+  (大きさが分かっていれば読む前に、分からなければ読みながら `AttachmentTooLargeException`)。コアは上限を持たないので、ここがクライアントの判断。
+- **送る** (`AppStore.sendMessage(text)`): 選択中のチャットの**ステージ済みの ID** を付けて `send_user_message`。受け付けられたら入力中から外す (拒まれたら残す)。アップロード中・失敗がある間は
+  送らずエラーを出す (失敗した添付だけ抜いて送ってしまわないため)。画面の判定は `canSendMessage(text, pending)`: 全部ステージ済みで、本文が空でないか添付が 1 つ以上 (**本文が空でも添付だけで送れる**)。
+- **会話** (`TranscriptItem.User.attachments: List<AttachmentMeta>`): `inbox_queued` の `item.attachments` から。`prompted` の `attachments` (最終の送り方) が来たら `delivery` を差し替える
+  (予測は `path` に落ちることがある)。読み込んだ履歴の外 (前のページ) にある発言には効かない (予測のまま)。
+- **画像のプレビュー** (`AttachmentPreviews`、`AppStore.attachmentPreviews`): `load(project, chat, meta)` が `get_attachment` で取り、メモリ (合計 32 MiB、使ってから最も長いものから捨てる) に置く。
+  同じ添付の同時の要求は 1 回にまとめ、画面が離れても取得は続けてキャッシュに入れる。`peek` は取りに行かない読み出し (最初の 1 コマ用)。`AttachmentMeta.canPreview()` (画像で 10 MiB 以下)。
+  自分で送った画像はステージしたときにキャッシュへ入る (会話に出るとき取り直さない)。結果は `Loaded(bytes)` / `TooLarge` / `Failed(message)` (失敗は覚えない)。
+- **Android** (`androidApp/.../attachments/UriAttachments.kt`): `UriAttachments(contentResolver)` — `describe(uri)` (名前・種類・大きさ。提供元が答えなくても失敗せず、名前が無ければ Uri の末尾と種類から作る)、
+  `read(file)` (上限つきで読む)、`addTo(composer, project, chat, uris)` (選んだ順に足す。フォトピッカー・SAF・クリップボード共通)。`ClipData.fileUris()` はクリップボードの `content:` の Uri だけを返す。
+- **チャットを消すと** (自分でも他のクライアントでも): 下書きと同じく入力中の添付とプレビューを捨てる (コアのファイルはチャットと一緒に消えるので `discard` は送らない)。入力中の添付はプロセスが落ちると消える (保存しない)。
+- **テスト**: 共通 `AttachmentComposerTest` 21 件・`AttachmentPreviewsTest` 8 件・`AttachmentsTest` 9 件 (ステージの状態遷移・1 つずつ送る・失敗とやり直し・上限・外す・送るときの ID と空の本文・チャットごと・
+  チャット削除・キャッシュの同時要求と追い出し・会話への写し方)。`FakeCore` が `stage` / `discard` / `get_attachment` に答える。Robolectric `UriAttachmentsTest` 8 件 (テスト用の `ContentProvider` で
+  名前・種類・大きさの補い方・上限・大きさを偽る提供元・開けないファイル・コンポーザへの追加・クリップボード)。
+
+### 実装で決めたこと (添付ファイルの画面)
+
+PC のコンポーザ・会話の添付 (`src/ui/Composer.tsx` / `AttachmentTile.tsx` / `SentAttachments.tsx`) と同じ見た目・振る舞い。PC に無いもの (やり直しのボタン・拡大表示のピンチなど) は作らない。
+
+- **+ ボタン** (`ComposerAttachments.kt` の `AttachButton`): 入力欄の左。押すと「写真」(フォトピッカー `PickMultipleVisualMedia`、画像だけ。動画は 10 MiB に収まらない) と「ファイル」(SAF `OpenMultipleDocuments`、何でも) のメニュー。
+  どちらも複数選べ、選んだ順に `UriAttachments.addTo` でステージする。
+- **貼り付け**: 入力欄を状態型の `BasicTextField(TextFieldState)` にし、`Modifier.contentReceiver` で受ける (値型の `BasicTextField` は contentReceiver を受けない。Compose foundation 1.12)。
+  クリップボードの貼り付け・キーボードの画像 (Gboard のステッカーなど)・ドラッグ&ドロップが同じ口に来る。`content:` の Uri で文字を持たない項目だけを添付にし、文字の項目はそのまま入力欄に入る (PC と同じ)。
+- **タイル** (`AttachmentTile.kt`): コンポーザ・会話とも 88dp の正方形。画像はサムネイル (`AttachmentPreviews.load` で取り、タイルの 2 倍の画素まで `inSampleSize` で縮めて読む)、それ以外は種類のアイコン・拡張子・名前。
+  左上に送り方 (native = Bot / path = Folder。読み上げは PC の `DELIVERY_LABELS`、コンポーザでは「· 送信時に確定」)、コンポーザでは右上に ×。アップロード中は回るアイコン、失敗は警告と理由。
+  コンポーザは入力欄の枠の中・上に横スクロールで並べる。状態の一言は PC と同じ (「添付中… · 終わると送信できます」「添付できなかったファイルを外すと送信できます」)。
+- **送る**: `canSendMessage` (全部ステージ済みで、本文か添付がある)。本文が空でも添付だけで送れる。
+- **会話**: ユーザーの発言は本文の吹き出しの下に添付のタイル (右寄せ、× 無し、左上は最終の送り方)。添付だけの発言は吹き出しを出さない。画像はタップで画面いっぱいに出す (`AttachmentViewer`、長辺 2048px まで縮めて読む)。
+  画像の取得は中央の会話だけ (`TranscriptSource.loadAttachment`)。タスク詳細の会話には渡さない (PC と同じ)。
+- **テスト**: Robolectric `ComposerAttachmentsTest` 10 件 (タイルの送り方・×・アップロード中と失敗で送れない・添付だけで送る・+ からファイル/写真を選ぶ画面と結果・クリップボードの画像と文字の貼り付け・拡大表示・
+  会話のタイルの位置と × 無し・添付だけの発言)、`ConversationScreenTest` 2 件 (本物の同期層でステージ → サムネイル → 本文無しで `attachments` 付きの送信、× でコアから破棄)。
+
 ## ペアリング
 
 | 項目 | 内容 |

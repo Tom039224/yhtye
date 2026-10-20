@@ -6,6 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use yhtye_core::api::{ApiCommand, ApiErrorCode, ApiResponse};
@@ -22,6 +24,7 @@ use yhtye_core::store::{Store, db_path};
 mod common;
 
 use common::fake_tailscale::{FakeTailscale, ME, SOMEONE_ELSE, free_port};
+use common::repo::TempRepo;
 
 const TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -683,4 +686,89 @@ async fn a_core_hands_out_its_remote_hosts_with_the_strict_policy() {
         Err(HostsError::NotTailscaleHost(_))
     ));
     core.shutdown().await;
+}
+
+/// A file does not have a size limit of its own (`ws::MAX_MESSAGE_BYTES`): one over
+/// the library's default limits for a WebSocket message (16 MiB a frame) is attached
+/// on a host through the PC's client of it, and read back whole.
+#[tokio::test]
+async fn a_file_over_the_default_websocket_limits_is_attached_on_a_host() {
+    const SIZE: usize = 20 << 20;
+    let repo = TempRepo::new();
+    let host = start_host(FakeTailscale::new()).await;
+    let client = start_client().await;
+    let mut notices = client.hosts.subscribe();
+    client
+        .hosts
+        .add(&host.target().await, "Workstation")
+        .await
+        .expect("paired");
+    client
+        .hosts
+        .connect(&host.server_id)
+        .await
+        .expect("connect");
+    status_where(&mut notices, &host.server_id, connected).await;
+
+    let project = match host
+        .core
+        .command(ApiCommand::OpenProject {
+            path: repo.repo.display().to_string(),
+        })
+        .await
+        .expect("open")
+    {
+        ApiResponse::Project { project } => project.id,
+        other => panic!("unexpected {other:?}"),
+    };
+    let chat = match host
+        .core
+        .command(ApiCommand::CreateChat {
+            project: project.clone(),
+            branch: Some("main".into()),
+            worktree: None,
+        })
+        .await
+        .expect("chat")
+    {
+        ApiResponse::Chat { chat } => chat.id,
+        other => panic!("unexpected {other:?}"),
+    };
+
+    let bytes: Vec<u8> = (0..SIZE).map(|i| (i % 251) as u8).collect();
+    let data_base64 = STANDARD.encode(&bytes);
+    assert!(data_base64.len() > 16 << 20, "over the default frame limit");
+    let stage = ApiCommand::StageAttachment {
+        project: project.clone(),
+        chat: chat.clone(),
+        name: "big.bin".into(),
+        mime: None,
+        data_base64: data_base64.clone(),
+    };
+    let staged = client
+        .hosts
+        .call(&host.server_id, &stage)
+        .await
+        .expect("staged on the host");
+    assert_eq!(staged["type"], "attachment_staged", "{staged}");
+    let meta = &staged["attachment"];
+    assert_eq!(meta["size"], SIZE, "{meta}");
+
+    let get = ApiCommand::GetAttachment {
+        project,
+        chat,
+        id: meta["id"].as_str().expect("id").to_string(),
+    };
+    let back = client
+        .hosts
+        .call(&host.server_id, &get)
+        .await
+        .expect("read back through the client");
+    assert_eq!(back["type"], "attachment", "{back}");
+    assert!(
+        back["data_base64"].as_str() == Some(data_base64.as_str()),
+        "the file comes back unchanged"
+    );
+    client.hosts.shutdown().await;
+    host.core.shutdown().await;
 }

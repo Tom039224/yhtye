@@ -113,6 +113,8 @@ object YIcons {
         "M16 13H8",
         "M16 17H8",
     )
+    val File = lineIcon("file", "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6")
+    val Image = lineIcon("image", rect(3f, 3f, 18f, 18f, 2f), circle(9f, 9f, 2f), "m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21")
     val Unplug = lineIcon(
         "unplug",
         "m19 5 3-3",
