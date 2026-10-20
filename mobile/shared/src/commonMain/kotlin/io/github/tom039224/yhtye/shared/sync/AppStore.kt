@@ -247,16 +247,28 @@ class AppStore(
     }
 
     suspend fun openProject(path: String) {
-        onConfined {
-            set { it.copy(busy = it.busy.copy(opening = true)) }
-            try {
-                val r = report<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs) ?: return@onConfined
-                // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
-                set { it.copy(projects = toFrontProject(it.projects, r.project)) }
-                load(r.project)
-            } finally {
-                set { it.copy(busy = it.busy.copy(opening = false)) }
+        val reason = tryOpenProject(path) ?: return
+        onConfined { pushError("${commandName(ApiCommand.OpenProject(path))} failed: $reason") }
+    }
+
+    /**
+     * [openProject] の、断られた理由をその場に出す画面 (ダッシュボードの「プロジェクトを追加」) 用: 失敗を画面のエラー
+     * ([AppState.errors]) に積まず、コアの理由を返す。開けたら null。
+     */
+    suspend fun tryOpenProject(path: String): String? = onConfined {
+        set { it.copy(busy = it.busy.copy(opening = true)) }
+        try {
+            val r = try {
+                core.expect<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs)
+            } catch (e: RpcException) {
+                return@onConfined describe(e)
             }
+            // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
+            set { it.copy(projects = toFrontProject(it.projects, r.project)) }
+            load(r.project)
+            null
+        } finally {
+            set { it.copy(busy = it.busy.copy(opening = false)) }
         }
     }
 

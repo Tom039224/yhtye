@@ -49,6 +49,8 @@ import io.github.tom039224.yhtye.ui.common.YIcons
 import io.github.tom039224.yhtye.ui.conversation.ConversationScreen
 import io.github.tom039224.yhtye.ui.conversation.Mention
 import io.github.tom039224.yhtye.ui.conversation.MentionsState
+import io.github.tom039224.yhtye.ui.dashboard.DashboardCenter
+import io.github.tom039224.yhtye.ui.dashboard.FolderBrowserScreen
 import io.github.tom039224.yhtye.ui.panels.LeftPanel
 import io.github.tom039224.yhtye.ui.panels.LeftPanelMemory
 import io.github.tom039224.yhtye.ui.panels.MainView
@@ -87,17 +89,23 @@ sealed interface Stacked {
 
     data object Settings : Stacked
 
+    /** ダッシュボードの「プロジェクトを追加」: ホストのフォルダを辿る。 */
+    data object Folders : Stacked
+
     /** 画面の作り直しで残すための文字列。 */
     val key: String get() = when (this) {
         is Detail -> "task:$task"
         Settings -> SETTINGS_KEY
+        Folders -> FOLDERS_KEY
     }
 
     companion object {
         private const val SETTINGS_KEY = "settings"
+        private const val FOLDERS_KEY = "folders"
 
         fun parse(key: String): Stacked? = when {
             key == SETTINGS_KEY -> Settings
+            key == FOLDERS_KEY -> Folders
             key.startsWith("task:") -> Detail(key.removePrefix("task:"))
             else -> null
         }
@@ -111,8 +119,9 @@ private val NO_UPDATES = MutableStateFlow(UpdateState(enabled = false))
 private const val NOW_TICK_MS = 30_000L
 
 /**
- * ペアリング後のホーム: 3 パネル (左 = ビューの切り替え・プロジェクト・ブランチとチャット・使用量、中央 = 会話、
- * 右 = 選択中のチャットのグループ) と、その上に積む画面 (タスク詳細・設定)。状態は同期層 ([sync]) から読み、
+ * ペアリング後のホーム: 3 パネル (左 = レール・プロジェクト・ブランチとチャット・使用量、中央 = ダッシュボード / 会話 / 履歴、
+ * 右 = 選択中のチャットのグループ) と、その上に積む画面 (タスク詳細・設定・フォルダの選択)。最初のビューはダッシュボード
+ * (PC と同じ。同期層は最後のプロジェクトを裏で開き直す)。状態は同期層 ([sync]) から読み、
  * 操作も同期層に送る。
  *
  * - 戻るは 積んだ画面 → パネル → 中央 の順 (積んだ画面の `PredictiveBackHandler` は後から合成されるので先に効く)。
@@ -122,6 +131,9 @@ private const val NOW_TICK_MS = 30_000L
  * - 設定 ([SettingsScreen]) はレールの一番下の「設定」から [Stacked.Settings] で開く。
  * - アプリの新しい版があれば ([DevicePane.updates])、左パネルの設定のボタンに小さな印を付ける。
  * - 完了の通知のタップ ([openChat]) は、積んだ画面とパネルを閉じて、そのプロジェクトのチャットを中央に出す。
+ * - ダッシュボードでプロジェクトを開いた・チャットを選んだら、コーディングのビューに切り替える。
+ *
+ * @param initialView 最初のビュー (テストはコーディングから始める)。
  */
 @Composable
 fun MainScreen(
@@ -134,6 +146,7 @@ fun MainScreen(
     device: DevicePane = UnavailableDevicePane,
     openChat: OpenChatRequest? = null,
     onOpenChatHandled: (OpenChatRequest) -> Unit = {},
+    initialView: MainView = MainView.Dashboard,
 ) {
     val model: MainViewModel = viewModel(key = deviceId) { MainViewModel() }
     val app by sync.state.collectAsStateWithLifecycle()
@@ -148,7 +161,11 @@ fun MainScreen(
             now = System.currentTimeMillis()
         }
     }
-    var view by rememberSaveable { mutableStateOf(MainView.Work) }
+    var view by rememberSaveable { mutableStateOf(initialView) }
+    val openWork = {
+        view = MainView.Work
+        shell.hide()
+    }
     var stackedKey by rememberSaveable { mutableStateOf<String?>(null) }
     val stacked = stackedKey?.let(Stacked::parse)
     var cancelKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -187,9 +204,10 @@ fun MainScreen(
                         onView = { view = it },
                         memory = model.left,
                         selfId = deviceId,
-                        onChatChosen = shell::hide,
+                        onChatChosen = openWork,
                         onOpenSettings = { stackedKey = Stacked.Settings.key },
                         updateAvailable = update.available != null,
+                        gestureInsets = gestureInsets,
                     )
                 },
                 right = {
@@ -198,10 +216,17 @@ fun MainScreen(
                     }
                 },
                 center = {
-                    if (view == MainView.Runs) {
-                        RunsCenter(showMenu = !shell.wide, onOpenLeft = { shell.show(Panel.Left) })
-                    } else {
-                        ConversationScreen(
+                    when (view) {
+                        MainView.Runs -> RunsCenter(showMenu = !shell.wide, onOpenLeft = { shell.show(Panel.Left) })
+                        MainView.Dashboard -> DashboardCenter(
+                            app = app,
+                            sync = sync,
+                            showMenu = !shell.wide,
+                            onOpenLeft = { shell.show(Panel.Left) },
+                            onOpenWork = openWork,
+                            onAddProject = { stackedKey = Stacked.Folders.key },
+                        )
+                        MainView.Work -> ConversationScreen(
                             app = app,
                             sync = sync,
                             mentions = model.mentions,
@@ -210,6 +235,7 @@ fun MainScreen(
                             onOpenRight = { shell.show(Panel.Right) },
                             onReconnect = onReconnect,
                             appVersion = device.appVersion,
+                            onOpenDashboard = { view = MainView.Dashboard },
                         )
                     }
                 },
@@ -226,6 +252,15 @@ fun MainScreen(
                         onCancel = requestCancel,
                     )
                     Stacked.Settings -> SettingsScreen(app, sync.settings, device, onBack = { stackedKey = null }, onUnpair = onUnpair)
+                    Stacked.Folders -> FolderBrowserScreen(
+                        app = app,
+                        sync = sync,
+                        onBack = { stackedKey = null },
+                        onOpened = {
+                            stackedKey = null
+                            openWork()
+                        },
+                    )
                 }
             }
         }

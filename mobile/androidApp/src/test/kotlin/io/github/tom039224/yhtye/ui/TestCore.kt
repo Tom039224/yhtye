@@ -116,6 +116,12 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
         truncated = false,
     )
 
+    /** `get_usage_stats` の答え (期間の日数・UTC からのずれ → 統計)。 */
+    var usageStats: (days: Long, tzOffsetMin: Int) -> UsageStats = ::cannedUsageStats
+
+    /** あれば `get_usage_stats` はこれが終わるまで答えない (読み込み中の画面を見るため)。 */
+    var usageStatsGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
     /** `get_branch_statuses` の答え。 */
     var branchStatuses = BranchStatuses("main", emptyList())
 
@@ -198,7 +204,12 @@ class TestCore(var snapshot: Snapshot, var log: List<ApiEvent>) : CoreConnection
                 ApiResponse.Chat(chat.copy(title = command.title))
             }
             is ApiCommand.GetUsage -> throw ApiException(ApiError(ApiErrorCode.Unavailable, "no usage"))
-            is ApiCommand.GetUsageStats -> ApiResponse.UsageStats(cannedUsageStats(command.days ?: 30, command.tzOffsetMin ?: 0))
+            is ApiCommand.GetUsageStats -> {
+                usageStatsGate?.await()
+                // 待っている間に失敗を仕込まれたら、それを返す
+                failures[command::class]?.let { throw ApiException(it) }
+                ApiResponse.UsageStats(usageStats(command.days ?: 30, command.tzOffsetMin ?: 0))
+            }
             is ApiCommand.ListDirectory -> ApiResponse.Directory(listDirectory(command.path, command.showHidden ?: false))
             is ApiCommand.GetAgentSettings -> ApiResponse.AgentSettings(settingsFor(command.project))
             is ApiCommand.SetAgentSettings -> {
