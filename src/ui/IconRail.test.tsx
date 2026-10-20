@@ -1,4 +1,4 @@
-// The left rail: the dashboard, the work and runs views and the settings, and
+// The left rail: the dashboard, the work view and the settings, and
 // the projects that are open as rows with a status dot (a click shows one, a
 // right click opens its menu, rows are reordered by drag or Alt + arrows).
 
@@ -71,12 +71,12 @@ describe("the buttons", () => {
     const { store } = setup();
     await openRepo(store);
     const labels = within(rail()).getAllByRole("button").map((b) => b.getAttribute("aria-label"));
-    expect(labels).toEqual(["ダッシュボード", "repo に切り替え (停止)", "beta に切り替え (待機中)", "コーディング", "履歴", "設定"]);
+    expect(labels).toEqual(["ダッシュボード", "repo に切り替え (停止)", "beta に切り替え (待機中)", "コーディング", "設定"]);
   });
 
   it("keeps the labels in the document (the stylesheet shows them when the rail is expanded)", () => {
     setup();
-    for (const label of ["ダッシュボード", "コーディング", "履歴", "設定"]) {
+    for (const label of ["ダッシュボード", "コーディング", "設定"]) {
       const button = within(rail()).getByRole("button", { name: label });
       expect(within(button).getByText(label)).toHaveClass("rail-label");
       expect(button).toHaveAttribute("title", label);
@@ -89,15 +89,13 @@ describe("the buttons", () => {
     expect(screen.getByRole("button", { name: "ダッシュボード" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "ダッシュボード" })).toHaveClass("active");
     expect(screen.getByRole("button", { name: "コーディング" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "履歴" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("switches to the view of the button, and opens the settings", async () => {
     const { user, onChange, onOpenSettings } = setup();
     await user.click(screen.getByRole("button", { name: "ダッシュボード" }));
-    await user.click(screen.getByRole("button", { name: "履歴" }));
     await user.click(screen.getByRole("button", { name: "コーディング" }));
-    expect(onChange.mock.calls.map((c) => c[0])).toEqual(["dashboard", "runs", "work"]);
+    expect(onChange.mock.calls.map((c) => c[0])).toEqual(["dashboard", "work"]);
     const settings = screen.getByRole("button", { name: "設定" });
     expect(settings).toHaveAttribute("aria-haspopup", "dialog");
     expect(settings).not.toHaveAttribute("aria-pressed");

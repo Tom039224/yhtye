@@ -37,7 +37,6 @@ What works:
 What is not done, and limitations:
 
 - Linux only (see below). No installers, no auto-update.
-- The history ("runs") view is on hold and shows an empty state.
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
