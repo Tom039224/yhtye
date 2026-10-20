@@ -20,7 +20,7 @@ import { StoreContext } from "../store/useStore";
 import type { View } from "../ui/IconRail";
 import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
-import { FakeCore, MemoryTransport } from "./memoryTransport";
+import { cannedUsageStats, FakeCore, MemoryTransport } from "./memoryTransport";
 import { FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "./remoteHosts";
 
 /**
@@ -29,9 +29,9 @@ import { FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "./remoteHo
  * content than fits (12 devices among it: folded into "他 N 台"), the same with group and task
  * names of the most characters there can be (32) instead of the older `G-1` / `T-1`, or the
  * recorded run with other Yhtye hosts paired with (one connected with a long name, one revoked,
- * one waiting to reconnect).
+ * one waiting to reconnect), or a first run (no project registered, no agent logs on the host).
  */
-const SCENARIOS = ["empty", "run", "devices", "long", "names", "hosts"] as const;
+const SCENARIOS = ["empty", "run", "devices", "long", "names", "hosts", "fresh"] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
 /** The view the page opens on (`?view=`): the work view unless asked (the app itself starts on the dashboard). */
@@ -353,7 +353,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       { id: "dev-2", name: `Workstation ${NO_SPACES}`, kind: "desktop", created_ms: NOW, last_seen_ms: NOW - 3_600_000, connected: false },
     ];
   }
-  return { core, open: scenario !== "empty" };
+  return { core, open: scenario !== "empty" && scenario !== "fresh" };
 }
 
 /** The recorded run with three other hosts paired with, whose projects are listed after this PC's. */
@@ -408,6 +408,28 @@ async function main(): Promise<void> {
     // The long scenarios read 90 days like 7: a report of the period asked, with a lot in it.
     const serve = transport.handler;
     transport.handler = (cmd) => (cmd.type === "get_usage_stats" && !core.usageStats && !core.failures.has(cmd.type) ? { type: "usage_stats", stats: richStats(cmd.days ?? 30) } : serve(cmd));
+  }
+  if (scenario === "fresh") {
+    // A first run: the core knows no project, and no harness has left a log on the host.
+    const serve = transport.handler;
+    transport.handler = (cmd) => {
+      if (cmd.type === "list_projects") return { type: "projects", projects: [] };
+      if (cmd.type !== "get_usage_stats") return serve(cmd);
+      const stats = cannedUsageStats(cmd.days ?? 30, cmd.tz_offset_min ?? 0);
+      const none = { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 };
+      return {
+        type: "usage_stats",
+        stats: {
+          ...stats,
+          sources: stats.sources.map((s) => ({ ...s, found: false, files: 0 })),
+          totals: { tokens: none, sessions: 0 },
+          days: stats.days.map((d) => ({ ...d, tokens: none, sessions: 0, harnesses: [] })),
+          by_model: [],
+          by_harness: [],
+          by_project: [],
+        },
+      };
+    };
   }
   store.start();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

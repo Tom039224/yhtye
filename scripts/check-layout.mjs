@@ -323,17 +323,23 @@ function inspectDashboard({ charts }) {
 
 const click = (page, name, options = {}) => page.getByRole("button", { name, ...options }).first().click();
 
+/** Waits for the rail's panel to have finished widening (it grows over 0.14s, after a short delay for the pointer). */
+const railOpened = (page) => page.waitForFunction(() => {
+  const panel = document.querySelector(".rail-panel");
+  return panel.getBoundingClientRect().width > 180 && panel.getAnimations().length === 0;
+});
+
 /** Brings the pointer over the rail, which expands its panel over the sidebar. */
 async function hoverRail(page) {
   await page.locator(".rail").hover({ position: { x: 22, y: 300 } });
-  await page.waitForFunction(() => document.querySelector(".rail-panel").getBoundingClientRect().width > 180);
+  await railOpened(page);
 }
 
 /** Moves the keyboard focus into the rail (Tab from the title bar), which expands it too. */
 async function focusRail(page) {
   await page.locator(".titlebar").evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
   await page.keyboard.press("Tab");
-  await page.waitForFunction(() => document.querySelector(".rail-panel").getBoundingClientRect().width > 180);
+  await railOpened(page);
 }
 
 /** Opens the dashboard from the rail (for the scenarios that start in the work view). */
@@ -522,6 +528,8 @@ const STATES = [
     await click(page, "再読み込み", { exact: true });
     await page.locator(".usage-empty").waitFor();
   }, verify: dashboard(false) },
+  { name: "dashboard: nothing opened yet", scenario: "empty", view: "dashboard", run: statsShown, verify: dashboard(true) },
+  { name: "dashboard: a first run (no project, no agent logs)", scenario: "fresh", view: "dashboard", run: statsShown, verify: dashboard(false) },
   { name: "dashboard: other Yhtye hosts' projects (long host names)", scenario: "hosts", view: "dashboard", run: statsShown, verify: dashboard(true) },
   { name: "dashboard: every control reached with Tab", scenario: "long", view: "dashboard", interactive: true, tab: 60 },
   { name: "hosts: rail expanded (remote rows with long host names)", scenario: "hosts", interactive: true, run: hoverRail, verify: rail(true) },

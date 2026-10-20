@@ -7,7 +7,7 @@ import { RemoteMark } from "./RemoteMark";
  * The project on screen, by name (the sidebar's "Project" section). Projects
  * are chosen in the rail and on the dashboard, so this only shows which one the
  * sidebar below belongs to: its ring (turning while work is on), its name and,
- * for another host's project, the remote mark.
+ * for another host's project, the remote mark; its path (with the host) under the name.
  */
 export function CurrentProject() {
   const view = useAppState((s) => s.project);
@@ -24,8 +24,16 @@ export function CurrentProject() {
   return (
     <div className="project-current" title={`${host}${view.info.path} · ${RING_LABEL[ring]}`}>
       <span className={`ring ring-${ring}`} data-testid="current-ring" />
-      <span className="name">{view.info.name}</span>
-      <RemoteMark entry={entry ?? undefined} />
+      <span className="project-current-text">
+        <span className="project-current-name">
+          <span className="name">{view.info.name}</span>
+          <RemoteMark entry={entry ?? undefined} />
+        </span>
+        <span className="path" aria-hidden="true">
+          {host}
+          {view.info.path}
+        </span>
+      </span>
     </div>
   );
 }

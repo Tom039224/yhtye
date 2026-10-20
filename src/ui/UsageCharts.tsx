@@ -163,7 +163,7 @@ export function Heatmap({ days }: { days: DaySeries[] }) {
   const label = busiest && busiest.total > 0 ? `日別の利用ヒートマップ。最も多い日は ${busiest.date} (${formatTokens(busiest.total)} トークン)` : "日別の利用ヒートマップ。利用なし";
   return (
     <figure className="heatmap-figure">
-      <div className="heatmap" role="img" aria-label={label} style={{ gridTemplateColumns: `auto repeat(${weeks}, minmax(0, 1fr))` }}>
+      <div className="heatmap" role="img" aria-label={label} style={{ gridTemplateColumns: `auto repeat(${weeks}, var(--heat-track))` }}>
         {LABELLED_WEEKDAYS.map((d) => (
           <span key={d} className="heat-weekday" style={{ gridColumn: 1, gridRow: d + 1 }} aria-hidden="true">
             {WEEKDAYS[d]}
