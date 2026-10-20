@@ -204,6 +204,7 @@ pub fn run_app(opts: &Options) {
     let app = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             yhtye_command,
             remote_hosts::yhtye_remote_hosts,

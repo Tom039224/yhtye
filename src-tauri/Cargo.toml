@@ -23,6 +23,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 # `yhtye://pair?…` links. The 2.4 line of this and of single-instance fits the tauri the lock holds (2.5+ need tauri 2.12).
 tauri-plugin-deep-link = "~2.4"
+# The OS folder picker for adding a project. 2.8+ need tauri 2.12; 2.7 asks for tauri-plugin-fs ^2.5.2, which the lock
+# keeps at 2.5.2 (fs 2.6+ need tauri 2.12 too), so do not `cargo update` it.
+tauri-plugin-dialog = "~2.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 yhtye-core = { path = "../crates/yhtye-core" }
