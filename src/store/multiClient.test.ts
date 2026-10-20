@@ -53,7 +53,7 @@ describe("app-wide events", () => {
   it("re-reads the project list when another client opens a project", async () => {
     const s = newStore();
     await open(s);
-    const other = { id: "other", name: "other", path: "/tmp/other", open: true, running: false };
+    const other = { id: "other", name: "other", path: "/tmp/other", open: true, running: false, awake: false };
     core.others = [other];
     const before = transport.callsOf("list_projects").length;
     transport.emit(appWide({ type: "projects_changed", project: "other" }));
@@ -61,6 +61,63 @@ describe("app-wide events", () => {
     expect(transport.callsOf("list_projects").length).toBe(before + 1);
     // Not folded into the open project.
     expect(view(s).cursor).toBe(CHAT_LOG.length);
+  });
+
+  it("reads the branch order of the project on screen, and replaces it with each branch_order_changed", async () => {
+    core.branchOrder = [MAIN_WT];
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().branchOrder).toEqual({ project: PROJECT.id, keys: [MAIN_WT] }));
+    transport.emit(appWide({ type: "branch_order_changed", project: PROJECT.id, keys: ["feat/x", MAIN_WT] }));
+    expect(s.getState().branchOrder?.keys).toEqual(["feat/x", MAIN_WT]);
+    // The order of another project is not the one on screen.
+    transport.emit(appWide({ type: "branch_order_changed", project: "other", keys: ["z"] }));
+    expect(s.getState().branchOrder?.keys).toEqual(["feat/x", MAIN_WT]);
+    // Not folded into the open project.
+    expect(view(s).cursor).toBe(CHAT_LOG.length);
+  });
+
+  it("reads the branch order again after a resync", async () => {
+    const s = newStore();
+    await open(s);
+    core.branchOrder = ["a", "b"];
+    transport.emit(appWide({ type: "resync" }));
+    await vi.waitFor(() => expect(s.getState().branchOrder?.keys).toEqual(["a", "b"]));
+  });
+
+  it("shows a reorder at once, asks the core with the keys on screen and keeps the core's answer", async () => {
+    core.branchOrder = ["hidden"];
+    const s = newStore();
+    await open(s);
+    await vi.waitFor(() => expect(s.getState().branchOrder?.keys).toEqual(["hidden"]));
+    const done = s.reorderBranches([MAIN_WT, "feat/x"]);
+    expect(s.getState().branchOrder?.keys).toEqual([MAIN_WT, "feat/x", "hidden"]);
+    await done;
+    expect(transport.callsOf("reorder_branches").at(-1)).toMatchObject({ project: PROJECT.id, keys: [MAIN_WT, "feat/x"] });
+    expect(s.getState().branchOrder?.keys).toEqual([MAIN_WT, "feat/x", "hidden"]);
+  });
+
+  it("reorders the projects: shown at once, sent whole, and the core's listing kept", async () => {
+    const other = { id: "other", name: "other", path: "/tmp/other", open: false, running: false, awake: false };
+    core.others = [other];
+    const s = newStore();
+    await open(s);
+    await s.refreshProjects();
+    expect(s.getState().projects.map((p) => p.id)).toEqual([PROJECT.id, "other"]);
+    const done = s.reorderProjects(["other", PROJECT.id]);
+    expect(s.getState().projects.map((p) => p.id)).toEqual(["other", PROJECT.id]);
+    await done;
+    expect(transport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["other", PROJECT.id]);
+    expect(s.getState().projects.map((p) => p.id)).toEqual(["other", PROJECT.id]);
+  });
+
+  it("puts a project it opens first", async () => {
+    const other = { id: "other", name: "other", path: "/tmp/other", open: false, running: false, awake: false };
+    core.others = [other];
+    const s = newStore();
+    await open(s);
+    await s.openProject(other.path);
+    expect(s.getState().projects[0].id).toBe("other");
   });
 
   it("passes settings changes to the settings screens", async () => {

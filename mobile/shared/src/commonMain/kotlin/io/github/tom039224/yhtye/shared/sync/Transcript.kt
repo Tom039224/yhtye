@@ -256,6 +256,7 @@ fun applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state: State? = null): Tr
         // live の起動中はチャットの「起動中」の印で、アプリ全体のイベントはプロジェクトのものではない
         is ApiEventBody.SessionStarting,
         is ApiEventBody.ProjectsChanged,
+        is ApiEventBody.BranchOrderChanged,
         is ApiEventBody.SettingsChanged,
         ApiEventBody.Resync,
         is ApiEventBody.RemoteStatusChanged,

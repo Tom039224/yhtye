@@ -177,6 +177,51 @@ impl Driver {
         }
     }
 
+    /// Stops the orchestrator session of `chat`: its process ends and its token
+    /// is revoked, but its stored session is kept, so the next message to the
+    /// chat starts it again with `session/load`. Refused while the orchestrator
+    /// is starting or in a turn (stop the turn first; a sleep never cuts one
+    /// off). A session that was never started is already asleep: accepted.
+    pub(super) fn sleep_chat(&mut self, chat: &str) -> Result<(), ToolError> {
+        self.check_sleepable(chat)?;
+        self.sessions.stop(&orchestrator_session(chat));
+        Ok(())
+    }
+
+    /// Puts every chat to sleep like [`Self::sleep_chat`], all or none: if any
+    /// chat's orchestrator is starting or in a turn the sleep is refused (for
+    /// the first such chat) and no session is stopped.
+    pub(super) fn sleep_project(&mut self) -> Result<(), ToolError> {
+        let chats: Vec<String> = self.state.chats.iter().map(|c| c.id.clone()).collect();
+        for chat in &chats {
+            self.check_sleepable(chat)?;
+        }
+        for chat in &chats {
+            self.sessions.stop(&orchestrator_session(chat));
+        }
+        Ok(())
+    }
+
+    /// Whether `chat` may sleep now: `not_found` for an unknown chat,
+    /// `invalid_state` while its orchestrator is starting or in a turn.
+    fn check_sleepable(&self, chat: &str) -> Result<(), ToolError> {
+        if self.state.chat(chat).is_none() {
+            return Err(ToolError::not_found(format!("no chat {chat}")));
+        }
+        let key = orchestrator_session(chat);
+        if self.sessions.is_starting(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is starting; sleep it once it is idle"
+            )));
+        }
+        if self.sessions.is_live(&key) && !self.sessions.is_idle(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is working; stop its turn before sleeping the chat"
+            )));
+        }
+        Ok(())
+    }
+
     /// The worktree of `chat` if its directory still exists: `not_found` for
     /// an unknown chat, `invalid_state` for one whose worktree is gone.
     pub(super) fn chat_worktree(&self, chat: &str) -> Result<PathBuf, ToolError> {

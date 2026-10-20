@@ -109,8 +109,10 @@ function GroupBar({ group, state }: { group: Group; state: State }) {
           label={groupLabel(state, group)}
           testId={`group-status-${group.id}`}
         />
-        <span className="group-id">{group.id}</span>
-        <span className="group-branches" title="グループブランチ ← マージ先 (base)">
+        <span className="group-id" title={group.id}>
+          {group.id}
+        </span>
+        <span className="group-branches" title={`グループブランチ ${group.group_branch} ← マージ先 (base) ${group.base_branch}`}>
           <Icon name="git-branch" size={12} />
           {group.group_branch}
           <Icon name="arrow-left" size={11} />

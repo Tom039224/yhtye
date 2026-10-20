@@ -1,20 +1,32 @@
-import { type FormEvent, type KeyboardEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useId, useRef, useState } from "react";
 
-import type { GitOverview } from "../api/generated";
+import type { BranchState, BranchStatuses, GitOverview } from "../api/generated";
 import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
-import { buildTree, chatRing, type WorktreeNode } from "./branchTree";
+import { buildTree, nodeKey, type WorktreeNode } from "./branchTree";
 import { ChatRow } from "./ChatRow";
-import { Icon, IconButton } from "./Icon";
+import { Icon, IconButton, type IconName } from "./Icon";
+import { RowMenu } from "./RowMenu";
+import { useContextMenu } from "./useContextMenu";
 import { useNow } from "./useNow";
+import { moveActions, reorderKey, type Sortable, useSortable } from "./useSortable";
 
 function selectOverview(s: AppState): GitOverview | null {
   return s.git && s.project && s.git.project === s.project.info.id ? s.git.overview : null;
 }
 
+function selectStatuses(s: AppState): BranchStatuses | null {
+  return s.git && s.project && s.git.project === s.project.info.id ? s.git.statuses : null;
+}
+
 const NONE: string[] = [];
+
+/** The branch order of the open project (`BranchOrderView`). */
+function selectOrder(s: AppState): string[] {
+  return s.branchOrder && s.project && s.branchOrder.project === s.project.info.id ? s.branchOrder.keys : NONE;
+}
 
 /** Chats made after git was last read (`GitView.awaiting`). */
 function selectAwaiting(s: AppState): string[] {
@@ -32,6 +44,7 @@ export function BranchTree() {
   const view = useAppState((s) => s.project);
   const overview = useAppState(selectOverview);
   const awaiting = useAppState(selectAwaiting);
+  const order = useAppState(selectOrder);
   const gitError = useAppState((s) => (s.git && s.project && s.git.project === s.project.info.id ? s.git.error : null));
   const [formOpen, setFormOpen] = useState(false);
   // Explicit open / close per worktree; the default is "open if it has chats or
@@ -39,7 +52,10 @@ export function BranchTree() {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const now = useNow(30_000);
   const ready = view?.phase === "ready" || view?.state != null;
-  const tree = buildTree(view?.chats ?? [], overview, awaiting);
+  const tree = buildTree(view?.chats ?? [], overview, awaiting, order);
+  const worktreeKeys = tree.worktrees.map(nodeKey);
+  const moveWorktrees = (next: string[]) => void store.reorderBranches(next);
+  const sortable = useSortable(worktreeKeys, moveWorktrees);
   const isOpen = (w: WorktreeNode) => toggled[w.path] ?? (w.chats.length > 0 || w.isMain);
   const toggle = (w: WorktreeNode) => setToggled((t) => ({ ...t, [w.path]: !isOpen(w) }));
   const empty = tree.worktrees.length === 0 && tree.lost.length === 0 && tree.otherBranches.length === 0;
@@ -67,7 +83,17 @@ export function BranchTree() {
       {view ? (
         <ul className="side-list branch-tree" aria-label="branches">
           {tree.worktrees.map((w) => (
-            <WorktreeRow key={w.path} node={w} open={isOpen(w)} now={now} onToggle={() => toggle(w)} onNewChat={() => void store.createChat({ worktree: w.path })} />
+            <WorktreeRow
+              key={w.path}
+              node={w}
+              open={isOpen(w)}
+              now={now}
+              keys={worktreeKeys}
+              sortable={sortable}
+              onMove={moveWorktrees}
+              onToggle={() => toggle(w)}
+              onNewChat={() => void store.createChat({ worktree: w.path })}
+            />
           ))}
           {tree.lost.length > 0 ? (
             <li className="deleted-branches">
@@ -93,20 +119,92 @@ interface WorktreeRowProps {
   node: WorktreeNode;
   open: boolean;
   now: number;
+  /** The worktrees on screen, in order (their reorder is dragged, or done from the menu / Alt + ↑ ↓). */
+  keys: string[];
+  sortable: Sortable;
+  onMove: (next: string[]) => void;
   onToggle: () => void;
   onNewChat: () => void;
 }
 
-function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps) {
-  const view = useAppState((s) => s.project);
-  const running = Boolean(view && node.chats.some((c) => chatRing(view, c.id) === "running"));
+/**
+ * The icon and tone of each PR / merge state, after Orca's sidebar: a plain
+ * branch until there is a PR, the PR glyph in green while it is open, the merge
+ * glyph in purple once merged (with a badge when new work came after the merge),
+ * and a question mark when the state could not be read.
+ */
+const STATUS_ICON: Record<BranchState, { icon: IconName; tone: string }> = {
+  unmerged: { icon: "git-branch", tone: "branch-status-unmerged" },
+  pr_open: { icon: "git-pull-request", tone: "branch-status-open" },
+  merged: { icon: "git-merge", tone: "branch-status-merged" },
+  merged_with_changes: { icon: "git-merge", tone: "branch-status-changes" },
+  unknown: { icon: "help", tone: "branch-status-unknown" },
+};
+
+const STATUS_ICON_SIZE = 13;
+
+/** Japanese label of a branch's status icon, with the PR number when there is one. */
+export function statusLabel(state: BranchState, pr: number | null): string {
+  switch (state) {
+    case "unmerged":
+      return "まだ取り込まれていません";
+    case "pr_open":
+      return pr == null ? "PR 作成済み" : `PR 作成済み (#${pr})`;
+    case "merged":
+      return pr == null ? "取り込み済み" : `PR でマージ済み (#${pr})`;
+    case "merged_with_changes":
+      return pr == null ? "取り込み済み・未マージの変更あり" : `PR でマージ済み・未マージの変更あり (#${pr})`;
+    case "unknown":
+      return "状態不明";
+  }
+}
+
+/**
+ * The icon left of a branch: its PR / merge status. The default branch itself
+ * and a detached worktree get the neutral branch icon (no state, no label).
+ */
+function StatusIcon({ branch, statuses }: { branch: string | null; statuses: BranchStatuses | null }) {
+  if (branch == null || branch === statuses?.default_branch) {
+    return (
+      <span className="branch-status">
+        <Icon name="git-branch" size={STATUS_ICON_SIZE} />
+      </span>
+    );
+  }
+  const found = statuses?.statuses.find((s) => s.branch === branch);
+  const state = found?.state ?? "unknown";
+  const label = statusLabel(state, found?.pr_number ?? null);
+  const { icon, tone } = STATUS_ICON[state];
+  return (
+    <span className={`branch-status ${tone}`} role="img" aria-label={label} title={label}>
+      <Icon name={icon} size={STATUS_ICON_SIZE} />
+      {state === "merged_with_changes" ? <span className="branch-status-badge" /> : null}
+    </span>
+  );
+}
+
+function WorktreeRow({ node, open, now, keys, sortable, onMove, onToggle, onNewChat }: WorktreeRowProps) {
+  const menu = useContextMenu();
+  const menuId = useId();
+  const rowRef = useRef<HTMLButtonElement>(null);
+  const overview = useAppState(selectOverview);
+  const statuses = useAppState(selectStatuses);
+  const branch = overview?.worktrees.find((w) => w.path === node.path)?.branch ?? null;
   const where = node.isMain ? `${node.path} · メインクローン` : node.path;
   return (
     <li>
-      <div className="wt-head">
-        <button type="button" className="side-row branch-row" aria-expanded={open} title={where} onClick={onToggle}>
+      <div className="wt-head" {...sortable.rowProps(node.path)} onContextMenu={menu.onContextMenu}>
+        <button
+          ref={rowRef}
+          type="button"
+          className="side-row branch-row"
+          aria-expanded={open}
+          title={where}
+          onClick={onToggle}
+          onKeyDown={(e) => void reorderKey(e, keys, node.path, onMove)}
+        >
           <Icon name="chevron-down" size={12} className={`caret ${open ? "" : "collapsed"}`} />
-          {running ? <span className="ring ring-running" role="img" aria-label="実行中" /> : <span className={`dot ${node.isMain ? "dot-ok" : ""}`} />}
+          <StatusIcon branch={branch} statuses={statuses} />
           <span className="name">{node.label}</span>
           {node.missing ? (
             <span className="age" title="作業ツリーが見つかりません">
@@ -119,6 +217,18 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
           <IconButton icon="message-plus" size={14} className="row-action" label={`${node.label} の新しいチャット`} onClick={onNewChat} />
         )}
       </div>
+      {menu.isOpen ? (
+        <RowMenu
+          id={menuId}
+          label={`${node.label} の操作`}
+          anchor={menu.anchor}
+          actions={moveActions(keys, node.path, onMove)}
+          onClose={(refocus) => {
+            menu.close();
+            if (refocus) rowRef.current?.focus();
+          }}
+        />
+      ) : null}
       {open ? (
         <ul className="chat-list" aria-label={`chats of ${node.label}`}>
           {node.chats.map((c) => (
@@ -134,6 +244,8 @@ function WorktreeRow({ node, open, now, onToggle, onNewChat }: WorktreeRowProps)
 function OtherBranches({ names }: { names: string[] }) {
   const store = useStore();
   const [open, setOpen] = useState(false);
+  const moveBranches = (next: string[]) => void store.reorderBranches(next);
+  const sortable = useSortable(names, moveBranches);
   return (
     <li>
       <button
@@ -151,14 +263,54 @@ function OtherBranches({ names }: { names: string[] }) {
       {open ? (
         <ul className="chat-list" aria-label="other branches">
           {names.map((n) => (
-            <li key={n}>
-              <button type="button" className="side-row new-chat" title={`${n} の作業ツリーを作ってチャットを始める`} onClick={() => void store.createChat({ branch: n })} aria-label={`${n} の新しいチャット`}>
-                <Icon name="message-plus" size={13} />
-                <span className="name">{n}</span>
-              </button>
-            </li>
+            <OtherBranchRow key={n} name={n} names={names} sortable={sortable} onMove={moveBranches} />
           ))}
         </ul>
+      ) : null}
+    </li>
+  );
+}
+
+interface OtherBranchRowProps {
+  name: string;
+  /** The branches on screen, in order. */
+  names: string[];
+  sortable: Sortable;
+  onMove: (next: string[]) => void;
+}
+
+function OtherBranchRow({ name, names, sortable, onMove }: OtherBranchRowProps) {
+  const store = useStore();
+  const statuses = useAppState(selectStatuses);
+  const menu = useContextMenu();
+  const menuId = useId();
+  const rowRef = useRef<HTMLButtonElement>(null);
+  return (
+    <li {...sortable.rowProps(name)} onContextMenu={menu.onContextMenu}>
+      <button
+        ref={rowRef}
+        type="button"
+        className="side-row new-chat"
+        title={`${name} の作業ツリーを作ってチャットを始める`}
+        aria-label={`${name} の新しいチャット`}
+        onClick={() => void store.createChat({ branch: name })}
+        onKeyDown={(e) => void reorderKey(e, names, name, onMove)}
+      >
+        <StatusIcon branch={name} statuses={statuses} />
+        <Icon name="message-plus" size={13} />
+        <span className="name">{name}</span>
+      </button>
+      {menu.isOpen ? (
+        <RowMenu
+          id={menuId}
+          label={`${name} の操作`}
+          anchor={menu.anchor}
+          actions={moveActions(names, name, onMove)}
+          onClose={(refocus) => {
+            menu.close();
+            if (refocus) rowRef.current?.focus();
+          }}
+        />
       ) : null}
     </li>
   );

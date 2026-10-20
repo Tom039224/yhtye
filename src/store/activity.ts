@@ -5,6 +5,7 @@
 
 import type { ApiEvent, ProjectInfo, TaskStatus } from "../api/generated";
 import type { ProjectView } from "./project";
+import { isOrchestratorKey } from "./chats";
 
 /** A task in these states has an agent (or the merge) working on it. */
 const WORKING_TASK: ReadonlySet<TaskStatus> = new Set(["running", "merging"]);
@@ -13,6 +14,11 @@ const WORKING_TASK: ReadonlySet<TaskStatus> = new Set(["running", "merging"]);
 export function hasRunningWork(view: ProjectView): boolean {
   if (view.sessions.some((s) => s.status === "live" && s.turn_running)) return true;
   return view.state?.tasks.some((t) => WORKING_TASK.has(t.status)) ?? false;
+}
+
+/** One of the shown project's chats has an orchestrator session up (live). */
+export function hasLiveOrchestrator(view: ProjectView): boolean {
+  return view.sessions.some((s) => s.status === "live" && isOrchestratorKey(s.session_key));
 }
 
 /**
@@ -48,28 +54,31 @@ export function changesActivity(ev: ApiEvent): boolean {
 }
 
 /**
- * `projects` with the activity `fresh` (the core's list) reports: `open` and
- * `running` of the projects already known, nothing else, so a project opened
- * since the request was made is not lost. The same array if nothing changed.
+ * `projects` with the activity `fresh` (the core's list) reports: `open`,
+ * `running` and `awake` of the projects already known, nothing else, so a
+ * project opened since the request was made is not lost. The same array if
+ * nothing changed.
  */
 export function mergeActivity(projects: ProjectInfo[], fresh: ProjectInfo[]): ProjectInfo[] {
   let changed = false;
   const merged = projects.map((p) => {
     const f = fresh.find((x) => x.id === p.id);
-    if (!f || (f.open === p.open && f.running === p.running)) return p;
+    if (!f || (f.open === p.open && f.running === p.running && f.awake === p.awake)) return p;
     changed = true;
-    return { ...p, open: f.open, running: f.running };
+    return { ...p, open: f.open, running: f.running, awake: f.awake };
   });
   return changed ? merged : projects;
 }
 
 /**
- * `projects` with the running flag of `left` (the project that was on screen)
- * taken from its view, as it is now judged by the flag instead. A view that
- * has not loaded says nothing, and is left as the core reported it.
+ * `projects` with the running flag and the awake flag of `left` (the project
+ * that was on screen) taken from its view, as it is now judged by the flags
+ * instead. A view that has not loaded says nothing, and is left as the core
+ * reported it.
  */
 export function rememberRunning(projects: ProjectInfo[], left: ProjectView | null): ProjectInfo[] {
   if (!left || left.phase !== "ready") return projects;
   const running = hasRunningWork(left);
-  return projects.map((p) => (p.id === left.info.id && p.running !== running ? { ...p, running } : p));
+  const awake = hasLiveOrchestrator(left);
+  return projects.map((p) => (p.id === left.info.id && (p.running !== running || p.awake !== awake) ? { ...p, running, awake } : p));
 }

@@ -4,18 +4,13 @@
 //! The same flow against the real Tailscale is `real_tailscale_round_trip`
 //! (`#[ignore]`).
 
-mod common;
-
-use std::net::IpAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use common::repo::TempRepo;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
@@ -28,87 +23,20 @@ use tokio_tungstenite::{
 use yhtye_core::api::{ApiCommand, ApiEventBody, ApiResponse};
 use yhtye_core::remote::{
     ClientKind, Clients, MAX_FAILURES, PairingCode, RemoteDevice, RemoteStatus, Tailscale,
-    TailscaleCli, TailscaleError, TailscalePeer, TailscaleSelf, token_hash,
+    TailscaleCli, token_hash,
 };
 use yhtye_core::runtime::{Core, CoreConfig, host_name};
 use yhtye_core::secrets::MemoryBackend;
 use yhtye_core::store::{Store, db_path};
 
+mod common;
+
+use common::fake_tailscale::{FakeTailscale, ME, SOMEONE_ELSE, free_port};
+use common::repo::TempRepo;
+
 const TIMEOUT: Duration = Duration::from_secs(10);
-const ME: u64 = 1;
-const SOMEONE_ELSE: u64 = 2;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-#[derive(Debug)]
-struct FakeTailscale {
-    /// `Err`: Tailscale is "stopped".
-    up: Mutex<bool>,
-    /// The user every peer belongs to.
-    peer_user: u64,
-    /// This PC is a tagged node.
-    pc_tagged: AtomicBool,
-    /// Every peer is a tagged node.
-    peers_tagged: bool,
-    /// `whois` lookups so far.
-    whois_calls: AtomicUsize,
-}
-
-impl FakeTailscale {
-    fn new() -> Arc<Self> {
-        Self::with_peer_user(ME)
-    }
-
-    fn with_peer_user(peer_user: u64) -> Arc<Self> {
-        Arc::new(Self {
-            up: Mutex::new(true),
-            peer_user,
-            pc_tagged: AtomicBool::new(false),
-            peers_tagged: false,
-            whois_calls: AtomicUsize::new(0),
-        })
-    }
-
-    /// Every peer is tagged, whoever the user is.
-    fn with_tagged_peers(peer_user: u64) -> Arc<Self> {
-        Arc::new(Self {
-            up: Mutex::new(true),
-            peer_user,
-            pc_tagged: AtomicBool::new(false),
-            peers_tagged: true,
-            whois_calls: AtomicUsize::new(0),
-        })
-    }
-
-    fn whois_calls(&self) -> usize {
-        self.whois_calls.load(Ordering::SeqCst)
-    }
-}
-
-#[async_trait]
-impl Tailscale for FakeTailscale {
-    async fn status(&self) -> Result<TailscaleSelf, TailscaleError> {
-        if !*self.up.lock().unwrap() {
-            return Err(TailscaleError(
-                "Tailscale is not running (state: Stopped)".into(),
-            ));
-        }
-        Ok(TailscaleSelf {
-            addresses: vec!["127.0.0.1".parse().unwrap()],
-            dns_name: Some("pc.test.ts.net".into()),
-            user_id: ME,
-            tagged: self.pc_tagged.load(Ordering::SeqCst),
-        })
-    }
-
-    async fn whois(&self, _ip: IpAddr) -> Result<TailscalePeer, TailscaleError> {
-        self.whois_calls.fetch_add(1, Ordering::SeqCst);
-        Ok(TailscalePeer {
-            user_id: self.peer_user,
-            tagged: self.peers_tagged,
-        })
-    }
-}
 
 fn config(dir: &Path, tailscale: Arc<dyn Tailscale>) -> CoreConfig {
     let mut cfg = CoreConfig::claude_code(dir, "haiku");
@@ -116,13 +44,6 @@ fn config(dir: &Path, tailscale: Arc<dyn Tailscale>) -> CoreConfig {
     cfg.secret_backend = Arc::new(MemoryBackend::default());
     cfg.tailscale = tailscale;
     cfg
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("a free port")
-        .port()
 }
 
 async fn status(core: &Core, cmd: ApiCommand) -> RemoteStatus {

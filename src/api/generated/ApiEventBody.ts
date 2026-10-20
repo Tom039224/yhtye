@@ -55,7 +55,7 @@ suspended: boolean, } | { "type": "session_interrupted", session: string, } | { 
  * How each attachment of the batch's user messages was delivered, the
  * final decision (the `inbox_queued` entry has the prediction).
  */
-attachments?: Array<AttachmentDelivered>, } | { "type": "session_starting", session: string, } | { "type": "projects_changed", project: string, } | { "type": "settings_changed", kind: SettingsKind, 
+attachments?: Array<AttachmentDelivered>, } | { "type": "session_starting", session: string, } | { "type": "projects_changed", project: string, } | { "type": "branch_order_changed", project: string, keys: Array<string>, } | { "type": "settings_changed", kind: SettingsKind, 
 /**
  * The project whose agent settings layer changed (`None`: the global
  * layer, or a kind without projects).

@@ -201,20 +201,20 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
     let r = TempRepo::new();
     let orch = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "agents"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "agents"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "sonnet task", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "task-one",
                 "model": "sonnet"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_task", "args": {"name": "opus",
                 "group_id": "${group_id}", "title": "opus task", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "task-two",
                 "harness": "fake", "model": "opus"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t2",
                 "group_id": "${group_id}", "title": "b task", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "task-three",
                 "harness": "fake-b"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t3",
                 "group_id": "${group_id}", "title": "default task", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "task-four"}}},
             {"mcp_call": {"tool": "get_status", "args": {}}}
@@ -277,26 +277,26 @@ async fn create_task_picks_agents_within_the_candidates_and_rejects_others() {
         "{rejected}"
     );
 
-    // T-1: the override; T-2: fake-b (its model filled in from the candidate); T-3: the default.
+    // t1: the override; t2: fake-b (its model filled in from the candidate); t3: the default.
     assert_eq!(
-        started(&seen, "T-1/implementer"),
+        started(&seen, "t1/implementer"),
         [(Some(c("fake", Some("sonnet"))), false)]
     );
-    assert!(reports_model(&messages(&seen, "T-1/implementer"), "sonnet"));
+    assert!(reports_model(&messages(&seen, "t1/implementer"), "sonnet"));
     assert_eq!(
-        started(&seen, "T-2/implementer"),
+        started(&seen, "t2/implementer"),
         [(Some(c("fake-b", Some("haiku"))), false)]
     );
     assert!(
-        messages(&seen, "T-2/implementer")
+        messages(&seen, "t2/implementer")
             .iter()
             .any(|m| m.contains("from-b"))
     );
     assert_eq!(
-        started(&seen, "T-3/implementer"),
+        started(&seen, "t3/implementer"),
         [(Some(c("fake", Some("haiku"))), false)]
     );
-    assert!(reports_model(&messages(&seen, "T-3/implementer"), "haiku"));
+    assert!(reports_model(&messages(&seen, "t3/implementer"), "haiku"));
     assert_eq!(
         started(&seen, ORCHESTRATOR_SESSION),
         [(Some(c("fake", Some("haiku"))), false)]
@@ -352,18 +352,18 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
     let r = TempRepo::new();
     let orch = json!({"turns": [
         {"match": "first", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "later"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "later"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "long", "kind": "code",
                 "steps": [{"kind": "implement"}, {"kind": "checkpoint"}, {"kind": "implement"}],
                 "instruction": "long-task"}}}
         ]},
         {"match": "[yhtye:checkpoint_reached]", "actions": [{"message": "waiting"}]},
         {"match": "second", "actions": [
-            {"mcp_call": {"tool": "create_task", "args": {
-                "group_id": "G-1", "title": "new", "kind": "investigate",
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t2",
+                "group_id": "g1", "title": "new", "kind": "investigate",
                 "steps": [{"kind": "implement"}], "instruction": "new-task"}}},
-            {"mcp_call": {"tool": "resolve_checkpoint", "args": {"task_id": "T-1", "decision": "continue"}}}
+            {"mcp_call": {"tool": "resolve_checkpoint", "args": {"task_id": "t1", "decision": "continue"}}}
         ]},
         {"match": "[yhtye:group_settled]", "actions": [
             {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "ok"}}}
@@ -424,20 +424,20 @@ async fn changed_settings_apply_to_sessions_started_afterwards() {
     .await;
 
     assert_eq!(
-        started(&seen, "T-1/implementer"),
+        started(&seen, "t1/implementer"),
         [(Some(c("fake", Some("haiku"))), false)]
     );
-    let t1 = messages(&seen, "T-1/implementer");
+    let t1 = messages(&seen, "t1/implementer");
     assert_eq!(
         t1.iter().filter(|m| m.contains(";model=haiku;")).count(),
         2,
         "{t1:?}"
     );
     assert_eq!(
-        started(&seen, "T-2/implementer"),
+        started(&seen, "t2/implementer"),
         [(Some(c("fake", Some("sonnet"))), false)]
     );
-    assert!(reports_model(&messages(&seen, "T-2/implementer"), "sonnet"));
+    assert!(reports_model(&messages(&seen, "t2/implementer"), "sonnet"));
     core.shutdown().await;
 }
 
@@ -446,8 +446,8 @@ async fn a_restored_session_keeps_the_agent_it_ran() {
     let r = TempRepo::new();
     let orch = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "restart"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "restart"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "slow", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "slow-task"}}}
         ]}
@@ -482,7 +482,7 @@ async fn a_restored_session_keeps_the_agent_it_ran() {
     .await;
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |e| {
-        matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::Output(_) } if session == "T-1/implementer")
+        matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::Output(_) } if session == "t1/implementer")
     })
     .await;
     core.shutdown().await;
@@ -499,12 +499,12 @@ async fn a_restored_session_keeps_the_agent_it_ran() {
     let mut rx = core.subscribe();
     open(&core, &r).await;
     let mut seen = Vec::new();
-    until(&mut rx, &mut seen, |e| turn_ended(e, "T-1/implementer")).await;
+    until(&mut rx, &mut seen, |e| turn_ended(e, "t1/implementer")).await;
     assert_eq!(
-        started(&seen, "T-1/implementer"),
+        started(&seen, "t1/implementer"),
         [(Some(c("fake", Some("sonnet"))), true)]
     );
-    assert!(reports_model(&messages(&seen, "T-1/implementer"), "sonnet"));
+    assert!(reports_model(&messages(&seen, "t1/implementer"), "sonnet"));
     core.shutdown().await;
 }
 
@@ -758,8 +758,8 @@ async fn a_vanished_harness_is_replaced_and_reported() {
     let r = TempRepo::new();
     let orch = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "gone"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "gone"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "go"}}}
         ]},
@@ -830,7 +830,7 @@ async fn a_vanished_harness_is_replaced_and_reported() {
         .collect();
     assert!(
         replaced.contains(&(
-            "T-1/implementer".into(),
+            "t1/implementer".into(),
             Some(c("fake", Some("haiku"))),
             Some(b.clone())
         )),
@@ -906,9 +906,9 @@ async fn efforts_of_a_long_model_list_are_read_per_model() {
 #[tokio::test]
 async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
     let r = TempRepo::new();
-    let create = |title: &str, extra: Value| {
+    let create = |name: &str, title: &str, extra: Value| {
         let mut args = json!({
-            "group_id": "${group_id}", "title": title, "kind": "code",
+            "group_id": "${group_id}", "name": name, "title": title, "kind": "code",
             "steps": [{"kind": "implement"}], "instruction": title
         });
         for (k, v) in extra.as_object().expect("object") {
@@ -919,17 +919,17 @@ async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
     let orch = json!({"turns": [
         {"match": "[yhtye:user_message]", "actions": [
             "report_state",
-            {"mcp_call": {"tool": "create_group", "args": {"title": "efforts"}}},
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "efforts"}}},
             // 1: two sonnet rows and no effort named -> rejected.
-            create("ambiguous", json!({"harness": "fake", "model": "sonnet"})),
+            create("ambiguous", "ambiguous", json!({"harness": "fake", "model": "sonnet"})),
             // 2: an effort no row has -> rejected.
-            create("no row", json!({"harness": "fake", "model": "sonnet", "effort": "max"})),
+            create("no-row", "no row", json!({"harness": "fake", "model": "sonnet", "effort": "max"})),
             // 3: the exact row.
-            create("exact", json!({"harness": "fake", "model": "sonnet", "effort": "high"})),
+            create("t1", "exact", json!({"harness": "fake", "model": "sonnet", "effort": "high"})),
             // 4: only one haiku row: the effort may be omitted (it has none).
-            create("unique", json!({"model": "haiku"})),
+            create("t2", "unique", json!({"model": "haiku"})),
             // 5: the reviewer's row, by its effort only.
-            create("reviewed", json!({"review_effort": "low"})),
+            create("t3", "reviewed", json!({"review_effort": "low"})),
         ]},
         {"match": "[yhtye:group_settled]", "actions": [
             {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "ok"}}}
@@ -1006,10 +1006,10 @@ async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
 
     // The exact row runs with its model and effort; a model without an effort runs without.
     assert_eq!(
-        started(&seen, "T-1/implementer"),
+        started(&seen, "t1/implementer"),
         [(Some(c("fake", Some("sonnet")).with_effort("high")), false)]
     );
-    let texts = messages(&seen, "T-1/implementer");
+    let texts = messages(&seen, "t1/implementer");
     assert!(
         texts
             .iter()
@@ -1017,11 +1017,11 @@ async fn create_task_needs_an_exact_row_and_the_effort_is_applied() {
         "the agent reports the effort it was given: {texts:?}"
     );
     assert_eq!(
-        started(&seen, "T-2/implementer"),
+        started(&seen, "t2/implementer"),
         [(Some(c("fake", Some("haiku"))), false)]
     );
     assert!(
-        messages(&seen, "T-2/implementer")
+        messages(&seen, "t2/implementer")
             .iter()
             .all(|t| !t.contains("effort=")),
     );

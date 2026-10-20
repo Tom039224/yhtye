@@ -3,6 +3,7 @@
 
 import type { ClientDevice, ClientKind } from "../api/generated";
 import type { ConnectionStatus } from "../api/transport";
+import type { IconName } from "./Icon";
 import { formatDateTime } from "./labels";
 
 /** A ping this recent, or newer, reads "now". */
@@ -61,11 +62,18 @@ export function orderClients(devices: readonly ClientDevice[]): ClientDevice[] {
     .map(({ d }) => d);
 }
 
-const KIND_LABELS: Record<ClientKind, string> = { android: "Android" };
+const KIND_LABELS: Record<ClientKind, string> = { android: "Android", desktop: "PC" };
 
 /** What kind of client a device is, in words. */
 export function clientKindLabel(kind: ClientKind): string {
   return KIND_LABELS[kind] ?? kind;
+}
+
+const KIND_ICONS: Record<ClientKind, IconName> = { android: "phone", desktop: "monitor" };
+
+/** The glyph of a client row: a phone for the Android client, a monitor for another desktop app. */
+export function clientKindIcon(kind: ClientKind): IconName {
+  return KIND_ICONS[kind] ?? "phone";
 }
 
 /** A device's state in words (its accessible name and tooltip). */

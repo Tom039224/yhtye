@@ -18,6 +18,7 @@ import { ev } from "../test/events";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { stubIntersectionObserver } from "../test/intersectionObserver";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
+import { KIND_LABEL } from "./statusIcons";
 
 const reveal = vi.fn();
 const LOG = durable(FULL_RUN);
@@ -96,6 +97,35 @@ describe("design layout", () => {
     expect(within(graph).getByTitle("T-2 実装中")).toHaveTextContent("T-2");
     expect(within(graph).getByText("HEAD")).toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "git" })).getByTitle("yhtye/G-1 ← main")).toHaveTextContent("yhtye/G-1main");
+  });
+
+  it("labels the branches of named groups and tasks, and of a named task in a numbered group", async () => {
+    const group = { ...base.groups[0], id: "headless-server", status: "active" as const, group_branch: "yhtye/headless-server" };
+    const named = { ...running, id: "remote-icon", group: "headless-server" };
+    const later = { ...running, id: "tray-badge", group: "G-46", status: "done" as const };
+    const sha = (c: string) => c.repeat(40);
+    const git: GitOverview = {
+      ...GIT,
+      branches: [],
+      commits: [
+        { sha: sha("t"), parents: [sha("g")], branches: ["yhtye/headless-server--remote-icon"], subject: "wip: icon", ts_ms: 4 },
+        { sha: sha("o"), parents: [sha("g")], branches: ["yhtye/G-46--tray-badge"], subject: "wip: badge", ts_ms: 3 },
+        { sha: sha("m"), parents: [sha("g")], branches: ["main"], subject: "chore: base", ts_ms: 2 },
+        { sha: sha("g"), parents: [], branches: ["yhtye/headless-server"], subject: "initial", ts_ms: 0 },
+      ],
+    };
+    const { store } = setup({ git, snapshot: snapshotOf({ groups: [group], tasks: [named, later] }), log: [] });
+    await open(store);
+    const graph = screen.getByTestId("git-graph");
+    expect(within(graph).getByTitle("remote-icon 実装中")).toHaveTextContent("remote-icon");
+    expect(within(graph).getByTitle("tray-badge 完了")).toHaveTextContent("tray-badge");
+    expect(within(graph).getByTitle("yhtye/headless-server")).toHaveTextContent(/^headless-server$/);
+    // A name may be cut short on screen: the tooltip keeps the whole.
+    const card = screen.getByRole("article", { name: "task remote-icon" });
+    expect(within(card).getByTitle(`remote-icon · ${KIND_LABEL[named.kind]}`)).toHaveTextContent(/^remote-icon$/);
+    const bar = screen.getByRole("region", { name: "group headless-server" });
+    expect(within(bar).getByTitle("headless-server")).toHaveTextContent(/^headless-server$/);
+    expect(within(bar).getByTitle(`グループブランチ yhtye/headless-server ← マージ先 (base) ${group.base_branch}`)).toBeInTheDocument();
   });
 
   it("renders task cards with progress, log, steps, footer and the group wait banner", async () => {

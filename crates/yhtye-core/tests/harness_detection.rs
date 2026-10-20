@@ -850,9 +850,9 @@ fn messages(seen: &[ApiEvent], key: &str) -> Vec<String> {
 async fn rows_of_a_harness_that_is_not_installed_are_hidden_from_the_orchestrator() {
     let r = TempRepo::new();
     let bin = Bin::new();
-    let group_and_tasks = |harness: &str, model: Option<&str>| {
+    let group_and_tasks = |name: &str, harness: &str, model: Option<&str>| {
         let mut args = json!({
-            "group_id": "${group_id}", "title": harness, "kind": "code",
+            "group_id": "${group_id}", "name": name, "title": harness, "kind": "code",
             "steps": [{"kind": "implement"}], "instruction": "go", "harness": harness});
         if let Some(m) = model {
             args["model"] = json!(m);
@@ -864,9 +864,9 @@ async fn rows_of_a_harness_that_is_not_installed_are_hidden_from_the_orchestrato
         "turns": [
             {"match": "[yhtye:user_message]", "actions": [
                 "report_state",
-                {"mcp_call": {"tool": "create_group", "args": {"title": "hidden"}}},
-                group_and_tasks("opencode", Some("x")),
-                group_and_tasks("devin", None),
+                {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "hidden"}}},
+                group_and_tasks("refused", "opencode", Some("x")),
+                group_and_tasks("t1", "devin", None),
                 {"mcp_call": {"tool": "get_status", "args": {}}}
             ]},
             {"match": "[yhtye:group_settled]", "actions": [
@@ -975,7 +975,7 @@ async fn rows_of_a_harness_that_is_not_installed_are_hidden_from_the_orchestrato
         seen.iter().any(|e| matches!(
             &e.body,
             ApiEventBody::SessionStarted { session, agent, .. }
-                if session == "T-1/implementer" && agent.as_ref() == Some(&devin)
+                if session == "t1/implementer" && agent.as_ref() == Some(&devin)
         )),
         "the task ran on Devin"
     );

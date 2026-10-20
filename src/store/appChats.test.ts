@@ -431,11 +431,33 @@ describe("pinging the core", () => {
 
   it("pings when the connection opens and keeps the host name and the time of the answer", async () => {
     const s = newStore();
-    expect(s.getState().host).toEqual({ name: null, lastPingAt: null });
+    expect(s.getState().host).toEqual({ name: null, version: null, compatibility: null, headless: false, lastPingAt: null });
     await vi.advanceTimersByTimeAsync(0);
     expect(transport.callsOf("ping")).toHaveLength(1);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: Date.now() });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: Date.now() });
     s.stop();
+  });
+
+  it("keeps that the host runs without a GUI, and reads a core that does not say as having one", async () => {
+    core.headless = true;
+    const s = newStore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.getState().host.headless).toBe(true);
+    s.stop();
+
+    // A core that predates the field leaves it out of its pong.
+    const handle = core.handle.bind(core);
+    core.handle = (cmd) => {
+      const reply = handle(cmd);
+      if (reply.type !== "pong") return reply;
+      const { headless: _headless, ...older } = reply;
+      return older as typeof reply;
+    };
+    const old = newStore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.getState().host.name).toBe("test-host");
+    expect(old.getState().host.headless).toBe(false);
+    old.stop();
   });
 
   it("pings every few seconds, and stops while the connection is closed", async () => {
@@ -446,7 +468,7 @@ describe("pinging the core", () => {
     transport.setStatus({ state: "closed", reason: "gone", retryInMs: null });
     await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3);
     expect(transport.callsOf("ping")).toHaveLength(3);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: answered });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: answered });
     // It picks up again on reconnecting.
     transport.setStatus({ state: "open" });
     await vi.advanceTimersByTimeAsync(0);

@@ -34,6 +34,8 @@ sha2 = "0.10"
 base64 = "0.22"
 url = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# Remote access (desktop client): the WebSocket to another Yhtye (plain `ws://`; WireGuard encrypts).
+tokio-tungstenite = "0.29"
 # Stage 7e: secret environment variables in the OS keyring (Secret Service on Linux), Codex config.toml
 keyring = { version = "3.6", default-features = false }
 toml = { version = "1", default-features = false, features = ["parse", "serde"] }

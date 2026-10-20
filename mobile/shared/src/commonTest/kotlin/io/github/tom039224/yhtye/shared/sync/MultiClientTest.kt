@@ -43,7 +43,7 @@ class MultiClientTest {
     fun rereadsTheProjectListWhenAnotherClientOpensAProject() = runTest {
         val s = newStore(core, prefs)
         openAndSettle(s)
-        core.others = listOf(ProjectInfo("other", "other", "/tmp/other", open = true, running = false))
+        core.others = listOf(ProjectInfo("other", "other", "/tmp/other", open = true, running = false, awake = false))
         val before = core.callsOf<ApiCommand.ListProjects>().size
         push(core, appWide(ApiEventBody.ProjectsChanged("other")))
         assertEquals(listOf(PROJECT.id, "other"), s.state.value.projects.map { it.id })

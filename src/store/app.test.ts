@@ -214,7 +214,7 @@ describe("AppStore lazy history", () => {
 });
 
 describe("AppStore background activity", () => {
-  const BETA = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false };
+  const BETA = { id: "beta", name: "beta", path: "/tmp/beta", open: true, running: false, awake: false };
   const beta = (seq: number, ev: ApiEvent): ApiEvent => ({ ...ev, seq, project: "beta" });
   const running = (id: string) => store.getState().projects.find((p) => p.id === id)?.running;
   const listCalls = () => transport.callsOf("list_projects").length;

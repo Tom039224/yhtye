@@ -13,6 +13,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiResponse
 import io.github.tom039224.yhtye.shared.api.generated.AttachmentDelivery
 import io.github.tom039224.yhtye.shared.api.generated.AttachmentKind
 import io.github.tom039224.yhtye.shared.api.generated.AttachmentMeta
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.ClientServer
@@ -53,6 +54,12 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     /** コアが知っている他のプロジェクト ([info] の後に並ぶ。`open_project` はパスで探す)。 */
     var others: List<ProjectInfo> = emptyList()
 
+    /** プロジェクトの順 (id。新しく使った順)。`open_project` は使ったことにする。 */
+    var projectOrder: List<String> = emptyList()
+
+    /** プロジェクトのブランチの順 (キー。新しく使った順)。 */
+    var branchOrder: List<String> = emptyList()
+
     /** 失敗させるコマンド (種類ごと)。 */
     val failures = HashMap<KClass<out ApiCommand>, ApiError>()
 
@@ -68,9 +75,14 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     )
     var usage: UsageReport? = null
     var host = "test-host"
+    /** `get_branch_statuses` の答え。 */
+    var branchStatuses: BranchStatuses = BranchStatuses("main", emptyList())
 
     /** `ping` が返す PC の版 (空 = この項目を返す前の古い PC)。 */
     var hostVersion = ""
+
+    /** `ping` が答える、PC が GUI 無しで動いているか。 */
+    var hostHeadless = false
 
     /** ペアリング済みの端末 (`list_clients`)。 */
     var devices: List<ClientDevice> = emptyList()
@@ -114,6 +126,9 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
 
     inline fun <reified T : ApiCommand> callsOf(): List<T> = calls.filterIsInstance<T>()
 
+    /** `list_projects` の答え: [projectOrder] の順、載っていないものはその後に。 */
+    private fun listing(): List<ProjectInfo> = sortByOrder(listOf(info) + others, projectOrder) { it.id }
+
     fun fail(type: KClass<out ApiCommand>, code: ApiErrorCode, message: String) {
         failures[type] = ApiError(code, message)
     }
@@ -144,10 +159,26 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
     private fun refuse(code: ApiErrorCode, message: String): Nothing = throw ApiException(ApiError(code, message))
 
     private fun handle(command: ApiCommand): ApiResponse = when (command) {
-        ApiCommand.Ping -> ApiResponse.Pong(host, hostVersion)
+        ApiCommand.Ping -> ApiResponse.Pong(host, hostVersion, hostHeadless)
         ApiCommand.ListClients -> ApiResponse.Clients(Clients(ClientServer(host), devices))
-        ApiCommand.ListProjects -> ApiResponse.Projects(listOf(info) + others)
-        is ApiCommand.OpenProject -> ApiResponse.Project((others.find { it.path == command.path } ?: info).copy(open = true))
+        ApiCommand.ListProjects -> ApiResponse.Projects(listing())
+        is ApiCommand.OpenProject -> {
+            val project = (others.find { it.path == command.path } ?: info).copy(open = true)
+            projectOrder = listOf(project.id) + projectOrder.filter { it != project.id }
+            ApiResponse.Project(project)
+        }
+        is ApiCommand.ReorderProjects -> {
+            val known = listing().map { it.id }
+            val ids = command.ids.filter { it in known }.distinct()
+            projectOrder = ids + projectOrder.filter { it !in ids }
+            ApiResponse.Projects(listing())
+        }
+        is ApiCommand.GetBranchOrder -> ApiResponse.BranchOrder(branchOrder)
+        is ApiCommand.ReorderBranches -> {
+            val keys = command.keys.filter { it.isNotEmpty() }.distinct()
+            branchOrder = keys + branchOrder.filter { it !in keys }
+            ApiResponse.BranchOrder(branchOrder)
+        }
         is ApiCommand.GetSnapshot -> ApiResponse.Snapshot(snapshot)
         is ApiCommand.ListEvents -> {
             val limit = minOf(command.limit ?: 500, pageCap)
@@ -156,6 +187,7 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
             ApiResponse.Events(events, more = after.size > limit)
         }
         is ApiCommand.GetGitOverview -> ApiResponse.GitOverview(git)
+        is ApiCommand.GetBranchStatuses -> ApiResponse.BranchStatuses(branchStatuses)
         is ApiCommand.OpenChat ->
             if (snapshot.chats.none { it.id == command.chat }) {
                 refuse(ApiErrorCode.NotFound, "no chat ${command.chat}")

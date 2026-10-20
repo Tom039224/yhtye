@@ -87,7 +87,9 @@ function GroupCard({ id, title, state }: { id: string; title: string; state: Sta
       <div className="group-card-header" title="グループ">
         <Icon name="layers" size={13} />
         <span className="group-card-title">{title}</span>
-        <span className="dim">{id}</span>
+        <span className="dim" title={id}>
+          {id}
+        </span>
       </div>
       <div className="group-card-body">
         {tasks.length === 0 ? <div className="dim">タスクはまだありません</div> : null}
@@ -96,8 +98,10 @@ function GroupCard({ id, title, state }: { id: string; title: string; state: Sta
           return (
             <div key={t.id} className="group-card-row">
               <Icon name={toneIcon(tone, t.kind)} size={12} className={`tone-icon tone-icon-${tone}`} />
-              <span className="n">{t.id}</span>
-              {t.title}
+              <span className="n" title={t.id}>
+                {t.id}
+              </span>
+              <span className="group-card-row-title">{t.title}</span>
             </div>
           );
         })}

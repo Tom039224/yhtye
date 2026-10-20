@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -266,6 +267,29 @@ class ConversationScreenTest {
         rule.onNodeWithTag("menu-delete").performClick()
         rule.onNodeWithText("実行中のため削除できません。先に停止してください。").assertExists()
         rule.onNodeWithTag("delete-confirm").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sleep is offered for the idle orchestrator and sends the command`() {
+        open()
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").performClick()
+        settle { core.callsOf<ApiCommand.SleepChat>().isNotEmpty() }
+        assertEquals(chat.id, core.callsOf<ApiCommand.SleepChat>().single().chat)
+    }
+
+    @Test
+    fun `sleep is hidden for a sleeping chat`() {
+        open(recording.end.copy(sessions = recording.end.sessions.filter { it.sessionKey != orchestrator }))
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sleep is disabled while the turn runs`() {
+        open(working())
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").assertIsNotEnabled()
     }
 
     @Test

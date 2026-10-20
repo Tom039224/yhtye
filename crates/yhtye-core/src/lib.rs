@@ -4,6 +4,7 @@
 //! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
 //! - [`attachments`]: files attached to a user message (saving, delivery to the agent)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
+//! - [`order`]: the recently-used order of projects and branches
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
 //! - [`api`]: the UI-facing event stream and snapshot
@@ -14,6 +15,7 @@
 //! - [`usage`]: subscription usage / quota read from the harness
 //! - [`ws`]: the API over a WebSocket (dev bridge and remote server)
 //! - [`remote`]: remote access over Tailscale (pairing, devices, the server)
+//! - [`remote_client`]: the other side: this app as a client of another Yhtye
 
 pub mod acp;
 pub mod agents;
@@ -23,8 +25,10 @@ mod clock;
 pub mod domain;
 pub mod git;
 pub mod mcp;
+pub mod order;
 pub mod prompts;
 pub mod remote;
+pub mod remote_client;
 pub mod runtime;
 pub mod secrets;
 pub mod store;

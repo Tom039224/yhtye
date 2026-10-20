@@ -184,10 +184,18 @@ pub enum ApiEventBody {
         session: String,
     },
     /// App-wide (`project` is empty, `live`, `seq` 0): a project was registered
-    /// or opened (its orchestration started in this process); clients re-read
-    /// `list_projects`.
+    /// or opened (its orchestration started in this process), or the project
+    /// order changed (a project was used, or the user reordered them; `project`
+    /// is the one used, empty for a reorder); clients re-read `list_projects`.
     ProjectsChanged {
         project: String,
+    },
+    /// App-wide: the order of `project`'s branches changed (a chat of one was
+    /// used, or the user reordered them). `keys` is the whole order, as
+    /// `get_branch_order` answers it; it replaces what a client has.
+    BranchOrderChanged {
+        project: String,
+        keys: Vec<String>,
     },
     /// App-wide: settings were changed by some client. A hint: a settings
     /// screen on display reads them again (`get_agent_settings`,
@@ -256,6 +264,7 @@ impl ApiEventBody {
             || matches!(
                 self,
                 Self::ProjectsChanged { .. }
+                    | Self::BranchOrderChanged { .. }
                     | Self::SettingsChanged { .. }
                     | Self::Resync
                     | Self::ClientsChanged { .. }
@@ -278,6 +287,7 @@ impl ApiEventBody {
         match self {
             Self::Domain { .. }
             | Self::ProjectsChanged { .. }
+            | Self::BranchOrderChanged { .. }
             | Self::SettingsChanged { .. }
             | Self::Resync
             | Self::RemoteStatusChanged { .. }

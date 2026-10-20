@@ -9,34 +9,31 @@ fn simple_task_runs_merges_and_settles_the_group() {
     let mut sim = Sim::new();
     sim.group();
     let chain = sim.task(json!({}));
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 0)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 0)]);
     assert!(has_effect(&chain, |e| matches!(e,
-        Effect::RunStep { workdir: Some(w), .. } if w.to_str() == Some("/wt/T-1"))));
-    assert!(prompt_of(&chain).starts_with("[yhtye:step] task=T-1 kind=code step=1/2"));
-    assert_eq!(sim.status("T-1"), TaskStatus::Running);
+        Effect::RunStep { workdir: Some(w), .. } if w.to_str() == Some("/wt/t1"))));
+    assert!(prompt_of(&chain).starts_with("[yhtye:step] task=t1 kind=code step=1/2"));
+    assert_eq!(sim.status("t1"), TaskStatus::Running);
 
-    let chain = sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::Git(GitOp::FinishTask { .. })
     )));
     assert!(has_effect(
         &chain,
-        |e| matches!(e, Effect::StopTaskAgents { task } if task == "T-1")
+        |e| matches!(e, Effect::StopTaskAgents { task } if task == "t1")
     ));
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::GroupSettled]);
     assert_eq!(
         sim.state.inbox[0].item.render(),
-        "[yhtye:group_settled] group=G-1\nT-1 done: result of step 0"
+        "[yhtye:group_settled] group=g1\nt1 done: result of step 0"
     );
 
     let (reply, _) = sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "ok"}),
+        json!({"group_id": "g1", "summary": "ok"}),
     );
     assert_eq!(reply["status"], json!("done"));
     assert_eq!(reply["merge"]["ok"], json!(true));
@@ -51,17 +48,14 @@ fn the_next_step_starts_only_when_the_turn_ends() {
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "implement"}]}));
     let chain = sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::ReportStepDone,
         json!({"result": "a"}),
     );
     assert!(run_steps(&chain).is_empty());
-    assert_eq!(sim.t("T-1").current, 0);
-    let chain = sim.turn_ended(agent("T-1", Role::Implementer, 0), TurnOutcome::EndTurn);
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 1)]
-    );
+    assert_eq!(sim.t("t1").current, 0);
+    let chain = sim.turn_ended(agent("t1", Role::Implementer, 0), TurnOutcome::EndTurn);
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 1)]);
 }
 
 #[test]
@@ -69,24 +63,21 @@ fn needs_changes_inserts_implement_and_review_then_approves() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
-    let chain = sim.report("T-1", Role::Implementer, None);
-    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 1)]);
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Reviewer, 1)]);
     assert!(
         prompt_of(&chain)
             .contains("Results of earlier steps:\nstep 0 (implement): result of step 0")
     );
 
-    let chain = sim.report("T-1", Role::Reviewer, Some("needs_changes"));
-    let kinds: Vec<StepKind> = sim.t("T-1").steps.iter().map(|s| s.kind).collect();
+    let chain = sim.report("t1", Role::Reviewer, Some("needs_changes"));
+    let kinds: Vec<StepKind> = sim.t("t1").steps.iter().map(|s| s.kind).collect();
     use StepKind::*;
     assert_eq!(kinds, vec![Implement, Review, Implement, Review, Done]);
-    assert_eq!(sim.t("T-1").review_rounds, 1);
+    assert_eq!(sim.t("t1").review_rounds, 1);
     assert!(has_effect(&chain, |e| matches!(e,
         Effect::StopAgent { agent } if agent.role == Role::Reviewer && agent.step == 1)));
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-1".into(), Role::Implementer, 2)]
-    );
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Implementer, 2)]);
     let prompt = prompt_of(&chain);
     assert!(
         prompt.contains("Address these findings:\nresult of step 1"),
@@ -94,10 +85,10 @@ fn needs_changes_inserts_implement_and_review_then_approves() {
     );
     assert!(prompt.contains("Original instruction:\ndo it"), "{prompt}");
 
-    let chain = sim.report("T-1", Role::Implementer, None);
-    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 3)]);
-    sim.report("T-1", Role::Reviewer, Some("approve"));
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Reviewer, 3)]);
+    sim.report("t1", Role::Reviewer, Some("approve"));
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -107,17 +98,17 @@ fn review_rounds_exhausted_asks_the_orchestrator() {
     });
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
-    sim.report("T-1", Role::Implementer, None);
-    sim.report("T-1", Role::Reviewer, Some("needs_changes"));
-    sim.report("T-1", Role::Implementer, None);
-    let chain = sim.report("T-1", Role::Reviewer, Some("needs_changes"));
-    assert_eq!(sim.status("T-1"), TaskStatus::Handling);
-    assert_eq!(sim.t("T-1").steps.len(), 5, "no third round inserted");
+    sim.report("t1", Role::Implementer, None);
+    sim.report("t1", Role::Reviewer, Some("needs_changes"));
+    sim.report("t1", Role::Implementer, None);
+    let chain = sim.report("t1", Role::Reviewer, Some("needs_changes"));
+    assert_eq!(sim.status("t1"), TaskStatus::Handling);
+    assert_eq!(sim.t("t1").steps.len(), 5, "no third round inserted");
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::StopAgent { .. }
     )));
-    let help = sim.state.open_help("T-1").expect("help").clone();
+    let help = sim.state.open_help("t1").expect("help").clone();
     assert_eq!(help.kind, HelpKind::ReviewRoundsExhausted);
     assert_eq!(help.source, HelpSource::Yhtye);
 
@@ -126,7 +117,7 @@ fn review_rounds_exhausted_asks_the_orchestrator() {
         ToolName::AnswerHelp,
         json!({"help_id": help.id, "action": "resume"}),
     );
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -134,28 +125,25 @@ fn dependency_without_instruction_asks_for_it_when_resolved() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    let chain = sim.task(json!({"depends_on": ["T-1"], "instruction": null}));
+    let chain = sim.task(json!({"depends_on": ["t1"], "instruction": null}));
     assert!(run_steps(&chain).is_empty());
-    assert_eq!(sim.status("T-2"), TaskStatus::Pending);
+    assert_eq!(sim.status("t2"), TaskStatus::Pending);
     sim.deliver_inbox();
 
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-2"), TaskStatus::AwaitingInstruction);
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t2"), TaskStatus::AwaitingInstruction);
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::InstructionNeeded]);
     assert_eq!(
         sim.state.inbox[0].item.render(),
-        "[yhtye:instruction_needed] task=T-2\nT-1: result of step 0"
+        "[yhtye:instruction_needed] task=t2\nt1: result of step 0"
     );
     let (reply, chain) = sim.orch_ok(
         ToolName::SetInstruction,
-        json!({"task_id": "T-2", "instruction": "use T-1's result"}),
+        json!({"task_id": "t2", "instruction": "use t1's result"}),
     );
     assert_eq!(reply["status"], json!("running"));
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-2".into(), Role::Implementer, 0)]
-    );
-    assert!(prompt_of(&chain).contains("use T-1's result"));
+    assert_eq!(run_steps(&chain), vec![("t2".into(), Role::Implementer, 0)]);
+    assert!(prompt_of(&chain).contains("use t1's result"));
 }
 
 #[test]
@@ -163,17 +151,14 @@ fn dependency_with_instruction_starts_automatically() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    sim.task(json!({"depends_on": ["T-1", "T-1"]}));
+    sim.task(json!({"depends_on": ["t1", "t1"]}));
     assert_eq!(
-        sim.t("T-2").depends_on,
-        vec!["T-1".to_string()],
+        sim.t("t2").depends_on,
+        vec!["t1".to_string()],
         "deduplicated"
     );
-    let chain = sim.report("T-1", Role::Implementer, None);
-    assert_eq!(
-        run_steps(&chain),
-        vec![("T-2".into(), Role::Implementer, 0)]
-    );
+    let chain = sim.report("t1", Role::Implementer, None);
+    assert_eq!(run_steps(&chain), vec![("t2".into(), Role::Implementer, 0)]);
 }
 
 #[test]
@@ -183,15 +168,15 @@ fn checkpoint_wakes_the_orchestrator_and_continue_passes_the_note() {
     sim.task(
         json!({"steps": [{"kind": "implement"}, {"kind": "checkpoint"}, {"kind": "implement"}]}),
     );
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-1"), TaskStatus::Checkpoint);
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t1"), TaskStatus::Checkpoint);
     assert_eq!(
         sim.state.inbox[0].item.render(),
-        "[yhtye:checkpoint_reached] task=T-1 step=1\nstep 0 (implement): result of step 0"
+        "[yhtye:checkpoint_reached] task=t1 step=1\nstep 0 (implement): result of step 0"
     );
     let (reply, chain) = sim.orch_ok(
         ToolName::ResolveCheckpoint,
-        json!({"task_id": "T-1", "decision": "continue", "note": "also update docs"}),
+        json!({"task_id": "t1", "decision": "continue", "note": "also update docs"}),
     );
     assert_eq!(reply["status"], json!("running"));
     assert_eq!(reply["current_step"], json!(2));
@@ -203,10 +188,10 @@ fn checkpoint_abort_cancels_the_task() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({"steps": [{"kind": "checkpoint"}, {"kind": "implement"}]}));
-    assert_eq!(sim.status("T-1"), TaskStatus::Checkpoint);
+    assert_eq!(sim.status("t1"), TaskStatus::Checkpoint);
     let (reply, chain) = sim.orch_ok(
         ToolName::ResolveCheckpoint,
-        json!({"task_id": "T-1", "decision": "abort"}),
+        json!({"task_id": "t1", "decision": "abort"}),
     );
     assert_eq!(reply["status"], json!("cancelled"));
     assert!(has_effect(&chain, |e| matches!(
@@ -225,7 +210,7 @@ fn agent_help_is_answered_with_a_prompt_to_the_same_session() {
     sim.group();
     sim.task(json!({}));
     let chain = sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "question", "message": "which file?"}),
     );
@@ -233,13 +218,13 @@ fn agent_help_is_answered_with_a_prompt_to_the_same_session() {
         chain.reply,
         Some(Ok(json!({"help_id": "H-1", "next": "end_turn_and_wait"})))
     );
-    assert_eq!(sim.status("T-1"), TaskStatus::Handling);
+    assert_eq!(sim.status("t1"), TaskStatus::Handling);
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::WakeOrchestrator { .. }
     )));
     // The silent turn end after `help` is not a protocol violation.
-    let chain = sim.turn_ended(agent("T-1", Role::Implementer, 0), TurnOutcome::EndTurn);
+    let chain = sim.turn_ended(agent("t1", Role::Implementer, 0), TurnOutcome::EndTurn);
     assert!(chain.effects.is_empty());
 
     let (reply, chain) = sim.orch_ok(
@@ -250,8 +235,8 @@ fn agent_help_is_answered_with_a_prompt_to_the_same_session() {
     assert!(has_effect(&chain, |e| matches!(e,
         Effect::PromptAgent { agent, text }
             if agent.step == 0 && text == "[yhtye:help_answer] help_id=H-1\nREADME.md")));
-    sim.report("T-1", Role::Implementer, None);
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    sim.report("t1", Role::Implementer, None);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -260,31 +245,31 @@ fn cancel_task_stops_agents_closes_help_and_settles() {
     sim.group();
     sim.task(json!({}));
     sim.sub_ok(
-        sub("T-1", Role::Implementer, 0),
+        sub("t1", Role::Implementer, 0),
         ToolName::Help,
         json!({"kind": "blocked", "message": "stuck"}),
     );
     sim.deliver_inbox();
     let (reply, chain) = sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "not needed"}),
+        json!({"task_id": "t1", "reason": "not needed"}),
     );
-    assert_eq!(reply, json!({"task_id": "T-1", "status": "cancelled"}));
-    assert_eq!(sim.t("T-1").cancel_reason.as_deref(), Some("not needed"));
+    assert_eq!(reply, json!({"task_id": "t1", "status": "cancelled"}));
+    assert_eq!(sim.t("t1").cancel_reason.as_deref(), Some("not needed"));
     assert_eq!(
         sim.state.help("H-1").map(|h| h.state),
         Some(HelpState::Closed)
     );
     assert!(has_effect(
         &chain,
-        |e| matches!(e, Effect::StopTaskAgents { task } if task == "T-1")
+        |e| matches!(e, Effect::StopTaskAgents { task } if task == "t1")
     ));
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::Git(GitOp::RemoveWorkspace { .. })
     )));
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::GroupSettled]);
-    assert!(sim.state.inbox[0].item.body.contains("T-1 cancelled"));
+    assert!(sim.state.inbox[0].item.body.contains("t1 cancelled"));
 }
 
 #[test]
@@ -292,19 +277,19 @@ fn cancelled_dependency_blocks_dependents_and_settles_the_group() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    sim.task(json!({"depends_on": ["T-1"]}));
-    sim.task(json!({"depends_on": ["T-2"]}));
+    sim.task(json!({"depends_on": ["t1"]}));
+    sim.task(json!({"depends_on": ["t2"]}));
     sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "x"}),
+        json!({"task_id": "t1", "reason": "x"}),
     );
-    assert_eq!(sim.status("T-2"), TaskStatus::Pending);
+    assert_eq!(sim.status("t2"), TaskStatus::Pending);
     let body = &sim.state.inbox.last().expect("settled").item.body;
-    assert!(body.contains("T-2 cannot start"), "{body}");
-    assert!(body.contains("T-3 cannot start"), "{body}");
+    assert!(body.contains("t2 cannot start"), "{body}");
+    assert!(body.contains("t3 cannot start"), "{body}");
     let code = sim.orch_err(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "s"}),
+        json!({"group_id": "g1", "summary": "s"}),
     );
     assert_eq!(code, ErrorCode::InvalidState);
 }
@@ -314,15 +299,15 @@ fn cancel_group_cancels_open_tasks_without_waking_the_orchestrator() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    sim.task(json!({"depends_on": ["T-1"]}));
+    sim.task(json!({"depends_on": ["t1"]}));
     sim.deliver_inbox();
     let (reply, chain) = sim.orch_ok(
         ToolName::CancelGroup,
-        json!({"group_id": "G-1", "reason": "user changed their mind"}),
+        json!({"group_id": "g1", "reason": "user changed their mind"}),
     );
     assert_eq!(reply["status"], json!("cancelled"));
-    assert_eq!(sim.status("T-1"), TaskStatus::Cancelled);
-    assert_eq!(sim.status("T-2"), TaskStatus::Cancelled);
+    assert_eq!(sim.status("t1"), TaskStatus::Cancelled);
+    assert_eq!(sim.status("t2"), TaskStatus::Cancelled);
     assert!(sim.state.inbox.is_empty());
     assert!(
         !chain
@@ -331,7 +316,7 @@ fn cancel_group_cancels_open_tasks_without_waking_the_orchestrator() {
             .any(|e| matches!(e, Effect::WakeOrchestrator { .. }))
     );
     assert_eq!(
-        sim.state.group("G-1").map(|g| g.status),
+        sim.state.group("g1").map(|g| g.status),
         Some(GroupStatus::Cancelled)
     );
 }
@@ -343,10 +328,10 @@ fn modify_steps_replaces_only_unstarted_steps() {
     sim.task(
         json!({"steps": [{"kind": "implement"}, {"kind": "checkpoint"}, {"kind": "implement"}]}),
     );
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     let (reply, _) = sim.orch_ok(
         ToolName::ModifySteps,
-        json!({"task_id": "T-1", "steps": [{"kind": "review"}, {"kind": "implement", "instruction": "polish"}]}),
+        json!({"task_id": "t1", "steps": [{"kind": "review"}, {"kind": "implement", "instruction": "polish"}]}),
     );
     let steps = reply["steps"].as_array().expect("steps");
     let kinds: Vec<&str> = steps.iter().filter_map(|s| s["kind"].as_str()).collect();
@@ -359,9 +344,9 @@ fn modify_steps_replaces_only_unstarted_steps() {
     assert_eq!(steps[3]["instruction"], json!("polish"));
     let (_, chain) = sim.orch_ok(
         ToolName::ResolveCheckpoint,
-        json!({"task_id": "T-1", "decision": "continue"}),
+        json!({"task_id": "t1", "decision": "continue"}),
     );
-    assert_eq!(run_steps(&chain), vec![("T-1".into(), Role::Reviewer, 2)]);
+    assert_eq!(run_steps(&chain), vec![("t1".into(), Role::Reviewer, 2)]);
 }
 
 #[test]
@@ -369,15 +354,12 @@ fn modify_steps_with_an_empty_list_leaves_only_done() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({"steps": [{"kind": "checkpoint"}, {"kind": "implement"}]}));
-    sim.orch_ok(
-        ToolName::ModifySteps,
-        json!({"task_id": "T-1", "steps": []}),
-    );
+    sim.orch_ok(ToolName::ModifySteps, json!({"task_id": "t1", "steps": []}));
     sim.orch_ok(
         ToolName::ResolveCheckpoint,
-        json!({"task_id": "T-1", "decision": "continue"}),
+        json!({"task_id": "t1", "decision": "continue"}),
     );
-    assert_eq!(sim.status("T-1"), TaskStatus::Done);
+    assert_eq!(sim.status("t1"), TaskStatus::Done);
 }
 
 #[test]
@@ -424,14 +406,14 @@ fn status_queries_describe_the_group_and_task() {
     sim.group();
     sim.task(json!({"steps": [{"kind": "implement"}, {"kind": "review"}]}));
     let (status, _) = sim.orch_ok(ToolName::GetStatus, json!({}));
-    assert_eq!(status["group"]["id"], json!("G-1"));
+    assert_eq!(status["group"]["id"], json!("g1"));
     assert_eq!(status["tasks"][0]["current_step"], json!("implement"));
     assert_eq!(
         status["tasks"][0]["steps_summary"],
         json!(["implement:running", "review:pending", "done:pending"])
     );
-    let (task, _) = sim.orch_ok(ToolName::GetTask, json!({"task_id": "T-1"}));
-    assert_eq!(task["branch"], json!("yhtye/G-1-T-1"));
-    assert_eq!(task["worktree"], json!("/wt/T-1"));
+    let (task, _) = sim.orch_ok(ToolName::GetTask, json!({"task_id": "t1"}));
+    assert_eq!(task["branch"], json!("yhtye/g1--t1"));
+    assert_eq!(task["worktree"], json!("/wt/t1"));
     assert_eq!(task["steps"][0]["status"], json!("running"));
 }

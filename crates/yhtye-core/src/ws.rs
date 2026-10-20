@@ -49,11 +49,13 @@ impl SessionPolicy {
     pub const REMOTE: Self = Self { local: false };
 }
 
-/// Largest message (and frame) the server reads from a client. A file is
-/// attached by sending it whole in one command (`stage_attachment`, base64), and
-/// Yhtye puts no limit on its size, so the library's defaults (64 MiB per
-/// message, 16 MiB per frame: a 48 MB file at most) are lifted far above any
-/// file a person attaches. Only a client that passed its access check gets here.
+/// Largest message (and frame) the server reads from a client, and a client of
+/// another host (`remote_client`) reads from that host. A file is attached by
+/// sending it whole in one command (`stage_attachment`, base64) and read back
+/// whole (`get_attachment`), and Yhtye puts no limit on its size, so the
+/// library's defaults (64 MiB per message, 16 MiB per frame: a 48 MB file at
+/// most) are lifted far above any file a person attaches. Only a client that
+/// passed its access check gets here, and a host is one the user paired with.
 pub const MAX_MESSAGE_BYTES: usize = 1 << 31;
 
 /// Accepts messages up to [`MAX_MESSAGE_BYTES`] on `upgrade`; both transports
@@ -438,7 +440,15 @@ mod tests {
             r#"{"type": "list_projects"}"#,
             r#"{"type": "set_secret_env", "name": "A", "value": "v"}"#,
             r#"{"type": "send_user_message", "project": "p", "chat": "c", "text": "t"}"#,
+            r#"{"type": "sleep_chat", "project": "p", "chat": "c"}"#,
+            r#"{"type": "sleep_project", "project": "p"}"#,
+            r#"{"type": "reorder_projects", "ids": ["p"]}"#,
+            r#"{"type": "get_branch_order", "project": "p"}"#,
+            r#"{"type": "reorder_branches", "project": "p", "keys": ["/w"]}"#,
             r#"{"type": "list_clients"}"#,
+            r#"{"type": "stage_attachment", "project": "p", "chat": "c", "name": "a.png", "data_base64": ""}"#,
+            r#"{"type": "discard_attachment", "project": "p", "chat": "c", "id": "a"}"#,
+            r#"{"type": "get_attachment", "project": "p", "chat": "c", "id": "a"}"#,
         ];
         for json in anyone {
             let cmd: ApiCommand = serde_json::from_str(json).expect(json);

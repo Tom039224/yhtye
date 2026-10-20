@@ -296,6 +296,24 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
+    /// Stops the chat's orchestrator session (see
+    /// [`crate::api::ApiCommand::SleepChat`]): `not_found` for an unknown chat,
+    /// `invalid_state` while its orchestrator is starting or in a turn.
+    pub async fn sleep_chat(&self, chat: impl Into<String>) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::SleepChat(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// Stops every chat's orchestrator session (see
+    /// [`crate::api::ApiCommand::SleepProject`]): `invalid_state`, with nothing
+    /// stopped, while any of them is starting or in a turn.
+    pub async fn sleep_project(&self) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::SleepProject(tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
     /// Gives `chat` the user's title (`not_found` for an unknown chat,
     /// `invalid_argument` for an empty or too long title); returns the chat as
     /// listed afterwards.
@@ -368,11 +386,12 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
-    /// Whether work is on: a live session is in a turn, or a task is running or
-    /// merging (the sidebar's ring).
-    pub async fn is_running(&self) -> Result<bool, OrchError> {
+    /// Whether work is on (a live session is in a turn, or a task is running
+    /// or merging) and whether one of the chats has an orchestrator session up
+    /// (the sidebar's ring).
+    pub async fn activity(&self) -> Result<(bool, bool), OrchError> {
         let (tx, rx) = oneshot::channel();
-        self.send(Cmd::Running(tx))?;
+        self.send(Cmd::Activity(tx))?;
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 

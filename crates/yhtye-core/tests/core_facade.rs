@@ -159,12 +159,12 @@ fn full_run_scripts() -> (Value, Value, Value) {
             {"message": "a group for this."},
             {"tool_call": {"id": "read-1", "title": "Read README.md"}},
             {"tool_call_update": {"id": "read-1", "status": "completed"}},
-            {"mcp_call": {"tool": "create_group", "args": {"title": "greeting"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "greeting"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "add hello.txt", "kind": "code",
                 "steps": [{"kind": "implement"}, {"kind": "review"}],
                 "instruction": "write-hello"}}},
-            {"message": "Task T-1 is running."}
+            {"message": "Task t1 is running."}
         ]},
         {"match": "[yhtye:group_settled]", "actions": [
             {"mcp_call": {"tool": "finish_group", "args": {"group_id": "${group}", "summary": "hello.txt added"}}},
@@ -415,10 +415,10 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     let orch = json!({"turns": [
         {"match": "hold on", "actions": [{"message": "thinking..."}, "wait_cancel"]},
         {"match": "start two", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "two"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "two"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1", "group_id": "${group_id}", "title": "a",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-a"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "b",
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t2", "group_id": "${group_id}", "title": "b",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-b"}}}
         ]},
         {"actions": [{"message": "noted"}]}
@@ -461,7 +461,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
             )
         }
     };
-    until(&mut rx, &mut seen, running("T-2")).await;
+    until(&mut rx, &mut seen, running("t2")).await;
 
     let cancel_task = |task: &str| ApiCommand::CancelTask {
         project: project.clone(),
@@ -469,10 +469,10 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         reason: None,
     };
     assert_eq!(
-        error_code(&core, cancel_task("T-9")).await,
+        error_code(&core, cancel_task("t9")).await,
         ApiErrorCode::NotFound
     );
-    run(&core, cancel_task("T-1")).await;
+    run(&core, cancel_task("t1")).await;
     let snap = snapshot(&core, &project).await;
     assert_eq!(snap.state.tasks[0].status, TaskStatus::Cancelled);
     assert_eq!(
@@ -481,7 +481,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     );
     until(&mut rx, &mut seen, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
-            if session == ORCHESTRATOR_SESSION && text.contains("the user cancelled task T-1"))
+            if session == ORCHESTRATOR_SESSION && text.contains("the user cancelled task t1"))
     })
     .await;
     assert!(seen.iter().any(|e| matches!(&e.body,
@@ -490,7 +490,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
 
     let cancel_group = ApiCommand::CancelGroup {
         project: project.clone(),
-        group: "G-1".into(),
+        group: "g1".into(),
         reason: Some("changed my mind".into()),
     };
     run(&core, cancel_group.clone()).await;
@@ -502,7 +502,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         "the task and integration worktrees are gone: {:?}",
         r.extra_worktrees()
     );
-    assert!(r.branch_exists("yhtye/G-1"), "the group branch is kept");
+    assert!(r.branch_exists("yhtye/g1"), "the group branch is kept");
     // Cancelling it again (another client was first) is accepted and does
     // nothing: no tool call is recorded, the orchestrator is not told twice.
     let calls = |seen: &[ApiEvent]| {
@@ -511,10 +511,10 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
             .count()
     };
     run(&core, cancel_group).await;
-    run(&core, cancel_task("T-1")).await;
+    run(&core, cancel_task("t1")).await;
     until(&mut rx, &mut seen, |e| {
         matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
-            if session == ORCHESTRATOR_SESSION && text.contains("cancelled group G-1"))
+            if session == ORCHESTRATOR_SESSION && text.contains("cancelled group g1"))
     })
     .await;
     until(&mut rx, &mut seen, orchestrator_turn_ended).await;
@@ -522,12 +522,12 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     assert_eq!(calls(&seen), 3);
     let notes = seen
         .iter()
-        .filter(|e| matches!(&e.body, ApiEventBody::Prompted { text, .. } if text.contains("cancelled group G-1")))
+        .filter(|e| matches!(&e.body, ApiEventBody::Prompted { text, .. } if text.contains("cancelled group g1")))
         .count();
     assert_eq!(notes, 1, "the orchestrator is told once");
     // The recording ends once both task agents are stopped, so the end snapshot
     // has nothing the recorded events do not.
-    for task in ["T-1", "T-2"] {
+    for task in ["t1", "t2"] {
         let key = format!("{task}/implementer");
         let stopped = |e: &ApiEvent| matches!(&e.body, ApiEventBody::SessionStopped { session, .. } if *session == key);
         if !seen.iter().any(stopped) {
@@ -559,8 +559,8 @@ async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
     let orch = json!({"turns": [
         {"match": "hold on", "actions": [{"message": "thinking..."}, "wait_cancel"]},
         {"match": "start one", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1", "group_id": "${group_id}", "title": "a",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "wait-a"}}}
         ]},
         {"actions": [{"message": "noted"}]}
@@ -610,7 +610,7 @@ async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
     until(&mut rx, &mut seen, |e| {
         is_domain(
             e,
-            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "T-1"),
+            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "t1"),
         )
     })
     .await;
@@ -618,7 +618,7 @@ async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
     assert_eq!(running_projects(&core).await, vec![project.clone()]);
     let cancel_group = ApiCommand::CancelGroup {
         project: project.clone(),
-        group: "G-1".into(),
+        group: "g1".into(),
         reason: None,
     };
     run(&core, cancel_group).await;
@@ -636,8 +636,8 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
     let idle_repo = TempRepo::new();
     let orch = json!({"turns": [
         {"match": "start one", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
-            {"mcp_call": {"tool": "create_task", "args": {"group_id": "${group_id}", "title": "a",
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1", "group_id": "${group_id}", "title": "a",
                 "kind": "code", "steps": [{"kind": "implement"}], "instruction": "write-a"}}}
         ]},
         {"actions": [{"message": "noted"}]}
@@ -665,7 +665,7 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
     until(&mut rx, &mut seen, |e| {
         is_domain(
             e,
-            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "T-1"),
+            |d| matches!(d, DomainEvent::StepStarted { task, .. } if task == "t1"),
         )
     })
     .await;
@@ -680,7 +680,7 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
     assert!(resumed[0].1.as_ref().is_ok_and(|p| p.open));
     let mut seen = Vec::new();
     until(&mut rx, &mut seen, |e| {
-        is_domain(e, |d| matches!(d, DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "T-1"))
+        is_domain(e, |d| matches!(d, DomainEvent::TaskStatusChanged { task, status: TaskStatus::Done } if task == "t1"))
     })
     .await;
     let ApiResponse::Projects { projects } = run(&core, ApiCommand::ListProjects).await else {
@@ -728,13 +728,13 @@ async fn git_overview(core: &Core, project: &str, limit: Option<u32>) -> GitOver
 #[tokio::test]
 async fn the_git_overview_shows_branches_and_the_commit_graph() {
     let r = TempRepo::new();
-    r.git(&["checkout", "-q", "-b", "yhtye/G-1"]);
+    r.git(&["checkout", "-q", "-b", "yhtye/g1"]);
     r.write("a.txt", "a\n");
     r.commit("feat: a");
     r.git(&["checkout", "-q", "main"]);
     r.write("b.txt", "b\n");
     r.commit("chore: b");
-    r.git(&["merge", "-q", "--no-ff", "-m", "merge G-1", "yhtye/G-1"]);
+    r.git(&["merge", "-q", "--no-ff", "-m", "merge g1", "yhtye/g1"]);
     let idle = json!({"turns": []});
     let core = Core::start(core_config(&r, idle.clone(), idle.clone(), idle))
         .await
@@ -744,9 +744,9 @@ async fn the_git_overview_shows_branches_and_the_commit_graph() {
     let git = git_overview(&core, &p.id, None).await;
     assert_eq!(git.head.as_deref(), Some("main"));
     let names: Vec<&str> = git.branches.iter().map(|b| b.name.as_str()).collect();
-    assert_eq!(names, ["main", "yhtye/G-1"]);
+    assert_eq!(names, ["main", "yhtye/g1"]);
     let subjects: Vec<&str> = git.commits.iter().map(|c| c.subject.as_str()).collect();
-    assert_eq!(subjects[0], "merge G-1");
+    assert_eq!(subjects[0], "merge g1");
     assert_eq!(subjects.len(), 4, "{subjects:?}");
     assert!(!git.truncated);
     let merge = &git.commits[0];
@@ -758,7 +758,7 @@ async fn the_git_overview_shows_branches_and_the_commit_graph() {
         .iter()
         .find(|c| c.subject == "feat: a")
         .expect("side commit");
-    assert_eq!(side.branches, ["yhtye/G-1"]);
+    assert_eq!(side.branches, ["yhtye/g1"]);
     assert_eq!(
         merge.parents[1], side.sha,
         "second parent is the merged branch"
@@ -909,12 +909,34 @@ async fn ping_answers_with_the_name_of_this_machine_and_the_app_version() {
         .expect("core");
     // No project is needed, and every call gets the same answer.
     for _ in 0..2 {
-        let ApiResponse::Pong { host, version } = run(&core, ApiCommand::Ping).await else {
+        let ApiResponse::Pong {
+            host,
+            version,
+            headless,
+        } = run(&core, ApiCommand::Ping).await
+        else {
             panic!("a pong");
         };
         assert!(!host.trim().is_empty());
         assert_eq!(host, yhtye_core::runtime::host_name());
         assert_eq!(version, yhtye_core::runtime::APP_VERSION);
+        assert!(
+            !headless,
+            "the app has a GUI unless the config says it has not"
+        );
     }
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn ping_tells_whether_the_core_runs_headless() {
+    let r = TempRepo::new();
+    let mut cfg = core_config(&r, json!({}), json!({}), json!({}));
+    cfg.headless = true;
+    let core = Core::start(cfg).await.expect("core");
+    let ApiResponse::Pong { headless, .. } = run(&core, ApiCommand::Ping).await else {
+        panic!("a pong");
+    };
+    assert!(headless);
     core.shutdown().await;
 }
