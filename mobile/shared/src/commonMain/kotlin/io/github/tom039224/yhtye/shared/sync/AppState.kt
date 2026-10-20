@@ -5,6 +5,7 @@ import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
+import io.github.tom039224.yhtye.shared.api.generated.UsageStats
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 
 /** [AppStore] が公開するアプリ全体の状態 (不変。`AppStore.state` の値)。PC の `AppState` に当たる。 */
@@ -24,6 +25,8 @@ data class AppState(
     /** 表示中のプロジェクトのブランチの順 (読むまでは null)。 */
     val branchOrder: BranchOrderView? = null,
     val usage: UsageView = UsageView(),
+    /** ホストのエージェントの利用統計 (ダッシュボード。コアの `get_usage_stats`)。 */
+    val stats: StatsView = StatsView(),
     val host: HostView = HostView(),
     /** ペアリング済みの端末 (コアの `list_clients`。並びはコアのまま)。左パネルの下端でホストの下に出す。 */
     val clients: List<ClientDevice> = emptyList(),
@@ -62,6 +65,31 @@ data class UsageView(
     val error: String? = null,
     val loading: Boolean = false,
 )
+
+/**
+ * ホストのエージェントのトークン使用量の統計 (コアが各エージェントのセッションログから数える)。使用量のメーター ([UsageView]) と
+ * 違い、期間 ([days]) を選べる。読み直している間も前の [report] を持ち続ける (画面が空にならない)。
+ */
+data class StatsView(
+    val report: UsageStats? = null,
+    /** 最後の読み取りが失敗した理由 (読み直し始めると消える。[report] は前のまま残す)。 */
+    val error: String? = null,
+    val loading: Boolean = false,
+    /** 選ばれている期間 (日数。[STATS_PERIODS] のどれか、または 1–[MAX_STATS_DAYS])。 */
+    val days: Int = DEFAULT_STATS_DAYS,
+) {
+    /** [report] が選ばれている期間のものでない (期間を変えて読み込み中、または読み込みに失敗した)。 */
+    val isStale: Boolean get() = report != null && report.periodDays != days.toLong()
+}
+
+/** 画面が出す期間 (日数)。コアは 1–[MAX_STATS_DAYS] を受ける。 */
+val STATS_PERIODS: List<Int> = listOf(7, 30, 90, 365)
+
+/** 期間を選ぶ前の既定。コアの既定でもある。 */
+const val DEFAULT_STATS_DAYS: Int = 30
+
+/** コアが受ける期間の上限。 */
+const val MAX_STATS_DAYS: Int = 366
 
 /** コアが動いているマシン (ping の最後の応答)。 */
 data class HostView(
