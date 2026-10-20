@@ -248,12 +248,24 @@ impl Emitter<'_> {
             );
             return None;
         }
-        let d = f.default.as_ref().unwrap_or_else(|| {
-            panic!(
-                "{}.{}: optional field without a known default",
-                self.def.name, f.key
-            )
-        });
+        // schemars leaves the default out of a field it skips when empty
+        // (`default` with `skip_serializing_if = "Vec::is_empty"`): the empty
+        // list is the default then.
+        let skipped_when_empty = match f.ty {
+            Ty::List(_) if !f.always_written => Some(Value::Array(Vec::new())),
+            Ty::Map(_) if !f.always_written => Some(Value::Object(Default::default())),
+            _ => None,
+        };
+        let d = f
+            .default
+            .as_ref()
+            .or(skipped_when_empty.as_ref())
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}.{}: optional field without a known default",
+                    self.def.name, f.key
+                )
+            });
         Some(match (&f.ty, d) {
             (Ty::Bool, Value::Bool(b)) => b.to_string(),
             (Ty::Int, Value::Number(n)) => n.to_string(),

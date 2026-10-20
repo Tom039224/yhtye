@@ -2,6 +2,7 @@
 //!
 //! - [`acp`]: ACP client (agent processes and sessions)
 //! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
+//! - [`attachments`]: files attached to a user message (saving, delivery to the agent)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
@@ -17,6 +18,7 @@
 pub mod acp;
 pub mod agents;
 pub mod api;
+pub mod attachments;
 mod clock;
 pub mod domain;
 pub mod git;

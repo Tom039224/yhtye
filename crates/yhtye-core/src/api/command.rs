@@ -14,6 +14,7 @@ use crate::agents::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessDetection, HarnessInfo,
     HarnessModels, ModelEfforts, RoleSettings,
 };
+use crate::attachments::AttachmentMeta;
 use crate::domain::{ErrorCode, ToolError};
 use crate::git::GitOverview;
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
@@ -56,10 +57,53 @@ pub enum ApiCommand {
     /// idle). Starts that orchestrator if it is not running (Stage 8: lazily,
     /// restoring the chat's stored session if there is one). `not_found` for an
     /// unknown chat, `invalid_state` when the chat's worktree no longer exists.
+    /// `attachments` are files staged with `stage_attachment` for this chat; the
+    /// text may be empty when there is at least one (`invalid_argument` if there
+    /// is neither). `not_found` for an attachment that does not exist,
+    /// `invalid_argument` for one that was sent before.
     SendUserMessage {
         project: String,
         chat: String,
         text: String,
+        /// Ids from `attachment_staged`, in the order to show them (a client
+        /// without attachments leaves it out).
+        #[serde(default)]
+        #[ts(optional = nullable)]
+        attachments: Vec<String>,
+    },
+    /// Saves a file the user wants to attach to a message of `chat` (the project
+    /// must be registered, the chat must exist). `data_base64` is the whole file,
+    /// of any size (a transport may limit it). `name` is made safe to save under
+    /// (directory parts are dropped); `mime` is the client's claim, corrected by
+    /// the content. Answers `attachment_staged`: its id for `send_user_message`,
+    /// its kind, and how it is expected to be delivered to the chat's
+    /// orchestrator (`delivery`): `native` when the harness it runs accepts that
+    /// kind (images, or text as embedded context), else `path`. The final choice
+    /// is made when the message is sent, with the orchestrator actually running;
+    /// the `prompted` event says what it was. `invalid_argument` for bad base64.
+    StageAttachment {
+        project: String,
+        chat: String,
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        mime: Option<String>,
+        data_base64: String,
+    },
+    /// Deletes a staged attachment that was not sent. `not_found` if there is
+    /// none, `invalid_state` once a message was sent with it.
+    DiscardAttachment {
+        project: String,
+        chat: String,
+        id: String,
+    },
+    /// A staged or sent attachment with its content (previews in the
+    /// conversation, also on remote devices). `not_found` if it does not exist
+    /// (or its chat was deleted).
+    GetAttachment {
+        project: String,
+        chat: String,
+        id: String,
     },
     /// The user opened `chat` in the UI: its orchestrator is started now,
     /// restoring its stored session, if it is not running and has anything to
@@ -393,6 +437,15 @@ pub enum ApiResponse {
     },
     /// The command was accepted (sending, cancelling).
     Accepted,
+    /// Answer of `stage_attachment`.
+    AttachmentStaged {
+        attachment: AttachmentMeta,
+    },
+    /// Answer of `get_attachment`.
+    Attachment {
+        attachment: AttachmentMeta,
+        data_base64: String,
+    },
     Chats {
         chats: Vec<ChatInfo>,
     },

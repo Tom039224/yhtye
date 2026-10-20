@@ -231,6 +231,7 @@ async fn projects_are_validated_registered_and_reopened() {
         project: p.id.clone(),
         chat: "C-1".into(),
         text: "  \n".into(),
+        attachments: vec![],
     };
     assert_eq!(
         error_code(&core, empty).await,
@@ -273,6 +274,7 @@ async fn a_request_runs_to_the_merge_through_the_facade() {
         project: project.clone(),
         chat: "C-1".into(),
         text: "Add hello.txt please".into(),
+        attachments: vec![],
     };
     assert!(matches!(run(&core, send).await, ApiResponse::Accepted));
     let mut seen = Vec::new();
@@ -342,6 +344,7 @@ async fn run_forgetful(finish_on_reminder: bool) -> (TempRepo, Snapshot, Vec<Api
         project: project.clone(),
         chat: "C-1".into(),
         text: "Add hello.txt please".into(),
+        attachments: vec![],
     };
     assert!(matches!(run(&core, send).await, ApiResponse::Accepted));
     let mut seen = Vec::new();
@@ -432,6 +435,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         project: project.clone(),
         chat: "C-1".into(),
         text: text.into(),
+        attachments: vec![],
     };
     let mut seen = Vec::new();
 
@@ -476,7 +480,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
         Some("cancelled by the user")
     );
     until(&mut rx, &mut seen, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, text }
+        matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
             if session == ORCHESTRATOR_SESSION && text.contains("the user cancelled task T-1"))
     })
     .await;
@@ -509,7 +513,7 @@ async fn the_user_can_cancel_the_orchestrator_turn_a_task_and_a_group() {
     run(&core, cancel_group).await;
     run(&core, cancel_task("T-1")).await;
     until(&mut rx, &mut seen, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, text }
+        matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
             if session == ORCHESTRATOR_SESSION && text.contains("cancelled group G-1"))
     })
     .await;
@@ -577,6 +581,7 @@ async fn a_project_is_running_while_a_turn_or_a_task_is_on() {
         project: project.clone(),
         chat: "C-1".into(),
         text: text.into(),
+        attachments: vec![],
     };
     let mut seen = Vec::new();
 
@@ -653,6 +658,7 @@ async fn projects_with_unfinished_work_are_reopened_and_resumed_on_start() {
         project: project.clone(),
         chat: "C-1".into(),
         text: "start one".into(),
+        attachments: vec![],
     };
     run(&core, send).await;
     let mut seen = Vec::new();

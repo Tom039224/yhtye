@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::event::DomainEvent;
 use super::types::{MessageOutcome, MessageVia, Role, TaskKind, ToolError};
+use crate::attachments::AttachmentMeta;
 use crate::mcp::SessionBinding;
 use crate::mcp::tools::{CreateGroupArgs, MessageTaskArgs, ToolCall};
 
@@ -180,6 +181,9 @@ pub enum DomainCommand {
     UserMessage {
         chat: String,
         text: String,
+        /// Staged attachments sent with it.
+        #[serde(default)]
+        attachments: Vec<AttachmentMeta>,
     },
     /// The orchestrator's turn ended (Stage 7a: a settled group it left open
     /// gets a reminder, then Yhtye finishes it).

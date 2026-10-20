@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
+use super::prompt::Prompt;
 use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
 use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions};
@@ -66,9 +67,9 @@ struct Attempt {
 
 /// What to send once a session started in the background is up.
 pub(super) struct FirstPrompts {
-    pub(super) queued: VecDeque<String>,
+    pub(super) queued: VecDeque<Prompt>,
     /// Replaces the first queued prompt if the stored session was not restored.
-    pub(super) fallback: Option<String>,
+    pub(super) fallback: Option<Prompt>,
 }
 
 impl Sessions {
@@ -325,9 +326,9 @@ impl Sessions {
     }
 }
 
-pub(super) fn replace_first(queued: &mut VecDeque<String>, text: String) {
+pub(super) fn replace_first(queued: &mut VecDeque<Prompt>, prompt: Prompt) {
     match queued.front_mut() {
-        Some(first) => *first = text,
-        None => queued.push_back(text),
+        Some(first) => *first = prompt,
+        None => queued.push_back(prompt),
     }
 }

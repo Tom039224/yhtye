@@ -223,7 +223,7 @@ async fn ws(
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    upgrade.on_upgrade(move |socket| async move {
+    crate::ws::accept_large_messages(upgrade).on_upgrade(move |socket| async move {
         let shared = Arc::clone(&ctx.shared);
         // Revoked between the check and now: close at once.
         let Some(cancel) = shared.attach(&device.id, &ctx.cancel, ctx.generation).await else {

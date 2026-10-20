@@ -65,7 +65,14 @@ message is delivered or handed back (seconds, at most about a minute) and return
 
 Your prompts consist of blocks `[yhtye:<type>] key=value ...` followed by a body:
 
-- `user_message` — the user wrote to you.
+- `user_message` — the user wrote to you. It may be followed by `attachment` lines.
+- `attachment` (`name`, `mime`, `size`, `delivery`, `path`) — a file the user attached to
+  the `user_message` above it. With `delivery=native` its content is part of this prompt
+  (an image, or a text file as embedded context), after the text. With `delivery=path`
+  it was only saved: read the file at the absolute `path` with your tools (the Read tool)
+  when you need it. Either way `path` stays valid for the whole chat, so give it to a task
+  (in its `instruction`) when an agent has to look at the file; agents cannot see what was
+  attached to your prompt.
 - `help_raised` (`help_id`, `task`, `kind`) — an agent needs you: `answer_help`
   (`resume` with a `reply`, or `cancel_task`). For `kind=merge_conflict` (the task's
   branch conflicts with work already merged into the group), first `modify_steps` with

@@ -4,6 +4,8 @@
 //! The same flow against the real Tailscale is `real_tailscale_round_trip`
 //! (`#[ignore]`).
 
+mod common;
+
 use std::net::IpAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -11,12 +13,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use common::repo::TempRepo;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{
+    MaybeTlsStream, WebSocketStream, connect_async, connect_async_with_config,
+};
 use yhtye_core::api::{ApiCommand, ApiEventBody, ApiResponse};
 use yhtye_core::remote::{
     ClientKind, Clients, MAX_FAILURES, PairingCode, RemoteDevice, RemoteStatus, Tailscale,
@@ -1045,5 +1053,95 @@ async fn every_client_sees_the_clients_and_their_changes() {
     let after = client_events(&mut local_events);
     assert_eq!(after.len(), 1, "one event for the revocation");
     assert_eq!(after[0].devices.len(), 1);
+    core.shutdown().await;
+}
+
+/// A connection whose own message limits are lifted too: the library's defaults
+/// (16 MiB per frame) would refuse the reply with a big file in it.
+async fn connect_unlimited(ws_url: &str, token: &str) -> Ws {
+    let mut req = ws_url.into_client_request().expect("request");
+    req.headers_mut().insert(
+        "authorization",
+        format!("Bearer {token}").parse().expect("header"),
+    );
+    let config = WebSocketConfig::default()
+        .max_message_size(None)
+        .max_frame_size(None);
+    connect_async_with_config(req, Some(config), false)
+        .await
+        .expect("connects")
+        .0
+}
+
+/// A file does not have a size limit of its own: one that is over the library's
+/// default limits for a WebSocket message (16 MiB a frame) is attached from a
+/// paired device in one command and read back whole.
+#[tokio::test]
+async fn a_remote_device_attaches_a_file_over_the_default_websocket_limits() {
+    const SIZE: usize = 20 << 20;
+    let repo = TempRepo::new();
+    let core = Core::start(config(&repo.data, FakeTailscale::new()))
+        .await
+        .expect("core");
+    let port = free_port();
+    enable(&core, port).await;
+    let code = new_code(&core).await;
+    let (st, paired) = pair(&format!("http://127.0.0.1:{port}"), &code.code, "Pixel").await;
+    assert_eq!(st, 200, "{paired}");
+    let token = paired["token"].as_str().expect("token").to_string();
+    let mut ws = connect_unlimited(&format!("ws://127.0.0.1:{port}/ws"), &token).await;
+    let mut events = Vec::new();
+
+    let opened = call(
+        &mut ws,
+        1,
+        json!({"type": "open_project", "path": repo.repo.display().to_string()}),
+        &mut events,
+    )
+    .await;
+    assert_eq!(opened["ok"]["type"], "project", "{opened}");
+    let project = opened["ok"]["project"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let chat = call(
+        &mut ws,
+        2,
+        json!({"type": "create_chat", "project": project, "branch": "main"}),
+        &mut events,
+    )
+    .await;
+    assert_eq!(chat["ok"]["type"], "chat", "{chat}");
+    let chat = chat["ok"]["chat"]["id"].as_str().expect("id").to_string();
+
+    let bytes: Vec<u8> = (0..SIZE).map(|i| (i % 251) as u8).collect();
+    let data_base64 = STANDARD.encode(&bytes);
+    assert!(data_base64.len() > 16 << 20, "over the default frame limit");
+    let staged = call(
+        &mut ws,
+        3,
+        json!({"type": "stage_attachment", "project": project, "chat": chat,
+               "name": "big.bin", "data_base64": data_base64}),
+        &mut events,
+    )
+    .await;
+    assert_eq!(staged["ok"]["type"], "attachment_staged", "{staged}");
+    let meta = &staged["ok"]["attachment"];
+    assert_eq!(meta["size"], SIZE, "{meta}");
+    assert_eq!(
+        (meta["kind"].as_str(), meta["delivery"].as_str()),
+        (Some("file"), Some("path"))
+    );
+
+    let back = call(
+        &mut ws,
+        4,
+        json!({"type": "get_attachment", "project": project, "chat": chat, "id": meta["id"]}),
+        &mut events,
+    )
+    .await;
+    assert_eq!(back["ok"]["type"], "attachment", "{back}");
+    let echoed = back["ok"]["data_base64"].as_str().expect("data");
+    assert!(echoed == data_base64, "the file comes back unchanged");
     core.shutdown().await;
 }
