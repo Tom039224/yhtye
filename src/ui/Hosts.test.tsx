@@ -1,17 +1,18 @@
-// The screens of the hosts (T-97, T-98): the project pull-down across hosts with
+// The screens of the hosts (T-97, T-98): the rail's projects across hosts with
 // the mark of a remote one, the banner and the footer of a remote host on
 // screen. The registry and the stores are real; the shell and the remote hosts
 // are fakes (src/test/remoteHosts.ts).
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RemoteDevice } from "../api/generated";
 import { LOCAL_HOST } from "../store/hosts";
 import { HostsProvider } from "../store/useHosts";
 import { FAR_ONLY, FAR_REPO, FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "../test/remoteHosts";
 import { ConnectionBanner } from "./ConnectionBanner";
+import { IconRail } from "./IconRail";
 import { Sidebar } from "./Sidebar";
 
 let t: TestHosts;
@@ -34,6 +35,13 @@ async function showRemote(host = "sid-1") {
   await waitFor(() => expect(t.registry.getState().active).toBe(host));
 }
 
+/** The rail on the hosts' registry; `onChange` is the view switch it asks for. */
+function mountRail() {
+  const onChange = vi.fn();
+  const user = mount(<IconRail view="work" onChange={onChange} settingsOpen={false} onOpenSettings={() => {}} />);
+  return { user, onChange };
+}
+
 const marks = (within_: HTMLElement) => within(within_).queryAllByRole("img", { name: /^リモート/ });
 
 beforeEach(() => {
@@ -44,14 +52,26 @@ afterEach(() => {
   t.registry.stop();
 });
 
-describe("the project pull-down across hosts", () => {
+describe("the rail's projects across hosts", () => {
+  /** Every remote host has both its projects open, so that the rail lists them. */
+  function withOpenFarProjects() {
+    t.registry.stop();
+    t = newTestHosts({
+      configureFar: (far) => {
+        far.core.info = { ...FAR_REPO, open: true };
+        far.core.others = [{ ...FAR_ONLY, open: true, awake: true }];
+      },
+    });
+  }
+  const rows = () => within(screen.getByRole("list", { name: "開いているプロジェクト" })).getAllByRole("button");
+  const row = (name: RegExp) => within(screen.getByRole("list", { name: "開いているプロジェクト" })).getByRole("button", { name });
+
   it("lists this PC's projects first, then each remote host's, a remote one marked with its host", async () => {
-    const user = mount(<Sidebar />);
+    withOpenFarProjects();
+    mountRail();
     await started(["sid-1", "sid-2"]);
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    const options = within(screen.getByRole("listbox", { name: "プロジェクト" })).getAllByRole("option");
-    // `repo` is a project of three hosts and `server-only` of two: those rows say whose they are.
-    expect(options.map((o) => o.textContent)).toEqual([
+    await waitFor(() => expect(rows()).toHaveLength(6));
+    expect(rows().map((o) => o.textContent)).toEqual([
       "repo",
       "beta",
       "repohost-sid-1",
@@ -59,114 +79,125 @@ describe("the project pull-down across hosts", () => {
       "repohost-sid-2",
       "server-onlyhost-sid-2",
     ]);
-    expect(options.map((o) => marks(o).length)).toEqual([0, 0, 1, 1, 1, 1]);
-    expect(options[2]).toHaveAttribute("title", expect.stringContaining("/srv/repo"));
+    expect(rows().map((o) => marks(o).length)).toEqual([0, 0, 1, 1, 1, 1]);
+    expect(rows()[2]).toHaveAttribute("title", expect.stringContaining("/srv/repo"));
   });
 
-  it("marks a remote project with the host's name and state on hover, and says nothing more where the name is its own", async () => {
-    const user = mount(<Sidebar />);
+  it("lists only the projects that are open: a remote host's others wait on the dashboard", async () => {
+    mountRail();
+    await started(["sid-1"]);
+    expect(rows().map((o) => o.textContent)).toEqual(["repo", "beta"]);
+  });
+
+  it("marks a remote project with the host's name and state on hover", async () => {
+    withOpenFarProjects();
+    mountRail();
     await started();
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    const options = screen.getAllByRole("option");
-    // `server-only` is only on the host: no host name beside it, but the mark has it.
-    expect(options[3].textContent).toBe("server-only");
-    const mark = marks(options[3])[0];
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    const mark = marks(rows()[3])[0];
     expect(mark).toHaveAttribute("title", "host-sid-1 · 接続中");
     expect(mark).not.toHaveClass("down");
     expect(mark.querySelector("svg")).toHaveAttribute("data-icon", "remote");
   });
 
   it("greys the mark of a host that is not connected, and does not pick its project", async () => {
-    const user = mount(<Sidebar />);
+    withOpenFarProjects();
+    const { onChange } = mountRail();
     await started();
+    await waitFor(() => expect(rows()).toHaveLength(4));
     (t.api as FakeHostsApi).notice({
       type: "status",
       server_id: "sid-1",
       status: { connection: { state: "waiting_to_reconnect", attempt: 1, delay_ms: 1000, reason: "refused" }, server: null },
     });
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    const option = screen.getByRole("option", { name: /server-only/ });
-    expect(option).toHaveAttribute("aria-disabled", "true");
-    const mark = marks(option)[0];
+    const far = row(/^server-only に切り替え/);
+    await waitFor(() => expect(far).toHaveAttribute("aria-disabled", "true"));
+    const mark = marks(far)[0];
     expect(mark).toHaveClass("down");
     expect(mark).toHaveAttribute("title", "host-sid-1 · 切断 (再接続待ち)");
-    await user.click(option);
+    const user = userEvent.setup();
+    await user.click(far);
     expect(t.registry.getState().active).toBe(LOCAL_HOST);
     expect(t.fars.get("sid-1")?.transport.callsOf("open_project")).toEqual([]);
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("looks as it did when no host is paired with: no mark, no host name", async () => {
-    const user = mount(<Sidebar />);
+    mountRail();
     await started([]);
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    const options = screen.getAllByRole("option");
-    expect(options.map((o) => o.textContent)).toEqual(["repo", "beta"]);
+    expect(rows().map((o) => o.textContent)).toEqual(["repo", "beta"]);
     expect(screen.queryAllByRole("img", { name: /^リモート/ })).toEqual([]);
     expect(document.querySelector(".host-tag, .remote-mark")).toBeNull();
   });
 
-  it("switches the screen to the host of the project that is picked, and opens it there", async () => {
-    const user = mount(<Sidebar />);
+  it("switches the screen to the host of the project that is clicked, and opens it there", async () => {
+    withOpenFarProjects();
+    const { user, onChange } = mountRail();
     await started();
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    await user.click(screen.getByRole("option", { name: /server-only/ }));
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    await user.click(row(/^server-only に切り替え/));
+    expect(onChange).toHaveBeenCalledWith("work");
     expect(t.registry.getState().active).toBe("sid-1");
-    await waitFor(() => expect(screen.getByRole("button", { name: /^server-only/ })).toBeInTheDocument());
     expect(t.fars.get("sid-1")?.transport.callsOf("open_project").map((c) => c.path)).toEqual([FAR_ONLY.path]);
     expect(t.localTransport.callsOf("open_project")).toEqual([]);
-
-    // The list is still every host's, the open one is marked, and so is the pull-down itself.
-    // Opening a project uses it (T-103), so within its host's rows it is the first.
-    const trigger = screen.getByRole("button", { name: /^server-only/ });
-    expect(marks(trigger)).toHaveLength(1);
-    await user.click(trigger);
-    const options = screen.getAllByRole("option");
-    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["false", "false", "true", "false"]);
+    // The rail follows: the project is the current one now, and only it.
+    await waitFor(() => expect(row(/^server-only に切り替え/)).toHaveAttribute("aria-current", "true"));
+    expect(rows().filter((r) => r.getAttribute("aria-current") === "true")).toHaveLength(1);
   });
 
   it("keeps the same project of another host apart from the one on screen", async () => {
-    const user = mount(<Sidebar />);
+    withOpenFarProjects();
+    mountRail();
     await started();
     await act(() => t.registry.selectProject(LOCAL_HOST, t.registry.getState().projects[0].project));
     await waitFor(() => expect(t.localTransport.callsOf("open_project")).toHaveLength(1));
-    await user.click(screen.getByRole("button", { name: "repo" }));
-    // Both rows are called repo; only this app's is the open one.
-    const options = screen.getAllByRole("option", { name: /^repo/ });
-    expect(options.map((o) => o.getAttribute("aria-selected"))).toEqual(["true", "false"]);
-    // The trigger of a local project has no mark.
-    expect(marks(screen.getByRole("button", { name: "repo" }))).toEqual([]);
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    // Two rows are called repo; only this app's is the open one.
+    const repos = rows().filter((r) => r.getAttribute("aria-label")?.startsWith("repo に切り替え"));
+    expect(repos.map((o) => o.getAttribute("aria-current"))).toEqual(["true", null]);
+    expect(marks(repos[0])).toEqual([]);
+    expect(marks(repos[1])).toHaveLength(1);
   });
 
-  it("opens a repository on the host that is on screen, and says whose path it takes", async () => {
-    const user = mount(<Sidebar />);
+  it("gives the status dot of a remote project by that host's word, and of the same id by its own", async () => {
+    t.registry.stop();
+    t = newTestHosts({
+      configureFar: (far) => {
+        far.core.info = { ...FAR_REPO, open: true, running: true, awake: true };
+      },
+    });
+    mountRail();
     await started();
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    expect(screen.getByRole("textbox", { name: "開くリポジトリのパス" })).toHaveAttribute("placeholder", "/path/to/git/repository");
-    await user.keyboard("{Escape}");
-
-    await showRemote();
-    await user.click(screen.getByRole("button", { name: /^server-only/ }));
-    const input = screen.getByRole("textbox", { name: "開くリポジトリのパス (host-sid-1 上)" });
-    expect(input).toHaveAttribute("placeholder", "host-sid-1 上のパス");
-    await user.type(input, "/srv/other{Enter}");
-    expect(t.fars.get("sid-1")?.transport.callsOf("open_project").map((c) => c.path)).toContain("/srv/other");
-    expect(t.localTransport.callsOf("open_project").map((c) => c.path)).not.toContain("/srv/other");
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    expect(screen.getByTestId("rail-dot-host:sid-1:repo")).toHaveClass("project-dot-running");
+    expect(screen.getByTestId("rail-dot-repo")).toHaveClass("project-dot-idle");
   });
 });
 
-describe("sleeping and moving projects in the pull-down across hosts", () => {
-  it("offers the menu and the drag on the rows of this PC only while this PC is on screen", async () => {
-    const user = mount(<Sidebar />);
-    await started();
-    await user.click(screen.getByRole("button", { name: "プロジェクトを選択" }));
-    const options = screen.getAllByRole("option");
-    // repo, beta (this PC's), then repo, server-only (the host's).
-    expect(options.map((o) => o.getAttribute("draggable"))).toEqual(["true", "true", null, null]);
+describe("sleeping and moving projects in the rail across hosts", () => {
+  function withOpenFarProjects() {
+    t.registry.stop();
+    t = newTestHosts({
+      configureFar: (far) => {
+        far.core.info = { ...FAR_REPO, open: true };
+        far.core.others = [{ ...FAR_ONLY, open: true, awake: true }];
+      },
+    });
+  }
+  const rows = () => within(screen.getByRole("list", { name: "開いているプロジェクト" })).getAllByRole("button");
 
-    await user.pointer({ keys: "[MouseRight]", target: options[3] });
+  it("offers the menu and the drag on the rows of this PC only while this PC is on screen", async () => {
+    withOpenFarProjects();
+    const { user } = mountRail();
+    await started();
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    // repo, beta (this PC's), then repo, server-only (the host's).
+    expect(rows().map((o) => o.closest("li")?.getAttribute("draggable") ?? null)).toEqual(["true", "true", null, null]);
+
+    await user.pointer({ keys: "[MouseRight]", target: rows()[3] });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
-    await user.pointer({ keys: "[MouseRight]", target: options[1] });
+    await user.pointer({ keys: "[MouseRight]", target: rows()[1] });
     const menu = screen.getByRole("menu", { name: "beta の操作" });
     await user.click(within(menu).getByRole("menuitem", { name: "上へ移動" }));
     expect(t.localTransport.callsOf("reorder_projects").at(-1)?.ids).toEqual(["beta", "repo"]);
@@ -174,19 +205,20 @@ describe("sleeping and moving projects in the pull-down across hosts", () => {
   });
 
   it("sends the move of a remote host's project to that host, and leaves this PC's rows alone", async () => {
-    const user = mount(<Sidebar />);
+    withOpenFarProjects();
+    const { user } = mountRail();
     await started();
     await showRemote();
-    await user.click(screen.getByRole("button", { name: /^server-only/ }));
-    const options = screen.getAllByRole("option");
+    await waitFor(() => expect(rows()).toHaveLength(4));
     // The host's own rows are the ones that can be moved now.
-    expect(options.map((o) => o.getAttribute("draggable"))).toEqual([null, null, "true", "true"]);
+    expect(rows().map((o) => o.closest("li")?.getAttribute("draggable") ?? null)).toEqual([null, null, "true", "true"]);
 
-    await user.pointer({ keys: "[MouseRight]", target: options[0] });
+    await user.pointer({ keys: "[MouseRight]", target: rows()[0] });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
     // Opening server-only used it: it is the host's first.
-    await user.pointer({ keys: "[MouseRight]", target: options[2] });
+    expect(rows()[2]).toHaveAttribute("aria-label", expect.stringMatching(/^server-only /));
+    await user.pointer({ keys: "[MouseRight]", target: rows()[2] });
     const menu = screen.getByRole("menu", { name: "server-only の操作" });
     expect(within(menu).getByRole("menuitem", { name: "上へ移動" })).toBeDisabled();
     await user.click(within(menu).getByRole("menuitem", { name: "下へ移動" }));
@@ -195,21 +227,19 @@ describe("sleeping and moving projects in the pull-down across hosts", () => {
   });
 });
 
-describe("the projects running in the background", () => {
-  it("carry the mark when they are a remote host's, and not otherwise", async () => {
+describe("the sidebar's project of a remote host", () => {
+  it("names the project with the remote mark, and this PC's without one", async () => {
     mount(<Sidebar />);
     await started();
-    // This PC's own `beta` is open in the background.
-    expect(await screen.findByRole("button", { name: /^beta に切り替え/ })).toBeInTheDocument();
-    expect(screen.queryAllByRole("img", { name: /^リモート/ })).toEqual([]);
+    await act(() => t.registry.selectProject(LOCAL_HOST, t.registry.getState().projects[0].project));
+    await waitFor(() => expect(document.querySelector(".project-current .name")).toHaveTextContent("repo"));
+    expect(marks(document.querySelector(".project-current") as HTMLElement)).toEqual([]);
 
-    const far = t.fars.get("sid-1")!;
-    far.core.others = [{ ...FAR_ONLY, open: true, awake: true }];
-    await act(() => far.store.refreshProjects());
-    await act(() => t.registry.selectProject("sid-1", FAR_REPO));
-    const chip = await screen.findByRole("button", { name: /^server-only に切り替え/ });
-    expect(marks(chip)).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: /^beta に切り替え/ })).not.toBeInTheDocument();
+    await showRemote();
+    await waitFor(() => expect(document.querySelector(".project-current .name")).toHaveTextContent("server-only"));
+    const current = document.querySelector(".project-current") as HTMLElement;
+    expect(marks(current)).toHaveLength(1);
+    expect(current).toHaveAttribute("title", expect.stringContaining("host-sid-1: /srv/server-only"));
   });
 });
 

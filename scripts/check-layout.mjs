@@ -39,11 +39,11 @@ const VIEWPORTS = [
 const INTERACTIVE_VIEWPORTS = VIEWPORTS.slice(0, 3);
 const READY_TIMEOUT_MS = 30_000;
 const STRUCTURE = [
-  "html", "body", "#root", ".app", ".titlebar", ".banners", ".body", ".rail", ".sidebar", ".branches", ".side-footer", ".workspace",
+  "html", "body", "#root", ".app", ".titlebar", ".banners", ".body", ".rail-panel", ".sidebar", ".branches", ".side-footer", ".workspace", ".dashboard",
   ".conversation", ".right", ".tasks", ".bottom", ".statusbar", ".modal-backdrop", ".settings-modal",
 ];
 /** Pop-ups that must lie inside the window and inside every box that clips them. */
-const OVERLAYS = [".row-menu", ".project-popup", ".picker-popover", ".settings-modal"];
+const OVERLAYS = [".row-menu", ".rail-panel", ".picker-popover", ".settings-modal"];
 
 // ---- the checks, run inside the page ----------------------------------------------------------
 
@@ -227,14 +227,123 @@ function inspectNames({ ids }) {
   return problems;
 }
 
+/**
+ * Run in the page with the rail expanded (the pointer over it, or the keyboard focus in it): the
+ * rail still takes 44px of the layout, so the sidebar has not moved; its panel lies over the
+ * sidebar inside the window; every row, the bottom buttons included, stays inside the panel; and
+ * a long list of projects scrolls inside the panel instead of pushing the buttons out.
+ */
+function inspectRail({ expanded }) {
+  const problems = [];
+  const rect = (el) => el.getBoundingClientRect();
+  const rail = document.querySelector(".rail");
+  const panel = document.querySelector(".rail-panel");
+  if (!rail || !panel) return ["the rail has no panel"];
+  if (Math.abs(rect(rail).width - 44) > 0.5) problems.push(`the rail takes ${rect(rail).width}px of the layout, not 44px`);
+  const sidebar = document.querySelector(".sidebar");
+  if (sidebar && Math.abs(rect(sidebar).left - 44) > 0.5) problems.push(`the sidebar starts at ${rect(sidebar).left}px, not right of the 44px rail`);
+  const open = rect(panel).width;
+  if (expanded && open < 180) problems.push(`the rail panel is only ${Math.round(open)}px wide while expanded`);
+  if (!expanded && Math.abs(open - 44) > 0.5) problems.push(`the rail panel is ${Math.round(open)}px wide while collapsed`);
+  if (getComputedStyle(panel).position !== "absolute") problems.push("the rail panel is not an overlay (position: absolute)");
+  const box = rect(panel);
+  for (const row of panel.querySelectorAll(".rail-row")) {
+    const r = rect(row);
+    if (r.width === 0 || r.height === 0) continue; // scrolled out of the project list
+    const inList = row.closest(".rail-project-list");
+    if (r.right > box.right + 0.5 || r.left < box.left - 0.5) problems.push(`a rail row sticks out of the panel sideways (${Math.round(r.left)}-${Math.round(r.right)})`);
+    if (!inList && (r.bottom > box.bottom + 0.5 || r.top < box.top - 0.5)) problems.push(`the rail button "${row.getAttribute("aria-label")}" is pushed out of the panel`);
+  }
+  const labels = [...panel.querySelectorAll(".rail-label")].filter((el) => el.getClientRects().length > 0);
+  if (expanded && labels.length === 0) problems.push("no label is shown while the rail is expanded");
+  if (!expanded && labels.length > 0) problems.push(`${labels.length} labels are shown while the rail is collapsed`);
+  for (const el of labels) {
+    if (el.scrollWidth > el.clientWidth + 1) {
+      const tip = el.closest("[title]")?.getAttribute("title") ?? "";
+      if (!tip.includes(el.textContent.trim().slice(0, 4))) problems.push(`the rail label "${el.textContent.trim().slice(0, 30)}" is cut short and no tooltip has the whole`);
+    }
+  }
+  const settings = [...panel.querySelectorAll(".rail-bottom .rail-row")].at(-1);
+  if (settings && rect(settings).bottom > box.bottom + 0.5) problems.push("the settings button is pushed below the panel");
+  return problems;
+}
+
+/**
+ * Run in the page of the dashboard: it scrolls inside itself only; the projects, the cards and the
+ * charts keep their size (no squeezed heatmap cells, no zero-width chart); long names are cut with
+ * a tooltip that has the whole. `charts`: the statistics are shown (not an empty or error state).
+ */
+function inspectDashboard({ charts }) {
+  const problems = [];
+  const rect = (el) => el.getBoundingClientRect();
+  const scroll = document.querySelector(".dashboard-scroll");
+  if (!scroll) return ["the dashboard is not shown"];
+  if (scroll.scrollWidth > scroll.clientWidth + 1) problems.push(`the dashboard is ${scroll.scrollWidth - scroll.clientWidth}px wider than its box`);
+  for (const row of scroll.querySelectorAll(".dash-project")) {
+    if (rect(row).width < 120) problems.push(`a project row is squeezed (${Math.round(rect(row).width)}px)`);
+    const name = row.querySelector(".dash-project-name .name");
+    if (name && name.scrollWidth > name.clientWidth + 1 && !row.getAttribute("title")?.includes("/")) problems.push("a project name is cut short and its row has no tooltip");
+  }
+  if (!charts) return problems;
+  const cards = [...scroll.querySelectorAll(".stat-card")];
+  if (cards.length !== 5) problems.push(`${cards.length} summary cards, expected 5`);
+  for (const value of scroll.querySelectorAll(".stat-value")) {
+    if (value.scrollWidth > value.clientWidth + 1) problems.push(`a summary value is cut off (${value.textContent})`);
+  }
+  const svg = scroll.querySelector(".chart-svg");
+  if (!svg || rect(svg).width < 150 || rect(svg).height < 60) problems.push("the daily chart is missing or too small");
+  const days = scroll.querySelectorAll(".chart-day").length;
+  if (days > 0 && rect(svg).width / days < 2) problems.push(`the daily chart has ${days} bars in ${Math.round(rect(svg).width)}px`);
+  for (const cell of scroll.querySelectorAll(".heatmap .heat-cell")) {
+    if (rect(cell).width < 6 || rect(cell).height < 6) {
+      problems.push("a heatmap cell is squeezed");
+      break;
+    }
+  }
+  for (const section of scroll.querySelectorAll(".breakdown")) {
+    const box = rect(section);
+    if (box.width < 200) problems.push(`the "${section.getAttribute("aria-label")}" breakdown is squeezed (${Math.round(box.width)}px)`);
+    for (const el of section.querySelectorAll(".breakdown-row *")) {
+      const r = rect(el);
+      if (r.width > 0 && r.right > box.right + 0.5) {
+        problems.push(`something in the "${section.getAttribute("aria-label")}" breakdown sticks out of it`);
+        break;
+      }
+    }
+    for (const name of section.querySelectorAll(".breakdown-name")) {
+      if (name.scrollWidth > name.clientWidth + 1 && !name.getAttribute("title")) problems.push("a breakdown name is cut short and has no tooltip");
+    }
+  }
+  const folders = scroll.querySelector(".folder-browser");
+  if (folders && rect(folders).right > rect(scroll).right + 0.5) problems.push("the folder browser sticks out of the dashboard");
+  return problems;
+}
+
 // ---- the screen states -------------------------------------------------------------------------
 
 const click = (page, name, options = {}) => page.getByRole("button", { name, ...options }).first().click();
 
-async function openProjectPicker(page) {
-  await page.locator(".project-trigger").click();
-  await page.locator(".project-popup").waitFor();
+/** Brings the pointer over the rail, which expands its panel over the sidebar. */
+async function hoverRail(page) {
+  await page.locator(".rail").hover({ position: { x: 22, y: 300 } });
+  await page.waitForFunction(() => document.querySelector(".rail-panel").getBoundingClientRect().width > 180);
 }
+
+/** Moves the keyboard focus into the rail (Tab from the title bar), which expands it too. */
+async function focusRail(page) {
+  await page.locator(".titlebar").evaluate(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+  await page.keyboard.press("Tab");
+  await page.waitForFunction(() => document.querySelector(".rail-panel").getBoundingClientRect().width > 180);
+}
+
+/** Opens the dashboard from the rail (for the scenarios that start in the work view). */
+async function showDashboard(page) {
+  await click(page, "ダッシュボード", { exact: true });
+  await page.getByRole("region", { name: "dashboard" }).waitFor();
+}
+
+/** Waits for the statistics of the dashboard (or its empty / error state) to be drawn. */
+const statsShown = (page) => page.locator(".usage-report, .usage-empty, .usage-error, [data-testid='usage-none']").first().waitFor();
 
 async function openRowMenu(page, which) {
   const more = page.locator(".chat-more");
@@ -253,10 +362,10 @@ async function wheelOver(page, selector, deltaY) {
   await page.waitForTimeout(150);
 }
 
-/** A project of the remote host with the long name, picked in the pull-down (that host's store is on screen). */
+/** A project of the remote host with the long name, opened from the dashboard (that host's store is on screen). */
 async function showRemoteProject(page) {
-  await openProjectPicker(page);
-  await page.locator(".project-option", { hasText: "server-only" }).first().click();
+  await showDashboard(page);
+  await page.locator(".dash-project", { hasText: "server-only" }).first().click();
   await page.waitForFunction(() => document.querySelector(".host-footer [data-icon='server-headless']"));
   await page.evaluate(() => window.__yhtye.hosts.api.notice({ type: "status", server_id: "sid-long", status: { connection: { state: "waiting_to_reconnect", attempt: 1, delay_ms: 3000, reason: "connection refused: the host is not there" }, server: null } }));
   await page.locator(".banners .alert").first().waitFor();
@@ -336,7 +445,27 @@ async function failSendThreeTimes(page) {
   await page.locator(".banners .alert").first().waitFor();
 }
 
-/** { name, scenario, interactive, run(page), verify(page) }: `run` brings the page into the state (default: as loaded); `verify` returns more problems. */
+/** The rail's check (inspectRail) as a state's `verify`. */
+const rail = (expanded) => (page) => page.evaluate(inspectRail, { expanded });
+
+/** The dashboard's check (inspectDashboard) as a state's `verify`; `charts`: the statistics are shown. */
+const dashboard = (charts = true) => (page) => page.evaluate(inspectDashboard, { charts });
+
+/** Chooses the period of the statistics and waits for the chart to have that many days. */
+async function choosePeriod(page, days) {
+  await statsShown(page);
+  await page.getByRole("radio", { name: `${days}日` }).click();
+  await page.waitForFunction((n) => document.querySelectorAll(".chart-day").length === n, days);
+}
+
+/** Opens the host folder browser of "プロジェクトを追加" (the dev bridge has no OS dialog). */
+async function openFolderBrowser(page) {
+  await click(page, "プロジェクトを追加", { exact: true });
+  await page.getByRole("region", { name: "フォルダを選択" }).waitFor();
+  await page.locator(".folder-entry").nth(1).waitFor();
+}
+
+/** { name, scenario, view, interactive, run(page), verify(page) }: `view` is the view the page opens on (default: work); `run` brings the page into the state (default: as loaded); `verify` returns more problems. */
 const STATES = [
   { name: "no project open", scenario: "empty" },
   { name: "the recorded run", scenario: "run" },
@@ -347,12 +476,55 @@ const STATES = [
   { name: "long: task list wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".tasks .scroll", 4000) },
   { name: "long: git panel wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".bottom .scroll", 4000) },
   { name: "long: branch tree wheeled on", scenario: "long", interactive: true, run: (page) => wheelOver(page, ".branch-tree", 4000) },
-  { name: "long: project pull-down open", scenario: "long", interactive: true, run: openProjectPicker },
-  { name: "long: project pull-down open, arrowed down to the last project", scenario: "long", interactive: true, run: async (page) => {
-    await openProjectPicker(page);
-    await page.keyboard.press("End");
-    await page.waitForTimeout(100);
-  } },
+  { name: "rail: collapsed, with many projects open", scenario: "long", verify: rail(false) },
+  { name: "rail: expanded by the pointer", scenario: "long", interactive: true, run: hoverRail, verify: rail(true) },
+  { name: "rail: expanded, the project list wheeled on", scenario: "long", interactive: true, run: async (page) => {
+    await hoverRail(page);
+    await wheelOver(page, ".rail-project-list", 4000);
+  }, verify: rail(true) },
+  { name: "rail: expanded by the keyboard focus", scenario: "long", interactive: true, run: focusRail, verify: rail(true) },
+  { name: "rail: a project's menu open", scenario: "long", interactive: true, run: async (page) => {
+    await hoverRail(page);
+    await page.locator(".rail-project-row").nth(1).click({ button: "right" });
+    await page.locator(".row-menu").waitFor();
+  }, verify: rail(true) },
+  { name: "rail: the last project's menu open (no room below)", scenario: "long", interactive: true, run: async (page) => {
+    await hoverRail(page);
+    await page.locator(".rail-project-list").evaluate((el) => void (el.scrollTop = el.scrollHeight));
+    await page.locator(".rail-project-row").last().click({ button: "right" });
+    await page.locator(".row-menu").waitFor();
+  }, verify: rail(true) },
+  { name: "rail: expanded on the dashboard", scenario: "long", view: "dashboard", interactive: true, run: hoverRail, verify: rail(true) },
+  { name: "dashboard: projects and statistics", scenario: "run", view: "dashboard", run: statsShown, verify: dashboard(true) },
+  { name: "dashboard: many projects with long names, 30 days of statistics", scenario: "long", view: "dashboard", run: statsShown, verify: dashboard(true) },
+  { name: "dashboard: 7 days of statistics", scenario: "long", view: "dashboard", interactive: true, run: (page) => choosePeriod(page, 7), verify: dashboard(true) },
+  { name: "dashboard: 90 days of statistics", scenario: "long", view: "dashboard", interactive: true, run: (page) => choosePeriod(page, 90), verify: dashboard(true) },
+  { name: "dashboard: folder browser open (a big home folder)", scenario: "long", view: "dashboard", interactive: true, run: openFolderBrowser, verify: dashboard(true) },
+  { name: "dashboard: folder browser, a path that does not exist", scenario: "long", view: "dashboard", interactive: true, run: async (page) => {
+    await openFolderBrowser(page);
+    await page.getByRole("textbox", { name: "フォルダのパス" }).fill("/no/such/folder");
+    await page.keyboard.press("Enter");
+    await page.getByRole("region", { name: "フォルダを選択" }).getByRole("alert").waitFor();
+  }, verify: dashboard(true) },
+  { name: "dashboard: statistics that cannot be read", scenario: "long", view: "dashboard", interactive: true, run: async (page) => {
+    await statsShown(page);
+    await page.evaluate(() => window.__yhtye.failCommand("get_usage_stats", "cannot read the session logs: permission denied, and this is a long reason to see how it wraps"));
+    await click(page, "再読み込み", { exact: true });
+    await page.locator(".usage-error").waitFor();
+  }, verify: dashboard(false) },
+  { name: "dashboard: no agent logs found", scenario: "run", view: "dashboard", interactive: true, run: async (page) => {
+    await statsShown(page);
+    await page.evaluate(() => {
+      const { core } = window.__yhtye;
+      const stats = core.handle({ type: "get_usage_stats", days: 30 }).stats;
+      core.usageStats = { ...stats, sources: stats.sources.map((s) => ({ ...s, found: false, files: 0 })), totals: { ...stats.totals, sessions: 0, tokens: { input: 0, output: 0, cache_read: 0, cache_creation: 0, total: 0 } } };
+    });
+    await click(page, "再読み込み", { exact: true });
+    await page.locator(".usage-empty").waitFor();
+  }, verify: dashboard(false) },
+  { name: "dashboard: other Yhtye hosts' projects (long host names)", scenario: "hosts", view: "dashboard", run: statsShown, verify: dashboard(true) },
+  { name: "dashboard: every control reached with Tab", scenario: "long", view: "dashboard", interactive: true, tab: 60 },
+  { name: "hosts: rail expanded (remote rows with long host names)", scenario: "hosts", interactive: true, run: hoverRail, verify: rail(true) },
   { name: "long: chat menu on the first row", scenario: "long", interactive: true, run: (page) => openRowMenu(page, "first") },
   { name: "long: chat menu on the last row", scenario: "long", interactive: true, run: async (page) => { await scrollTreeToEnd(page); await openRowMenu(page, "last"); } },
   { name: "long: a task selected (agent output)", scenario: "long", interactive: true, run: async (page) => { await click(page, /^1 件目/, { exact: false }); await page.getByRole("region", { name: "agent output" }).waitFor(); } },
@@ -417,7 +589,6 @@ const STATES = [
     await page.getByRole("button", { name: "折りたたむ" }).waitFor();
   } },
   { name: "hosts: other Yhtye hosts paired with (this PC's project on screen)", scenario: "hosts" },
-  { name: "hosts: project pull-down open (remote rows with long host names)", scenario: "hosts", interactive: true, run: openProjectPicker },
   { name: "hosts: a remote host's project on screen (footer, remote mark, lost connection)", scenario: "hosts", interactive: true, run: showRemoteProject },
   { name: "hosts: settings (接続先) with the hosts listed", scenario: "hosts", interactive: true, run: async (page) => {
     await click(page, "設定");
@@ -527,7 +698,7 @@ async function openState(browser, baseUrl, state, viewport) {
   await page.route((u) => !u.href.startsWith(baseUrl), (route) => route.abort());
   for (let attempt = 1; ; attempt++) {
     try {
-      await page.goto(`${baseUrl}/layout-harness.html?scenario=${state.scenario}`);
+      await page.goto(`${baseUrl}/layout-harness.html?scenario=${state.scenario}&view=${state.view ?? "work"}`);
       await page.waitForFunction(() => document.documentElement.dataset.ready, null, { timeout: READY_TIMEOUT_MS });
       break;
     } catch (e) {

@@ -34,7 +34,7 @@ function setup(opts: { snapshot?: Snapshot; log?: typeof LOG; git?: GitOverview;
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   return { transport, core, store, user: userEvent.setup() };

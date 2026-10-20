@@ -19,7 +19,7 @@
 //   keys this store saves under and the keys the UI makes from a project id carry
 //   the host's `keyScope` ("" for the local core, "host:<id>:" for a remote one).
 
-import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, ChatInfo, ClientDevice, GitOverview, ProjectInfo, UsageReport } from "../api/generated";
+import type { ApiCommand, ApiEvent, ApiEventBody, ApiResponse, BranchStatuses, ChatInfo, ClientDevice, DirectoryListing, GitOverview, ProjectInfo, UsageReport, UsageStats } from "../api/generated";
 import type { HostCompatibility } from "../api/remoteHosts";
 import { type ConnectionStatus, type Transport, toCommandError } from "../api/transport";
 import { changesActivity, mergeActivity, rememberRunning } from "./activity";
@@ -103,6 +103,14 @@ export interface UsageView {
   loading: boolean;
 }
 
+/** Token usage statistics of the dashboard (read from the agents' own logs by the core). */
+export interface StatsView {
+  report: UsageStats | null;
+  /** Why the last read failed. */
+  error: string | null;
+  loading: boolean;
+}
+
 /** The machine the core runs on, as its last answer to a ping told. */
 export interface HostView {
   /** Its host name (`null` until the first answer). */
@@ -158,6 +166,8 @@ export interface AppState {
   /** The branch order of the open project (`null` until it was read). */
   branchOrder: BranchOrderView | null;
   usage: UsageView;
+  /** The usage statistics of the dashboard (read on demand, see `refreshStats`). */
+  stats: StatsView;
   host: HostView;
   /** The paired devices (the core's `list_clients`), as the core ordered them. */
   clients: ClientDevice[];
@@ -177,6 +187,8 @@ export class AppStore extends SettingsCommands {
   private activityTimer: ReturnType<typeof setTimeout> | null = null;
   private activityToken = 0;
   private usageTimer: ReturnType<typeof setInterval> | null = null;
+  /** Bumped by every `refreshStats`: only the newest answer is kept (the period may change meanwhile). */
+  private statsToken = 0;
   /** This store's host is the one on screen (the meters are read only then, see `setForeground`). */
   private foreground = true;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -216,6 +228,7 @@ export class AppStore extends SettingsCommands {
       git: null,
       branchOrder: null,
       usage: { report: null, error: null, loading: false },
+      stats: { report: null, error: null, loading: false },
       host: { name: null, version: null, compatibility: null, headless: false, lastPingAt: null },
       clients: [],
     };
@@ -278,10 +291,22 @@ export class AppStore extends SettingsCommands {
   }
 
   async openProject(path: string): Promise<void> {
+    try {
+      await this.tryOpenProject(path);
+    } catch (e) {
+      this.pushError(`open_project failed: ${toCommandError(e).message}`);
+    }
+  }
+
+  /**
+   * `openProject` for a form that shows the refusal next to its input (the
+   * dashboard's "add a project"): rejects with the core's error instead of
+   * putting it in the banners.
+   */
+  async tryOpenProject(path: string): Promise<void> {
     this.set({ busy: { ...this.state.busy, opening: true } });
     try {
-      const r = await this.run({ type: "open_project", path }, "project");
-      if (!r) return;
+      const r = await this.invoke({ type: "open_project", path }, "project");
       // Opening a project uses it: it is first now (the core says so too).
       this.set({ projects: toFrontProject(this.state.projects, r.project) });
       await this.load(r.project);
@@ -607,6 +632,35 @@ export class AppStore extends SettingsCommands {
     } catch (e) {
       this.set({ usage: { report: null, error: toCommandError(e).message, loading: false } });
     }
+  }
+
+  /**
+   * Reads the token usage statistics of the last `days` days (the dashboard),
+   * cut into days in this client's time zone. `refresh` asks the core to scan
+   * the logs again instead of answering from its cache. The newest call wins:
+   * choosing another period while one is read drops the older answer. A
+   * failure keeps no report: the dashboard shows the reason.
+   */
+  async refreshStats(days: number, refresh = false): Promise<void> {
+    const token = ++this.statsToken;
+    this.set({ stats: { ...this.state.stats, loading: true } });
+    try {
+      const r = await this.invoke({ type: "get_usage_stats", days, tz_offset_min: clientTzOffsetMin(), refresh }, "usage_stats");
+      if (token === this.statsToken) this.set({ stats: { report: r.stats, error: null, loading: false } });
+    } catch (e) {
+      if (token === this.statsToken) this.set({ stats: { report: null, error: toCommandError(e).message, loading: false } });
+    }
+  }
+
+  /**
+   * The folders of `path` on the machine this store's core runs on (its home
+   * directory when omitted): what the folder browser of "add a project" lists
+   * where the OS dialog cannot reach the host. Rejects with the core's error
+   * (not found, not a directory, not allowed) for the browser to show.
+   */
+  async listDirectory(path?: string): Promise<DirectoryListing> {
+    const r = await this.invoke({ type: "list_directory", ...(path ? { path } : {}) }, "directory");
+    return r.directory;
   }
 
   /** Shows a message in the error banners (for what the host management layer could not do). */
@@ -991,6 +1045,12 @@ export class AppStore extends SettingsCommands {
   private notify(): void {
     for (const l of [...this.listeners]) l();
   }
+}
+
+/** This client's UTC offset in minutes, east positive (what `get_usage_stats` cuts the days with). */
+export function clientTzOffsetMin(): number {
+  // `getTimezoneOffset` is how far UTC is behind local time (negative east of Greenwich); `|| 0` drops a -0.
+  return -new Date().getTimezoneOffset() || 0;
 }
 
 /** `p` first, replacing its entry (or added when the list did not have it). */

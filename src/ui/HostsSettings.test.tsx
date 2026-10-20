@@ -21,7 +21,7 @@ let t: TestHosts;
 
 const api = () => t.api as FakeHostsApi;
 
-function mount(ui: React.ReactElement = <App />) {
+function mount(ui: React.ReactElement = <App initialView="work" />) {
   render(<HostsProvider registry={t.registry}>{ui}</HostsProvider>);
   return userEvent.setup();
 }

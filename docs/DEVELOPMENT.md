@@ -206,13 +206,15 @@ html / body / `#root` は `height: 100%` + `overflow: hidden` で固定してあ
   (html / body / `#root` の高さと overflow、`.app` の位置と `min-width` が無いこと、`min-height: 0` / `min-width: 0`、
   スクロール領域がすべて `position` を持つこと)。
 - **`pnpm check:layout` (`scripts/check-layout.mjs`)**: playwright-core + Chromium (headless) で、
-  `layout-harness.html` (本物の `App` をメモリ上のコアで動かす開発専用ページ。`src/test/layoutHarness.tsx`) を
+  `layout-harness.html` (本物の `App` をメモリ上のコアで動かす開発専用ページ。`src/test/layoutHarness.tsx`。
+  `?scenario=` で中身、`?view=dashboard|work|runs` で最初のビューを選ぶ。既定は work) を
   画面の状態ごとに開き、`document.scrollingElement` の `scrollHeight <= innerHeight`、`scrollWidth <= innerWidth`、
   `scrollX / scrollY == 0`、枠 (`.app` `.body` `.sidebar` `.conversation` `.right` など) の中身がはみ出していないこと、
-  ポップアップ (⋯ メニュー・プロジェクトのプルダウン・モデル一覧) がウィンドウ内に収まっていることを確かめる。
+  ポップアップ (⋯ メニュー・プロジェクトのメニュー・モデル一覧) と、展開したレールのパネル (サイドバーの上に重なるオーバーレイ。レイアウト上は 44px のまま) がウィンドウ内に収まっていることを確かめる。
   状態は、プロジェクト無し・記録した実行・大量の会話/タスク/ブランチ・ホイール操作・各ポップアップ・設定・
   エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・別のホストを持つ状態 (`hosts`: 長い名前・失効・再接続待ちのホスト。
-  プルダウン・リモートのプロジェクトを開いた画面・設定の「接続先」・リンクを受けた画面)・下部パネルに 8 個のタスクタブを開いた状態
+  展開したレール・リモートのプロジェクトを開いた画面・設定の「接続先」・リンクを受けた画面)・展開式のレール (閉じた・ポインタ・キーボード・メニュー、
+  長い一覧のスクロール)・ダッシュボード (長い名前の多数のプロジェクト、7 / 90 日の統計、フォルダブラウザ、統計の失敗・ログ無し)・下部パネルに 8 個のタスクタブを開いた状態
   (タブ列が横スクロールして全部に届くこと、git の見出しやセッションの選択が潰れないこと) を 1060x600 から 1920x1080 まで。
   Rust のコアは要らない (Vite だけを空いているポートで起動する)。画面を足す・直すときは実行しておく。
 

@@ -80,19 +80,57 @@ button:disabled { cursor: default; }
 
 .body { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
-.rail {
-  width: 44px; flex: none; background: var(--surface-chrome); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0;
+/* The rail is 44px wide in the layout (RAIL_WIDTH in ui/layout.ts; the sidebar's width limits
+   count on it). What grows is its panel, an overlay: while the pointer is over the rail, or the
+   keyboard focus is in it (`:focus-visible`, so a click that leaves the focus on a button does not
+   keep it open), or a project's menu is open, the panel widens over the sidebar. The labels are
+   always in the DOM and only shown here, so jsdom (no :hover) sees them too. */
+.rail { position: relative; width: 44px; flex: none; z-index: 20; }
+.rail-panel {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 44px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  background: var(--surface-chrome); border-right: 1px solid var(--border);
 }
-.rail-button {
-  position: relative; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none;
-  display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-panel { width: 232px; box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45); }
+
+.rail-row {
+  position: relative; width: 100%; height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--text-dim); text-align: left; font-size: 12.5px; white-space: nowrap;
 }
-.rail-button:hover { background: var(--surface-hover); color: var(--text-tertiary); }
-.rail-button.active { background: var(--surface-chip); color: var(--accent); }
-.rail-button.active::before {
+.rail-row:hover { background: var(--surface-hover); color: var(--text-tertiary); }
+.rail-row.current { color: var(--text-primary); }
+.rail-row.active { background: var(--surface-chip); color: var(--accent); }
+.rail-row.active::before {
   content: ""; position: absolute; left: -8px; top: 6px; width: 2px; height: 16px; border-radius: 1px; background: var(--accent);
 }
+.rail-row[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.rail-icon { width: 28px; flex: none; display: flex; align-items: center; justify-content: center; }
+.rail-label { display: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-label { display: block; }
+.rail-project-label .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rail-project-label .host-tag { flex: 0 1 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); font: 400 10.5px/1.3 var(--font-mono); }
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-project-label { display: flex; align-items: center; gap: 6px; }
+
+.rail-section { min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.rail-projects { flex: 1 1 auto; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+.rail-heading {
+  display: none; align-items: center; gap: 6px; height: 18px; margin: 0; padding: 0 2px;
+  font: 500 10.5px/1 var(--font-mono); letter-spacing: 0.06em; color: var(--text-faint);
+}
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-heading { display: flex; }
+.rail-heading .rail-label { flex: none; }
+.rail-empty { margin: 0; padding: 0 2px; font: 400 10.5px/1.6 var(--font-mono); color: var(--text-dim); }
+.rail-project-list {
+  flex: 1 1 auto; min-height: 0; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px;
+  overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain;
+}
+.rail-project-list::-webkit-scrollbar { display: none; }
+.rail-project { flex: none; }
+.rail-bottom { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+
+/* A project's status dot: lit green while work is on in it, hollow otherwise. */
+.project-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; border: 1.5px solid var(--ring-stopped); }
+.project-dot-running { border-color: var(--ring-running-head); background: var(--ring-running-head); box-shadow: 0 0 0 3px var(--ring-running-track); }
 
 .statusbar {
   height: 24px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 12px;
@@ -129,7 +167,12 @@ button:disabled { cursor: default; }
 
 .runs-view { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface-panel); }
 .runs-view p { font: 400 12.5px/1 var(--font-mono); color: var(--text-dim); }
-.main-empty { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface-chat); }
+.main-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: var(--surface-chat); }
+.main-empty-action {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border-card); border-radius: 6px;
+  background: var(--surface-inset); color: var(--text-muted); font-size: 12px;
+}
+.main-empty-action:hover { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text-primary); }
 
 /* ---- buttons -------------------------------------------------------------- */
 
@@ -165,13 +208,6 @@ button:disabled { cursor: default; }
   border-color: var(--ring-running-track); border-top-color: var(--ring-running-head);
   animation: yspin 0.9s linear infinite;
 }
-
-.open-form { display: flex; gap: 4px; padding: 6px 12px 0; }
-.open-form input {
-  flex: 1; min-width: 0; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border-card);
-  background: var(--surface-inset); font: 400 10.5px/1.5 var(--font-mono); color: var(--text-body);
-}
-.open-form input::placeholder { color: var(--text-dim); }
 
 .side-footer { margin-top: auto; padding: 8px 12px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 7px; }
 .host { font: 500 10.5px/1.4 var(--font-mono); color: var(--text-tertiary); }
@@ -415,7 +451,7 @@ button.attachment-face:focus-visible { outline: 1px solid var(--accent); outline
 /* An absolutely positioned box is clipped and scrolled by the scroll container that is its
    containing block, and by nothing else. Without this, the .sr-only labels inside a long list
    stay at their place in the page, below the window, and make the whole page scrollable. */
-.scroll, .side-list, .settings-body, .picker-list, .bg-list, .project-options, .md pre, .md table { position: relative; }
+.scroll, .side-list, .settings-body, .picker-list, .rail-project-list, .dashboard-scroll, .md pre, .md table { position: relative; }
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
   background: rgba(8, 7, 6, 0.72);

@@ -7,7 +7,7 @@ import "../styles/tokens.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 
-import type { ApiEvent, AttachmentMeta, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, Task } from "../api/generated";
+import type { ApiEvent, AttachmentMeta, BranchState, BranchStatuses, ChatInfo, GitCommit, GitOverview, Group, HarnessModels, Help, RemoteDevice, SessionRecord, Snapshot, State, StatsDay, StatsTokens, Task, UsageStats } from "../api/generated";
 import App from "../App";
 import { AppStore } from "../store/app";
 import { orchestratorKey } from "../store/chats";
@@ -17,6 +17,7 @@ import { memoryPrefs } from "../store/prefs";
 import { LOCAL_HOST } from "../store/hosts";
 import { HostsProvider } from "../store/useHosts";
 import { StoreContext } from "../store/useStore";
+import type { View } from "../ui/IconRail";
 import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { FakeCore, MemoryTransport } from "./memoryTransport";
@@ -32,6 +33,13 @@ import { FakeHostsApi, hostInfo, newTestHosts, type TestHosts } from "./remoteHo
  */
 const SCENARIOS = ["empty", "run", "devices", "long", "names", "hosts"] as const;
 type Scenario = (typeof SCENARIOS)[number];
+
+/** The view the page opens on (`?view=`): the work view unless asked (the app itself starts on the dashboard). */
+const VIEWS: readonly View[] = ["dashboard", "work", "runs"];
+function requestedView(): View {
+  const asked = new URLSearchParams(window.location.search).get("view");
+  return VIEWS.find((v) => v === asked) ?? "work";
+}
 
 declare global {
   interface Window {
@@ -233,6 +241,65 @@ function longLog(group: Group, ids: Ids): ApiEvent[] {
   return log;
 }
 
+const HARNESSES = ["claude-code", "codex", "opencode"];
+
+const tokensOf = (total: number): StatsTokens => {
+  const input = Math.round(total * 0.05);
+  const output = Math.round(total * 0.03);
+  const cache_creation = Math.round(total * 0.12);
+  return { input, output, cache_creation, cache_read: total - input - output - cache_creation, total };
+};
+
+const sumTokens = (list: StatsTokens[]): StatsTokens =>
+  tokensOf(list.reduce((n, t) => n + t.total, 0));
+
+/** A usage report of `days` days ending today, with all three harnesses, big numbers, long names and a long tail of models and projects. */
+function richStats(days: number): UsageStats {
+  const dayList: StatsDay[] = Array.from({ length: days }, (_, k) => {
+    const i = days - 1 - k;
+    const date = new Date(NOW - i * 86_400_000).toISOString().slice(0, 10);
+    const harnesses = HARNESSES.flatMap((harness, h) => {
+      const idle = (k + h) % 7 === 0 || (h === 2 && k % 3 !== 0);
+      const tokens = idle ? 0 : (((k * 37 + h * 101) % 23) + 1) * (h === 0 ? 5_100_000 : 1_300_000);
+      return tokens > 0 ? [{ harness, tokens, sessions: 1 + (k % 4) }] : [];
+    });
+    const total = harnesses.reduce((n, h) => n + h.tokens, 0);
+    return { date, tokens: tokensOf(total), sessions: harnesses.reduce((n, h) => n + h.sessions, 0), harnesses };
+  });
+  const total = sumTokens(dayList.map((d) => d.tokens));
+  const share = (n: number, of: number) => tokensOf(Math.round(total.total * (n / of)));
+  const models = Array.from({ length: 21 }, (_, i) => ({
+    name: i % 4 === 0 ? `claude-opus-4-5-with-an-extremely-long-model-name-${NO_SPACES}${i}` : `model-${i}`,
+    tokens: share(1, 2 ** Math.min(i + 1, 12)),
+    sessions: 40 - i,
+    other: i === 20,
+  }));
+  const projects = Array.from({ length: 21 }, (_, i) => ({
+    name: i % 3 === 0 ? `${NO_SPACES}${i}` : `project-${i}`,
+    project: i === 20 ? null : `other-${i}`,
+    tokens: share(1, 2 ** Math.min(i + 1, 12)),
+    sessions: 30 - i,
+    other: i === 20,
+  }));
+  return {
+    generated_at_ms: NOW,
+    period_days: days,
+    tz_offset_min: 0,
+    sources: HARNESSES.map((harness) => ({ harness, found: true, files: 120 })),
+    totals: { tokens: total, sessions: dayList.reduce((n, d) => n + d.sessions, 0) },
+    days: dayList,
+    by_model: models,
+    by_harness: HARNESSES.map((name, h) => ({ name, tokens: share(h === 0 ? 3 : 1, 5), sessions: 100 - h * 20, other: false })),
+    by_project: projects,
+  };
+}
+
+/** A home with far more folders than fit, long names among them, and a few git repositories. */
+function bigHome(): FakeCore["fsTree"] {
+  const folders = Array.from({ length: 80 }, (_, i) => ({ name: i % 5 === 0 ? `${NO_SPACES}${i}` : `folder-${i}`, git: i % 7 === 0 }));
+  return { "/": [{ name: "home" }], "/home": [{ name: "u" }], "/home/u": folders };
+}
+
 function build(scenario: Scenario): { core: FakeCore; open: boolean } {
   if (scenario === "long" || scenario === "names") {
     const ids = scenario === "names" ? NAMED : NUMBERED;
@@ -273,7 +340,9 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
       last_seen_ms: i % 2 === 0 ? NOW - i * 3_600_000 : null,
       connected: i % 4 === 0,
     }));
-    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: false, running: false, awake: false }));
+    // Half of them are open (so the rail lists them), some of those with work on.
+    core.others = Array.from({ length: 30 }, (_, i) => ({ id: `other-${i}`, name: `${NO_SPACES}${i}`, path: `/work/other-${i}`, open: i % 2 === 0, running: i % 4 === 0, awake: i % 2 === 0 }));
+    core.fsTree = bigHome();
     return { core, open: true };
   }
   const core = new FakeCore(PROJECT, FULL_RUN.start);
@@ -294,6 +363,9 @@ async function mountHosts(): Promise<TestHosts> {
     configureFar: (far) => {
       far.core.host = far.id === "sid-long" ? long : `host-${far.id}`;
       far.core.headless = far.id === "sid-long";
+      // Their projects are open, so the rail lists them with the host's long name.
+      far.core.info = { ...far.core.info, open: true, running: far.id === "sid-long" };
+      far.core.others = far.core.others.map((p) => ({ ...p, open: true, awake: true }));
     },
   });
   t.localCore.log = durable(FULL_RUN);
@@ -309,7 +381,7 @@ async function mountHosts(): Promise<TestHosts> {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <HostsProvider registry={t.registry}>
-        <App />
+        <App initialView={requestedView()} />
       </HostsProvider>
     </React.StrictMode>,
   );
@@ -332,11 +404,16 @@ async function main(): Promise<void> {
   const failCommand = (type: string, message: string) =>
     core.failures.set(type as Parameters<typeof core.failures.set>[0], new CommandError("unavailable", message));
   window.__yhtye = { store, core, transport, failCommand };
+  if (scenario === "long" || scenario === "names") {
+    // The long scenarios read 90 days like 7: a report of the period asked, with a lot in it.
+    const serve = transport.handler;
+    transport.handler = (cmd) => (cmd.type === "get_usage_stats" && !core.usageStats && !core.failures.has(cmd.type) ? { type: "usage_stats", stats: richStats(cmd.days ?? 30) } : serve(cmd));
+  }
   store.start();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <StoreContext.Provider value={store}>
-        <App />
+        <App initialView={requestedView()} />
       </StoreContext.Provider>
     </React.StrictMode>,
   );

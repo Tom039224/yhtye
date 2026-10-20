@@ -24,7 +24,7 @@ async function setup(prefs: Prefs = memoryPrefs()) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   await act(() => store.openProject(PROJECT.path));

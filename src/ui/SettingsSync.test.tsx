@@ -28,7 +28,7 @@ async function setup(section: string) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   await act(() => store.openProject(PROJECT.path));
