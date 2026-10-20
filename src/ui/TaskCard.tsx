@@ -59,7 +59,7 @@ export function TaskCard({ task, state, view, now, selected, onSelect, onMention
     <article className={`task task-card-${tone} ${selected ? "selected" : ""}`} aria-label={`task ${task.id}`}>
       <div className="task-header">
         <StatusChip className={`tone-${tone}`} icon={toneIcon(tone, task.kind)} label={TONE_LABEL[tone]} active={active} />
-        <span className="task-id" title={KIND_LABEL[task.kind]}>
+        <span className="task-id" title={`${task.id} · ${KIND_LABEL[task.kind]}`}>
           {task.id}
         </span>
         <button type="button" className="task-title linklike" onClick={onSelect} title="エージェントの出力を見る">

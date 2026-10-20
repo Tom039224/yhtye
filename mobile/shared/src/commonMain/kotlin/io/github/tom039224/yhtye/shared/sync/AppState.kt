@@ -1,6 +1,7 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
@@ -20,6 +21,8 @@ data class AppState(
     val busy: Busy = Busy(),
     /** 表示中のプロジェクトの git の概要 (ブランチの木・会話のヘッダ)。 */
     val git: GitView? = null,
+    /** 表示中のプロジェクトのブランチの順 (読むまでは null)。 */
+    val branchOrder: BranchOrderView? = null,
     val usage: UsageView = UsageView(),
     val host: HostView = HostView(),
     /** ペアリング済みの端末 (コアの `list_clients`。並びはコアのまま)。左パネルの下端でホストの下に出す。 */
@@ -43,7 +46,14 @@ data class GitView(
      * 読み直すまでは作業ツリーが一覧に無くても「見つからない」にしない ([placeOf] の `awaiting`)。
      */
     val awaiting: List<String> = emptyList(),
+    /** ブランチごとの PR / マージの状態 (BRANCHES の木の点)。 */
+    val statuses: BranchStatuses? = null,
+    /** [statuses] を最後に読んだ時刻 (エポックからのミリ秒)。 */
+    val statusesAt: Long = 0,
 )
+
+/** プロジェクトのブランチの順 (コアのリスト。新しく使った順): 作業ツリーのパスと、作業ツリーの無いブランチの名前。 */
+data class BranchOrderView(val project: String, val keys: List<String>)
 
 /** サブスクリプションの使用量 (コアがハーネスから読む)。 */
 data class UsageView(
@@ -61,6 +71,8 @@ data class HostView(
     val lastPingAt: Long? = null,
     /** PC の Yhtye の版 (`0.1.0`)。ping が版を返さない古い PC では null (互換性の判定は「不明」)。 */
     val version: String? = null,
+    /** PC の Yhtye が GUI 無しで動いている (`yhtye --headless`)。ping が答えない古い PC では false (GUI のあるホスト扱い)。 */
+    val headless: Boolean = false,
 )
 
 const val MAX_ERRORS: Int = 5

@@ -13,6 +13,7 @@ import kotlinx.serialization.Serializable
 data class RemoteDevice(
     val id: String,
     val name: String,
+    val kind: ClientKind,
     @SerialName("created_ms")
     val createdMs: Long,
     /**

@@ -1,5 +1,5 @@
-//! Repository queries and the few writing commands Yhtye uses (commit, merge,
-//! stash). Each function works on one worktree directory.
+//! Repository queries and the few writing commands Yhtye uses (commit, squash,
+//! merge, stash). Each function works on one worktree directory.
 
 use std::path::Path;
 
@@ -8,16 +8,6 @@ use super::run::{git, git_env, git_ok};
 /// Identity for Yhtye's commits when the repository has none configured.
 const FALLBACK_NAME: &str = "Yhtye";
 const FALLBACK_EMAIL: &str = "yhtye@localhost";
-
-/// Whether git hooks run for a commit or merge made by Yhtye.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Hooks {
-    /// Yhtye's internal branches (task commits, task → group merges): hooks and
-    /// commit signing are skipped (they may block or prompt).
-    Skip,
-    /// The user's base branch: the repository's own policy applies.
-    Run,
-}
 
 /// Outcome of `git merge --no-ff`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +18,23 @@ pub(super) enum MergeOutcome {
     Conflict(Vec<String>),
     Failed(String),
 }
+
+/// Outcome of `git merge --squash`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SquashOutcome {
+    /// The branch's changes are staged, waiting to be committed.
+    Staged,
+    /// The branch adds nothing to `HEAD`.
+    Nothing,
+    /// Conflicted in these files; the squash was aborted.
+    Conflict(Vec<String>),
+    Failed(String),
+}
+
+/// Separates the commits, and a commit's subject from its trailers, in the
+/// output of [`merged_tasks`].
+const RECORD: char = '\u{1e}';
+const FIELD: char = '\u{1f}';
 
 pub(super) async fn branch_exists(dir: &Path, branch: &str) -> Result<bool, String> {
     let r = format!("refs/heads/{branch}");
@@ -174,6 +181,13 @@ pub(super) async fn commit_all(dir: &Path, message: &str) -> Result<bool, String
         return Ok(false);
     }
     git_ok(dir, &["add", "-A"]).await?;
+    commit_index(dir, message).await?;
+    Ok(true)
+}
+
+/// Commits what is staged in `dir` (Yhtye's internal commit: hooks and signing
+/// are skipped).
+async fn commit_index(dir: &Path, message: &str) -> Result<(), String> {
     let env = identity_env(dir).await?;
     let args = [
         "-c",
@@ -184,28 +198,22 @@ pub(super) async fn commit_all(dir: &Path, message: &str) -> Result<bool, String
         "-m",
         message,
     ];
-    git_env(dir, &args, &env).await?.into_result("git commit")?;
-    Ok(true)
+    git_env(dir, &args, &env)
+        .await?
+        .into_result("git commit")
+        .map(|_| ())
 }
 
-/// `git merge --no-ff <branch>` in `dir`. A conflicted merge is aborted, so the
-/// worktree is left as it was.
+/// `git merge --no-ff <branch>` in `dir` (the user's base branch: the
+/// repository's own hooks and signing policy apply). A conflicted merge is
+/// aborted, so the worktree is left as it was.
 pub(super) async fn merge_no_ff(
     dir: &Path,
     branch: &str,
     message: &str,
-    hooks: Hooks,
 ) -> Result<MergeOutcome, String> {
     let env = identity_env(dir).await?;
-    let mut args = vec![];
-    if hooks == Hooks::Skip {
-        args.extend(["-c", "commit.gpgSign=false"]);
-    }
-    args.extend(["merge", "--no-ff", "--no-edit", "-m", message]);
-    if hooks == Hooks::Skip {
-        args.push("--no-verify");
-    }
-    args.push(branch);
+    let args = ["merge", "--no-ff", "--no-edit", "-m", message, branch];
     let out = git_env(dir, &args, &env).await?;
     if out.ok {
         return Ok(MergeOutcome::Merged(rev(dir, "HEAD").await?));
@@ -221,6 +229,99 @@ pub(super) async fn merge_no_ff(
     } else {
         Ok(MergeOutcome::Conflict(conflicted))
     }
+}
+
+/// `git merge --squash <branch>` in `dir`: stages what `branch` adds, without
+/// committing and without a `MERGE_HEAD` (so `git merge --abort` does not apply).
+/// A conflicted or failed squash is undone, so the worktree is left as it was.
+pub(super) async fn merge_squash(dir: &Path, branch: &str) -> Result<SquashOutcome, String> {
+    let out = git(dir, &["merge", "--squash", branch]).await?;
+    if out.ok {
+        // `git merge --squash` also writes `SQUASH_MSG` when there is nothing to commit.
+        if git(dir, &["diff", "--cached", "--quiet"]).await?.ok {
+            abort_squash(dir).await?;
+            return Ok(SquashOutcome::Nothing);
+        }
+        return Ok(SquashOutcome::Staged);
+    }
+    let conflicted = unmerged_files(dir).await?;
+    abort_squash(dir).await?;
+    if conflicted.is_empty() {
+        Ok(SquashOutcome::Failed(
+            out.failure(&format!("git merge --squash {branch}")),
+        ))
+    } else {
+        Ok(SquashOutcome::Conflict(conflicted))
+    }
+}
+
+/// Commits what [`merge_squash`] staged; returns the new `HEAD`.
+pub(super) async fn commit_squash(dir: &Path, message: &str) -> Result<String, String> {
+    commit_index(dir, message).await?;
+    rev(dir, "HEAD").await
+}
+
+/// Whether a squash was started in `dir` and not committed (git keeps its
+/// message in `SQUASH_MSG` until the commit).
+pub(super) async fn squash_in_progress(dir: &Path) -> Result<bool, String> {
+    let path = git_ok(dir, &["rev-parse", "--git-path", "SQUASH_MSG"]).await?;
+    let file = dir.join(path.trim());
+    tokio::fs::try_exists(&file)
+        .await
+        .map_err(|e| format!("could not look for {}: {e}", file.display()))
+}
+
+/// Undoes an uncommitted squash in `dir`, if there is one: the index and the
+/// files it changed go back to `HEAD` (a squash has no `MERGE_HEAD`, so `git
+/// merge --abort` does not apply). Untracked files stay.
+pub(super) async fn abort_squash(dir: &Path) -> Result<(), String> {
+    if squash_in_progress(dir).await? {
+        git_ok(dir, &["reset", "--merge"]).await?;
+    }
+    Ok(())
+}
+
+/// Subjects of the commits that are not merges in `range`, oldest first.
+pub(super) async fn commit_subjects(dir: &Path, range: &str) -> Result<Vec<String>, String> {
+    let args = ["log", "--no-merges", "--reverse", "--format=%s", range];
+    Ok(git_ok(dir, &args)
+        .await?
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+/// Ids of the tasks merged into the group branch by the commits of `range`,
+/// oldest merge first: from the `Yhtye-Task:` trailer of a squash commit, and
+/// from the subject of a `--no-ff` merge of an older Yhtye
+/// (`Merge <branch> (<task>) into <group branch>`).
+pub(super) async fn merged_tasks(dir: &Path, range: &str) -> Result<Vec<String>, String> {
+    let format = "--format=%x1e%s%x1f%(trailers:only,unfold)";
+    let args = ["log", "--topo-order", "--reverse", format, range];
+    Ok(parse_merged_tasks(&git_ok(dir, &args).await?))
+}
+
+fn parse_merged_tasks(log: &str) -> Vec<String> {
+    let mut tasks = Vec::new();
+    for record in log.split(RECORD).filter(|r| !r.trim().is_empty()) {
+        let (subject, trailers) = record.split_once(FIELD).unwrap_or((record, ""));
+        let trailed = trailers
+            .lines()
+            .find_map(|l| l.strip_prefix("Yhtye-Task:"))
+            .map(str::trim);
+        if let Some(task) = trailed.or_else(|| legacy_merged_task(subject)) {
+            tasks.push(task.to_string());
+        }
+    }
+    tasks
+}
+
+/// The task of a `Merge <branch> (<task>) into <group branch>` subject.
+fn legacy_merged_task(subject: &str) -> Option<&str> {
+    let rest = subject.trim().strip_prefix("Merge ")?;
+    let (_, rest) = rest.split_once(" (")?;
+    let (task, rest) = rest.split_once(") into ")?;
+    (!rest.is_empty() && !task.is_empty()).then_some(task)
 }
 
 /// Moves every change in `dir` (untracked files included) to a new stash entry.
@@ -256,4 +357,34 @@ pub(super) async fn git_merge_base(dir: &Path, branch: &str) -> Result<String, S
         .await?
         .trim()
         .to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merged_tasks_come_from_trailers_and_old_merge_subjects() {
+        let log = "\u{1e}Add login\u{1f}Yhtye-Group: api\nYhtye-Task: login\nYhtye-Agent: codex\n\n\
+                   \u{1e}Merge yhtye/G-1-T-2 (T-2) into yhtye/G-1\u{1f}\n\n\
+                   \u{1e}Unrelated commit\u{1f}\n\n\
+                   \u{1e}Merge main into yhtye/g\u{1f}\n\n";
+        assert_eq!(parse_merged_tasks(log), ["login", "T-2"]);
+    }
+
+    #[test]
+    fn only_a_merge_subject_naming_a_task_counts() {
+        assert_eq!(
+            legacy_merged_task("Merge yhtye/a--b (b) into yhtye/a"),
+            Some("b")
+        );
+        for other in [
+            "Merge branch 'main' into yhtye/a",
+            "Merge yhtye/a (a) into",
+            "Fix (b) into shape",
+            "",
+        ] {
+            assert_eq!(legacy_merged_task(other), None, "{other}");
+        }
+    }
 }

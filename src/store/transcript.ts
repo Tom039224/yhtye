@@ -185,6 +185,7 @@ export function applyTranscriptEvent(t: Transcripts, ev: ApiEvent, state?: State
       // Live: shown as the chat's "starting" badge, not in the transcript.
       return t;
     case "projects_changed":
+    case "branch_order_changed":
     case "settings_changed":
     case "resync":
     case "remote_status_changed":

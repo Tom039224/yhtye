@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { type DraftAttachment, memoryDrafts } from "./drafts";
+import { type DraftAttachment, memoryDrafts, scopedDrafts } from "./drafts";
 
 describe("memoryDrafts", () => {
   it("is empty for a chat that has no draft", () => {
@@ -81,5 +81,46 @@ describe("draft attachments", () => {
     drafts.clear("repo", "C-1");
     expect(drafts.get("repo", "C-1")).toBe("");
     expect(drafts.attachments("repo", "C-1")).toEqual([]);
+  });
+});
+
+describe("scopedDrafts", () => {
+  it("is the drafts themselves for the local core (empty scope)", () => {
+    const drafts = memoryDrafts();
+    expect(scopedDrafts(drafts, "")).toBe(drafts);
+  });
+
+  it("keeps the same project id of two hosts apart", () => {
+    const drafts = memoryDrafts();
+    const local = scopedDrafts(drafts, "");
+    const remote = scopedDrafts(drafts, "host:sid-1:");
+    const other = scopedDrafts(drafts, "host:sid-2:");
+    local.set("repo", "C-1", "on this PC");
+    remote.set("repo", "C-1", "on the server");
+    expect(local.get("repo", "C-1")).toBe("on this PC");
+    expect(remote.get("repo", "C-1")).toBe("on the server");
+    expect(other.get("repo", "C-1")).toBe("");
+    remote.set("repo", "C-1", "");
+    expect(remote.get("repo", "C-1")).toBe("");
+    expect(local.get("repo", "C-1")).toBe("on this PC");
+  });
+
+  it("keeps the attachments of the same project id of two hosts apart too", () => {
+    const drafts = memoryDrafts();
+    const seen = vi.fn();
+    drafts.subscribe(seen);
+    const local = scopedDrafts(drafts, "");
+    const remote = scopedDrafts(drafts, "host:sid-1:");
+    const file = (key: string): DraftAttachment => ({ key, name: `${key}.txt`, kind: "text", preview: null, status: "staged", meta: null, error: null });
+    local.updateAttachments("repo", "C-1", (list) => [...list, file("a")]);
+    remote.updateAttachments("repo", "C-1", (list) => [...list, file("b")]);
+    expect(local.attachments("repo", "C-1").map((a) => a.key)).toEqual(["a"]);
+    expect(remote.attachments("repo", "C-1").map((a) => a.key)).toEqual(["b"]);
+    expect(seen).toHaveBeenCalledTimes(2);
+    remote.set("repo", "C-1", "text");
+    remote.clear("repo", "C-1");
+    expect(remote.get("repo", "C-1")).toBe("");
+    expect(remote.attachments("repo", "C-1")).toEqual([]);
+    expect(local.attachments("repo", "C-1").map((a) => a.key)).toEqual(["a"]);
   });
 });

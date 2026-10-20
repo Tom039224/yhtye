@@ -45,3 +45,7 @@
 .icon-button-outline { border: 1px solid var(--border-card); width: 28px; height: 28px; }
 .icon-button-outline:hover:not(:disabled) { border-color: var(--border-hover); }
 .graph-more { margin: 0; padding: 4px 0 0; text-align: center; color: var(--text-faintest); }
+
+/* What marks a project of another host (RemoteMark): the accent while that host is connected, grey when it is not. */
+.remote-mark { display: inline-flex; flex: none; color: var(--accent); }
+.remote-mark.down { color: var(--text-faint); }

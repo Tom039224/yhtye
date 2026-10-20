@@ -80,3 +80,20 @@ export function memoryDrafts(): Drafts {
     },
   };
 }
+
+/**
+ * `drafts` as one host's view of it: project ids repeat across hosts, so the
+ * host's `scope` (see `AppStoreOptions.keyScope`) goes in front of them. An
+ * empty scope (the local core) is `drafts` itself.
+ */
+export function scopedDrafts(drafts: Drafts, scope: string): Drafts {
+  if (scope === "") return drafts;
+  return {
+    get: (project, chat) => drafts.get(scope + project, chat),
+    set: (project, chat, text) => drafts.set(scope + project, chat, text),
+    attachments: (project, chat) => drafts.attachments(scope + project, chat),
+    updateAttachments: (project, chat, f) => drafts.updateAttachments(scope + project, chat, f),
+    clear: (project, chat) => drafts.clear(scope + project, chat),
+    subscribe: (listener) => drafts.subscribe(listener),
+  };
+}

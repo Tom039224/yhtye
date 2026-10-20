@@ -308,10 +308,10 @@ mod tests {
             instruction: "check it",
             context: None,
             note: None,
-            review_range: Some(("yhtye/G-1-T-2", "yhtye/G-1")),
+            review_range: Some(("yhtye/api--login", "yhtye/api")),
         });
-        assert!(text.contains("task branch `yhtye/G-1-T-2`"));
-        assert!(text.contains("git diff $(git merge-base yhtye/G-1 HEAD)"));
+        assert!(text.contains("task branch `yhtye/api--login`"));
+        assert!(text.contains("git diff $(git merge-base yhtye/api HEAD)"));
     }
 
     #[test]

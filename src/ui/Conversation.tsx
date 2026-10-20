@@ -124,7 +124,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
       </div>
       {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
-        key={chat ? `${view.info.id}/${chat.id}` : "none"}
+        key={chat ? `${store.scopedKey(view.info.id)}/${chat.id}` : "none"}
         initialText={chat ? store.drafts.get(view.info.id, chat.id) : ""}
         onTextChange={(text) => {
           if (chat) store.drafts.set(view.info.id, chat.id, text);

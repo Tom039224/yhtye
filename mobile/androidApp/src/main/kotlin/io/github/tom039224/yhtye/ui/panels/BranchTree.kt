@@ -3,6 +3,7 @@ package io.github.tom039224.yhtye.ui.panels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -51,19 +53,23 @@ import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
+import io.github.tom039224.yhtye.shared.api.generated.BranchState
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.client.RpcException
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
 import io.github.tom039224.yhtye.shared.sync.ProjectView
-import io.github.tom039224.yhtye.shared.sync.Ring
 import io.github.tom039224.yhtye.shared.sync.WorktreeNode
 import io.github.tom039224.yhtye.shared.sync.buildTree
 import io.github.tom039224.yhtye.shared.sync.chatRing
 import io.github.tom039224.yhtye.shared.sync.describe
 import io.github.tom039224.yhtye.shared.sync.isInternalBranch
 import io.github.tom039224.yhtye.shared.sync.shortAge
+import io.github.tom039224.yhtye.shared.sync.statusLabel
+import io.github.tom039224.yhtye.shared.sync.statusOf
+import io.github.tom039224.yhtye.ui.common.ReorderMenu
 import io.github.tom039224.yhtye.ui.common.RingMark
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.rememberActionScope
@@ -72,13 +78,14 @@ import io.github.tom039224.yhtye.ui.conversation.NEW_CHAT_TITLE
 import kotlinx.coroutines.launch
 
 // ブランチ (作業ツリー) とチャットの木 (PC の BranchTree / ChatRow、orchestrator-desktop §9、モックの「Branch」):
-// 作業ツリーを今のブランチの名前で (メインクローンは緑の点、チャットが動いていれば回るリング)、折りたためて、
+// 作業ツリーを今のブランチの名前で (左のアイコンは PR / マージの状態、PC と同じアイコン・色・文言)、折りたためて、
 // それぞれに新しいチャット。見つからない作業ツリーのチャット、作業ツリーの無い他のブランチ、「+」で新しいブランチ。
 // チャットの名前の変更・削除はスマホでは会話の上部のメニュー (決定事項)。
 
 private val ROW_SHAPE = RoundedCornerShape(10.dp)
 private val FORM_SHAPE = RoundedCornerShape(12.dp)
 private val FIELD_SHAPE = RoundedCornerShape(8.dp)
+private val STATUS_ICON_SIZE = 14.dp
 
 /** 開始点の「HEAD」(PC の HEAD_OPTION)。 */
 private const val HEAD_OPTION = ""
@@ -112,7 +119,11 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
     val overview = git?.overview
     var formOpen by rememberSaveable(view?.info?.id) { mutableStateOf(false) }
     val ready = view != null && (view.phase == LoadPhase.Ready || view.state != null)
-    val tree = buildTree(view?.chats.orEmpty(), overview, git?.awaiting.orEmpty())
+    val order = app.branchOrder?.takeIf { view != null && it.project == view.info.id }?.keys.orEmpty()
+    val tree = buildTree(view?.chats.orEmpty(), overview, git?.awaiting.orEmpty(), order)
+    // 並べ替えは画面に出ている順を送る: 作業ツリーと、作業ツリーの無いブランチは別々の一覧
+    val worktreeKeys = tree.worktrees.map { it.path }
+    val moveBranches = { next: List<String> -> scope.launch { sync.reorderBranches(next) }; Unit }
     val newChat = { worktree: String?, branch: String? ->
         scope.launch { if (sync.createChat(worktree = worktree, branch = branch)) onChatChosen() }
         Unit
@@ -146,9 +157,15 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
         }
         if (view == null) return@Column
         val project = view.info.id
+        val statuses = git?.statuses
         tree.worktrees.forEach { w ->
             val open = memory.isOpen(project, w)
-            WorktreeRow(view, w, open, onToggle = { memory.toggle(project, w) }, onNewChat = { newChat(w.path, null) })
+            val branch = overview?.worktrees?.find { it.path == w.path }?.branch
+            WorktreeRow(
+                w, open, branch, statuses, worktreeKeys, moveBranches,
+                onToggle = { memory.toggle(project, w) },
+                onNewChat = { newChat(w.path, null) },
+            )
             if (open) w.chats.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.lost.isNotEmpty()) {
@@ -165,7 +182,10 @@ fun BranchTree(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory
             tree.lost.forEach { chat -> ChatRow(view, chat, now, onChosen = onChatChosen, sync = sync) }
         }
         if (tree.otherBranches.isNotEmpty()) {
-            OtherBranches(tree.otherBranches, memory.othersOpen(project), onToggle = { memory.toggleOthers(project) }) { newChat(null, it) }
+            OtherBranches(
+                tree.otherBranches, statuses, memory.othersOpen(project), moveBranches,
+                onToggle = { memory.toggleOthers(project) },
+            ) { newChat(null, it) }
         }
     }
 }
@@ -182,16 +202,59 @@ private fun SideNote(text: String, error: Boolean = false) {
     )
 }
 
+/**
+ * ブランチの左のアイコン: PR / マージの状態 (PC の StatusIcon と同じアイコン・色・日本語ラベル、Orca のサイドバーに倣う)。
+ * PR が無ければブランチ、開いた PR は緑の PR、マージ済みは紫のマージ (その後に変更があれば小さな点)。
+ * 既定のブランチ自身と detached の作業ツリーはラベルの無いブランチ。
+ */
 @Composable
-private fun WorktreeRow(view: ProjectView, node: WorktreeNode, open: Boolean, onToggle: () -> Unit, onNewChat: () -> Unit) {
+private fun StatusIcon(branch: String?, statuses: BranchStatuses?, testTag: String? = null) {
     val c = Yhtye.colors
-    val running = node.chats.any { chatRing(view, it.id) == Ring.Running }
+    val tag = if (testTag == null) Modifier else Modifier.testTag(testTag)
+    val found = statusOf(branch, statuses)
+    if (found == null) {
+        YIcon(YIcons.Branch, c.tx4, STATUS_ICON_SIZE, tag)
+        return
+    }
+    val (state, pr) = found
+    val (icon, tint) = when (state) {
+        BranchState.Unmerged -> YIcons.Branch to c.tx4
+        BranchState.PrOpen -> YIcons.PullRequest to c.doneBar
+        BranchState.Merged, BranchState.MergedWithChanges -> YIcons.Merge to c.revBar
+        BranchState.Unknown, BranchState.Unrecognized -> YIcons.Help to c.tx5
+    }
+    Box(Modifier.semantics { contentDescription = statusLabel(state, pr) }.then(tag)) {
+        YIcon(icon, tint, STATUS_ICON_SIZE, Modifier.testTag("branch-icon-${icon.name}"))
+        if (state == BranchState.MergedWithChanges) {
+            // パネルの地の縁で、マージのアイコンから切り抜いて見せる
+            Box(
+                Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(7.dp)
+                    .background(c.bgPanel, CircleShape).padding(1.dp).background(c.handBar, CircleShape)
+                    .testTag("branch-status-badge"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorktreeRow(
+    node: WorktreeNode,
+    open: Boolean,
+    branch: String?,
+    statuses: BranchStatuses?,
+    keys: List<String>,
+    onMove: (List<String>) -> Unit,
+    onToggle: () -> Unit,
+    onNewChat: () -> Unit,
+) {
+    val c = Yhtye.colors
+    var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Row(
             Modifier
                 .weight(1f)
                 .heightIn(min = 40.dp)
-                .clickable(role = Role.Button, onClick = onToggle)
+                .combinedClickable(role = Role.Button, onLongClick = { menu = true }, onClick = onToggle)
                 .semantics {
                     stateDescription = if (open) "開いている" else "閉じている"
                     contentDescription = if (node.isMain) "${node.label} · メインクローン" else node.label
@@ -202,11 +265,7 @@ private fun WorktreeRow(view: ProjectView, node: WorktreeNode, open: Boolean, on
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             YIcon(YIcons.ChevronDown, c.tx4, 14.dp, Modifier.rotate(if (open) 0f else -90f))
-            if (running) {
-                RingMark(Ring.Running)
-            } else {
-                Box(Modifier.size(7.dp).background(if (node.isMain) c.doneBar else c.ringStop, CircleShape).testTag(if (node.isMain) "main-clone" else "worktree-dot"))
-            }
+            StatusIcon(branch, statuses, testTag = if (node.isMain) "main-clone" else null)
             Text(
                 node.label,
                 color = c.tx2,
@@ -219,6 +278,7 @@ private fun WorktreeRow(view: ProjectView, node: WorktreeNode, open: Boolean, on
             if (node.missing) {
                 Box(Modifier.semantics { contentDescription = "作業ツリーが見つかりません" }) { YIcon(YIcons.Alert, c.handBar, 12.dp) }
             }
+            ReorderMenu(menu, { menu = false }, keys, node.path, "worktree-move-${node.path}", onMove)
         }
         if (!node.missing) {
             IconButton(
@@ -269,8 +329,16 @@ private fun ChatRow(view: ProjectView, chat: ChatInfo, now: Long, onChosen: () -
 
 /** 作業ツリーにチェックアウトされていない他のブランチ (そこへの新しいチャットは Yhtye が作業ツリーを作る)。 */
 @Composable
-private fun OtherBranches(names: List<String>, open: Boolean, onToggle: () -> Unit, onNewChat: (String) -> Unit) {
+private fun OtherBranches(
+    names: List<String>,
+    statuses: BranchStatuses?,
+    open: Boolean,
+    onMove: (List<String>) -> Unit,
+    onToggle: () -> Unit,
+    onNewChat: (String) -> Unit,
+) {
     val c = Yhtye.colors
+    var menuFor by remember { mutableStateOf<String?>(null) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -296,7 +364,7 @@ private fun OtherBranches(names: List<String>, open: Boolean, onToggle: () -> Un
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 1.dp)
                 .clip(ROW_SHAPE)
-                .clickable(role = Role.Button) { onNewChat(n) }
+                .combinedClickable(role = Role.Button, onLongClick = { menuFor = n }) { onNewChat(n) }
                 .semantics(mergeDescendants = true) { contentDescription = "$n の新しいチャット" }
                 .heightIn(min = 42.dp)
                 .padding(start = 30.dp, end = 10.dp)
@@ -304,8 +372,10 @@ private fun OtherBranches(names: List<String>, open: Boolean, onToggle: () -> Un
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            StatusIcon(n, statuses)
             YIcon(YIcons.MessagePlus, c.tx3, 16.dp)
             Text(n, color = c.tx2, fontFamily = MonoFont, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ReorderMenu(menuFor == n, { menuFor = null }, names, n, "other-move-$n", onMove)
         }
     }
 }

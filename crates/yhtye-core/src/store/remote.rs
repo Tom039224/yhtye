@@ -4,7 +4,8 @@
 use sqlx::SqlitePool;
 
 use super::StoreError;
-use super::codec::{int, uint};
+use super::codec::{int, name, parse, uint};
+use crate::remote::ClientKind;
 
 /// A paired device. `token_hash` is the SHA-256 of its token (hex); the token
 /// itself is never stored.
@@ -12,18 +13,20 @@ use super::codec::{int, uint};
 pub struct DeviceRecord {
     pub id: String,
     pub name: String,
+    pub kind: ClientKind,
     pub token_hash: String,
     pub created_ms: u64,
     pub last_seen_ms: Option<u64>,
 }
 
-type DeviceRow = (String, String, String, i64, Option<i64>);
+type DeviceRow = (String, String, String, String, i64, Option<i64>);
 
 fn device(row: DeviceRow) -> Result<DeviceRecord, StoreError> {
-    let (id, name, token_hash, created_ms, last_seen_ms) = row;
+    let (id, device_name, kind, token_hash, created_ms, last_seen_ms) = row;
     Ok(DeviceRecord {
         id,
-        name,
+        name: device_name,
+        kind: parse(&kind)?,
         token_hash,
         created_ms: uint(created_ms)?,
         last_seen_ms: last_seen_ms.map(uint).transpose()?,
@@ -33,7 +36,7 @@ fn device(row: DeviceRow) -> Result<DeviceRecord, StoreError> {
 /// Every paired device, oldest first.
 pub(super) async fn devices(pool: &SqlitePool) -> Result<Vec<DeviceRecord>, StoreError> {
     let rows: Vec<DeviceRow> = sqlx::query_as(
-        "SELECT id, name, token_hash, created_ms, last_seen_ms FROM remote_devices \
+        "SELECT id, name, kind, token_hash, created_ms, last_seen_ms FROM remote_devices \
          ORDER BY created_ms, id",
     )
     .fetch_all(pool)
@@ -43,11 +46,12 @@ pub(super) async fn devices(pool: &SqlitePool) -> Result<Vec<DeviceRecord>, Stor
 
 pub(super) async fn add_device(pool: &SqlitePool, d: &DeviceRecord) -> Result<(), StoreError> {
     sqlx::query(
-        "INSERT INTO remote_devices (id, name, token_hash, created_ms, last_seen_ms) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO remote_devices (id, name, kind, token_hash, created_ms, last_seen_ms) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&d.id)
     .bind(&d.name)
+    .bind(name(&d.kind)?)
     .bind(&d.token_hash)
     .bind(int(d.created_ms)?)
     .bind(d.last_seen_ms.map(int).transpose()?)

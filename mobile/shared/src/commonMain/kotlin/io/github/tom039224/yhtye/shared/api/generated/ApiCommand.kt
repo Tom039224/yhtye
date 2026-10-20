@@ -20,7 +20,10 @@ sealed interface ApiCommand {
     data object Ping : ApiCommand
 
     /**
-     * Every project known to the database, and whether it is open.
+     * Every project known to the database, and whether it is open, most
+     * recently used first (opening a project uses it; `reorder_projects` sets
+     * the order by hand). Projects never used come last, in the order they were
+     * registered.
      */
     @Serializable
     data object ListProjects : ApiCommand
@@ -28,7 +31,8 @@ sealed interface ApiCommand {
     /**
      * Opens (registering it on first use) the git repository at `path`: starts
      * its orchestrator and resumes interrupted tasks. Opening an open project
-     * returns it unchanged.
+     * returns it unchanged. The project is used: it moves to the front of the
+     * project order.
      */
     @Serializable
     data class OpenProject(
@@ -158,6 +162,69 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * Stops the chat's orchestrator session (its process ends and its token is
+     * revoked), so the chat rests until it is used again: the next message to
+     * it starts the orchestrator again, restoring the stored session. Sessions
+     * start lazily, so one that was never started is already asleep.
+     * `not_found` for an unknown chat, `invalid_state` while its orchestrator
+     * is working (starting or in a turn); stop or wait for the turn first.
+     * Stopping an idle session reports `session_stopped`, like any other stop.
+     */
+    @Serializable
+    data class SleepChat(
+        val project: String,
+        val chat: String,
+    ) : ApiCommand
+
+    /**
+     * Puts the projects in the order the user made (a drag in the project list):
+     * `ids` come first, in that order (unknown ones are ignored), then the
+     * projects it does not name, in their order. Answers with the listing like
+     * `list_projects`; every client re-reads it (`projects_changed`).
+     */
+    @Serializable
+    data class ReorderProjects(
+        val ids: List<String>,
+    ) : ApiCommand
+
+    /**
+     * The order of the project's branches (BRANCHES tree), most recently used
+     * first: the keys of its worktrees (the worktree's path) and of its local
+     * branches that no worktree has checked out (the branch name). Items whose
+     * key is not listed come after, in the tree's own order. Works for
+     * projects that are not open.
+     */
+    @Serializable
+    data class GetBranchOrder(
+        val project: String,
+    ) : ApiCommand
+
+    /**
+     * Puts the project's branches in the order the user made: `keys` come first
+     * in that order, then the keys it does not name, as they were. Answers
+     * with the order like `get_branch_order`; every client gets
+     * `branch_order_changed`. Works for projects that are not open.
+     */
+    @Serializable
+    data class ReorderBranches(
+        val project: String,
+        val keys: List<String>,
+    ) : ApiCommand
+
+    /**
+     * Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
+     * each): all its orchestrator sessions stop, so the project is no longer
+     * awake. All or none: `invalid_state` (and nothing is stopped) while any
+     * chat's orchestrator is working (starting or in a turn). A project that
+     * is known but not open has nothing up, so it is already asleep:
+     * accepted. `not_found` for an unknown project.
+     */
+    @Serializable
+    data class SleepProject(
+        val project: String,
+    ) : ApiCommand
+
+    /**
      * The project's chats, most recently used first. Works for projects that
      * are not open.
      */
@@ -264,6 +331,16 @@ sealed interface ApiCommand {
          * Most commits to return (default [`DEFAULT_GRAPH_COMMITS`], at most 500).
          */
         val limit: Long? = null,
+    ) : ApiCommand
+
+    /**
+     * The PR / merge status of every local branch (the dots of the BRANCHES
+     * tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+     * for every branch). Works for projects that are not open.
+     */
+    @Serializable
+    data class GetBranchStatuses(
+        val project: String,
     ) : ApiCommand
 
     /**
@@ -457,6 +534,11 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("open_chat", OpenChat.serializer()) { it is OpenChat },
             TaggedVariant<ApiCommand>("cancel_orchestrator_turn", CancelOrchestratorTurn.serializer()) { it is CancelOrchestratorTurn },
             TaggedVariant<ApiCommand>("compact_chat", CompactChat.serializer()) { it is CompactChat },
+            TaggedVariant<ApiCommand>("sleep_chat", SleepChat.serializer()) { it is SleepChat },
+            TaggedVariant<ApiCommand>("reorder_projects", ReorderProjects.serializer()) { it is ReorderProjects },
+            TaggedVariant<ApiCommand>("get_branch_order", GetBranchOrder.serializer()) { it is GetBranchOrder },
+            TaggedVariant<ApiCommand>("reorder_branches", ReorderBranches.serializer()) { it is ReorderBranches },
+            TaggedVariant<ApiCommand>("sleep_project", SleepProject.serializer()) { it is SleepProject },
             TaggedVariant<ApiCommand>("list_chats", ListChats.serializer()) { it is ListChats },
             TaggedVariant<ApiCommand>("create_chat", CreateChat.serializer()) { it is CreateChat },
             TaggedVariant<ApiCommand>("rename_chat", RenameChat.serializer()) { it is RenameChat },
@@ -466,6 +548,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("cancel_group", CancelGroup.serializer()) { it is CancelGroup },
             TaggedVariant<ApiCommand>("retry_group_merge", RetryGroupMerge.serializer()) { it is RetryGroupMerge },
             TaggedVariant<ApiCommand>("get_git_overview", GetGitOverview.serializer()) { it is GetGitOverview },
+            TaggedVariant<ApiCommand>("get_branch_statuses", GetBranchStatuses.serializer()) { it is GetBranchStatuses },
             TaggedVariant<ApiCommand>("get_usage", GetUsage.serializer()) { it is GetUsage },
             TaggedVariant<ApiCommand>("get_agent_settings", GetAgentSettings.serializer()) { it is GetAgentSettings },
             TaggedVariant<ApiCommand>("set_agent_settings", SetAgentSettings.serializer()) { it is SetAgentSettings },

@@ -4,6 +4,8 @@
 mod branches;
 mod cli;
 mod graph;
+mod message;
+mod pr_status;
 mod repo;
 mod run;
 mod worktree;
@@ -16,6 +18,8 @@ pub use cli::{GitCli, worktree_root};
 pub use graph::{
     GitBranch, GitCommit, GitOverview, GitWorktree, MAX_GRAPH_COMMITS, list_branches, overview,
 };
+pub use message::{CREATED_WITH_VERSION, created_with_line};
+pub use pr_status::{BranchState, BranchStatus, BranchStatuses, branch_statuses, default_branch};
 
 use crate::domain::{GitOp, GitResult};
 
@@ -93,16 +97,19 @@ pub trait GitService: Send + Sync + 'static {
         Ok(())
     }
 
-    /// The highest number `n` of a `yhtye/G-<n>` branch or a `G-<n>` worktree
-    /// directory git has (0: none). A new group is numbered past it, so leftovers
-    /// of a wiped database do not collide with it.
-    async fn highest_group_number(&self) -> Result<u32, String> {
-        Ok(0)
+    /// What in git already uses the name of a new group `group` (`task: None`)
+    /// or of a new task `task` of `group`, if anything (e.g. a branch or
+    /// worktree directory left by a wiped database): such a name is refused,
+    /// never adjusted.
+    async fn name_in_git(&self, group: &str, task: Option<&str>) -> Result<Option<String>, String> {
+        let _ = (group, task);
+        Ok(None)
     }
 
     /// Runs `op`. Expected outcomes (conflicts, dirty trees) are results, not errors:
     /// `CreateGroupBranch` / `RemoveWorkspace` → `Done`; `PrepareWorkspace` →
-    /// `Workspace`; `FinishTask` → `Merged` / `Conflict` / `Dirty`;
+    /// `Workspace`; `FinishTask` (squashes a `code` task into the group branch as
+    /// one commit) → `Merged` / `Conflict` / `Dirty`;
     /// `MergeGroup` → `Merged` / `Blocked` (also when the worktree is not on the
     /// base branch any more, Stage 8e); anything else going wrong → `Failed`.
     async fn run(&self, op: &GitOp) -> GitResult;
@@ -209,6 +216,9 @@ mod tests {
                 group_branch: "yhtye/G-1".into(),
                 base_branch: "main".into(),
                 trigger: crate::domain::MergeTrigger::FinishGroup,
+                title: "Group".into(),
+                summary: String::new(),
+                tasks: Vec::new(),
             })
             .await;
         assert!(matches!(merged, GitResult::Merged { .. }));

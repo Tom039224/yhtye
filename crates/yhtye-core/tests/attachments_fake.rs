@@ -557,6 +557,57 @@ async fn attachments_still_arrive_when_the_orchestrator_is_restarted_without_its
     core.shutdown().await;
 }
 
+/// A chat that was put to sleep (`sleep_chat`) keeps its staged files: a message
+/// with attachments wakes its orchestrator, with the stored session, and they
+/// arrive as for any other message.
+#[tokio::test]
+async fn a_message_with_attachments_wakes_a_sleeping_chat() {
+    let r = TempRepo::new();
+    let hello = json!({"match": "hello", "actions": [{"message": "hi"}]});
+    let core = Core::start(core_config(&r, script(all_caps(), vec![hello])))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    new_chat(&core, &project).await;
+    // Staged before the chat has an orchestrator at all, kept through its sleep.
+    let shot = stage(&core, &project, "shot.png", None, &png()).await;
+
+    run(&core, send(&project, "C-1", "hello", &[])).await;
+    next(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == ORCH)
+        .then_some(())
+    })
+    .await;
+    let sleep = ApiCommand::SleepChat {
+        project: project.clone(),
+        chat: "C-1".into(),
+    };
+    assert!(matches!(run(&core, sleep).await, ApiResponse::Accepted));
+    next(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::SessionStopped { session, suspended: false } if session == ORCH)
+            .then_some(())
+    })
+    .await;
+
+    run(&core, send(&project, "C-1", "see", &[&shot])).await;
+    let blocks = reported_blocks(&mut rx).await;
+    assert_eq!(of_type(&blocks, "image").len(), 1, "{blocks:#?}");
+    let text = blocks[0]["text"].as_str().expect("text");
+    assert!(text.contains("name=shot.png"), "{text}");
+    assert_eq!(of_type(&blocks, "image")[0]["sha"], fnv1a(&png()).as_str());
+    // Sent: it can no longer be discarded, and the file is still where the store keeps it.
+    let discard = ApiCommand::DiscardAttachment {
+        project: project.clone(),
+        chat: "C-1".into(),
+        id: shot.id.clone(),
+    };
+    assert_eq!(code(&core, discard).await, ApiErrorCode::InvalidState);
+    assert_eq!(std::fs::read(file_of(&r, "C-1", &shot)).unwrap(), png());
+    core.shutdown().await;
+}
+
 #[tokio::test]
 async fn staging_sending_and_discarding_have_clear_errors() {
     let r = TempRepo::new();

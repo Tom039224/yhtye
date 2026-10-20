@@ -77,10 +77,6 @@ button:disabled { cursor: default; }
   display: flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border-pill); border-radius: 5px;
   font: 500 11px/1 var(--font-mono); color: var(--text-quaternary);
 }
-.dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--branch-dot); }
-.dot-ok { background: var(--status-done-bar); }
-.dot-busy { background: var(--status-implementing-bar); }
-.dot-bad { background: var(--status-handling-bar); }
 
 .body { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
@@ -248,6 +244,7 @@ button:disabled { cursor: default; }
   font: 400 11px/1.5 var(--font-mono); color: var(--text-faint);
 }
 .notice .notice-body { flex: 1 1 100%; color: var(--text-muted); }
+.notice .mono { min-width: 0; overflow-wrap: anywhere; }
 /* The orchestrator's message to a task's agent: the accent marks it as the orchestrator's (design §3.4),
    the bar and inset ground keep it apart from the agent's own plain text. */
 .orch-msg { border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-inset); padding: 7px 12px 8px; min-width: 0; }
@@ -283,10 +280,13 @@ details.tool { display: block; }
 }
 .group-card-header .icon { color: var(--text-faint); }
 .group-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-card-header .dim { font: 400 10.5px/1 var(--font-mono); }
+/* Group and task ids are names of up to 32 characters (orchestration-model §2.1): they give way
+   to the titles, cut short with an ellipsis (their title attribute has the whole). */
+.group-card-header .dim { flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 10.5px/1.4 var(--font-mono); }
 .group-card-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font: 400 11.5px/1.4 var(--font-mono); color: var(--text-quaternary); }
 .group-card-row { display: flex; align-items: center; gap: 8px; }
-.group-card-row .n { color: var(--text-faint); }
+.group-card-row .n { flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+.group-card-row-title { min-width: 0; overflow-wrap: anywhere; }
 .tone-icon { flex: none; }
 .tone-icon-waiting { color: var(--text-faint); }
 .tone-icon-implementing { color: var(--status-implementing-bar); }
@@ -330,7 +330,8 @@ details.tool { display: block; }
 .mention:hover { background: var(--surface-hover-strong); }
 .mention .at { color: var(--accent); flex: none; }
 .mention .x { color: var(--text-dim); }
-.mention .label { overflow: hidden; text-overflow: ellipsis; }
+.mention-id { flex: 0 1 auto; min-width: 3ch; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
+.mention .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .composer-hint { width: 100%; display: flex; align-items: center; gap: 6px; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim); }
 .composer-hint .icon { flex: none; }
 /* The + (attach files) at the text's lower left, centred on the 28px send button like the text's first row. */
@@ -440,7 +441,11 @@ button.attachment-face:focus-visible { outline: 1px solid var(--accent); outline
 .settings-head {
   flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border);
 }
-.settings-title { margin: 0; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+.settings-title { flex: none; margin: 0; white-space: nowrap; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+/* A remote host on screen: whose settings these are (a long name gives way, the heading does not). */
+.settings-host { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 400 11.5px/1.5 var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.settings-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-head .scope-toggle { flex: none; }
 .settings-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 32px; }
 .scope-toggle { display: flex; border: 1px solid var(--border-card); border-radius: 5px; overflow: hidden; }
 .scope-toggle button {
@@ -534,7 +539,7 @@ button.attachment-face:focus-visible { outline: 1px solid var(--accent); outline
   display: flex; align-items: center; gap: 9px; min-width: 0;
   font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim);
 }
-.group-id { flex: none; font-weight: 500; color: var(--text-muted); }
+.group-id { flex: 0 1 auto; min-width: 4ch; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text-muted); }
 .group-branches { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .group-branches .icon { flex: none; }
 .group-count { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--text-muted); }
@@ -568,7 +573,10 @@ button.attachment-face:focus-visible { outline: 1px solid var(--accent); outline
 .task-card-done, .task-card-cancelled { background: var(--surface-card-muted); border-color: var(--border-muted); gap: 6px; }
 .task-card-handling { background: var(--status-handling-card-bg); border-color: var(--status-handling-card-border); }
 .task-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.task-id { font: 500 11px/1 var(--font-mono); color: var(--text-muted); flex: none; }
+.task-id {
+  flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 11px/1.4 var(--font-mono); color: var(--text-muted);
+}
 .task-title { font-size: 12.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .task-title:hover { color: var(--accent-hover); }
 .task-card-done .task-title, .task-card-cancelled .task-title { color: var(--text-quaternary); }
@@ -659,6 +667,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab-group.active { background: var(--surface-chip); }
 .tab-group .tab { background: none; padding-right: 3px; }
 .tab-group.active .tab { color: var(--text-primary); }
+/* A long task name is cut short (the button's label and title have the whole). */
+.tab-label { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
 .tab-group .tab-close { width: 18px; height: 18px; margin-right: 2px; border-radius: 4px; }
 .bottom-meta { display: inline-flex; align-items: center; gap: 5px; font: 400 10.5px/1 var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
 .bottom-meta .icon { flex: none; }
@@ -681,9 +691,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .graph-row > svg { position: absolute; left: 0; top: 0; height: 28px; overflow: visible; }
 .graph-sha { font: 500 10.5px/1 var(--font-mono); color: var(--text-faint); flex: none; }
 .graph-subject { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.graph-badges { margin-left: auto; display: flex; gap: 4px; flex: none; }
+/* The badges keep their width (up to 60% of the row; then they share it, each cut short) and the subject gives way. */
+.graph-badges { margin-left: auto; display: flex; gap: 4px; flex: none; min-width: 0; max-width: 60%; }
 .git-badge {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 4ch; max-width: 24ch;
   padding: 1px 6px; border-radius: 3px; background: var(--surface-chip-dim);
   font: 500 10px/1.5 var(--font-mono); color: var(--text-faint); white-space: nowrap;
 }
@@ -691,7 +702,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .git-badge-reviewing { background: var(--git-badge-reviewing-bg); color: var(--git-badge-reviewing-fg); }
 .git-badge-handling { background: var(--git-badge-handling-bg); color: var(--git-badge-handling-fg); }
 .git-badge-done { background: var(--git-badge-done-bg); color: var(--git-badge-done-fg); }
-.git-badge-head { color: var(--text-quaternary); }
+.git-badge-head { color: var(--text-quaternary); flex: none; }
+.git-badge .icon { flex: none; }
+.git-badge-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* Markdown in agent messages (src/ui/Markdown.tsx) */
 .msg-md { white-space: normal; }
@@ -774,6 +787,23 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .remote-heading { margin: 4px 0 0; font: 600 12px/1.4 var(--font-text); color: var(--text-muted); }
 .remote-device { flex-wrap: wrap; }
 .remote-device .secret-name { overflow-wrap: anywhere; min-width: 0; }
+
+/* Settings › 接続先 (HostsSettingsSection): the form that pairs with a host, and the hosts paired with. */
+.host-form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.host-form > * { max-width: 100%; }
+.host-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font: 400 11.5px/1.4 var(--font-text); color: var(--text-muted); }
+.host-form > .host-field { width: min(560px, 100%); }
+.host-form > .host-field .agent-search { width: 100%; box-sizing: border-box; }
+.host-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.host-fields .host-field { flex: 1 1 200px; }
+.host-fields .host-field-port { flex: 0 1 100px; }
+.host-fields .host-field-code { flex: 0 1 160px; }
+.host-fields .agent-search { width: 100%; box-sizing: border-box; }
+.host-problem { align-items: flex-start; }
+.host-problem > span { min-width: 0; overflow-wrap: anywhere; }
+.host-detail { display: block; margin-top: 2px; color: var(--text-dim); font: 400 10.5px/1.5 var(--font-mono); }
+.remote-host .client-kind { color: var(--text-dim); }
+.host-note { flex-basis: 100%; margin: 0; padding-left: 24px; font: 400 11px/1.6 var(--font-mono); color: var(--status-handling-fg); }
 
 /* ---- branches tree (Stage 8) ---------------------------------------------- */
 

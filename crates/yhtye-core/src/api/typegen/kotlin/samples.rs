@@ -22,10 +22,13 @@ use crate::api::{
 };
 use crate::attachments::{AttachmentDelivered, AttachmentDelivery, PromptCaps};
 use crate::domain::{DomainEvent, Role, ToolError};
-use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
+use crate::git::{
+    BranchState, BranchStatus, BranchStatuses, GitBranch, GitCommit, GitOverview, GitWorktree,
+};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{
-    Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError, RemoteStatus,
+    ClientKind, Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError,
+    RemoteStatus,
 };
 use crate::store::{ChatInfo, SessionRecord, SessionStatus};
 use crate::usage::{UsageReport, UsageWindow, UsageWindowKind};
@@ -132,6 +135,27 @@ fn commands() -> Vec<Sample> {
             json!({"type": "compact_chat", "project": "repo", "chat": "C-1"}),
         ),
         (
+            "sleep_chat",
+            json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
+        ),
+        (
+            "reorder_projects",
+            json!({"type": "reorder_projects", "ids": ["repo", "beta"]}),
+        ),
+        (
+            "get_branch_order",
+            json!({"type": "get_branch_order", "project": "repo"}),
+        ),
+        (
+            "reorder_branches",
+            json!({"type": "reorder_branches", "project": "repo",
+                "keys": ["/home/u/repo", "feat/x"]}),
+        ),
+        (
+            "sleep_project",
+            json!({"type": "sleep_project", "project": "repo"}),
+        ),
+        (
             "list_chats",
             json!({"type": "list_chats", "project": "repo"}),
         ),
@@ -174,6 +198,10 @@ fn commands() -> Vec<Sample> {
         (
             "get_git_overview",
             json!({"type": "get_git_overview", "project": "repo", "limit": 120}),
+        ),
+        (
+            "get_branch_statuses",
+            json!({"type": "get_branch_statuses", "project": "repo"}),
         ),
         ("get_usage", json!({"type": "get_usage", "refresh": true})),
         ("get_usage/default", json!({"type": "get_usage"})),
@@ -303,6 +331,7 @@ fn project_info(open: bool) -> ProjectInfo {
         path: "/home/u/repo".into(),
         open,
         running: open,
+        awake: open,
     }
 }
 
@@ -485,6 +514,7 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-0123456789abcdef".into(),
             name: "Pixel 9".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: Some(1_790_766_600_000),
             connected: true,
@@ -492,9 +522,18 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-fedcba9876543210".into(),
             name: "Tablet".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: None,
             connected: false,
+        },
+        RemoteDevice {
+            id: "dev-0f1e2d3c4b5a6978".into(),
+            name: "Workstation".into(),
+            kind: ClientKind::Desktop,
+            created_ms: 1_790_766_538_443,
+            last_seen_ms: Some(1_790_766_650_000),
+            connected: true,
         },
     ]
 }
@@ -630,6 +669,7 @@ fn responses() -> Vec<Sample> {
             ApiResponse::Pong {
                 host: "pc".into(),
                 version: "0.2.1".into(),
+                headless: true,
             },
         ),
         (
@@ -642,6 +682,12 @@ fn responses() -> Vec<Sample> {
             "project",
             ApiResponse::Project {
                 project: project_info(true),
+            },
+        ),
+        (
+            "branch_order",
+            ApiResponse::BranchOrder {
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (
@@ -685,6 +731,46 @@ fn responses() -> Vec<Sample> {
         ),
         ("chat_opened", ApiResponse::ChatOpened { starting: true }),
         ("git_overview", ApiResponse::GitOverview { git }),
+        (
+            "branch_statuses",
+            ApiResponse::BranchStatuses {
+                statuses: BranchStatuses {
+                    default_branch: Some("main".into()),
+                    statuses: vec![
+                        BranchStatus {
+                            branch: "feature/a".into(),
+                            state: BranchState::Unmerged,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                        BranchStatus {
+                            branch: "feature/b".into(),
+                            state: BranchState::PrOpen,
+                            pr_number: Some(123),
+                            pr_url: Some("https://github.com/u/repo/pull/123".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/c".into(),
+                            state: BranchState::Merged,
+                            pr_number: Some(122),
+                            pr_url: Some("https://github.com/u/repo/pull/122".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/d".into(),
+                            state: BranchState::MergedWithChanges,
+                            pr_number: Some(121),
+                            pr_url: Some("https://github.com/u/repo/pull/121".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/e".into(),
+                            state: BranchState::Unknown,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                    ],
+                },
+            },
+        ),
         ("usage", ApiResponse::Usage { usage }),
         (
             "agent_settings",
@@ -1298,6 +1384,13 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             },
         ),
         (
+            "branch_order_changed".into(),
+            ApiEventBody::BranchOrderChanged {
+                project: "repo".into(),
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
+            },
+        ),
+        (
             "settings_changed/agent_settings".into(),
             ApiEventBody::SettingsChanged {
                 kind: SettingsKind::AgentSettings,
@@ -1387,6 +1480,7 @@ fn server_messages() -> Vec<Sample> {
                 ok: ApiResponse::Pong {
                     host: "pc".into(),
                     version: "0.2.1".into(),
+                    headless: false,
                 },
             }),
         ),
@@ -1407,8 +1501,14 @@ fn server_messages() -> Vec<Sample> {
 
 fn remote_http() -> Vec<Sample> {
     let request: PairRequest = de(json!({"code": "ABCD2345", "device_name": "Pixel 9"}));
+    let desktop: PairRequest = de(json!({
+        "code": "ABCD2345",
+        "device_name": "Workstation",
+        "kind": "desktop",
+    }));
     vec![
         sample("PairRequest", "pair", &request),
+        sample("PairRequest", "pair_desktop", &desktop),
         sample(
             "PairResponse",
             "pair",
