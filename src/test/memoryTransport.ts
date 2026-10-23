@@ -16,6 +16,7 @@ import type {
   ChatInfo,
   ClientDevice,
   Clients,
+  DirectoryListing,
   GitOverview,
   HarnessDetection,
   HarnessInfo,
@@ -28,6 +29,7 @@ import type {
   RemoteStatus,
   Snapshot,
   UsageReport,
+  UsageStats,
 } from "../api/generated";
 import { CommandError, type ConnectionStatus, Listeners, type Transport, toCommandError } from "../api/transport";
 import { sortByOrder, toFront } from "../store/order";
@@ -111,6 +113,20 @@ export class FakeCore {
   branchStatuses: BranchStatuses = { default_branch: "main", statuses: [] };
   /** Served for `get_usage` (`null`: the core reports it unavailable). */
   usage: UsageReport | null = null;
+  /** Served for `get_usage_stats`; `null`: a small canned report of the period asked (see [`cannedUsageStats`]). */
+  usageStats: UsageStats | null = null;
+  /** The folders of the fake host served by `list_directory`: path → its sub-folders. The home is `/home/u`. */
+  fsTree: Record<string, FakeFolder[]> = {
+    "/": [{ name: "home" }, { name: "tmp" }],
+    "/home": [{ name: "u" }],
+    "/home/u": [{ name: "Documents" }, { name: "repo", git: true }, { name: ".config" }],
+    "/home/u/Documents": [],
+    "/home/u/repo": [{ name: "src" }, { name: ".github" }],
+    "/home/u/repo/src": [],
+    "/home/u/repo/.github": [],
+    "/home/u/.config": [],
+    "/tmp": [],
+  };
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
   agents = new FakeAgentSettings();
   /** Harness detection served by `get_harnesses` / `detect_harnesses` / `set_harness_path`. */
@@ -180,6 +196,27 @@ export class FakeCore {
   /** The projects as `list_projects` lists them: in the project order. */
   private listing(): ProjectInfo[] {
     return sortByOrder([this.info, ...this.others], this.projectOrder, (p) => p.id);
+  }
+
+  /** `list_directory` over [`fsTree`]: sub-folders sorted ignoring case, hidden ones only on request. */
+  private listDirectory(path: string | null, showHidden: boolean): DirectoryListing {
+    const home = "/home/u";
+    const wanted = path === null || path.trim() === "" || path === "~" ? home : path.replace(/^~\//, `${home}/`);
+    const dir = wanted.length > 1 ? wanted.replace(/\/+$/, "") : wanted;
+    if (!dir.startsWith("/")) throw new CommandError("invalid_argument", `${dir} is not an absolute path`);
+    const folders = this.fsTree[dir];
+    if (!folders) throw new CommandError("not_found", `${dir} does not exist`);
+    const child = (name: string) => (dir === "/" ? `/${name}` : `${dir}/${name}`);
+    return {
+      path: dir,
+      parent: dir === "/" ? null : dir.slice(0, dir.lastIndexOf("/")) || "/",
+      home,
+      is_git_repo: false,
+      entries: folders
+        .filter((f) => showHidden || !f.name.startsWith("."))
+        .map((f) => ({ name: f.name, path: child(f.name), is_git_repo: f.git === true }))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    };
   }
 
   handle(cmd: ApiCommand): ApiResponse {
@@ -258,6 +295,10 @@ export class FakeCore {
       case "get_usage":
         if (!this.usage) throw new CommandError("unavailable", "usage: no harness is configured to report usage");
         return { type: "usage", usage: this.usage };
+      case "get_usage_stats":
+        return { type: "usage_stats", stats: this.usageStats ?? cannedUsageStats(cmd.days ?? 30, cmd.tz_offset_min ?? 0) };
+      case "list_directory":
+        return { type: "directory", directory: this.listDirectory(cmd.path ?? null, cmd.show_hidden ?? false) };
       case "get_agent_settings":
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "set_agent_settings":
@@ -310,6 +351,57 @@ export class FakeCore {
         return { type: "accepted" };
     }
   }
+}
+
+/** A folder of [`FakeCore.fsTree`]. */
+export interface FakeFolder {
+  name: string;
+  /** It holds a `.git`. */
+  git?: boolean;
+}
+
+/** `count` consecutive dates (`YYYY-MM-DD`), the last being `last`. */
+function lastDates(count: number, last: string): string[] {
+  const end = Date.parse(`${last}T00:00:00Z`);
+  return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * 86_400_000).toISOString().slice(0, 10));
+}
+
+/** A small `get_usage_stats` report: Claude Code used on the last two days of the period, nothing before. */
+export function cannedUsageStats(days: number, tzOffsetMin: number): UsageStats {
+  const tokens = (input: number, output: number, cacheRead: number, cacheCreation: number) => ({
+    input,
+    output,
+    cache_read: cacheRead,
+    cache_creation: cacheCreation,
+    total: input + output + cacheRead + cacheCreation,
+  });
+  const dates = lastDates(days, "2026-10-20");
+  const usage = [tokens(100, 200, 3000, 400), tokens(200, 400, 6000, 800)];
+  const day = (date: string, i: number) => {
+    const t = usage[i - (days - usage.length)];
+    return {
+      date,
+      tokens: t ?? tokens(0, 0, 0, 0),
+      sessions: t ? 1 : 0,
+      harnesses: t ? [{ harness: "claude-code", tokens: t.total, sessions: 1 }] : [],
+    };
+  };
+  const sum = tokens(300, 600, 9000, 1200);
+  return {
+    generated_at_ms: 1_792_000_000_000,
+    period_days: days,
+    tz_offset_min: tzOffsetMin,
+    sources: [
+      { harness: "claude-code", found: true, files: 2 },
+      { harness: "codex", found: false, files: 0 },
+      { harness: "opencode", found: false, files: 0 },
+    ],
+    totals: { tokens: sum, sessions: 2 },
+    days: dates.map(day),
+    by_model: [{ name: "claude-opus-5-5", tokens: sum, sessions: 2, other: false }],
+    by_harness: [{ name: "claude-code", tokens: sum, sessions: 2, other: false }],
+    by_project: [{ name: "repo", project: "repo", tokens: sum, sessions: 2, other: false }],
+  };
 }
 
 /** The core's remote access in miniature: a server that starts unless `startError` says why not. */

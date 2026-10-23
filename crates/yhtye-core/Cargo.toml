@@ -28,6 +28,7 @@ gethostname.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true
 toml.workspace = true
+memchr.workspace = true
 # The desktop client of remote access (`remote_client`): `ws://` to another Yhtye, no TLS (WireGuard encrypts).
 tokio-tungstenite.workspace = true
 # Model list of OpenRouter (Codex harness, Stage 7e): one public GET, no credentials.

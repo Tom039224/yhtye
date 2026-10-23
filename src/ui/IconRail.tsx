@@ -1,10 +1,14 @@
-import { Icon } from "./Icon";
+import { Icon, type IconName } from "./Icon";
+import { RailProjects } from "./RailProjects";
 
-export type View = "work" | "runs";
+export type View = "dashboard" | "work";
 
 /**
- * Switches between the work view and the runs (history) view (design §3.2); the
- * settings button (Stage 7d) sits at the bottom of the strip.
+ * The left rail (design §3.2). It is 44px wide in the layout; hovering it, or
+ * moving the keyboard focus into it, expands its panel over the sidebar (CSS
+ * only: the labels are always in the DOM). From the top: the dashboard, the
+ * projects that are open (see {@link RailProjects}), the work view, and the
+ * settings (Stage 7d) at the bottom.
  */
 export function IconRail({
   view,
@@ -17,40 +21,59 @@ export function IconRail({
   settingsOpen: boolean;
   onOpenSettings: () => void;
 }) {
+  const viewButton = (to: View, icon: IconName, label: string) => (
+    <RailButton icon={icon} label={label} active={view === to} pressed onClick={() => onChange(to)} />
+  );
   return (
-    <nav className="rail" aria-label="views">
-      <button
-        type="button"
-        className={`rail-button ${view === "work" ? "active" : ""}`}
-        title="コーディング"
-        aria-label="コーディング"
-        aria-pressed={view === "work"}
-        onClick={() => onChange("work")}
-      >
-        <Icon name="code" size={18} />
-      </button>
-      <button
-        type="button"
-        className={`rail-button ${view === "runs" ? "active" : ""}`}
-        title="履歴"
-        aria-label="履歴"
-        aria-pressed={view === "runs"}
-        onClick={() => onChange("runs")}
-      >
-        <Icon name="history" size={18} />
-      </button>
-      <span className="spacer" />
-      <button
-        type="button"
-        className={`rail-button ${settingsOpen ? "active" : ""}`}
-        title="設定"
-        aria-label="設定"
-        aria-haspopup="dialog"
-        aria-expanded={settingsOpen}
-        onClick={onOpenSettings}
-      >
-        <Icon name="sliders" size={18} />
-      </button>
-    </nav>
+    <div className="rail">
+      <nav className="rail-panel" aria-label="views">
+        {viewButton("dashboard", "dashboard", "ダッシュボード")}
+        <RailProjects working={view === "work"} onShown={() => onChange("work")} />
+        <div className="rail-bottom">
+          {viewButton("work", "code", "コーディング")}
+          <RailButton
+            icon="sliders"
+            label="設定"
+            active={settingsOpen}
+            haspopup
+            expanded={settingsOpen}
+            onClick={onOpenSettings}
+          />
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+interface RailButtonProps {
+  icon: IconName;
+  label: string;
+  active: boolean;
+  /** A view switch: `aria-pressed` says whether it is the view shown. */
+  pressed?: boolean;
+  /** Opens a dialog: `aria-expanded` says whether it is open. */
+  haspopup?: boolean;
+  expanded?: boolean;
+  onClick: () => void;
+}
+
+/** An icon with its label (shown when the rail is expanded). */
+function RailButton({ icon, label, active, pressed, haspopup, expanded, onClick }: RailButtonProps) {
+  return (
+    <button
+      type="button"
+      className={`rail-row rail-button${active ? " active" : ""}`}
+      title={label}
+      aria-label={label}
+      aria-pressed={pressed ? active : undefined}
+      aria-haspopup={haspopup ? "dialog" : undefined}
+      aria-expanded={haspopup ? expanded : undefined}
+      onClick={onClick}
+    >
+      <span className="rail-icon">
+        <Icon name={icon} size={18} />
+      </span>
+      <span className="rail-label">{label}</span>
+    </button>
   );
 }

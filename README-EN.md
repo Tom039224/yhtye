@@ -37,7 +37,6 @@ What works:
 What is not done, and limitations:
 
 - Linux only (see below). No installers, no auto-update.
-- The history ("runs") view is on hold and shows an empty state.
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
@@ -255,6 +254,10 @@ first start.
 | [`docs/planned/`](docs/planned/) | Planned features |
 
 The UI design originated in Claude Design; the original and the spec are in [`docs/design/`](docs/design/).
+
+## Acknowledgements
+
+The usage statistics (the token usage dashboard) are inspired by [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC). Where the agents keep their session logs and how to read them follows its parsers; the implementation is our own, in Rust.
 
 ## License
 

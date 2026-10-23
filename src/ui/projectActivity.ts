@@ -1,4 +1,4 @@
-// What the sidebar shows about a project's activity, derived from what the
+// What the rail and the sidebar show about a project's activity, derived from what the
 // store already has: for the project on screen, its sessions and tasks; for any
 // other one, the project list (`open`: its orchestration runs in this process;
 // `running`: work is on in it, kept current by the store from the core).
@@ -23,15 +23,6 @@ export function projectRing(p: ProjectInfo, view: ProjectView | null): Ring {
   }
   if (p.open && p.running) return "running";
   return p.open && p.awake ? "ready" : "stopped";
-}
-
-/**
- * The projects running in the core in the background: open, not the one shown,
- * and with something up (work on, or a chat's orchestrator awake). A project
- * whose chats all sleep is not running: it is left out, and is still in the picker.
- */
-export function backgroundProjects(projects: ProjectInfo[], currentId: string | null): ProjectInfo[] {
-  return projects.filter((p) => p.open && (p.running || p.awake) && p.id !== currentId);
 }
 
 /**

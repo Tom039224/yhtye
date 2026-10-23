@@ -1,0 +1,247 @@
+name: Linux release
+
+# Pushing a tag `linux-v<major>.<minor>.<patch>` builds the desktop app (src-tauri/) for Linux and attaches the
+# AppImage, the deb and the rpm (plus SHA256SUMS) to a GitHub Release. See docs/DEVELOPMENT.md ("Releasing the
+# Linux desktop app"). The desktop app and the Android app are released separately: this workflow only reacts to
+# `linux-v*` tags (the Android one to `android-v*`).
+
+on:
+  push:
+    tags:
+      - "linux-v*"
+
+# Read-only by default; only the `release` job asks for write access.
+permissions:
+  contents: read
+
+# Never run two releases of the same tag at once, and never cancel one half way through.
+concurrency:
+  group: linux-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Builds and checks the bundles. It runs dependency install scripts and the whole build, so it only has the
+  # read-only token (and the checkout does not keep it). The bundles go to the `release` job as an artifact.
+  #
+  # The build runs in an Ubuntu 22.04 container: an AppImage (and the deb / rpm) needs at least the glibc and the
+  # WebKitGTK of the machine it was built on, so building on the oldest base we support keeps them usable on
+  # more distributions. The container is used instead of the `ubuntu-22.04` runner image because GitHub is
+  # retiring that image (deprecated since 2026-09-17, removed 2027-04-17, with brownouts before that).
+  build:
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+      compatible: ${{ steps.tag.outputs.compatible }}
+    steps:
+      # The tag is data from outside: it only reaches the scripts through the environment, never through
+      # `${{ }}` inside a script.
+      - name: Check the tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          re='^linux-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "$TAG" =~ $re ]]; then
+            echo "::error title=Bad tag::'$TAG' is not linux-v<major>.<minor>.<patch> (digits only, for example linux-v0.1.0)"
+            exit 1
+          fi
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          version="$major.$minor.$patch"
+          # While the version starts with 0. the app is a pre-release (0.x: the minor version can break compatibility).
+          # The rule is the Android app's (mobile/shared/.../version/Compatibility.kt): 0.x needs the same 0.<minor>;
+          # from 1.0 the major is the same and the PC's minor is at least the phone's minor.
+          if [[ "$major" == "0" ]]; then
+            prerelease=true
+            compatible="Android 版 ${major}.${minor}.x と互換"
+          else
+            prerelease=false
+            compatible="Android 版 ${major}.0.x〜${major}.${minor}.x と互換"
+          fi
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+            echo "compatible=$compatible"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing the Linux desktop app $version (pre-release: $prerelease)"
+
+      # What Tauri needs to build and bundle on Debian / Ubuntu, as in the `rust` job of ci.yml (libdbus is the
+      # keyring's; the GTK and WebKitGTK -dev packages also cover the folder picker of tauri-plugin-dialog),
+      # plus what the AppImage bundler runs: patchelf, file, and xdg-mime from xdg-utils (for the `yhtye://`
+      # link handler). git is for the checkout, jq for the version check below.
+      - name: Install system dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git jq file patchelf xdg-utils \
+            build-essential pkg-config libdbus-1-dev \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The version lives in three places that are changed together (see app_version.rs, which checks the same
+      # thing in CI). The tag must name exactly that version.
+      - name: Check the version
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          bad=0
+          check() {
+            if [[ "$2" != "$VERSION" ]]; then
+              echo "::error title=Version mismatch::$1 has version '$2' but the tag says '$VERSION'"
+              bad=1
+            fi
+          }
+          check "Cargo.toml ([workspace.package] version)" \
+            "$(awk '/^\[/ { in_package = ($0 == "[workspace.package]") } in_package && /^version[[:space:]]*=/ { gsub(/^[^"]*"|".*$/, ""); print; exit }' Cargo.toml)"
+          check "src-tauri/tauri.conf.json" "$(jq -r '.version // empty' src-tauri/tauri.conf.json)"
+          check "package.json" "$(jq -r '.version // empty' package.json)"
+          if ! grep -Eq '^[[:space:]]*version\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$' src-tauri/Cargo.toml; then
+            echo "::error title=Version mismatch::src-tauri/Cargo.toml must take its version from the workspace (version.workspace = true)"
+            bad=1
+          fi
+          if (( bad != 0 )); then
+            exit 1
+          fi
+          echo "All the versions are $VERSION"
+
+      # Same toolchain setup as the `frontend` and `rust` jobs of ci.yml (pnpm 11, Node 22, stable Rust; there is
+      # no rust-toolchain file).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      # Caches the dependencies' build. A tag only sees its own caches, so this helps when a failed run of the
+      # same tag is re-run (cache-on-failure), not the next release; and it is only ever read back by this job.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - run: pnpm install --frozen-lockfile
+
+      # `--bundles` is explicit (tauri.conf.json says "all"); `--locked` makes a Cargo.lock that is out of date
+      # a failure instead of a silent update. There is no updater, so nothing is signed.
+      - name: Build the bundles
+        run: pnpm tauri build --bundles appimage,deb,rpm -- --locked
+
+      # Each bundle must exist exactly once and carry the version. The AppImage is started (`--help` needs no
+      # display and does not open the app) to see that the bundled app runs at all.
+      - name: Verify and collect the bundles
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          bundle=target/release/bundle
+          arch="$(uname -m)"
+          mkdir release
+          for kind in appimage deb rpm; do
+            ext="$kind"
+            if [[ "$kind" == appimage ]]; then ext=AppImage; fi
+            mapfile -t found < <(find "$bundle/$kind" -maxdepth 1 -type f -name "*.$ext" 2>/dev/null)
+            if (( ${#found[@]} != 1 )); then
+              echo "::error title=Wrong bundles::expected exactly one .$ext in $bundle/$kind, found: ${found[*]:-none}"
+              ls -lR "$bundle" || true
+              exit 1
+            fi
+            if [[ "${found[0]}" != *"${VERSION}"* ]]; then
+              echo "::error title=Wrong version::${found[0]} does not carry the version $VERSION"
+              exit 1
+            fi
+            cp "${found[0]}" "release/yhtye-linux-$VERSION-$arch.$ext"
+          done
+
+          deb="release/yhtye-linux-$VERSION-$arch.deb"
+          deb_version="$(dpkg-deb -f "$deb" Version)"
+          if [[ "$deb_version" != "$VERSION" ]]; then
+            echo "::error title=Wrong version::the deb has version '$deb_version', not $VERSION"
+            exit 1
+          fi
+          contents="$(dpkg-deb -c "$deb")"
+          if ! grep -Eq ' (\./)?usr/bin/yhtye$' <<< "$contents"; then
+            echo "::error title=Bad deb::the deb does not contain /usr/bin/yhtye"
+            echo "$contents"
+            exit 1
+          fi
+
+          appimage="release/yhtye-linux-$VERSION-$arch.AppImage"
+          chmod +x "$appimage"
+          help="$(APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --help)"
+          if ! grep -q '^usage: yhtye' <<< "$help"; then
+            echo "::error title=Bad AppImage::the AppImage did not print its usage for --help"
+            echo "$help"
+            exit 1
+          fi
+
+          ( cd release && sha256sum -- yhtye-linux-* > SHA256SUMS && cat SHA256SUMS )
+
+      - name: Upload the bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only publishes: no repository code runs here. Nothing is released unless every check above passed.
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download the bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: release
+
+      - name: Check the files
+        run: |
+          cd release
+          sha256sum --check SHA256SUMS
+          ls -l
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+          COMPATIBLE: ${{ needs.build.outputs.compatible }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat > "$notes" <<NOTES
+          **${COMPATIBLE}** です。
+
+          - 互換性は版番号で決まります。0.x の間は \`0.<minor>\` が PC とスマホで同じなら互換、1.0 以降はメジャーが同じで PC のマイナーがスマホのマイナー以上なら互換です。パッチは PC と Android で独立しています。詳しくは README の「Android 版」を見てください。Android 版は \`android-v…\` のリリースから入れます。
+          - 対象は x86_64 の Linux です。Ubuntu 22.04 (glibc 2.35) でビルドしています。動作確認は Arch / CachyOS (Wayland) のソースビルドだけで、これらのパッケージ自体の動作は、他のディストリビューションを含め未確認です。
+          - 形式は 3 つです。どれも中身は同じアプリです。
+            - \`yhtye-linux-${VERSION}-x86_64.AppImage\`: 実行権限を付けてそのまま起動します (\`chmod +x\` してから実行)。
+            - \`yhtye-linux-${VERSION}-x86_64.deb\`: Debian / Ubuntu 系。\`sudo apt install ./yhtye-linux-${VERSION}-x86_64.deb\`
+            - \`yhtye-linux-${VERSION}-x86_64.rpm\`: Fedora 系。\`sudo dnf install ./yhtye-linux-${VERSION}-x86_64.rpm\`
+          - 検証: \`SHA256SUMS\` を同じ場所に置いて \`sha256sum --check --ignore-missing SHA256SUMS\`。
+          - エージェント (Claude Code など) と Secret Service は同梱していません。入れ方は [SETUP.md](${GITHUB_SERVER_URL}/${GH_REPO}/blob/${TAG}/SETUP.md) の「エージェントの準備」を見てください。
+          NOTES
+          args=(--title "Yhtye Linux ${VERSION} (${COMPATIBLE})" --notes-file "$notes" --verify-tag --latest=false)
+          if [[ "$PRERELEASE" == "true" ]]; then args+=(--prerelease); fi
+          gh release create "$TAG" release/yhtye-linux-* release/SHA256SUMS "${args[@]}"

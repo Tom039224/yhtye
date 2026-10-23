@@ -1,6 +1,8 @@
-import { memo, type MouseEvent, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { ExternalLink } from "./ExternalLink";
 
 /**
  * Agent text (orchestrator replies, sub-agent output) rendered as Markdown.
@@ -35,22 +37,9 @@ export function safeUrl(url: string): string {
   return SAFE_URL.test(trimmed) ? trimmed : "";
 }
 
-function openExternally(event: MouseEvent<HTMLAnchorElement>, href: string) {
-  event.preventDefault();
-  if ("__TAURI_INTERNALS__" in window) {
-    void import("@tauri-apps/plugin-opener").then(({ openUrl }) => openUrl(href)).catch(() => undefined);
-  } else {
-    window.open(href, "_blank", "noopener,noreferrer");
-  }
-}
-
 function Link({ href, children }: { href?: string; children?: ReactNode }) {
   if (!href) return <span className="md-link-dead">{children}</span>;
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" onClick={(e) => openExternally(e, href)}>
-      {children}
-    </a>
-  );
+  return <ExternalLink href={href}>{children}</ExternalLink>;
 }
 
 const COMPONENTS: Components = {

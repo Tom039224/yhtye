@@ -937,9 +937,9 @@ Stage 4 の構成 (`src/`):
   - ペアリングのリンク (`pairLinks`) は登録簿が持つ待ち行列で、`App` が届くたびに `takePairLink()` で取り出し、設定モーダルを「接続先」で開いてリンクを入れた状態にする
     (T-98。ペアリングはしない。接続先・ポートの確認と端末名の確認は同じ節の中で、人が「接続」を押すまで `yhtye_remote_add` は呼ばない)。設定が開いていれば「接続先」に切り替える。
     続けて届いたリンクは後のものが入る (入力欄は 1 つ)。
-  - 画面 (T-98): プロジェクトの選択 (`ProjectPicker`) が全ホストの一覧を出し (この PC のものが先、リモートは接続先ごとにその後ろ)、別ホストのプロジェクトには
-    名前の右に**リモートのアイコン** (`remote`。`RemoteMark`) を付ける。ホバーでホスト名と接続状態、接続していないホストのアイコンは灰色で、その項目は選べない。
-    ホスト名の併記は、同じ名前のプロジェクトが複数のホストにあるときだけ。「リポジトリを開く」欄は画面に出ているホストのパスを開く (リモートなら「<ホスト名> 上のパス」)。
+  - 画面 (T-98): プロジェクトの一覧 (レールの開いているプロジェクトとダッシュボードの全プロジェクト。`useProjects`) が全ホストを出し (この PC のものが先、リモートは接続先ごとにその後ろ)、別ホストのプロジェクトには
+    名前の右に**リモートのアイコン** (`remote`。`RemoteMark`) とホスト名を付ける。ホバーでホスト名と接続状態、接続していないホストのアイコンは灰色で、その行は選べない。
+    プロジェクトの追加はダッシュボードの「プロジェクトを追加」が画面に出ているホストに対して行う (リモートなら OS のダイアログではなく `list_directory` のフォルダブラウザ。§21.5)。
     設定の「接続先」でホストを足す・状態を見る・削除する (`HostsSettingsSection`)。リモートのホストが画面にあるときは、設定の「リモート接続」(そのホスト自身のサーバー・
     ペアリングコード・端末) は描かずに説明を出し (`RemoteSettingsElsewhere`。ホストが `forbidden` を返したときも同じ)、他の設定の見出しの横にそのホストの名前を出す。
     `ConnectionBanner` はリモートの切断・バージョン非互換をホスト名付きで出す。表示の仕様は [`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §3.3 (T-98)。
@@ -1534,7 +1534,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 
 ### 17.12 バックグラウンドのプロジェクトの動作中表示 (T-49)
 
-左上のプロジェクト切替のリングは「動作中のチャットがあれば回る緑、なければ中を抜いた緑」(開いていないプロジェクトも後者。グレーはチャット行だけ)。
+左のレールのプロジェクトのドットは「動作中のチャットがあれば緑に点灯、なければ中を抜いたドット」(サイドバーの Project の表示のリングは「あれば回る緑、なければ中を抜いた緑」。開いていないプロジェクトも後者。グレーはチャット行だけ)。
 表示中のプロジェクトはストアが持つビュー (`hasRunningWork`) で決められるが、表示していないプロジェクトのイベントはストアに入れないので、動作中かどうかを core から取る。
 
 - **core**: `ProjectInfo.running`。開いているプロジェクトで、live なエージェントセッションの `turn_running` があるか、タスクが `running` / `merging` のとき `true` (フロントの `hasRunningWork` と同じ基準。
@@ -1545,7 +1545,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   セッションの起動・停止・中断、タスクの状態変化 (`task_*` / `group_cancelled` / `chat_deleted`) なら 200ms の間引きで `list_projects` を読み直し、`open` / `running` だけを `projects` に取り込む
   (`mergeActivity`。並行した `open_project` で増えたプロジェクトは消さない)。別のプロジェクトを開くときは、離れるプロジェクトの `running` をビューから先に書いておき (`rememberRunning`)、
   回っていたリングが一瞬止まらないようにする。`projectRing` は表示中のプロジェクトにはビュー、それ以外には `open && running` を使う。
-- テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/ProjectPicker.test.tsx`)。
+- テスト: `tests/core_facade.rs` (`a_project_is_running_while_a_turn_or_a_task_is_on`)、vitest (`store/activity.test.ts` `store/app.test.ts` `ui/projectActivity.test.ts` `ui/IconRail.test.tsx`)。
 
 ### 17.13 プロジェクトとブランチを最近使った順に、手動で並べ替え (T-103)
 
@@ -1563,9 +1563,10 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
 - **PC**: `store/order.ts` の関数と `AppState.branchOrder`。`buildTree(chats, overview, awaiting, order)` が作業ツリーと「他のブランチ」を順に並べる (ブランチ内のチャットは従来どおり `byRecency`)。
   並べ替えは、ドラッグ&ドロップ (`ui/useSortable.ts`。ブラウザの drag イベント。行を別の行に落とすとその行の場所に入る)、右クリックの `RowMenu` の「上へ移動 / 下へ移動」、行にフォーカスして Alt+↑/↓。
   プロジェクトの右クリックメニュー (`ProjectMenu`) は T-102 のスリープと同じメニューで、並べ替えは一覧を開いたまま、スリープは一覧を閉じる。
-  対象は、プロジェクトのプルダウン (`ProjectPicker`。Alt+↑/↓ はリストボックスで)、左パネルの稼働中プロジェクトのチップ (`BackgroundProjects`。出ているチップだけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
+  対象は、左のレールの開いているプロジェクトの行 (`RailProjects`。Alt+↑/↓ は行にフォーカスして。出ている行だけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
+  (プロジェクトのプルダウンとバックグラウンドのチップは、ダッシュボード導入でレールに置き換わった。)
 - **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
-- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/ProjectPicker.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
+- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 
@@ -1791,7 +1792,7 @@ Android の共通モジュール (`mobile/shared`) の `PairingTarget.kt` / `Pai
 - **ローカル専用のコマンド** (§18.5: リモート接続の設定・ペアリングコード・端末の失効) は、リモートのホストへは `forbidden` で断られる。リモートのプロジェクトを
   表示している間にそれらの設定画面を開くと、ホストの断りがエラーとして出る (ホストごとの設定画面は後続のタスク)。
 - **スリープと並べ替え** (§17.12、§17.13): `sleep_project` / `reorder_projects` / `reorder_branches` / `get_branch_order` はローカル専用ではなく、リモートのホストにも通る
-  (`ApiCommand::is_local_only` は上の 5 つだけ。`ws.rs` のテストが固定している)。プロジェクトのプルダウンは全ホストのプロジェクトを混ぜて出すが、右クリックのメニュー・ドラッグ・Alt+↑/↓ は
+  (`ApiCommand::is_local_only` は上の 5 つだけ。`ws.rs` のテストが固定している)。レールとダッシュボードのプロジェクトの一覧は全ホストのプロジェクトを混ぜて出すが、右クリックのメニュー・ドラッグ・Alt+↑/↓ (レールの行) は
   **画面を描いているホストの行だけ**に付く (画面のストアはそのホスト 1 つにしか話せない)。別のホストの行は、選んでそのホストに切り替えてから同じ操作をする。
 - **添付ファイル** (§20): `stage_attachment` / `discard_attachment` / `get_attachment` と、添付付きの `send_user_message` もローカル専用ではなく、リモートのホストにも通る。
   ファイルはホストの `<データディレクトリ>/attachments/` に入る (PC 側には残らない)。WS の上限はホストと PC のクライアントの両方で 2 GiB に上げてある
@@ -1950,3 +1951,86 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
 - トランスクリプトはユーザーメッセージの本文の下に同じタイル (× なし) を出す。配送方式は `prompted` の `attachments` の確定値
   (古い履歴のページにあるメッセージの分は、そのページを読んだときに当てる)。画像は `get_attachment` で読み (送ったばかりのものは手元の内容)、
   最近の 64 件をキャッシュし、クリックで拡大表示する。CSP が `blob:` を許さないので画像は `data:` URL で出す。
+
+## 21. 利用統計 (`get_usage_stats`) とホストのフォルダ (`list_directory`) (`crates/yhtye-core/src/stats/`、`directory.rs`)
+
+プロジェクトのダッシュボード (Issue #18) の土台。PC の UI は §21.5。着想は [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC)。
+ログの場所と読み方は参考にしたが、実装は Rust で独自に書いた。**§14 の購読メーター (`get_usage`、`usage/`) とは別物** (あちらは Claude Code の `/usage` が返すプランの残量、こちらはセッションログから数えた実績)。
+
+### 21.1 計算はホストで、ホストの全セッションを数える
+
+統計は**コアが動いているマシン**のエージェントのセッションログから数える (Yhtye が起動したセッションに限らない)。別ホストに接続した PC や Android は、そのホストの数字を見る。
+どちらのコマンドも `is_local_only()` ではない (ペアリング済みのリモートも呼べる)。
+
+| ハーネス (`by_harness` / `sources` の id) | 読む場所 (環境変数の上書き。agentsview と同じ) | 1 行が 1 応答 |
+|---|---|---|
+| `claude-code` | `~/.claude/projects/**/*.jsonl` (`CLAUDE_PROJECTS_DIR`、なければ `CLAUDE_CONFIG_DIR/projects`)。サブエージェントは `<session>/subagents/agent-*.jsonl` | `type:"assistant"` の行: `timestamp`, `cwd`, `sessionId`, `message.{id, model, usage}` |
+| `codex` | `~/.codex/sessions/**/rollout-*.jsonl` と `archived_sessions` (`CODEX_SESSIONS_DIR`、`CODEX_HOME`) | `event_msg` の `token_count` の `info.last_token_usage` |
+| `opencode` | `~/.local/share/opencode/opencode.db` (`OPENCODE_DIR`)。SQLite を**読み取り専用**で開く | `message` (旧) と `session_message` (新、`session_v2`) の assistant 行の `data.tokens` |
+
+存在しない場所はエラーではなく、そのハーネスが何も出さないだけ (`sources[].found = false`)。読めない行は捨てる。
+
+- **Claude Code**: 1 応答がコンテンツブロックごとに複数行で書かれ、同じ `message.id` と使用量が付く → `message.id` で**まとめて最後の行を採る** (ファイル内)。ファイルをまたいで同じ id があれば (再開で履歴が複製される)
+  1 回だけ、`output_tokens` が大きい方を採る。サブエージェントの行 (`isSidechain`) は行の `sessionId` (親のセッション) の分として数える。`<synthetic>` モデルと全部 0 の行は捨てる。
+  **`/usage` だけを実行したセッション** (Yhtye 自身のプローブなど。ユーザーの発話がなく `/usage` コマンドだけがある) はファイルごと数えない。
+- **Codex**: 入力は `input_tokens − cached_input_tokens` (キャッシュ書き込み `cache_write_input_tokens` があればそれも引いて `cache_creation`)、`cached_input_tokens` が `cache_read`、`output_tokens` がそのまま出力。
+  `session_meta` に `forked_from_id` があるロールアウトは親の行を複製しているので**丸ごと捨てる**。`turn_context.model` がモデル。`total_token_usage` が前のイベントと同じなら (レート制限の更新などの再送) 数えない。
+- **OpenCode**: `tokens.{input, output, cache.{read, write}}`。新旧の両方の表にある行は新しい方だけ。サブセッション (`parent_id`) は親の分。cwd はセッションの `directory`。
+
+セッション = (ハーネス, セッション id)。1 つでも応答が期間にあれば 1 件。日またぎのセッションは両方の日に数える。
+
+### 21.2 速度: ファイルごとに 1 回だけ読む
+
+実機 (1673 ファイル / 6.2 GB の Claude ログ) で、release ビルドで 30 日が初回 6.7 秒、2 回目以降 約 35 ms、`refresh` で全部読み直して約 1 秒 (ページキャッシュあり)。
+
+- `StatsService` が**パース済みのファイルを (パス, サイズ, 更新時刻) で覚える** (`scan::FileCache`)。再度の呼び出しは一覧と `stat` だけで、変わったファイルだけ読み直す。消えたファイルは忘れる。
+- **更新時刻が期間より (1 日の余裕を足して) 古いファイルは読まない** (ファイルの最後の行はその更新時刻より新しくならない)。7 / 30 日は古い大量のログに触れない。長い期間を求めたときだけ古い分を足して読む。
+- 読むのは最大 8 スレッドの `spawn_blocking`。行は `memchr` の部分文字列検索で絞ってから `serde_json` で読む (数 GB の JSONL なので全行をパースしない)。
+- 呼び出しは単一実行 (`scanning` ロック)。同時に呼ばれたら 2 つ目は 1 つ目を待ち、覚えた結果を使う。
+- アプリ (`CoreConfig::installed`) は起動直後に 30 日分を**バックグラウンドで先読み** (`stats_warm_up`)。テスト用の設定 (`claude_code`) は先読みしない。ログの場所は `stats_sources` で差し替えられる (テストは一時ディレクトリを指す)。
+
+### 21.3 API
+
+```jsonc
+// 要求。days は既定 30 (1〜366。UI は 7 / 30 / 90 / 365)、tz_offset_min は UTC からの分 (既定 0。日の区切りに使う。範囲外は invalid_argument)
+{"type": "get_usage_stats", "days": 30, "tz_offset_min": 540, "refresh": false}
+// 応答
+{"type": "usage_stats", "stats": {
+  "generated_at_ms": 1792000000000, "period_days": 30, "tz_offset_min": 540,
+  "sources": [{"harness": "claude-code", "found": true, "files": 12}, …],     // claude-code / codex / opencode
+  "totals": {"tokens": {"input", "output", "cache_read", "cache_creation", "total"}, "sessions": 3},
+  "days": [{"date": "2026-10-20", "tokens": {…}, "sessions": 2,
+            "harnesses": [{"harness": "claude-code", "tokens": 642600, "sessions": 2}]}, …],   // 期間の全日、古い順。使用のない日は 0 と空の harnesses
+  "by_model":   [{"name": "claude-opus-5-5", "tokens": {…}, "sessions": 2, "other": false}, …],  // トークンの多い順。20 件まで、残りは name "other" / other true に合算
+  "by_harness": [{"name": "claude-code", …}, …],
+  "by_project": [{"name": "repo", "project": "repo", "tokens": {…}, "sessions": 2, "other": false}, …]  // project: 登録済みプロジェクトの id、なければ null
+}}
+```
+
+`total` = `input + output + cache_read + cache_creation` (キャッシュ読み出しを含む。実績ではキャッシュ読み出しが大半を占める)。数値はすべて `u64` (ts-rs は `number`、Kotlin は `Long`)。
+
+**プロジェクトへの対応づけ**: セッションの cwd (最も早い応答のもの) が、登録済みプロジェクトのパスの中か、その Yhtye の作業ツリーのディレクトリ (`worktree_root(data_dir, project_id)`) の中なら、そのプロジェクト
+(複数に当たれば最も深いルート)。どれにも当たらなければ cwd の**最後のディレクトリ名**を名前にする (`project: null`)。同じ名前は 1 つにまとまる。
+
+### 21.4 ホストのフォルダ (`list_directory`)
+
+別ホストに接続した PC や Android がプロジェクトを追加するとき、手元のファイルマネージャーはホストでは意味のないパスを返す。ホストのフォルダを選ぶための API。
+
+```jsonc
+{"type": "list_directory", "path": "/home/u", "show_hidden": false}      // path 省略/空/"~" はホストのユーザーのホーム、"~/x" も使える。相対パスは invalid_argument
+{"type": "directory", "directory": {"path": "/home/u", "parent": "/home", "home": "/home/u", "is_git_repo": false,
+   "entries": [{"name": "repo", "path": "/home/u/repo", "is_git_repo": true}, …]}}
+```
+
+`path` は正規化 (シンボリックリンクを解決) した絶対パス。ディレクトリだけ (リンク先がディレクトリのシンボリックリンクも含む)、読めないものは除く、大文字小文字を無視して並べる、`.` で始まるものは `show_hidden` のときだけ。
+`is_git_repo` は `.git` (ディレクトリでも、作業ツリーのファイルでも) がある。UTF-8 でない名前は往復できないので出さない。エラーは `not_found` (無い)、`invalid_argument` (ディレクトリでない / 絶対パスでない)、`forbidden` (権限がない)。
+ペアリング済みのリモートは、すでにホストでエージェントを動かせるので、フォルダ名の一覧も出してよいとした。
+
+### 21.5 PC の画面 (ダッシュボード。表示の仕様は [`orchestrator-desktop.md`](../design/orchestrator-desktop.md) §10)
+
+- **ストア**: `AppStore.refreshStats(days, refresh?)` が `get_usage_stats` を読んで `state.stats` (`{report, error, loading}`) に入れる。日の区切りはこの端末のタイムゾーン (`tz_offset_min = -new Date().getTimezoneOffset()`)。
+  最新の呼び出しの答えだけを採る (期間を切り替えると前のものは捨てる)。失敗は `error` に入れて画面に出す (バナーには出さない)。画面に出ているホストのストアが読む。
+  `listDirectory(path?)` は `list_directory` を呼び、コアのエラーのまま reject する (フォルダブラウザが見せる)。`tryOpenProject(path)` は `openProject` と同じだが、拒否を reject で返す (「プロジェクトを追加」がその場に出す。`openProject` は従来どおりバナー)。
+- **追加の入口**: `canPickLocalFolder(isRemoteHost)` (Tauri のアプリ内で、かつ別ホストでない) なら OS のダイアログ、そうでなければ `list_directory` のフォルダブラウザ (`FolderBrowser`)。
+- 統計の描画は SVG と CSS だけ (チャートのライブラリは使わない)。数の整形・日別の積み上げ・ヒートマップの配置・内訳の割合は `src/ui/usageStats.ts` の純関数。
+

@@ -1,6 +1,6 @@
 // The Claude Design layout (Stage 6a) driven by the store: title bar branch,
-// sidebar, task cards and mentions, the wait banner, the git panel, the runs
-// view, lazy history and reopening the last project.
+// sidebar, task cards and mentions, the wait banner, the git panel, lazy
+// history and reopening the last project.
 
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -34,7 +34,7 @@ function setup(opts: { snapshot?: Snapshot; log?: typeof LOG; git?: GitOverview;
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   return { transport, core, store, user: userEvent.setup() };
@@ -159,15 +159,6 @@ describe("design layout", () => {
     await waitFor(() => expect(transport.callsOf("send_user_message")).toHaveLength(1));
     expect(transport.callsOf("send_user_message")[0].text).toBe("@T-2 second task\n\nwhy is this slow?");
     await waitFor(() => expect(screen.queryAllByRole("button", { name: /の引用を外す$/ })).toHaveLength(0));
-  });
-
-  it("switches to the runs view, which is honestly empty", async () => {
-    const { user } = setup();
-    await user.click(screen.getByRole("button", { name: "履歴" }));
-    expect(screen.getByText("現状は何もありません")).toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "projects" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "コーディング" }));
-    expect(screen.getByRole("complementary", { name: "projects" })).toBeInTheDocument();
   });
 
   it("shows the selected task's agent output in the bottom panel and goes back to git", async () => {

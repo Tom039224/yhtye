@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import io.github.tom039224.yhtye.YhtyeTheme
+import io.github.tom039224.yhtye.ui.panels.MainView
 import io.github.tom039224.yhtye.shared.api.generated.AgentEvent
 import io.github.tom039224.yhtye.shared.api.generated.AgentOutput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
@@ -88,7 +89,7 @@ class ConversationScreenTest {
         sync.start()
         rule.setContent {
             YhtyeTheme(darkTheme = true) {
-                MainScreen("device", sync, onReconnect = {}, onUnpair = {}, gestureInsets = WindowInsets(0))
+                MainScreen("device", sync, onReconnect = {}, onUnpair = {}, gestureInsets = WindowInsets(0), initialView = MainView.Work)
             }
         }
         scope.launch { sync.openProject(PROJECT.path) }

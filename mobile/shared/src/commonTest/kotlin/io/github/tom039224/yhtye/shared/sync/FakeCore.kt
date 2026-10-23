@@ -18,6 +18,8 @@ import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
 import io.github.tom039224.yhtye.shared.api.generated.ClientServer
 import io.github.tom039224.yhtye.shared.api.generated.Clients
+import io.github.tom039224.yhtye.shared.api.generated.DirectoryEntry
+import io.github.tom039224.yhtye.shared.api.generated.DirectoryListing
 import io.github.tom039224.yhtye.shared.api.generated.EffortOption
 import io.github.tom039224.yhtye.shared.api.generated.GitBranch
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
@@ -29,15 +31,23 @@ import io.github.tom039224.yhtye.shared.api.generated.ModelEfforts
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.RoleSettings
 import io.github.tom039224.yhtye.shared.api.generated.Snapshot
+import io.github.tom039224.yhtye.shared.api.generated.StatsBucket
+import io.github.tom039224.yhtye.shared.api.generated.StatsDay
+import io.github.tom039224.yhtye.shared.api.generated.StatsDayHarness
+import io.github.tom039224.yhtye.shared.api.generated.StatsProject
+import io.github.tom039224.yhtye.shared.api.generated.StatsSource
+import io.github.tom039224.yhtye.shared.api.generated.StatsTokens
+import io.github.tom039224.yhtye.shared.api.generated.StatsTotals
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
+import io.github.tom039224.yhtye.shared.api.generated.UsageStats
 import io.github.tom039224.yhtye.shared.client.ApiException
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.CoreConnection
+import kotlin.io.encoding.Base64
+import kotlin.reflect.KClass
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.yield
-import kotlin.io.encoding.Base64
-import kotlin.reflect.KClass
 
 /**
  * テスト用のメモリ上のコア (PC の `src/test/memoryTransport.ts` の `MemoryTransport` + `FakeCore`)。
@@ -74,6 +84,19 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
         truncated = false,
     )
     var usage: UsageReport? = null
+    /** `get_usage_stats` の答え (null: 要求の期間に合わせた小さな既定の統計。[cannedUsageStats])。 */
+    var usageStats: UsageStats? = null
+    /** ホストのフォルダ (`list_directory`): パス → 直下のフォルダ。ホームは `/home/u`。 */
+    val fsTree: MutableMap<String, List<DirectoryEntry>> = mutableMapOf(
+        "/" to listOf(folder("/", "home"), folder("/", "tmp")),
+        "/home" to listOf(folder("/home", "u")),
+        "/home/u" to listOf(folder("/home/u", "Documents"), folder("/home/u", "repo", git = true), folder("/home/u", ".config")),
+        "/home/u/Documents" to emptyList(),
+        "/home/u/repo" to listOf(folder("/home/u/repo", "src")),
+        "/home/u/repo/src" to emptyList(),
+        "/home/u/.config" to emptyList(),
+        "/tmp" to emptyList(),
+    )
     var host = "test-host"
     /** `get_branch_statuses` の答え。 */
     var branchStatuses: BranchStatuses = BranchStatuses("main", emptyList())
@@ -209,6 +232,8 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
             ApiResponse.Chat(newChat(worktreeOf(command.name)))
         }
         is ApiCommand.GetUsage -> ApiResponse.Usage(usage ?: refuse(ApiErrorCode.Unavailable, "usage: no harness is configured to report usage"))
+        is ApiCommand.GetUsageStats -> ApiResponse.UsageStats(usageStats ?: cannedUsageStats(command.days ?: 30, command.tzOffsetMin ?: 0))
+        is ApiCommand.ListDirectory -> ApiResponse.Directory(listDirectory(command.path, command.showHidden ?: false))
         is ApiCommand.GetAgentSettings -> ApiResponse.AgentSettings(agentSettings(command.project))
         is ApiCommand.SetAgentSettings -> {
             if (command.expectedRevision != null && command.expectedRevision != agentRevision) {
@@ -267,6 +292,26 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
         else -> ApiResponse.Accepted
     }
 
+    /** [fsTree] の `list_directory`: 直下のフォルダを大文字小文字を無視して並べ、隠しフォルダは求められたときだけ。 */
+    private fun listDirectory(path: String?, showHidden: Boolean): DirectoryListing {
+        val home = "/home/u"
+        val wanted = when {
+            path.isNullOrBlank() || path == "~" -> home
+            path.startsWith("~/") -> "$home/${path.removePrefix("~/")}"
+            else -> path
+        }
+        val dir = if (wanted.length > 1) wanted.trimEnd('/') else wanted
+        if (!dir.startsWith("/")) refuse(ApiErrorCode.InvalidArgument, "$dir is not an absolute path")
+        val folders = fsTree[dir] ?: refuse(ApiErrorCode.NotFound, "$dir does not exist")
+        return DirectoryListing(
+            path = dir,
+            parent = if (dir == "/") null else dir.substringBeforeLast('/').ifEmpty { "/" },
+            home = home,
+            isGitRepo = false,
+            entries = folders.filter { showHidden || !it.name.startsWith(".") }.sortedBy { it.name.lowercase() },
+        )
+    }
+
     /** 保存の後の設定: 全体か [command] のプロジェクトの層のその役割を置き換えた形。 */
     private fun saved(command: ApiCommand.SetAgentSettings): AgentSettingsView? {
         val current = agentView ?: return null
@@ -310,4 +355,55 @@ class FakeCore(var info: ProjectInfo, var snapshot: Snapshot) : CoreConnection {
             revision = agentRevision,
         )
     }
+}
+
+/** [parent] の中のフォルダ [name] ([git]: `.git` がある)。 */
+private fun folder(parent: String, name: String, git: Boolean = false) =
+    DirectoryEntry(name = name, path = if (parent == "/") "/$name" else "$parent/$name", isGitRepo = git)
+
+/** 日番号 (1970-01-01 が 0) の `YYYY-MM-DD` (Hinnant の civil_from_days)。 */
+private fun dateOf(days: Long): String {
+    val z = days + 719_468
+    val era = z.floorDiv(146_097L)
+    val doe = z - era * 146_097
+    val yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp = (5 * doy + 2) / 153
+    val d = doy - (153 * mp + 2) / 5 + 1
+    val m = if (mp < 10) mp + 3 else mp - 9
+    val y = yoe + era * 400 + if (m <= 2) 1 else 0
+    return "${y.toString().padStart(4, '0')}-${m.toString().padStart(2, '0')}-${d.toString().padStart(2, '0')}"
+}
+
+private fun tokens(input: Long, output: Long, cacheRead: Long, cacheCreation: Long) =
+    StatsTokens(input, output, cacheRead, cacheCreation, input + output + cacheRead + cacheCreation)
+
+/** 期間の最後の 2 日だけ Claude Code の使用がある小さな `get_usage_stats` の答え ([days] 日、最後の日は 2026-10-20)。 */
+fun cannedUsageStats(days: Long, tzOffsetMin: Int): UsageStats {
+    val lastDay = 20_746L // 2026-10-20
+    val usage = listOf(tokens(100, 200, 3000, 400), tokens(200, 400, 6000, 800))
+    val sum = tokens(300, 600, 9000, 1200)
+    return UsageStats(
+        generatedAtMs = 1_792_000_000_000,
+        periodDays = days,
+        tzOffsetMin = tzOffsetMin,
+        sources = listOf(
+            StatsSource("claude-code", found = true, files = 2),
+            StatsSource("codex", found = false, files = 0),
+            StatsSource("opencode", found = false, files = 0),
+        ),
+        totals = StatsTotals(sum, sessions = 2),
+        days = (0 until days).map { i ->
+            val used = usage.getOrNull((i - (days - usage.size)).toInt())
+            StatsDay(
+                date = dateOf(lastDay - (days - 1 - i)),
+                tokens = used ?: tokens(0, 0, 0, 0),
+                sessions = if (used == null) 0 else 1,
+                harnesses = if (used == null) emptyList() else listOf(StatsDayHarness("claude-code", used.total, 1)),
+            )
+        },
+        byModel = listOf(StatsBucket("claude-opus-5-5", sum, sessions = 2, other = false)),
+        byHarness = listOf(StatsBucket("claude-code", sum, sessions = 2, other = false)),
+        byProject = listOf(StatsProject("repo", project = "repo", tokens = sum, sessions = 2, other = false)),
+    )
 }

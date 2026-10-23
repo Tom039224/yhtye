@@ -1,9 +1,12 @@
 package io.github.tom039224.yhtye.ui.panels
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -14,32 +17,32 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import io.github.tom039224.yhtye.MonoFont
-import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindow
 import io.github.tom039224.yhtye.shared.api.generated.UsageWindowKind
@@ -49,33 +52,34 @@ import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.formatRemaining
 import io.github.tom039224.yhtye.shared.sync.planLabel
 import io.github.tom039224.yhtye.shared.sync.usageWindow
-import io.github.tom039224.yhtye.ui.common.EmptyState
+import io.github.tom039224.yhtye.ui.common.SwipeThresholds
 import io.github.tom039224.yhtye.ui.common.YIcon
-import io.github.tom039224.yhtye.ui.common.rememberActionScope
 import io.github.tom039224.yhtye.ui.common.YIcons
+import io.github.tom039224.yhtye.ui.common.rememberActionScope
+import io.github.tom039224.yhtye.ui.shell.LocalPanelShell
+import io.github.tom039224.yhtye.ui.shell.Panel
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-// 左パネル (PC のアイコンレール + サイドバー + ステータスバーの使用量、モックの `#left`): 左端のレールでコーディング /
-// 履歴を切り替え、一番下に設定。コーディングではプロジェクトのドロップダウン・バックグラウンドで動作中のプロジェクト・
-// ブランチとチャットの木。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`) とプラン・使用量
-// (PC のステータスバー)。
+// 左パネル (PC のアイコンレール + サイドバー + ステータスバーの使用量、モックの `#left`): 左端のレール (`Rail.kt`) で
+// ダッシュボード / 開いているプロジェクト / コーディングを切り替え、一番下に設定。レールは左パネルが開いているときの
+// もう 1 回の左→右のスワイプで広がり、プロジェクトの名前が出る (`RailExpansion.kt`)。その右にプロジェクトの名前と
+// ブランチとチャットの木 (コーディングのときだけ。PC もダッシュボードではサイドバーを隠す)。ダッシュボードはレールだけで、
+// パネルはレールが広がった幅 (232dp) で開き、レールは広げたまま固定する (`MainScreen` が PanelShell の `leftMaxWidth` を
+// 渡す)。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`。サイドバーと同じくコーディングの
+// ときだけ) とプラン・使用量 (PC のステータスバー。どのビューでも出す)。
 
-private val RAIL_WIDTH = 56.dp
-private val RAIL_BUTTON_SHAPE = RoundedCornerShape(12.dp)
 private val METER_SHAPE = RoundedCornerShape(2.dp)
 
-/** PC のアイコンレールのビュー。 */
-enum class MainView { Work, Runs }
-
-/** 履歴のビュー (PC の RunsView): まだ設計していないので PC と同じ空の状態。 */
-const val RUNS_EMPTY = "現状は何もありません"
+/** PC のアイコンレールのビュー。アプリの最初はダッシュボード。 */
+enum class MainView { Dashboard, Work }
 
 /**
  * @param selfId ペアリングで保存したこの端末の ID (下端の一覧で「この端末」の印を付ける)。
  * @param onChatChosen チャットを選んだ・作った (中央に戻る)。
  * @param onOpenSettings レールの一番下の設定。
  * @param updateAvailable アプリの新しい版がある (設定のボタンに小さな印を付ける)。
+ * @param gestureInsets 画面の端のこの幅から始まったスワイプではレールを広げない (Android の「戻る」。パネルと同じ)。
  */
 @Composable
 fun LeftPanel(
@@ -89,87 +93,93 @@ fun LeftPanel(
     onChatChosen: () -> Unit,
     onOpenSettings: () -> Unit,
     updateAvailable: Boolean = false,
+    gestureInsets: WindowInsets = WindowInsets(0),
 ) {
     val c = Yhtye.colors
+    // ダッシュボードのパネルはレールの幅だけ (幅の広い端末の常時表示は除く): レールを広げたまま固定する
+    val shell = LocalPanelShell.current
+    val expansion = rememberRailExpansion(pinned = view == MainView.Dashboard && shell?.wide == false)
+    // パネルが閉じ始めたら畳む (次に開いたときは畳んだレール)。戻るは広がったレールを先に畳む (固定していれば畳むものが無いので
+    // そのままパネルを閉じる)
+    val panelShown = shell == null || shell.wide || shell.open == Panel.Left
+    LaunchedEffect(panelShown) { if (!panelShown && !expansion.pinned) expansion.collapse() }
+    BackHandler(enabled = expansion.open && !expansion.pinned) { expansion.collapse() }
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val edgeStart = gestureInsets.getLeft(density, LocalLayoutDirection.current).toFloat()
+    val fling = with(density) { SwipeThresholds.FLING_DP_PER_SECOND.dp.toPx() }
     Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).testTag("left-panel")) {
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Rail(view, onView, onOpenSettings, updateAvailable)
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                when (view) {
-                    MainView.Runs -> EmptyState(YIcons.History, RUNS_EMPTY, Modifier.align(Alignment.Center), testTag = "runs-empty")
-                    MainView.Work -> WorkSide(app, sync, now, memory, onChatChosen)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val expandedWidth = minOf(RAIL_EXPANDED_WIDTH, maxWidth)
+            val distance = with(density) { (expandedWidth - RAIL_WIDTH).toPx() }
+            // 中身・レール・外のタップの受け手のどれの上から始まったスワイプでも、ここで受ける (子が取らなかった横の動き)。
+            // 固定したレールは動かさないので受けない (横の動きは PanelShell がパネルの開閉に使う)
+            val swipe = if (expansion.pinned) {
+                Modifier
+            } else {
+                Modifier.pointerInput(expansion, distance, fling, edgeStart) { railSwipe(expansion, distance, fling, edgeStart, haptic) }
+            }
+            Box(Modifier.fillMaxSize().then(swipe)) {
+                Row(Modifier.fillMaxSize()) {
+                    Spacer(Modifier.width(RAIL_WIDTH).fillMaxHeight())
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        when (view) {
+                            MainView.Work -> WorkSide(app, sync, now, memory, onChatChosen)
+                            MainView.Dashboard -> Unit // レールだけ (PC のダッシュボードにサイドバーは無い)
+                        }
+                    }
                 }
+                RailOverlay(app, sync, view, onView, onOpenSettings, updateAvailable, expansion, expandedWidth)
             }
         }
         HorizontalDivider(color = c.line)
-        Footer(app, sync, now, selfId)
+        Footer(app, sync, now, selfId, showHosts = view == MainView.Work)
     }
 }
 
-/** 左端のレール: コーディング / 履歴、一番下に設定。 */
+/** 中身の上に重なるレール。広がっている間はその外のタップで畳む (PC でポインタがレールを離れたとき。固定していれば外は無い)。 */
 @Composable
-private fun Rail(view: MainView, onView: (MainView) -> Unit, onOpenSettings: () -> Unit, updateAvailable: Boolean) {
-    val c = Yhtye.colors
-    Column(
-        Modifier.width(RAIL_WIDTH).fillMaxHeight().background(c.bgRail).padding(vertical = 10.dp).semantics { contentDescription = "views" },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        RailButton(YIcons.Code, "コーディング", view == MainView.Work, "rail-work") { onView(MainView.Work) }
-        RailButton(YIcons.History, "履歴", view == MainView.Runs, "rail-runs") { onView(MainView.Runs) }
-        Spacer(Modifier.weight(1f))
-        RailButton(
-            YIcons.Sliders,
-            stringResource(if (updateAvailable) R.string.rail_settings_update else R.string.rail_settings),
-            active = false,
-            tag = "rail-settings",
-            marked = updateAvailable,
-            onClick = onOpenSettings,
-        )
+private fun RailOverlay(
+    app: AppState,
+    sync: AppStore,
+    view: MainView,
+    onView: (MainView) -> Unit,
+    onOpenSettings: () -> Unit,
+    updateAvailable: Boolean,
+    expansion: RailExpansion,
+    expandedWidth: Dp,
+) {
+    val progress = expansion.progress
+    if (progress > 0f && !expansion.pinned) {
+        Box(Modifier.fillMaxSize().pointerInput(expansion) { detectTapGestures { expansion.collapse() } }.testTag("rail-outside"))
     }
+    Rail(
+        app = app,
+        sync = sync,
+        view = view,
+        onView = onView,
+        onProjectChosen = {
+            onView(MainView.Work)
+            expansion.collapse()
+        },
+        onOpenSettings = onOpenSettings,
+        updateAvailable = updateAvailable,
+        width = lerp(RAIL_WIDTH, expandedWidth, progress),
+        showLabels = progress > 0f,
+    )
 }
 
-@Composable
-private fun RailButton(icon: ImageVector, label: String, active: Boolean, tag: String, marked: Boolean = false, onClick: () -> Unit) {
-    val c = Yhtye.colors
-    Box(contentAlignment = Alignment.CenterStart) {
-        if (active) {
-            Box(Modifier.offset(x = (-6).dp).width(3.dp).height(18.dp).clip(RoundedCornerShape(topEnd = 2.dp, bottomEnd = 2.dp)).background(c.accent))
-        }
-        Box(
-            Modifier
-                .size(44.dp)
-                .clip(RAIL_BUTTON_SHAPE)
-                .then(if (active) Modifier.background(c.bgChip) else Modifier)
-                .clickable(role = Role.Button, onClick = onClick)
-                .semantics {
-                    contentDescription = label
-                    selected = active
-                }
-                .testTag(tag),
-            contentAlignment = Alignment.Center,
-        ) {
-            YIcon(icon, if (active) c.accent else c.tx4, 20.dp)
-            // 小さな印 (右上の点)。意味は読み上げの名前が言う
-            if (marked) {
-                Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(8.dp).background(c.accent, CircleShape).testTag("$tag-mark"))
-            }
-        }
-    }
-}
-
-/** コーディングのビューの中身: プロジェクト、バックグラウンドのプロジェクト、ブランチとチャット。 */
+/** コーディングのパネルの中身: 表示中のプロジェクトの名前と、ブランチとチャットの木。 */
 @Composable
 private fun WorkSide(app: AppState, sync: AppStore, now: Long, memory: LeftPanelMemory, onChatChosen: () -> Unit) {
-    ProjectPickerArea(app, sync) {
-        BackgroundProjects(app, sync)
+    ProjectPickerArea(app) {
         BranchTree(app, sync, now, memory, onChatChosen)
     }
 }
 
-/** 下端: サーバー (コアのホストと最後の ping からの経過) と端末の一覧、プランと使用量 (タップで取り直す)。 */
+/** 下端: サーバー (コアのホストと最後の ping からの経過) と端末の一覧 ([showHosts] のときだけ)、プランと使用量 (タップで取り直す)。 */
 @Composable
-private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?) {
+private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?, showHosts: Boolean) {
     val c = Yhtye.colors
     val scope = rememberActionScope()
     Column(
@@ -180,7 +190,7 @@ private fun Footer(app: AppState, sync: AppStore, now: Long, selfId: String?) {
             .padding(start = 14.dp, end = 14.dp, top = 9.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        HostAndClients(app, selfId)
+        if (showHosts) HostAndClients(app, selfId)
         val report = app.usage.report
         val enabled = app.connection is ConnectionState.Connected && !app.usage.loading
         FlowRow(

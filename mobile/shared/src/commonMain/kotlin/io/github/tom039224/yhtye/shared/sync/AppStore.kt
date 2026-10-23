@@ -11,6 +11,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.CoreConnection
 import io.github.tom039224.yhtye.shared.client.RpcException
+import io.github.tom039224.yhtye.shared.deviceUtcOffsetMin
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,6 +87,8 @@ class AppStore(
         val activityRefreshMs: Long = 200,
         /** 使用量を読み直す間隔 (つながっていて前面の間。コアは 1 分キャッシュする)。 */
         val usageRefreshMs: Long = 5 * 60_000,
+        /** この端末の UTC からのずれ (分。エポックからのミリ秒の時点の) を返す: 利用統計の 1 日の区切り。 */
+        val utcOffsetMin: (atEpochMs: Long) -> Int = ::deviceUtcOffsetMin,
         /** コアに ping する間隔 (つながっていて前面の間。ホストの表示)。 */
         val pingIntervalMs: Long = 3_000,
         /** ping の応答をこれ以上待たない。 */
@@ -106,6 +110,9 @@ class AppStore(
 
     /** 設定画面のコマンドと、設定が変わった知らせ。 */
     val settings: SettingsCommands = SettingsCommands(core)
+
+    /** ホストのフォルダを辿ってプロジェクトに開く (プロジェクトの追加。コアが動いているマシンのフォルダなので、端末のものではない)。 */
+    val folders: FolderBrowser = FolderBrowser(core, this.scope) { path -> openProject(path) }
 
     /** 会話の添付の画像のメモリキャッシュ ([TranscriptItem.User.attachments] の中身を取る)。 */
     val attachmentPreviews: AttachmentPreviews =
@@ -139,6 +146,8 @@ class AppStore(
     private var activityTimer: Job? = null
     private var activityToken = 0L
     private var usageTimer: Job? = null
+    /** 統計の読みごとに進める: 最後に始めた読みだけが状態を変える (期間を続けて変えても前の答えが勝たない)。 */
+    private var statsToken = 0L
     private var pingTimer: Job? = null
     private var pinging = false
     private var clientsToken = 0L
@@ -238,16 +247,28 @@ class AppStore(
     }
 
     suspend fun openProject(path: String) {
-        onConfined {
-            set { it.copy(busy = it.busy.copy(opening = true)) }
-            try {
-                val r = report<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs) ?: return@onConfined
-                // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
-                set { it.copy(projects = toFrontProject(it.projects, r.project)) }
-                load(r.project)
-            } finally {
-                set { it.copy(busy = it.busy.copy(opening = false)) }
+        val reason = tryOpenProject(path) ?: return
+        onConfined { pushError("${commandName(ApiCommand.OpenProject(path))} failed: $reason") }
+    }
+
+    /**
+     * [openProject] の、断られた理由をその場に出す画面 (ダッシュボードの「プロジェクトを追加」) 用: 失敗を画面のエラー
+     * ([AppState.errors]) に積まず、コアの理由を返す。開けたら null。
+     */
+    suspend fun tryOpenProject(path: String): String? = onConfined {
+        set { it.copy(busy = it.busy.copy(opening = true)) }
+        try {
+            val r = try {
+                core.expect<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs)
+            } catch (e: RpcException) {
+                return@onConfined describe(e)
             }
+            // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
+            set { it.copy(projects = toFrontProject(it.projects, r.project)) }
+            load(r.project)
+            null
+        } finally {
+            set { it.copy(busy = it.busy.copy(opening = false)) }
         }
     }
 
@@ -530,6 +551,31 @@ class AppStore(
                 UsageView(error = describe(e))
             }
             set { it.copy(usage = usage) }
+        }
+    }
+
+    /**
+     * ホストの利用統計を [days] 日分 (今日まで。1–[MAX_STATS_DAYS] に丸める) 読み、その期間を選んだことにする。日の区切りはこの
+     * 端末のタイムゾーン ([Options.utcOffsetMin])。最初の 1 回はコアがログを読むので時間が掛かる ([Options.longCallTimeoutMs])。
+     * [refresh] はコアに読んだものを忘れさせて読み直させる。読み直している間は前の統計を持ち続け、失敗しても消さない
+     * ([StatsView.error] と [StatsView.isStale] で分かる)。続けて呼ぶと最後の呼びだけが状態を変える。
+     */
+    suspend fun refreshStats(days: Int = _state.value.stats.days, refresh: Boolean = false) {
+        onConfined {
+            val period = days.coerceIn(1, MAX_STATS_DAYS)
+            val token = ++statsToken
+            set { it.copy(stats = it.stats.copy(days = period, loading = true, error = null)) }
+            val offset = options.utcOffsetMin(now()).coerceIn(-MAX_UTC_OFFSET_MIN, MAX_UTC_OFFSET_MIN)
+            val command = ApiCommand.GetUsageStats(period.toLong(), offset, refresh.takeIf { it })
+            try {
+                val stats = core.expect<ApiResponse.UsageStats>(command, options.longCallTimeoutMs).stats
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(report = stats, loading = false)) }
+            } catch (e: RpcException) {
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(error = describe(e), loading = false)) }
+            } catch (e: CancellationException) {
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(loading = false)) }
+                throw e
+            }
         }
     }
 
@@ -930,6 +976,9 @@ class AppStore(
 
     private companion object {
         const val USERS_TURN_BUFFER = 64
+
+        /** コアが受ける UTC からのずれの上限 (±24 時間)。 */
+        const val MAX_UTC_OFFSET_MIN = 24 * 60
     }
 }
 
