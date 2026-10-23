@@ -35,7 +35,7 @@ const SCENARIOS = ["empty", "run", "devices", "long", "names", "hosts", "fresh"]
 type Scenario = (typeof SCENARIOS)[number];
 
 /** The view the page opens on (`?view=`): the work view unless asked (the app itself starts on the dashboard). */
-const VIEWS: readonly View[] = ["dashboard", "work", "runs"];
+const VIEWS: readonly View[] = ["dashboard", "work"];
 function requestedView(): View {
   const asked = new URLSearchParams(window.location.search).get("view");
   return VIEWS.find((v) => v === asked) ?? "work";

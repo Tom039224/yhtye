@@ -34,7 +34,6 @@ English: [README-EN.md](README-EN.md)
 できていないもの・制約:
 
 - 対応 OS は Linux のみ (下記)。配布用パッケージ、自動更新は無い
-- 過去のグループを辿る履歴 (runs) ビューは保留で、空表示のまま
 - Codex はオーケストレータとして使えない
   ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
 - Codex は OpenRouter 経由でのみ実機確認している

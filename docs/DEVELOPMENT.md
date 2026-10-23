@@ -372,6 +372,7 @@ Android アプリは GitHub Releases に署名済みの APK を添付して配�
 - アプリは `BuildConfig.VERSION_NAME` で自分の版を読む (`ThisApp.version`)。
 - **PC の版**はワークスペースの版 (`Cargo.toml` の `[workspace.package] version`)。`src-tauri` は `version.workspace = true`、`tauri.conf.json` と `package.json` は同じ値を手で合わせ、
   `crates/yhtye-core/tests/app_version.rs` が一致を見る。PC の版を上げるときは 3 か所を一緒に変える。`ping` の応答 (`pong{host, version}`) が PC の版をアプリに伝える。
+  PC (Linux) 版の出し方は [Linux デスクトップ版のリリース](#linux-デスクトップ版のリリース)。
 - **互換性の規則**は `mobile/shared/.../shared/version/Compatibility.kt` (0.x は `0.<minor>` が同じ、1.0 以降はメジャーが同じで PC のマイナー ≥ スマホのマイナー、パッチは見ない)。
   規則を変えたら README の表とテスト (`CompatibilityTest`) も直す。
 
@@ -453,3 +454,74 @@ rm /tmp/test.p12
 (Semantic Versioning。GitHub がプレリリースとした物も含む) があれば知らせる。リポジトリの名前や所有者を変えるときは、この定数 (`RELEASES_URL` / `RELEASE_PAGE_URL`) と
 README のリンクを直す。URL は `https://` だけを受け付ける (アプリは PC との通信のために平文を許すので、更新の確認は別の歯止めを持つ)。
 ネットワークの制限 (`TailscaleHosts`: PC との平文の接続先を Tailscale のアドレスに限る) は更新の確認とは無関係で、そのまま。
+
+## Linux デスクトップ版のリリース
+
+デスクトップ版 (`src-tauri/`) は、タグを push すると GitHub Actions が Linux 用にビルドし、GitHub Releases に **AppImage・deb・rpm** と `SHA256SUMS` を添付する。
+対象は x86_64 の Linux だけ。自動更新は無く、署名もしない (配る物のチェックサムは `SHA256SUMS`)。Android 版は別のタグで別に出す ([Android のリリース](#リリース-github-releases-に署名済み-apk-を出す))。
+
+### 版番号
+
+- **タグ**: `linux-v<major>.<minor>.<patch>` (例 `linux-v0.1.0`)。数字だけで、先頭の 0 は付けない。`android-v…` のタグとは無関係。
+- **PC の版は 3 か所**にあり、一緒に変える: ワークスペースの `Cargo.toml` の `[workspace.package] version`、`src-tauri/tauri.conf.json` の `version`、`package.json` の `version`
+  (`src-tauri/Cargo.toml` は `version.workspace = true`)。`crates/yhtye-core/tests/app_version.rs` が CI で一致を見る。
+  ワークフローは、さらに**タグの版とこの 3 か所が全部同じ**であることを確かめ、違えば何も作らずに失敗する (`linux-v0.1.1` を打ったのに 3 か所が 0.1.0 のまま、など)。
+  バンドルのファイル名と deb の `Version` は `tauri.conf.json` の版から付く。
+- 版が `0.` で始まる間は**プレリリース** (Latest にはしない)。リリース名・本文に、互換する Android アプリの版を「Android 版 0.1.x と互換」のように書く
+  (1.0 以降は「Android 版 1.0.x〜1.3.x と互換」。PC のマイナー以下のマイナーの Android が互換)。規則は Android 側と同じで、
+  [`Compatibility.kt`](../mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/version/Compatibility.kt) と README の「Android 版」にある。
+
+### 出し方
+
+1. 3 か所の版を上げて `main` に入れる。互換性が変わる変更を含むときは (0.x ならマイナー、1.0 以降は規則に従って)、Android アプリの版との組み合わせも考える。
+2. 出したいコミット (通常は `main` の先頭。CI が通っていること) にタグを打って push する。
+
+   ```sh
+   git switch main && git pull
+   git tag linux-v0.1.0
+   git push origin linux-v0.1.0
+   ```
+
+3. `.github/workflows/linux-release.yml` が動く (タグの push だけで動く。`ci.yml` とは別)。2 つの job でできている。
+   - **`build`** (`contents: read` だけ。Ubuntu 22.04 のコンテナ): タグの形式を検査 → apt で Tauri のビルド依存を入れる → チェックアウト → **3 か所の版がタグと同じか**検査 →
+     pnpm 11・Node 22・Rust stable → `pnpm install --frozen-lockfile` → `pnpm tauri build --bundles appimage,deb,rpm -- --locked` →
+     AppImage・deb・rpm がちょうど 1 つずつあって版を持つこと、deb の `Version` と `/usr/bin/yhtye`、AppImage が `--help` で起動することを確認 →
+     `yhtye-linux-<版>-x86_64.AppImage` / `.deb` / `.rpm` と `SHA256SUMS` を artifact にする。リポジトリのコード (依存の install スクリプトを含む) が動くのはここだけ。
+   - **`release`** (`contents: write`。リポジトリのコードは動かさない): artifact を落として `sha256sum --check` → `gh release create` (リリース名は
+     `Yhtye Linux 0.1.0 (Android 版 0.1.x と互換)`、`--verify-tag --latest=false`、版が `0.` で始まる間は `--prerelease`)。`build` が失敗したら動かない。
+   - ビルドは Rust のコンパイルが重い (16 コアの手元で約 6 分。ランナーはもっとかかる。`timeout-minutes: 60`)。
+4. Actions の画面で成功を確かめ、リリースのページから落として確かめる (`sha256sum --check --ignore-missing SHA256SUMS`、AppImage の起動、deb / rpm のインストール)。
+   最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「デスクトップ版のプレビルドはまだ無い」という記述を直す (今はソースからのビルドだけを案内している)。
+
+**Ubuntu 22.04 のコンテナ**でビルドするのは、AppImage / deb / rpm が「ビルドした環境の glibc・WebKitGTK 以上」を要求するため。新しい環境 (Arch など) で作ると古い Debian / Ubuntu では動かない物になる。
+`ubuntu-22.04` のランナーは GitHub が廃止する (2026-09-17 から非推奨、2027-04-17 に廃止、その前に停止日あり) ので、`ubuntu-latest` の上で `container: ubuntu:22.04` を使う。
+ベースを替えるときは `container:` の 1 行と、apt で入れる依存のパッケージ名 (`ci.yml` の `Install system dependencies` と同じもの) を見直す。
+AppImage のバンドルは `linuxdeploy` とそのプラグインをビルド中にダウンロードするので、その取得の失敗は再実行で直ることがある
+(失敗した run も依存のビルドキャッシュを残す (`cache-on-failure`) ので、同じタグの再実行は Rust のコンパイルを飛ばせる)。
+
+### 間違えたとき
+
+- **`build` が失敗した**: 何も公開されていない。原因を直して、タグを消して打ち直す (リモートのタグを消してから、直したコミットに打つ)。一時的な失敗なら Actions で job を再実行するだけでよい。
+
+  ```sh
+  git push origin :refs/tags/linux-v0.1.0 && git tag -d linux-v0.1.0
+  git tag linux-v0.1.0 && git push origin linux-v0.1.0
+  ```
+
+- **リリースが作られたあとで間違いに気づいた**: リリースとタグを消して (`gh release delete linux-v0.1.0 --cleanup-tag`)、直してから打ち直す。
+  **配ったあとの版を作り直さない** (同じ版の別のファイルを出すと、落とした人の `SHA256SUMS` と合わなくなる)。直すなら次のパッチを出す。
+  `release` が途中で失敗して添付が足りないリリースが残ったときも、同じように消して打ち直す。
+
+### `packaging/arch` との関係
+
+関係しない。`packaging/arch/PKGBUILD` は GitHub の `main` をクローンして `pnpm tauri build --no-bundle` でビルドする `yhtye-git` パッケージで、リリースのファイル名も `linux-v*` のタグも見ない。
+Arch / CachyOS の人はこれまでどおりソースから入れる (AppImage / deb / rpm は Arch 用ではない)。
+
+### ローカルで試す
+
+```sh
+pnpm tauri build --bundles deb    # target/release/bundle/deb/Yhtye_<版>_amd64.deb (遅い。AppImage / rpm も作るなら appimage,rpm を足す)
+```
+
+ただし配る物は CI で作る (手元のディストリビューションの glibc に縛られるため)。CI と同じ Ubuntu 22.04 の環境は、`ubuntu:22.04` のコンテナにワークフローの `Install system dependencies` の依存と
+Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれば再現できる。

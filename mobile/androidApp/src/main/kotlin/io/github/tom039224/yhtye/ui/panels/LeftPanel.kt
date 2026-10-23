@@ -52,7 +52,6 @@ import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.formatRemaining
 import io.github.tom039224.yhtye.shared.sync.planLabel
 import io.github.tom039224.yhtye.shared.sync.usageWindow
-import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.SwipeThresholds
 import io.github.tom039224.yhtye.ui.common.YIcon
 import io.github.tom039224.yhtye.ui.common.YIcons
@@ -63,19 +62,17 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 // 左パネル (PC のアイコンレール + サイドバー + ステータスバーの使用量、モックの `#left`): 左端のレール (`Rail.kt`) で
-// ダッシュボード / 開いているプロジェクト / コーディング / 履歴を切り替え、一番下に設定。レールは左パネルが開いているときの
+// ダッシュボード / 開いているプロジェクト / コーディングを切り替え、一番下に設定。レールは左パネルが開いているときの
 // もう 1 回の左→右のスワイプで広がり、プロジェクトの名前が出る (`RailExpansion.kt`)。その右にプロジェクトの名前と
-// ブランチとチャットの木 (コーディングのときだけ。PC もダッシュボードと履歴ではサイドバーを隠す。ダッシュボードはレールだけ、
-// 履歴は PC の RunsView と同じ空の状態)。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`。
-// サイドバーと同じくコーディングのときだけ) とプラン・使用量 (PC のステータスバー。どのビューでも出す)。
+// ブランチとチャットの木 (コーディングのときだけ。PC もダッシュボードではサイドバーを隠す)。ダッシュボードはレールだけで、
+// パネルはレールが広がった幅 (232dp) で開き、レールは広げたまま固定する (`MainScreen` が PanelShell の `leftMaxWidth` を
+// 渡す)。下端にサーバーとクライアントの一覧 (PC のサイドバーのフッタ、`HostFooter.kt`。サイドバーと同じくコーディングの
+// ときだけ) とプラン・使用量 (PC のステータスバー。どのビューでも出す)。
 
 private val METER_SHAPE = RoundedCornerShape(2.dp)
 
 /** PC のアイコンレールのビュー。アプリの最初はダッシュボード。 */
-enum class MainView { Dashboard, Work, Runs }
-
-/** 履歴のビュー (PC の RunsView): まだ設計していないので PC と同じ空の状態。 */
-const val RUNS_EMPTY = "現状は何もありません"
+enum class MainView { Dashboard, Work }
 
 /**
  * @param selfId ペアリングで保存したこの端末の ID (下端の一覧で「この端末」の印を付ける)。
@@ -99,12 +96,14 @@ fun LeftPanel(
     gestureInsets: WindowInsets = WindowInsets(0),
 ) {
     val c = Yhtye.colors
-    val expansion = rememberRailExpansion()
-    // パネルが閉じ始めたら畳む (次に開いたときは畳んだレール)。戻るは広がったレールを先に畳む
+    // ダッシュボードのパネルはレールの幅だけ (幅の広い端末の常時表示は除く): レールを広げたまま固定する
     val shell = LocalPanelShell.current
+    val expansion = rememberRailExpansion(pinned = view == MainView.Dashboard && shell?.wide == false)
+    // パネルが閉じ始めたら畳む (次に開いたときは畳んだレール)。戻るは広がったレールを先に畳む (固定していれば畳むものが無いので
+    // そのままパネルを閉じる)
     val panelShown = shell == null || shell.wide || shell.open == Panel.Left
-    LaunchedEffect(panelShown) { if (!panelShown) expansion.collapse() }
-    BackHandler(enabled = expansion.open) { expansion.collapse() }
+    LaunchedEffect(panelShown) { if (!panelShown && !expansion.pinned) expansion.collapse() }
+    BackHandler(enabled = expansion.open && !expansion.pinned) { expansion.collapse() }
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     val edgeStart = gestureInsets.getLeft(density, LocalLayoutDirection.current).toFloat()
@@ -113,13 +112,18 @@ fun LeftPanel(
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val expandedWidth = minOf(RAIL_EXPANDED_WIDTH, maxWidth)
             val distance = with(density) { (expandedWidth - RAIL_WIDTH).toPx() }
-            // 中身・レール・外のタップの受け手のどれの上から始まったスワイプでも、ここで受ける (子が取らなかった横の動き)
-            Box(Modifier.fillMaxSize().pointerInput(expansion, distance, fling, edgeStart) { railSwipe(expansion, distance, fling, edgeStart, haptic) }) {
+            // 中身・レール・外のタップの受け手のどれの上から始まったスワイプでも、ここで受ける (子が取らなかった横の動き)。
+            // 固定したレールは動かさないので受けない (横の動きは PanelShell がパネルの開閉に使う)
+            val swipe = if (expansion.pinned) {
+                Modifier
+            } else {
+                Modifier.pointerInput(expansion, distance, fling, edgeStart) { railSwipe(expansion, distance, fling, edgeStart, haptic) }
+            }
+            Box(Modifier.fillMaxSize().then(swipe)) {
                 Row(Modifier.fillMaxSize()) {
                     Spacer(Modifier.width(RAIL_WIDTH).fillMaxHeight())
                     Box(Modifier.weight(1f).fillMaxHeight()) {
                         when (view) {
-                            MainView.Runs -> EmptyState(YIcons.History, RUNS_EMPTY, Modifier.align(Alignment.Center), testTag = "runs-empty")
                             MainView.Work -> WorkSide(app, sync, now, memory, onChatChosen)
                             MainView.Dashboard -> Unit // レールだけ (PC のダッシュボードにサイドバーは無い)
                         }
@@ -133,7 +137,7 @@ fun LeftPanel(
     }
 }
 
-/** 中身の上に重なるレール。広がっている間はその外のタップで畳む (PC でポインタがレールを離れたとき)。 */
+/** 中身の上に重なるレール。広がっている間はその外のタップで畳む (PC でポインタがレールを離れたとき。固定していれば外は無い)。 */
 @Composable
 private fun RailOverlay(
     app: AppState,
@@ -146,7 +150,7 @@ private fun RailOverlay(
     expandedWidth: Dp,
 ) {
     val progress = expansion.progress
-    if (progress > 0f) {
+    if (progress > 0f && !expansion.pinned) {
         Box(Modifier.fillMaxSize().pointerInput(expansion) { detectTapGestures { expansion.collapse() } }.testTag("rail-outside"))
     }
     Rail(

@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
@@ -32,7 +33,8 @@ import kotlin.test.assertTrue
 
 /**
  * レール (PC の IconRail・RailProjects): 開いているプロジェクトのドット、タップでの切り替え、もう 1 回のスワイプでの展開と
- * 逆のスワイプでの畳み (パネルの開閉のスワイプを壊さない)。
+ * 逆のスワイプでの畳み (パネルの開閉のスワイプを壊さない)。ダッシュボードでは 1 回のスワイプで広がったレールまで開き、
+ * そのレールは広げたまま固定する。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(qualifiers = "w400dp-h800dp")
@@ -66,6 +68,20 @@ class RailTest {
     }
 
     private fun expanded(): Boolean = h.exists("rail-outside")
+
+    /** 中央の左端 (dp)。左パネルが開いていればパネルの右端。 */
+    private fun centerLeftDp(): Float = with(rule.density) { rule.onNodeWithTag("panel-center").fetchSemanticsNode().boundsInRoot.left.toDp().value }
+
+    /** 画面全体の [fromDp] (dp) から、タッチスロップを越えて [pulledDp] (dp) だけ横へゆっくり動かして離す。 */
+    private fun dragAt(fromDp: Float, pulledDp: Float, leftward: Boolean) {
+        rule.onRoot().performTouchInput {
+            dragFrom(Offset(with(rule.density) { fromDp.dp.toPx() }, height / 2f), with(rule.density) { pulledDp.dp.toPx() }, leftward)
+        }
+        h.settleFor()
+    }
+
+    /** レールにプロジェクトの名前が出ている (広がっている)。 */
+    private fun railShowsNames(): Boolean = rule.onAllNodes(hasText(busy.name) and hasAnyAncestor(hasTestTag("rail")), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
 
     @Test
     fun `the rail lists the open projects as dots, lit while work is on`() {
@@ -157,6 +173,8 @@ class RailTest {
         h.settleFor()
         assertTrue(h.exists("panel-left"))
         assertFalse(expanded())
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertEquals(PANEL_FULL_DP, centerLeftDp(), 0.5f)
         h.dragScreen(0.6f, leftward = true)
         h.settleFor()
         assertFalse(h.exists("panel-left"))
@@ -164,7 +182,7 @@ class RailTest {
 
     @Test
     fun `choosing a project in the expanded rail folds it`() {
-        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.open { projects = listOf(PROJECT, busy) }
         h.openLeft()
         dragOnPanel(0.5f)
         assertTrue(expanded())
@@ -172,8 +190,22 @@ class RailTest {
         h.settle { h.sync.state.value.project?.info?.id == busy.id }
         h.settleFor()
         assertFalse(expanded())
+        assertEquals(56f, railWidthDp(), 0.5f)
         assertTrue(h.exists("panel-left"))
+    }
+
+    @Test
+    fun `choosing a project in the pinned dashboard rail folds it and the panel grows to the full width`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        assertEquals(232f, railWidthDp(), 0.5f)
+        rule.onNodeWithTag("rail-project-${busy.id}").performClick()
+        h.settle { h.sync.state.value.project?.info?.id == busy.id }
+        h.settleFor()
         assertFalse(h.exists("dashboard"))
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertEquals(PANEL_FULL_DP, centerLeftDp(), 0.5f)
+        assertTrue(h.exists("panel-left"))
     }
 
     @Test
@@ -223,4 +255,202 @@ class RailTest {
         assertTrue(h.exists("dashboard"))
         rule.onNodeWithTag("rail-dashboard").assert(SemanticsMatcher.expectValue(SemanticsProperties.Selected, true))
     }
+
+    // ---- ダッシュボード: 1 回のスワイプで広がったレールまで開き、レールは広げたまま固定する ----
+
+    @Test
+    fun `one swipe from the dashboard opens the left panel straight to the expanded rail`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        assertTrue(h.exists("dashboard"))
+        h.dragScreen(0.6f)
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertTrue(railShowsNames())
+        listOf("ダッシュボード", "プロジェクト", "コーディング").forEach { label ->
+            rule.onNode(hasText(label) and hasAnyAncestor(hasTestTag("rail")), useUnmergedTree = true).assertExists()
+        }
+        // 中央はレールの右端で止まる (間が空かない・その先は 64dp を残す幅まで行かない)
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        // 固定したレールには外のタップの受け手も無い
+        assertFalse(expanded())
+    }
+
+    @Test
+    fun `the menu button opens the dashboard panel to the same expanded rail`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        h.settleFor()
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertTrue(railShowsNames())
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        // 使用量の欄もパネルに収まる
+        assertTrue(h.exists("usage"))
+    }
+
+    @Test
+    fun `one swipe back from the dashboard panel returns to the dashboard with no stop in between`() {
+        h.open(view = MainView.Dashboard)
+        h.dragScreen(0.6f)
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        h.dragScreen(0.5f, leftward = true)
+        h.settleFor()
+        assertFalse(h.exists("panel-left"))
+        assertTrue(h.exists("dashboard"))
+        assertEquals(0f, centerLeftDp(), 0.5f)
+    }
+
+    @Test
+    fun `a swipe back that starts on the pinned rail also returns to the dashboard in one step`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        dragAt(fromDp = 120f, pulledDp = 120f, leftward = true)
+        assertFalse(h.exists("panel-left"))
+        assertTrue(h.exists("dashboard"))
+    }
+
+    @Test
+    fun `back returns from the pinned rail to the dashboard in one step`() {
+        h.open(view = MainView.Dashboard)
+        h.openLeft()
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        h.settleFor()
+        assertFalse(h.exists("panel-left"))
+        assertTrue(h.exists("dashboard"))
+        assertTrue(!rule.activity.onBackPressedDispatcher.hasEnabledCallbacks())
+    }
+
+    @Test
+    fun `a tap beside the pinned rail closes the panel`() {
+        h.open(view = MainView.Dashboard)
+        h.openLeft()
+        rule.onNodeWithTag("panel-shield").performTouchInput { click(Offset(10f, height / 2f)) }
+        h.settleFor()
+        assertFalse(h.exists("panel-left"))
+    }
+
+    @Test
+    fun `the dashboard swipe commits at 35 percent of the 232dp the panel opens to`() {
+        h.open(view = MainView.Dashboard)
+        // 232dp の 35% は 81.2dp: 手前では戻り、超えれば開く
+        dragAt(fromDp = 40f, pulledDp = 232f * 0.30f, leftward = false)
+        assertFalse(h.exists("panel-left"))
+        dragAt(fromDp = 40f, pulledDp = 232f * 0.40f, leftward = false)
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        // 閉じるときも同じ割合
+        dragAt(fromDp = 300f, pulledDp = 232f * 0.30f, leftward = true)
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        dragAt(fromDp = 300f, pulledDp = 232f * 0.40f, leftward = true)
+        assertFalse(h.exists("panel-left"))
+    }
+
+    @Test
+    fun `dragging over the pinned rail does nothing`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        // 右へ (広げる向き): レールもパネルもそのまま
+        dragAt(fromDp = 100f, pulledDp = 120f, leftward = false)
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        // 速いはじきでも (これ以上広がらない)
+        rule.onRoot().performTouchInput {
+            dragFrom(Offset(with(rule.density) { 100.dp.toPx() }, height / 2f), with(rule.density) { 40.dp.toPx() }, leftward = false, dpPerSecond = 800f)
+        }
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertEquals(232f, centerLeftDp(), 0.5f)
+    }
+
+    @Test
+    fun `switching between coding and the dashboard in the rail resizes the panel`() {
+        h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
+        h.openLeft()
+        h.settleFor()
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        assertEquals(232f, railWidthDp(), 0.5f)
+
+        // コーディングへ: レールを畳みながらパネルが全幅に広がる
+        rule.onNodeWithTag("rail-work").performClick()
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertEquals(PANEL_FULL_DP, centerLeftDp(), 0.5f)
+        rule.onNodeWithTag("current-project").assertExists()
+
+        // ダッシュボードへ: パネルがレールの幅に縮んでレールが広がる
+        rule.onNodeWithTag("rail-dashboard").performClick()
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertEquals(232f, centerLeftDp(), 0.5f)
+        assertFalse(h.exists("current-project"))
+    }
+
+    @Test
+    fun `the work view keeps the two steps, open the panel then expand the rail`() {
+        h.open { projects = listOf(PROJECT, busy) }
+        h.dragScreen(0.6f)
+        h.settleFor()
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertEquals(PANEL_FULL_DP, centerLeftDp(), 0.5f)
+        assertFalse(railShowsNames())
+        dragOnPanel(0.5f)
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertEquals(PANEL_FULL_DP, centerLeftDp(), 0.5f)
+        assertTrue(railShowsNames())
+        // 戻りも 2 段
+        dragOnPanel(0.5f, leftward = true)
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertTrue(h.exists("panel-left"))
+        h.dragScreen(0.5f, leftward = true)
+        h.settleFor()
+        assertFalse(h.exists("panel-left"))
+    }
 }
+
+/** 幅の広い端末 (左パネルは常時表示): ダッシュボードでもレールは固定せず、畳んだ状態からスワイプで広げる。 */
+@RunWith(RobolectricTestRunner::class)
+@Config(qualifiers = "w1000dp-h800dp")
+class RailWideTest {
+    @get:Rule
+    val rule = createAndroidComposeRule<ComponentActivity>()
+
+    private val h = MainHarness(rule)
+
+    @After
+    fun tearDown() = h.close()
+
+    private fun railWidthDp(): Float = with(rule.density) { rule.onNodeWithTag("rail").fetchSemanticsNode().size.width.toDp().value }
+
+    @Test
+    fun `the dashboard rail is not pinned on a wide screen and the swipe still expands and folds it`() {
+        h.open(view = MainView.Dashboard)
+        h.settleFor()
+        assertTrue(h.exists("panel-left"))
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertFalse(h.exists("rail-outside"))
+
+        h.drag(from = 100.dp, pulled = 120.dp, leftward = false)
+        assertEquals(232f, railWidthDp(), 0.5f)
+        assertTrue(h.exists("rail-outside"))
+
+        h.drag(from = 280.dp, pulled = 120.dp, leftward = true)
+        assertEquals(56f, railWidthDp(), 0.5f)
+        assertFalse(h.exists("rail-outside"))
+    }
+
+    private fun MainHarness.drag(from: Dp, pulled: Dp, leftward: Boolean) {
+        rule.onRoot().performTouchInput {
+            dragFrom(Offset(with(rule.density) { from.toPx() }, height / 2f), with(rule.density) { pulled.toPx() }, leftward)
+        }
+        settleFor()
+    }
+}
+
+/** 幅 400dp の端末で、左パネルが全幅に開いたときの中央の左端 (400dp - 64dp)。 */
+private const val PANEL_FULL_DP = 336f

@@ -1,14 +1,14 @@
 import { Icon, type IconName } from "./Icon";
 import { RailProjects } from "./RailProjects";
 
-export type View = "dashboard" | "work" | "runs";
+export type View = "dashboard" | "work";
 
 /**
  * The left rail (design §3.2). It is 44px wide in the layout; hovering it, or
  * moving the keyboard focus into it, expands its panel over the sidebar (CSS
  * only: the labels are always in the DOM). From the top: the dashboard, the
- * projects that are open (see {@link RailProjects}), the work and runs views,
- * and the settings (Stage 7d) at the bottom.
+ * projects that are open (see {@link RailProjects}), the work view, and the
+ * settings (Stage 7d) at the bottom.
  */
 export function IconRail({
   view,
@@ -31,7 +31,6 @@ export function IconRail({
         <RailProjects working={view === "work"} onShown={() => onChange("work")} />
         <div className="rail-bottom">
           {viewButton("work", "code", "コーディング")}
-          {viewButton("runs", "history", "履歴")}
           <RailButton
             icon="sliders"
             label="設定"

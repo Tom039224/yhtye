@@ -13,7 +13,6 @@ import { IconRail, type View } from "./ui/IconRail";
 import { sidebarBounds } from "./ui/layout";
 import type { PairLinkRequest } from "./ui/HostsSettingsSection";
 import { Resizer } from "./ui/Resizer";
-import { RunsView } from "./ui/RunsView";
 import { SettingsModal } from "./ui/SettingsModal";
 import { Sidebar } from "./ui/Sidebar";
 import { StatusBar } from "./ui/StatusBar";
@@ -70,8 +69,6 @@ function App({ initialView = "dashboard" }: { initialView?: View }) {
         <IconRail view={view} onChange={setView} settingsOpen={settingsOpen} onOpenSettings={() => setSettingsOpen(true)} />
         {view === "dashboard" ? (
           <Dashboard onOpenWork={() => setView("work")} />
-        ) : view === "runs" ? (
-          <RunsView />
         ) : (
           <>
             <Sidebar />
