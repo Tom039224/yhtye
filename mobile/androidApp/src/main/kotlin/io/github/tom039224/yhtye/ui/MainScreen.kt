@@ -1,22 +1,9 @@
 package io.github.tom039224.yhtye.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemGestures
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -27,25 +14,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.Dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import io.github.tom039224.yhtye.Yhtye
 import io.github.tom039224.yhtye.background.OpenChatRequest
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.update.UpdateState
-import io.github.tom039224.yhtye.ui.common.EmptyState
 import io.github.tom039224.yhtye.ui.common.LocalActionScope
-import io.github.tom039224.yhtye.ui.common.YIcon
-import io.github.tom039224.yhtye.ui.common.YIcons
 import io.github.tom039224.yhtye.ui.conversation.ConversationScreen
 import io.github.tom039224.yhtye.ui.conversation.Mention
 import io.github.tom039224.yhtye.ui.conversation.MentionsState
@@ -54,7 +31,7 @@ import io.github.tom039224.yhtye.ui.dashboard.FolderBrowserScreen
 import io.github.tom039224.yhtye.ui.panels.LeftPanel
 import io.github.tom039224.yhtye.ui.panels.LeftPanelMemory
 import io.github.tom039224.yhtye.ui.panels.MainView
-import io.github.tom039224.yhtye.ui.panels.RUNS_EMPTY
+import io.github.tom039224.yhtye.ui.panels.RAIL_EXPANDED_WIDTH
 import io.github.tom039224.yhtye.ui.panels.RightPanel
 import io.github.tom039224.yhtye.ui.panels.RightPanelMemory
 import io.github.tom039224.yhtye.ui.settings.DevicePane
@@ -119,7 +96,7 @@ private val NO_UPDATES = MutableStateFlow(UpdateState(enabled = false))
 private const val NOW_TICK_MS = 30_000L
 
 /**
- * ペアリング後のホーム: 3 パネル (左 = レール・プロジェクト・ブランチとチャット・使用量、中央 = ダッシュボード / 会話 / 履歴、
+ * ペアリング後のホーム: 3 パネル (左 = レール・プロジェクト・ブランチとチャット・使用量、中央 = ダッシュボード / 会話、
  * 右 = 選択中のチャットのグループ) と、その上に積む画面 (タスク詳細・設定・フォルダの選択)。最初のビューはダッシュボード
  * (PC と同じ。同期層は最後のプロジェクトを裏で開き直す)。状態は同期層 ([sync]) から読み、
  * 操作も同期層に送る。
@@ -195,6 +172,8 @@ fun MainScreen(
                 gestureInsets = gestureInsets,
                 swipeEnabled = stacked == null,
                 rightEnabled = view == MainView.Work,
+                // ダッシュボードの左パネルはレールだけ: 1 回のスワイプで広がったレールの幅まで開く
+                leftMaxWidth = if (view == MainView.Dashboard) RAIL_EXPANDED_WIDTH else Dp.Infinity,
                 left = {
                     LeftPanel(
                         app = app,
@@ -217,7 +196,6 @@ fun MainScreen(
                 },
                 center = {
                     when (view) {
-                        MainView.Runs -> RunsCenter(showMenu = !shell.wide, onOpenLeft = { shell.show(Panel.Left) })
                         MainView.Dashboard -> DashboardCenter(
                             app = app,
                             sync = sync,
@@ -279,27 +257,5 @@ fun MainScreen(
             },
             onDismiss = { cancelKey = null },
         )
-    }
-}
-
-/** 履歴のビューの中央 (PC の RunsView): まだ設計していないので空の状態だけ。 */
-@Composable
-private fun RunsCenter(showMenu: Boolean, onOpenLeft: () -> Unit) {
-    val c = Yhtye.colors
-    Column(Modifier.fillMaxSize().background(c.bgCenter).windowInsetsPadding(WindowInsets.statusBars)) {
-        Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showMenu) {
-                IconButton(onClick = onOpenLeft, modifier = Modifier.semantics { contentDescription = "プロジェクトとチャット" }.testTag("open-left")) {
-                    YIcon(YIcons.Menu, c.tx2, 20.dp)
-                }
-            } else {
-                Spacer(Modifier.width(12.dp))
-            }
-            Text("履歴", color = c.tx, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 2.dp))
-        }
-        HorizontalDivider(color = c.line)
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            EmptyState(YIcons.History, RUNS_EMPTY, Modifier.align(Alignment.Center), testTag = "runs-center")
-        }
     }
 }

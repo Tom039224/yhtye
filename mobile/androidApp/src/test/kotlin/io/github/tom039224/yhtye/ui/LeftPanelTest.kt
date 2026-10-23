@@ -351,35 +351,30 @@ class LeftPanelTest {
     }
 
     @Test
-    fun `the rail switches to the history view, which has no right panel`() {
-        h.open()
+    fun `the rail has the dashboard, the projects, coding and settings but no history`() {
+        h.open { projects = listOf(PROJECT, busy) }
         h.openLeft()
-        rule.onNodeWithTag("rail-runs").performClick()
-        rule.waitForIdle()
-        rule.onNodeWithTag("runs-empty").assertExists()
-        // 左の中身と中央の両方が PC の RunsView と同じ空の状態
-        rule.onAllNodesWithText("現状は何もありません", useUnmergedTree = true).assertCountEquals(2)
-        assertFalse(h.exists("current-project"))
-        assertFalse(h.exists("host")) // PC の履歴にもサイドバー (のフッタ) は無い
-        rule.onNodeWithTag("panel-shield").performClick()
-        rule.waitForIdle()
-        rule.onNodeWithTag("runs-center").assertExists()
-        // 右パネルへのスワイプは動かない
-        h.swipeScreen(0.8f, 0.1f)
-        assertFalse(h.exists("panel-right"))
+        listOf("rail-dashboard", "rail-work", "rail-settings", "rail-project-${PROJECT.id}", "rail-project-${busy.id}")
+            .forEach { assertTrue(h.exists(it), it) }
+        assertFalse(h.exists("rail-runs"))
+        rule.onAllNodesWithText("履歴", useUnmergedTree = true).assertCountEquals(0)
+    }
 
-        h.openLeft()
-        rule.onNodeWithTag("rail-work").performClick()
-        rule.waitForIdle()
-        rule.onNodeWithTag("current-project").assertExists()
+    @Test
+    fun `the dashboard has no right panel`() {
+        h.open(view = MainView.Dashboard)
+        h.swipeScreen(0.8f, 0.1f)
+        h.settleFor()
+        assertFalse(h.exists("panel-right"))
+        assertFalse(h.exists("panel-left"))
     }
 
     @Test
     fun `the dashboard hides the project and branch side and leaves the rail, as on the PC`() {
         h.open(view = MainView.Dashboard) { projects = listOf(PROJECT, busy) }
         h.openLeft()
-        // レールはそのまま: ダッシュボード・コーディング・履歴・設定のボタンとプロジェクトのドット
-        listOf("rail-dashboard", "rail-work", "rail-runs", "rail-settings", "rail-project-${PROJECT.id}", "rail-project-${busy.id}")
+        // レールはそのまま: ダッシュボード・コーディング・設定のボタンとプロジェクトのドット
+        listOf("rail-dashboard", "rail-work", "rail-settings", "rail-project-${PROJECT.id}", "rail-project-${busy.id}")
             .forEach { assertTrue(h.exists(it), it) }
         // 表示中のプロジェクトの名前・ブランチの木・サーバーと端末の一覧は無い
         assertFalse(h.exists("current-project"))
@@ -388,7 +383,6 @@ class LeftPanelTest {
         assertFalse(h.exists("new-branch"))
         assertFalse(h.exists("other-branches"))
         assertFalse(h.exists("host"))
-        assertFalse(h.exists("runs-empty"))
         // PC のステータスバーと同じ、プランと使用量は残る
         assertTrue(h.exists("usage"))
         rule.onNodeWithTag("usage-5h", useUnmergedTree = true).assertExists()

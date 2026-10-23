@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -28,19 +29,26 @@ import kotlin.math.abs
 
 // レールの展開 (PC のホバーで広がるオーバーレイのタッチ版、Issue #18)。左パネルが開いているとき、同じ向き (左→右) にもう 1 回
 // スワイプするとレールが広がってプロジェクトの名前が出る。逆の向き (右→左) で畳み、もう 1 回でパネルが閉じる (今までどおり
-// PanelShell)。プロジェクトを選んでも畳む。
+// PanelShell)。プロジェクトを選んでも畳む。ダッシュボードではパネルがレールの幅しかない (PanelShell の `leftMaxWidth`) ので、
+// レールは広げたまま固定し ([RailExpansion.pin])、スワイプで開いたパネルがそのまま広がったレールになる。
 
 /** 広がる・畳むアニメーション (PC の `width .14s cubic-bezier(.3,0,.2,1)`)。 */
 private val RAIL_EASING = CubicBezierEasing(0.3f, 0f, 0.2f, 1f)
 private const val RAIL_SETTLE_MS = 140
 
-/** レールの広がり具合。[progress] は 0 (畳んだ) … 1 (広がった) で指に付いて動き、[open] は落ち着く先。 */
+/**
+ * レールの広がり具合。[progress] は 0 (畳んだ) … 1 (広がった) で指に付いて動き、[open] は落ち着く先。
+ * [pinned] の間 (ダッシュボード) は広げたままで、スワイプでも戻る・外のタップでも畳まない。
+ */
 @Stable
-internal class RailExpansion(private val scope: CoroutineScope) {
-    var progress: Float by mutableFloatStateOf(0f)
+internal class RailExpansion(private val scope: CoroutineScope, startPinned: Boolean = false) {
+    var progress: Float by mutableFloatStateOf(if (startPinned) 1f else 0f)
         internal set
 
-    var open: Boolean by mutableStateOf(false)
+    var open: Boolean by mutableStateOf(startPinned)
+        private set
+
+    var pinned: Boolean by mutableStateOf(startPinned)
         private set
 
     private var animation: Job? = null
@@ -48,6 +56,18 @@ internal class RailExpansion(private val scope: CoroutineScope) {
     fun expand() = settle(true)
 
     fun collapse() = settle(false)
+
+    /** 広げて固定する (アニメーションで広がる)。 */
+    fun pin() {
+        pinned = true
+        settle(true)
+    }
+
+    /** 固定を外して畳む (アニメーションで畳む)。 */
+    fun unpin() {
+        pinned = false
+        settle(false)
+    }
 
     internal fun stop() {
         animation?.cancel()
@@ -67,10 +87,15 @@ internal class RailExpansion(private val scope: CoroutineScope) {
     }
 }
 
+/** [pinned] (ダッシュボード) の間はレールを広げて固定する。最初から [pinned] なら広がった状態で始まる (開くときに伸びない)。 */
 @Composable
-internal fun rememberRailExpansion(): RailExpansion {
+internal fun rememberRailExpansion(pinned: Boolean = false): RailExpansion {
     val scope = rememberCoroutineScope()
-    return remember(scope) { RailExpansion(scope) }
+    val expansion = remember(scope) { RailExpansion(scope, pinned) }
+    LaunchedEffect(expansion, pinned) {
+        if (pinned) expansion.pin() else if (expansion.pinned) expansion.unpin()
+    }
+    return expansion
 }
 
 /**

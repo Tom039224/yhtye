@@ -62,7 +62,7 @@ import io.github.tom039224.yhtye.ui.common.rememberActionScope
 import kotlinx.coroutines.launch
 
 // 左端のレール (PC の IconRail・RailProjects、Issue #18): 上からダッシュボード、開いているプロジェクト (状態のドット)、
-// 下にコーディング・履歴・設定。畳んでいればアイコンとドットだけ、広げると ([RailExpansion]) パネルの上に重なって名前が出る。
+// 下にコーディング・設定。畳んでいればアイコンとドットだけ、広げると ([RailExpansion]) パネルの上に重なって名前が出る。
 
 /** 畳んだレールの幅 (レイアウト上の幅。広がってもこれは変わらず、パネルの中身の上に重なる)。 */
 internal val RAIL_WIDTH = 56.dp
@@ -120,7 +120,6 @@ internal fun Rail(
         RailProjects(app, sync, working = view == MainView.Work, showLabels = showLabels, onChosen = onProjectChosen)
         RailDivider()
         RailButton(YIcons.Code, "コーディング", view == MainView.Work, "rail-work", showLabels) { onView(MainView.Work) }
-        RailButton(YIcons.History, "履歴", view == MainView.Runs, "rail-runs", showLabels) { onView(MainView.Runs) }
         RailButton(
             YIcons.Sliders,
             stringResource(if (updateAvailable) R.string.rail_settings_update else R.string.rail_settings),
