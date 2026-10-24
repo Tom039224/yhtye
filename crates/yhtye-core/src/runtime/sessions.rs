@@ -13,7 +13,7 @@ use super::emitter::Emitter;
 pub(crate) use super::launch::{AgentPick, StoredSession};
 use super::launch::{FirstPrompts, Picked, replace_first};
 use super::orchestration::OrchestrationConfig;
-use crate::acp::{AgentError, AgentEvent, AgentHandle, SteerOutcome};
+use crate::acp::{AgentError, AgentEvent, AgentHandle, StartupStep, SteerOutcome};
 use crate::agents::StartScope;
 use crate::api::ApiEventBody;
 use crate::domain::{AgentRef, Role};
@@ -255,26 +255,28 @@ impl Sessions {
         self.start(binding, cwd, first, pick);
     }
 
+    /// Reports that the start of `key` is given up because of `e`.
     pub(super) fn failed(&self, key: &str, e: &AgentError) {
-        self.failed_text(key, e.to_string());
+        self.emit_failed(key, e.to_string(), false, e.startup_steps());
     }
 
     /// Reports that the start of `key` is given up.
     pub(super) fn failed_text(&self, key: &str, error: String) {
-        self.emit_failed(key, error, false);
+        self.emit_failed(key, error, false, &[]);
     }
 
     /// Reports a failed start of `key` that another one follows (the session is
     /// still starting; see [`ApiEventBody::SessionFailed`]).
-    pub(super) fn failed_retrying(&self, key: &str, error: String) {
-        self.emit_failed(key, error, true);
+    pub(super) fn failed_retrying(&self, key: &str, error: String, steps: &[StartupStep]) {
+        self.emit_failed(key, error, true, steps);
     }
 
-    fn emit_failed(&self, key: &str, error: String, retrying: bool) {
+    fn emit_failed(&self, key: &str, error: String, retrying: bool, steps: &[StartupStep]) {
         self.emit.send(ApiEventBody::SessionFailed {
             session: key.to_string(),
             error,
             retrying,
+            startup_steps: Some(steps.to_vec()).filter(|steps| !steps.is_empty()),
         });
     }
 
@@ -316,6 +318,7 @@ impl Sessions {
             replaced: starting.agent.replaced.clone(),
             cwd: Some(starting.cwd.display().to_string()),
             lost_acp_session_id: starting.lost_session(handle.info().resumed),
+            startup_steps: Some(handle.info().startup_steps.clone()).filter(|s| !s.is_empty()),
         });
         let queued = first_queue(starting, handle.info().resumed);
         let live = Live {
@@ -343,7 +346,7 @@ impl Sessions {
         self.revoke(token);
         match starting {
             Some(st) if st.resume.is_some() => {
-                self.restore_failed(binding, st, &e.to_string());
+                self.restore_failed(binding, st, e);
                 None
             }
             other => {

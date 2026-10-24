@@ -784,6 +784,7 @@ async fn starting_an_agent_with_nothing_installed_says_what_to_check() {
         session,
         error,
         retrying,
+        ..
     }) = seen.last().map(|e| &e.body)
     else {
         panic!("failed");

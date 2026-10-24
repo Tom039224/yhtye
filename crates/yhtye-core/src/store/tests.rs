@@ -351,6 +351,7 @@ fn session_started(seq: u64, key: &str, acp: &str) -> ApiEvent {
             replaced: None,
             cwd: Some("/work/tree".into()),
             lost_acp_session_id: None,
+            startup_steps: None,
         },
     )
 }

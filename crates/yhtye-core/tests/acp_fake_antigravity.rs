@@ -172,7 +172,7 @@ async fn an_authentication_error_says_how_to_log_in_and_other_errors_do_not() {
     let h = fake_antigravity_harness(script, None, None);
     let (err, mut events) = start_err(&h, dir.path(), SpawnOptions::default()).await;
 
-    let AgentError::Startup { step, message } = &err else {
+    let AgentError::Startup { step, message, .. } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(step, "session/new");

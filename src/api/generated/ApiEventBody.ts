@@ -7,6 +7,7 @@ import type { RemoteDevice } from "./RemoteDevice";
 import type { RemoteStatus } from "./RemoteStatus";
 import type { Role } from "./Role";
 import type { SettingsKind } from "./SettingsKind";
+import type { StartupStep } from "./StartupStep";
 import type { TextKind } from "./TextKind";
 import type { ToolCallRecord } from "./ToolCallRecord";
 
@@ -32,14 +33,26 @@ cwd?: string,
  * The ACP session this start meant to restore but could not (it is a
  * new session instead); kept so the old one can be restored later.
  */
-lost_acp_session_id?: string, } | { "type": "session_failed", session: string, error: string, 
+lost_acp_session_id?: string, 
+/**
+ * How long each startup step (`initialize`, `session/new` or
+ * `session/load`, `session/set_mode`, ...) took, in order; a start that
+ * slows down shows here before it fails. Absent in older logs.
+ */
+startup_steps?: Array<StartupStep>, } | { "type": "session_failed", session: string, error: string, 
 /**
  * Another start of this session follows (a failed restore is tried
  * again, or replaced by a new session), so it is still starting. False:
  * the start is given up and nothing follows. Older logs lack it (the
  * two were not told apart); read it as false.
  */
-retrying: boolean, } | { "type": "session_stopped", session: string, 
+retrying: boolean, 
+/**
+ * A start that failed in the agent's startup steps: how long each took
+ * until it failed, the failing step last (so the one that hung shows
+ * with its timeout). Absent for other failures and in older logs.
+ */
+startup_steps?: Array<StartupStep>, } | { "type": "session_stopped", session: string, 
 /**
  * Stopped because Yhtye shut down; it is restored on the next start.
  */

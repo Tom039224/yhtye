@@ -317,7 +317,7 @@ async fn failing_orchestrator_start_is_reported_and_keeps_the_message_in_the_inb
     let mut events = Vec::new();
     common::orch::send(&orch, "hello").await;
     until(&mut rx, &mut events, TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::SessionFailed { session, error, retrying: false }
+        matches!(&e.body, ApiEventBody::SessionFailed { session, error, retrying: false, .. }
             if session == ORCHESTRATOR_SESSION && error.contains("session/new"))
     })
     .await;

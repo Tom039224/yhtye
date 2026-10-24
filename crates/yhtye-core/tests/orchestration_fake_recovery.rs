@@ -160,13 +160,92 @@ async fn failing_sub_agent_start_raises_agent_crashed() {
     })
     .await;
     assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionFailed { session, error, retrying: false }
+        ApiEventBody::SessionFailed { session, error, retrying: false, .. }
             if session == "T-1/implementer" && error.contains("session/new"))));
     let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
     assert!(
         orch_prompts[1].contains("kind=agent_crashed\nThe implementer agent could not be started")
     );
     assert!(orch_prompts[2].starts_with("[yhtye:group_settled] group=G-1\nT-1 cancelled"));
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn hung_sub_agent_start_reports_stderr_and_step_timings() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let orch_script = json!({"turns": [
+        plan(&[json!({})]),
+        {"match": "[yhtye:help_raised]", "actions": [
+            {"mcp_call": {"tool": "answer_help", "args": {"help_id": "${help_id}", "action": "cancel_task"}}}]},
+        {"match": "[yhtye:group_settled]", "actions": [
+            {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "${group}", "reason": "hung"}}}]}
+    ]});
+    // The implementer answers `initialize` and `session/new` but never `session/set_mode`.
+    let mut implementer = fake_harness(json!({"hang_at": "session/set_mode"}));
+    implementer.startup_timeout = Duration::from_millis(500);
+    let cfg = config(
+        dir.path(),
+        fake_harness(orch_script),
+        implementer,
+        fake_harness(json!({})),
+    );
+    let (orch, mut rx) = Orchestration::start(cfg).await.expect("starts");
+    let mut events = Vec::new();
+    common::orch::send(&orch, "please").await;
+    until(&mut rx, &mut events, TIMEOUT, |e| {
+        is_message(e, ORCHESTRATOR_SESSION, "mcp:cancel_group:ok")
+    })
+    .await;
+
+    // `session_failed`: the error carries what the agent said, and the payload
+    // how long each step took (the hung one last, at the timeout).
+    let failed = events
+        .iter()
+        .find_map(|e| match &e.body {
+            ApiEventBody::SessionFailed {
+                session,
+                error,
+                retrying: false,
+                startup_steps,
+            } if session == "T-1/implementer" => Some((error, startup_steps)),
+            _ => None,
+        })
+        .expect("session_failed");
+    assert!(
+        failed.0.starts_with("agent startup timed out at `session/set_mode` after 500 ms\n--- agent stderr (tail) ---\n")
+            && failed.0.contains("fake: hanging at session/set_mode as scripted"),
+        "{}",
+        failed.0
+    );
+    let steps = failed.1.as_deref().expect("startup_steps");
+    let names: Vec<&str> = steps.iter().map(|s| s.step.as_str()).collect();
+    assert_eq!(names, ["initialize", "session/new", "session/set_mode"]);
+    assert!(steps[2].millis >= 500, "{steps:?}");
+
+    // The help tells the sentence as before, then the stderr tail.
+    let orch_prompts = prompts_to(&events, ORCHESTRATOR_SESSION);
+    assert!(
+        orch_prompts[1].contains(
+            "kind=agent_crashed\nThe implementer agent could not be started: agent startup timed out at `session/set_mode` after 500 ms. Resume to try again, or cancel the task.\n--- agent stderr (tail) ---\n"
+        ) && orch_prompts[1].contains("fake: hanging at session/set_mode as scripted"),
+        "{}",
+        orch_prompts[1]
+    );
+
+    // `session_started` of a start that worked carries the timings too.
+    let orchestrator_started = events.iter().find_map(|e| match &e.body {
+        ApiEventBody::SessionStarted {
+            session,
+            startup_steps,
+            ..
+        } if session == ORCHESTRATOR_SESSION => Some(startup_steps),
+        _ => None,
+    });
+    let started_steps = orchestrator_started
+        .and_then(Option::as_deref)
+        .expect("session_started has startup_steps");
+    assert_eq!(started_steps[0].step, "initialize");
+    assert_eq!(started_steps[1].step, "session/new");
     shutdown_and_check(orch, &events).await;
 }
 

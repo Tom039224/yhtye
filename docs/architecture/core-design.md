@@ -142,8 +142,9 @@ pub struct CoreConfig {
 - `ApiEvent` = `{ seq, ts_ms, project, live, body }` (Stage 3a で `yhtye_core::api` に定義、
   3b で `live` を追加)。`body: ApiEventBody` (serde `type` タグ付き) は次のいずれか:
   - `domain { event: DomainEvent }` — 状態の変化 (§5)。UI は `State::apply` と同じ規則で畳み込める。
-  - `session_started { session, role, task, pid, acp_session_id, resumed }` /
-    `session_failed { session, error, retrying }` (`retrying`: このあとにも起動が続く = 復元の再試行・新しいセッションへの切り替えの途中の失敗。`false` は起動を諦めた最終の失敗。古いログには無く、`false` として読む) /
+  - `session_started { session, role, task, pid, acp_session_id, resumed, …, startup_steps? }` /
+    `session_failed { session, error, retrying, startup_steps? }` (`retrying`: このあとにも起動が続く = 復元の再試行・新しいセッションへの切り替えの途中の失敗。`false` は起動を諦めた最終の失敗。古いログには無く、`false` として読む。
+    `startup_steps?: [{ step, millis }]` は起動の各段の所要時間 (起動が遅くなる予兆を後から追える / 失敗なら止まった段が最後)。任意で、古いログと起動の段の外の失敗には無い) /
     `session_stopped { session, suspended }` /
     `session_interrupted { session }` (3b: 起動時、前回動いていたセッション。`suspended` は
     Yhtye の終了で止めた = 次回の起動で復元する)
@@ -295,6 +296,13 @@ impl AgentHandle {
   プロセスの exit を `AgentEvent::Exited{code, signal}` で必ず最後に通知する。
   アクタータスクごと落ちた場合もガードの drop でグループを SIGKILL する。
   stderr は行ごとに `AgentEvent::Stderr` (ログのみ、UI には出さない) + 起動エラー用に末尾 40 行を保持。
+- **起動の失敗の診断** (Issue #25): 起動が失敗したら、保持した stderr 末尾を失敗の情報に付ける。`AgentError::Startup` は `message` の末尾に
+  (`--- agent stderr (tail) ---` の見出しつきで) 付け、`AgentError::Timeout` は任意の `stderr` フィールドに入れて `Display` に同じ形で付ける
+  (起動のタイムアウトは `initialize` / `session/new` / `session/set_mode` などで、アダプタが黙ったまま応答しない形が多く、理由は stderr にしか出ない)。
+  stderr が空なら従来どおりの文面。通常時の stderr は `debug` のまま (info 以上にしない) で、起動に失敗したときだけ末尾を `tracing::warn!` でも出す。
+  help (`agent_crashed`) の本文は「`… could not be started: <理由>. Resume to try again, or cancel the task.`」の文を崩さず、stderr 末尾はその**後ろ**の行に置く。
+  起動の各段 (`initialize` → `session/new` | `session/load` → `session/set_mode` → `session/set_config_option`) は `acp/startup.rs` が所要時間を測り、
+  成功なら `AgentInfo::startup_steps`、失敗なら `AgentError::startup_steps()` (`Startup` / `Timeout` の任意フィールド `steps`。失敗した段が最後で、タイムアウトした段はタイムアウト分) に載せる。
 
 ### 3.2 型付きイベント
 

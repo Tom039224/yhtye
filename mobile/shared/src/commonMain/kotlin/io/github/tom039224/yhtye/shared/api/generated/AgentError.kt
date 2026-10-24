@@ -1,11 +1,14 @@
 // Generated from the Rust API types of yhtye-core (crates/yhtye-core/src/api/typegen/kotlin).
 // Do not edit; run `pnpm gen:kotlin` (or `pnpm gen:types`).
+@file:OptIn(ExperimentalSerializationApi::class)
 
 package io.github.tom039224.yhtye.shared.api.generated
 
 import io.github.tom039224.yhtye.shared.api.TaggedSerializer
 import io.github.tom039224.yhtye.shared.api.TaggedVariant
 import io.github.tom039224.yhtye.shared.api.UnrecognizedVariant
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -20,16 +23,35 @@ sealed interface AgentError {
         val message: String,
     ) : AgentError
 
+    /**
+     * `message` ends with the agent's stderr tail when it wrote any.
+     */
     @Serializable
     data class Startup(
         val step: String,
         val message: String,
+        /**
+         * The startup steps that ran, the failed one last (absent when unknown).
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val steps: List<StartupStep>? = null,
     ) : AgentError
 
     @Serializable
     data class Timeout(
         val step: String,
         val millis: Long,
+        /**
+         * The tail of the agent's stderr when it wrote any (a hung agent
+         * usually says why there), shown with the error.
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val stderr: String? = null,
+        /**
+         * The startup steps that ran, the timed out one last (absent when unknown).
+         */
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val steps: List<StartupStep>? = null,
     ) : AgentError
 
     @Serializable

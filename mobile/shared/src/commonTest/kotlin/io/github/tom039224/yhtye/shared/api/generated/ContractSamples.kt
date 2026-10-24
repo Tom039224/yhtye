@@ -834,7 +834,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "session_started",
         ApiEvent.serializer(),
-        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\"}}",
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\",\"startup_steps\":[{\"step\":\"initialize\",\"millis\":812},{\"step\":\"session/new\",\"millis\":3411},{\"step\":\"session/set_mode\",\"millis\":120000}]}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -853,6 +853,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "session_failed",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_failed\",\"session\":\"T-1/0\",\"error\":\"spawn failed\",\"retrying\":true}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "session_failed/startup_steps",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_failed\",\"session\":\"T-1/0\",\"error\":\"agent startup timed out at `session/set_mode` after 120000 ms\",\"retrying\":false,\"startup_steps\":[{\"step\":\"initialize\",\"millis\":812},{\"step\":\"session/new\",\"millis\":3411},{\"step\":\"session/set_mode\",\"millis\":120000}]}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -984,7 +990,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "agent/ready",
         ApiEvent.serializer(),
-        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"ready\",\"data\":{\"acp_session_id\":\"acp-1\",\"resumed\":false,\"modes\":{\"currentModeId\":\"default\",\"availableModes\":[{\"id\":\"default\",\"name\":\"Default\"}]},\"config_options\":[{\"id\":\"model\",\"name\":\"Model\",\"type\":\"select\",\"currentValue\":\"opus\",\"options\":[{\"value\":\"opus\",\"name\":\"Opus\"}]}],\"capabilities\":{\"loadSession\":true,\"promptCapabilities\":{\"image\":false,\"audio\":false,\"embeddedContext\":false},\"mcpCapabilities\":{\"http\":false,\"sse\":false},\"sessionCapabilities\":{},\"auth\":{}},\"agent\":{\"name\":\"fake\",\"version\":\"1.0.0\"},\"supports_steering\":true}}}}",
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"ready\",\"data\":{\"acp_session_id\":\"acp-1\",\"resumed\":false,\"modes\":{\"currentModeId\":\"default\",\"availableModes\":[{\"id\":\"default\",\"name\":\"Default\"}]},\"config_options\":[{\"id\":\"model\",\"name\":\"Model\",\"type\":\"select\",\"currentValue\":\"opus\",\"options\":[{\"value\":\"opus\",\"name\":\"Opus\"}]}],\"capabilities\":{\"loadSession\":true,\"promptCapabilities\":{\"image\":false,\"audio\":false,\"embeddedContext\":false},\"mcpCapabilities\":{\"http\":false,\"sse\":false},\"sessionCapabilities\":{},\"auth\":{}},\"agent\":{\"name\":\"fake\",\"version\":\"1.0.0\"},\"supports_steering\":true,\"startup_steps\":[{\"step\":\"initialize\",\"millis\":812},{\"step\":\"session/new\",\"millis\":3411},{\"step\":\"session/set_mode\",\"millis\":120000}]}}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -1104,11 +1110,23 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "agent/turn_ended/startup",
         ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"startup\",\"step\":\"initialize\",\"message\":\"bad\",\"steps\":[{\"step\":\"initialize\",\"millis\":812},{\"step\":\"session/new\",\"millis\":3411},{\"step\":\"session/set_mode\",\"millis\":120000}]}}}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "agent/turn_ended/startup/bare",
+        ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"startup\",\"step\":\"initialize\",\"message\":\"bad\"}}}}}",
     ),
     ContractSample(
         "ApiEvent",
         "agent/turn_ended/timeout",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"timeout\",\"step\":\"session/new\",\"millis\":60000,\"stderr\":\"connect ETIMEDOUT\",\"steps\":[{\"step\":\"initialize\",\"millis\":812},{\"step\":\"session/new\",\"millis\":3411},{\"step\":\"session/set_mode\",\"millis\":120000}]}}}}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "agent/turn_ended/timeout/bare",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"agent\",\"session\":\"T-1/0\",\"event\":{\"type\":\"turn_ended\",\"data\":{\"Err\":{\"code\":\"timeout\",\"step\":\"session/new\",\"millis\":60000}}}}}",
     ),

@@ -11,10 +11,14 @@ use common::{
 use serde_json::json;
 use yhtye_core::acp::schema::{SessionId, StopReason};
 use yhtye_core::acp::{
-    AgentError, AgentEvent, AgentOutput, HarnessConfig, ModelSelect, SpawnOptions,
+    AgentError, AgentEvent, AgentOutput, HarnessConfig, ModelSelect, SpawnOptions, StartupStep,
 };
 
 const GONE_TIMEOUT: Duration = Duration::from_secs(5);
+
+fn step_names(steps: &[StartupStep]) -> Vec<&str> {
+    steps.iter().map(|s| s.step.as_str()).collect()
+}
 
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir")
@@ -156,7 +160,7 @@ async fn agent_exiting_during_initialize_reports_step_code_and_stderr() {
     let dir = tmp();
     let h = fake_harness(json!({"exit_at": "initialize"}));
     let (err, mut events) = start_err(&h, dir.path(), SpawnOptions::default()).await;
-    let AgentError::Startup { step, message } = &err else {
+    let AgentError::Startup { step, message, .. } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(step, "initialize");
@@ -176,7 +180,7 @@ async fn failing_session_new_reports_the_agent_error() {
     let dir = tmp();
     let h = fake_harness(json!({"fail_at": "session/new"}));
     let (err, _) = start_err(&h, dir.path(), SpawnOptions::default()).await;
-    let AgentError::Startup { step, message } = &err else {
+    let AgentError::Startup { step, message, .. } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(step, "session/new");
@@ -193,15 +197,121 @@ async fn hanging_startup_times_out_and_the_agent_is_killed() {
     let mut h = fake_harness(json!({"hang_at": "initialize"}));
     h.startup_timeout = Duration::from_millis(500);
     let (err, mut events) = start_err(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentError::Timeout {
+        step,
+        millis,
+        stderr,
+        steps,
+    } = &err
+    else {
+        panic!("{err:?}")
+    };
+    assert_eq!((step.as_str(), *millis), ("initialize", 500));
+    // The timed out step is the last one, with the time it waited.
     assert_eq!(
-        err,
-        AgentError::Timeout {
-            step: "initialize".into(),
-            millis: 500
-        }
+        step_names(steps.as_deref().unwrap_or_default()),
+        ["initialize"]
+    );
+    assert!(steps.as_deref().is_some_and(|s| s[0].millis >= 500));
+    // What the hung agent said on stderr is in the error.
+    assert!(
+        stderr
+            .as_deref()
+            .is_some_and(|t| t.contains("fake: hanging at initialize as scripted")),
+        "{stderr:?}"
+    );
+    assert!(
+        err.to_string().ends_with(
+            "after 500 ms\n--- agent stderr (tail) ---\nfake: hanging at initialize as scripted"
+        ),
+        "{err}"
     );
     // The hung agent is terminated (by signal or after stdin EOF).
     let _ = wait_exited(&mut events, Duration::from_secs(10)).await;
+}
+
+#[tokio::test]
+async fn a_hung_set_mode_reports_the_steps_before_it_and_the_agents_stderr() {
+    let dir = tmp();
+    let mut h = fake_harness(json!({"hang_at": "session/set_mode"}));
+    h.startup_timeout = Duration::from_millis(500);
+    h.mode_after_new = Some("bypassPermissions".into());
+    let (err, _events) = start_err(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentError::Timeout { step, stderr, .. } = &err else {
+        panic!("{err:?}")
+    };
+    assert_eq!(step, "session/set_mode");
+    assert!(
+        stderr
+            .as_deref()
+            .is_some_and(|t| t.contains("hanging at session/set_mode")),
+        "{stderr:?}"
+    );
+    let steps = err.startup_steps();
+    assert_eq!(
+        step_names(steps),
+        ["initialize", "session/new", "session/set_mode"]
+    );
+    // The two that answered are quick; the last one waited out the timeout.
+    assert!(steps[0].millis < 500 && steps[1].millis < 500, "{steps:?}");
+    assert!(steps[2].millis >= 500, "{steps:?}");
+}
+
+#[tokio::test]
+async fn a_started_agent_reports_how_long_each_startup_step_took() {
+    let dir = tmp();
+    // The test harness also sets a mode and a model: one step each.
+    let h = fake_harness(json!({}));
+    let mut s = start(&h, dir.path(), SpawnOptions::default()).await;
+    let AgentEvent::Ready(info) = s.next().await else {
+        panic!("expected Ready")
+    };
+    assert_eq!(
+        step_names(&info.startup_steps),
+        [
+            "initialize",
+            "session/new",
+            "session/set_mode",
+            "session/set_config_option"
+        ]
+    );
+    assert_eq!(s.handle.info().startup_steps, info.startup_steps);
+    s.handle.shutdown().await;
+
+    // Without a mode or model to set, only the steps that open the session.
+    let mut plain = HarnessConfig::plain(h.command.clone(), vec![]);
+    plain.env = h.env.clone();
+    let s = start(&plain, dir.path(), SpawnOptions::default()).await;
+    assert_eq!(
+        step_names(&s.handle.info().startup_steps),
+        ["initialize", "session/new"]
+    );
+    s.handle.shutdown().await;
+
+    // A restored session is `session/load` (and is already in its mode).
+    let mut s = start(&plain, dir.path(), resume("prev-123")).await;
+    let AgentEvent::Output(_) = s.next().await else {
+        panic!("history replay must precede Ready")
+    };
+    let AgentEvent::Ready(info) = s.next().await else {
+        panic!("expected Ready")
+    };
+    assert_eq!(
+        step_names(&info.startup_steps),
+        ["initialize", "session/load"]
+    );
+    s.handle.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failed_startup_step_is_the_last_one_reported() {
+    let dir = tmp();
+    let h = fake_harness(json!({"fail_at": "session/new"}));
+    let (err, _) = start_err(&h, dir.path(), SpawnOptions::default()).await;
+    assert_eq!(
+        step_names(err.startup_steps()),
+        ["initialize", "session/new"]
+    );
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use super::sessions::{AgentMsg, Sessions, Spawned, Starting};
 use crate::acp::schema::SessionId;
-use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions};
+use crate::acp::{AgentError, AgentEvent, HarnessConfig, SpawnOptions, sentence_around_message};
 use crate::agents::{AgentChoice, AgentRole};
 use crate::api::ApiEventBody;
 use crate::mcp::{McpToken, SessionBinding};
@@ -273,10 +273,10 @@ impl Sessions {
         &mut self,
         binding: SessionBinding,
         starting: Starting,
-        error: &str,
+        error: &AgentError,
     ) {
         let Some(stored) = starting.resume.clone() else {
-            return self.failed_text(&binding.session, error.to_string());
+            return self.failed(&binding.session, error);
         };
         let retries = self.cfg.agents.resume_retry().retries;
         let failed = starting.failed_restores + 1;
@@ -292,9 +292,12 @@ impl Sessions {
             );
             self.failed_retrying(
                 &binding.session,
-                format!(
-                    "restoring the session {id} failed ({error}); trying again ({failed}/{retries})"
-                ),
+                sentence_around_message(&error.to_string(), |reason| {
+                    format!(
+                        "restoring the session {id} failed ({reason}); trying again ({failed}/{retries})"
+                    )
+                }),
+                error.startup_steps(),
             );
             let attempt = Attempt {
                 failed_restores: failed,
@@ -315,7 +318,10 @@ impl Sessions {
         );
         self.failed_retrying(
             &binding.session,
-            format!("could not restore the session {id} ({error}); starting a new session"),
+            sentence_around_message(&error.to_string(), |reason| {
+                format!("could not restore the session {id} ({reason}); starting a new session")
+            }),
+            error.startup_steps(),
         );
         let attempt = Attempt {
             failed_restores: 0,

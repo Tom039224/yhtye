@@ -153,6 +153,7 @@ fn failure_events(events: &[ApiEvent], session: &str) -> Vec<(String, bool)> {
                 session: s,
                 error,
                 retrying,
+                ..
             } if s == session => Some((error.clone(), *retrying)),
             _ => None,
         })

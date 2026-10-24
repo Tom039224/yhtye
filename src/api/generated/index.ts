@@ -60,6 +60,7 @@ export type * from "./SessionRecord";
 export type * from "./SessionStatus";
 export type * from "./SettingsKind";
 export type * from "./Snapshot";
+export type * from "./StartupStep";
 export type * from "./State";
 export type * from "./Step";
 export type * from "./StepKind";

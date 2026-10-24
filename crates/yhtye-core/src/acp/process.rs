@@ -14,7 +14,7 @@ use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::config::HarnessConfig;
-use super::events::{AgentError, AgentEvent};
+use super::events::{AgentError, AgentEvent, stderr_section};
 use super::orphan::{self, Registration};
 use super::parent_death::{self, Watchdog};
 use crate::secrets::SecretEnv;
@@ -42,7 +42,7 @@ pub(crate) struct AgentProcess {
 pub(crate) struct StderrTail(Arc<Mutex<VecDeque<String>>>);
 
 impl StderrTail {
-    fn push(&self, line: String) {
+    pub fn push(&self, line: String) {
         let Ok(mut lines) = self.0.lock() else { return };
         if lines.len() == STDERR_TAIL_LINES {
             lines.pop_front();
@@ -60,13 +60,7 @@ impl StderrTail {
 
     /// `message` plus the stderr tail, for startup error reports.
     pub fn annotate(&self, message: impl Into<String>) -> String {
-        let message = message.into();
-        let tail = self.text();
-        if tail.is_empty() {
-            message
-        } else {
-            format!("{message}\n--- agent stderr (tail) ---\n{tail}")
-        }
+        format!("{}{}", message.into(), stderr_section(Some(&self.text())))
     }
 }
 

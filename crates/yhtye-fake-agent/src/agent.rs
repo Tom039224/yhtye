@@ -313,6 +313,7 @@ async fn gate(fake: &Fake, step: &str) -> Result<(), Error> {
         std::process::exit(2);
     }
     if s.at(&s.hang_at, step) {
+        eprintln!("fake: hanging at {step} as scripted");
         std::future::pending::<()>().await;
     }
     if s.at(&s.fail_at, step) {

@@ -13,7 +13,7 @@
 //!   "fail_kind": "internal",    // the error: "internal" (default) | "auth_required"
 //!   "fail_message": null,       // its data (default "fake: scripted failure at <step>")
 //!   "exit_at": null,            // same steps → print to stderr and exit(2)
-//!   "hang_at": null,            // same steps → never answer
+//!   "hang_at": null,            // same steps → say so on stderr, never answer
 //!   "fault_attempts": null,     // N (with "attempt_file"): only the first N processes fail / exit / hang
 //!   "attempt_file": null,       // a file counting the processes that did (it outlives them)
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"

@@ -24,7 +24,11 @@ pub use config::{
     MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect, OPENCODE_BUILD_MODE,
     PermissionPolicy, SystemPromptStyle,
 };
-pub use events::{AgentError, AgentEvent, AgentInfo, AgentOutput, config_value, effort_option};
+pub(crate) use events::sentence_around_message;
+pub use events::{
+    AgentError, AgentEvent, AgentInfo, AgentOutput, StartupStep, config_value, effort_option,
+    format_startup_steps,
+};
 pub use handle::{AgentHandle, SpawnOptions, spawn_agent};
 pub(crate) use orphan::start_registry as start_process_registry;
 pub use permission::{choose_permission, outcome_for};
