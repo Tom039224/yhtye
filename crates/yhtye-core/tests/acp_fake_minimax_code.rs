@@ -195,7 +195,7 @@ async fn an_authentication_error_reads_as_a_startup_error() {
     let h = fake_minimax_code_harness(script, None, None);
     let (err, mut events) = start_err(&h, dir.path(), SpawnOptions::default()).await;
 
-    let AgentError::Startup { step, message } = &err else {
+    let AgentError::Startup { step, message, .. } = &err else {
         panic!("{err:?}")
     };
     assert_eq!(step, "session/new");

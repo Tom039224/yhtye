@@ -63,10 +63,10 @@ pub async fn spawn_agent(
         ReadySlot::new(ready_tx),
     ));
     let info = ready_rx.await.unwrap_or_else(|_| {
-        Err(AgentError::Startup {
-            step: "connect".into(),
-            message: "the session actor stopped unexpectedly".into(),
-        })
+        Err(AgentError::startup(
+            "connect",
+            "the session actor stopped unexpectedly",
+        ))
     })?;
     Ok(AgentHandle {
         cmd_tx,

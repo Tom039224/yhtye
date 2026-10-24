@@ -203,10 +203,10 @@ pub async fn spawn_agent_with_secrets(
     mut options: SpawnOptions,
     events: mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<AgentHandle, AgentError> {
-    options.secret_env = secrets.env().await.map_err(|e| AgentError::Startup {
-        step: "secret environment variables".into(),
-        message: e.to_string(),
-    })?;
+    options.secret_env = secrets
+        .env()
+        .await
+        .map_err(|e| AgentError::startup("secret environment variables", e.to_string()))?;
     spawn_agent(harness, cwd, options, events).await
 }
 

@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::acp::{AgentEvent, AgentOutput};
+use crate::acp::{AgentEvent, AgentOutput, StartupStep};
 use crate::agents::AgentChoice;
 use crate::clock::now_ms;
 use crate::domain::{DomainEvent, Role, State};
@@ -121,6 +121,12 @@ pub enum ApiEventBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         lost_acp_session_id: Option<String>,
+        /// How long each startup step (`initialize`, `session/new` or
+        /// `session/load`, `session/set_mode`, ...) took, in order; a start that
+        /// slows down shows here before it fails. Absent in older logs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        startup_steps: Option<Vec<StartupStep>>,
     },
     /// A start of the session failed. `retrying` tells a failure on the way from
     /// the one that gives the start up.
@@ -132,6 +138,12 @@ pub enum ApiEventBody {
         /// the start is given up and nothing follows. Older logs lack it (the
         /// two were not told apart); read it as false.
         retrying: bool,
+        /// A start that failed in the agent's startup steps: how long each took
+        /// until it failed, the failing step last (so the one that hung shows
+        /// with its timeout). Absent for other failures and in older logs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        startup_steps: Option<Vec<StartupStep>>,
     },
     /// The session was shut down (or its process exited) and its token revoked.
     SessionStopped {

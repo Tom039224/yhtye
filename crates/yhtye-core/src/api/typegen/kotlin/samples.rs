@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::acp::{AgentError, AgentEvent, AgentInfo, AgentOutput};
+use crate::acp::{AgentError, AgentEvent, AgentInfo, AgentOutput, StartupStep};
 use crate::agents::{
     AgentChoice, AgentSettings, AgentSettingsLayer, EffortOption, HarnessDetection, HarnessInfo,
     HarnessModels, HarnessRequirement, ModelEfforts, ModelOption, PathSource, RoleSettings,
@@ -946,7 +946,23 @@ fn agent_info() -> AgentInfo {
         capabilities: de(json!({"loadSession": true})),
         agent: Some(de(json!({"name": "fake", "version": "1.0.0"}))),
         supports_steering: true,
+        startup_steps: startup_steps(),
     }
+}
+
+/// How long the startup steps took (the last one timed out).
+fn startup_steps() -> Vec<StartupStep> {
+    [
+        ("initialize", 812),
+        ("session/new", 3_411),
+        ("session/set_mode", 120_000),
+    ]
+    .into_iter()
+    .map(|(step, millis)| StartupStep {
+        step: step.into(),
+        millis,
+    })
+    .collect()
 }
 
 /// Every agent event and output kind (ACP payloads are opaque JSON in Kotlin).
@@ -1060,14 +1076,21 @@ fn agent_events() -> Vec<(String, AgentEvent)> {
             command: "npx".into(),
             message: "not found".into(),
         },
+        // The first of a code has its optional fields, the second (`/bare`) lacks
+        // them, as in logs of older versions.
         AgentError::Startup {
             step: "initialize".into(),
             message: "bad".into(),
+            steps: Some(startup_steps()),
         },
+        AgentError::startup("initialize", "bad"),
         AgentError::Timeout {
             step: "session/new".into(),
             millis: 60_000,
+            stderr: Some("connect ETIMEDOUT".into()),
+            steps: Some(startup_steps()),
         },
+        AgentError::timeout("session/new", 60_000),
         AgentError::Unsupported {
             requested: "opus".into(),
             available: "haiku".into(),
@@ -1083,12 +1106,21 @@ fn agent_events() -> Vec<(String, AgentEvent)> {
         },
         AgentError::Closed,
     ];
+    let mut seen = std::collections::BTreeSet::new();
     for e in errors {
         let code = serde_json::to_value(&e).expect("error")["code"]
             .as_str()
             .expect("code")
             .to_string();
-        out.push((format!("turn_ended/{code}"), AgentEvent::TurnEnded(Err(e))));
+        let bare = if seen.insert(code.clone()) {
+            ""
+        } else {
+            "/bare"
+        };
+        out.push((
+            format!("turn_ended/{code}{bare}"),
+            AgentEvent::TurnEnded(Err(e)),
+        ));
     }
     out
 }
@@ -1149,6 +1181,7 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
         replaced: full.then(|| de(json!({"harness": "gone", "model": null, "effort": null}))),
         cwd: full.then(|| "/home/u/repo".into()),
         lost_acp_session_id: full.then(|| "acp-0".into()),
+        startup_steps: full.then(startup_steps),
     };
     let mut out: Vec<(String, ApiEventBody)> = domain_events()
         .into_iter()
@@ -1170,6 +1203,16 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
                 session: "T-1/0".into(),
                 error: "spawn failed".into(),
                 retrying: true,
+                startup_steps: None,
+            },
+        ),
+        (
+            "session_failed/startup_steps".into(),
+            ApiEventBody::SessionFailed {
+                session: "T-1/0".into(),
+                error: "agent startup timed out at `session/set_mode` after 120000 ms".into(),
+                retrying: false,
+                startup_steps: Some(startup_steps()),
             },
         ),
         (

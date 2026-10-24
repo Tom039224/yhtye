@@ -6,6 +6,8 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use tokio::time::Instant;
+
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::schema::v1::{
     ClientCapabilities, Implementation, InitializeRequest, LoadSessionRequest, McpServer, Meta,
@@ -15,8 +17,14 @@ use agent_client_protocol::schema::v1::{
 use agent_client_protocol::{Agent, ConnectionTo, ErrorCode};
 
 use super::config::{HarnessConfig, SystemPromptStyle};
-use super::events::{AgentError, AgentInfo, config_value, effort_option};
+use super::events::{AgentError, AgentInfo, StartupStep, config_value, effort_option};
 use super::steering;
+
+const STEP_INITIALIZE: &str = "initialize";
+const STEP_SESSION_NEW: &str = "session/new";
+const STEP_SESSION_LOAD: &str = "session/load";
+const STEP_SET_MODE: &str = "session/set_mode";
+const STEP_SET_CONFIG_OPTION: &str = "session/set_config_option";
 
 /// Everything needed to open the session.
 pub(crate) struct StartupParams {
@@ -78,31 +86,76 @@ async fn step_with_login_hint<T>(
 ) -> Result<T, AgentError> {
     match tokio::time::timeout(timeout, fut).await {
         Ok(Ok(v)) => Ok(v),
-        Ok(Err(e)) => Err(AgentError::Startup {
-            step: name.into(),
-            message: match login_hint {
+        Ok(Err(e)) => Err(AgentError::startup(
+            name,
+            match login_hint {
                 Some(hint) if e.code == ErrorCode::AuthRequired => format!("{e}\n{hint}"),
                 _ => e.to_string(),
             },
-        }),
-        Err(_) => Err(AgentError::Timeout {
-            step: name.into(),
-            millis: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-        }),
+        )),
+        Err(_) => Err(AgentError::timeout(name, millis(timeout))),
     }
 }
 
-/// Opens the session and applies mode / model. Returns the session state.
+fn millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Times the startup steps, in the order they run.
+#[derive(Default)]
+struct StepLog(Vec<StartupStep>);
+
+impl StepLog {
+    /// Runs `step` as the startup step `name` and records how long it took,
+    /// whether it succeeded, failed or timed out.
+    async fn time<T>(
+        &mut self,
+        name: &str,
+        step: impl Future<Output = Result<T, AgentError>>,
+    ) -> Result<T, AgentError> {
+        let started = Instant::now();
+        let result = step.await;
+        self.0.push(StartupStep {
+            step: name.into(),
+            millis: millis(started.elapsed()),
+        });
+        result
+    }
+}
+
+/// Opens the session and applies mode / model. Returns the session state, with
+/// how long each step took in [`AgentInfo::startup_steps`] (on failure, in
+/// [`AgentError::startup_steps`]).
 pub(crate) async fn open_session(
     cx: &ConnectionTo<Agent>,
     p: &StartupParams,
+) -> Result<AgentInfo, AgentError> {
+    let mut log = StepLog::default();
+    match run_steps(cx, p, &mut log).await {
+        Ok(mut info) => {
+            info.startup_steps = log.0;
+            Ok(info)
+        }
+        Err(e) => Err(e.with_startup_steps(log.0)),
+    }
+}
+
+async fn run_steps(
+    cx: &ConnectionTo<Agent>,
+    p: &StartupParams,
+    log: &mut StepLog,
 ) -> Result<AgentInfo, AgentError> {
     let timeout = p.harness.startup_timeout;
     let login_hint = p.harness.login_hint.as_deref();
     let init = InitializeRequest::new(ProtocolVersion::V1)
         .client_capabilities(ClientCapabilities::default())
         .client_info(client_info(&p.harness));
-    let init = step("initialize", timeout, cx.send_request(init).block_task()).await?;
+    let init = log
+        .time(
+            STEP_INITIALIZE,
+            step(STEP_INITIALIZE, timeout, cx.send_request(init).block_task()),
+        )
+        .await?;
     let caps = init.agent_capabilities;
 
     let (session_id, modes, config_options, resumed) = match &p.resume {
@@ -110,13 +163,17 @@ pub(crate) async fn open_session(
             let req = LoadSessionRequest::new(id.clone(), p.cwd.clone())
                 .mcp_servers(p.mcp.clone())
                 .meta(p.session_meta());
-            let res = step_with_login_hint(
-                "session/load",
-                timeout,
-                login_hint,
-                cx.send_request(req).block_task(),
-            )
-            .await?;
+            let res = log
+                .time(
+                    STEP_SESSION_LOAD,
+                    step_with_login_hint(
+                        STEP_SESSION_LOAD,
+                        timeout,
+                        login_hint,
+                        cx.send_request(req).block_task(),
+                    ),
+                )
+                .await?;
             (id.clone(), res.modes, res.config_options, true)
         }
         resume => {
@@ -126,13 +183,17 @@ pub(crate) async fn open_session(
             let req = NewSessionRequest::new(p.cwd.clone())
                 .mcp_servers(p.mcp.clone())
                 .meta(p.session_meta());
-            let res = step_with_login_hint(
-                "session/new",
-                timeout,
-                login_hint,
-                cx.send_request(req).block_task(),
-            )
-            .await?;
+            let res = log
+                .time(
+                    STEP_SESSION_NEW,
+                    step_with_login_hint(
+                        STEP_SESSION_NEW,
+                        timeout,
+                        login_hint,
+                        cx.send_request(req).block_task(),
+                    ),
+                )
+                .await?;
             (res.session_id, res.modes, res.config_options, false)
         }
     };
@@ -145,6 +206,7 @@ pub(crate) async fn open_session(
         capabilities: caps,
         agent: init.agent_info,
         supports_steering: steering::advertised(init.meta.as_ref()),
+        startup_steps: Vec::new(),
     };
     // What the agent already reports as current is not set again: it saves a
     // request that can hang (a `set_mode` timeout cost a restored session) and
@@ -153,19 +215,24 @@ pub(crate) async fn open_session(
     if let Some(mode) = &p.harness.mode_after_new
         && info.current_mode() != Some(mode.as_str())
     {
-        set_mode(cx, &mut info, mode, timeout).await?;
+        log.time(STEP_SET_MODE, set_mode(cx, &mut info, mode, timeout))
+            .await?;
     }
     if let Some(model) = &p.harness.model
         && !has_option_value(&info.config_options, &model.config_id, &model.value)
     {
-        info.config_options = set_config_option(
-            cx,
-            &info.acp_session_id,
-            &model.config_id,
-            &model.value,
-            timeout,
-        )
-        .await?;
+        info.config_options = log
+            .time(
+                STEP_SET_CONFIG_OPTION,
+                set_config_option(
+                    cx,
+                    &info.acp_session_id,
+                    &model.config_id,
+                    &model.value,
+                    timeout,
+                ),
+            )
+            .await?;
     }
     // The available efforts depend on the model, so the effort always comes
     // after it. A model without that effort makes the start fail
@@ -173,9 +240,12 @@ pub(crate) async fn open_session(
     if let Some(effort) = &p.harness.effort {
         let config_id = effort_config_id(&info.config_options, &effort.config_id);
         if !has_option_value(&info.config_options, &config_id, &effort.value) {
-            info.config_options =
-                set_config_option(cx, &info.acp_session_id, &config_id, &effort.value, timeout)
-                    .await?;
+            info.config_options = log
+                .time(
+                    STEP_SET_CONFIG_OPTION,
+                    set_config_option(cx, &info.acp_session_id, &config_id, &effort.value, timeout),
+                )
+                .await?;
         }
     }
     Ok(info)
@@ -226,12 +296,7 @@ pub(crate) async fn request_set_mode(
     timeout: Duration,
 ) -> Result<(), AgentError> {
     let req = SetSessionModeRequest::new(session.clone(), mode.to_string());
-    step(
-        "session/set_mode",
-        timeout,
-        cx.send_request(req).block_task(),
-    )
-    .await?;
+    step(STEP_SET_MODE, timeout, cx.send_request(req).block_task()).await?;
     Ok(())
 }
 
@@ -260,20 +325,20 @@ pub(crate) async fn set_config_option(
 ) -> Result<Vec<SessionConfigOption>, AgentError> {
     let req = SetSessionConfigOptionRequest::new(session.clone(), config_id.to_string(), value);
     let res = step(
-        "session/set_config_option",
+        STEP_SET_CONFIG_OPTION,
         timeout,
         cx.send_request(req).block_task(),
     )
     .await?;
     match config_value(&res.config_options, config_id) {
         Some(current) if current == value => Ok(res.config_options),
-        current => Err(AgentError::Startup {
-            step: "session/set_config_option".into(),
-            message: format!(
+        current => Err(AgentError::startup(
+            STEP_SET_CONFIG_OPTION,
+            format!(
                 "requested {config_id}={value} but the agent reports {}",
                 current.unwrap_or("<no such option>")
             ),
-        }),
+        )),
     }
 }
 
@@ -311,6 +376,50 @@ mod tests {
             resume: None,
             system_prompt: system_prompt.map(str::to_string),
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn each_step_is_timed_whether_it_succeeds_fails_or_times_out() {
+        let mut log = StepLog::default();
+        let slow = |ms: u64| tokio::time::sleep(Duration::from_millis(ms));
+
+        let ok = log
+            .time("initialize", async {
+                slow(250).await;
+                Ok(1)
+            })
+            .await;
+        assert_eq!(ok, Ok(1));
+        let failed = log
+            .time("session/new", async {
+                slow(40).await;
+                Err::<(), _>(AgentError::startup("session/new", "bad"))
+            })
+            .await;
+        assert_eq!(failed, Err(AgentError::startup("session/new", "bad")));
+        let timed_out: Result<(), _> = log
+            .time(
+                "session/set_mode",
+                step("session/set_mode", Duration::from_secs(120), async {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                }),
+            )
+            .await;
+        assert_eq!(
+            timed_out,
+            Err(AgentError::timeout("session/set_mode", 120_000))
+        );
+
+        let recorded: Vec<(&str, u64)> =
+            log.0.iter().map(|s| (s.step.as_str(), s.millis)).collect();
+        assert_eq!(
+            recorded,
+            [
+                ("initialize", 250),
+                ("session/new", 40),
+                ("session/set_mode", 120_000)
+            ]
+        );
     }
 
     #[test]

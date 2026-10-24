@@ -194,6 +194,40 @@ fn start_failure_raises_agent_crashed() {
 }
 
 #[test]
+fn start_failure_help_keeps_its_sentence_and_ends_with_the_stderr_tail() {
+    let mut sim = running();
+    let timeout = "agent startup timed out at `session/set_mode` after 120000 ms";
+    sim.run(DomainCommand::AgentStartFailed {
+        agent: agent("T-1", Role::Implementer, 0),
+        error: format!("{timeout}\n--- agent stderr (tail) ---\nconnect ETIMEDOUT\nretrying"),
+    })
+    .expect("ok");
+    assert_eq!(
+        open_help(&sim).message,
+        format!(
+            "The implementer agent could not be started: {timeout}. \
+             Resume to try again, or cancel the task.\n\
+             --- agent stderr (tail) ---\nconnect ETIMEDOUT\nretrying"
+        )
+    );
+}
+
+#[test]
+fn start_failure_help_without_stderr_is_the_plain_sentence() {
+    let mut sim = running();
+    sim.run(DomainCommand::AgentStartFailed {
+        agent: agent("T-1", Role::Implementer, 0),
+        error: "npx not found".into(),
+    })
+    .expect("ok");
+    assert_eq!(
+        open_help(&sim).message,
+        "The implementer agent could not be started: npx not found. \
+         Resume to try again, or cancel the task."
+    );
+}
+
+#[test]
 fn stale_sessions_are_ignored() {
     let mut sim = Sim::new();
     sim.group();

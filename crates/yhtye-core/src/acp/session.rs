@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
-use super::events::{AgentError, AgentEvent, AgentInfo, AgentOutput};
+use super::events::{AgentError, AgentEvent, AgentInfo, AgentOutput, format_startup_steps};
 use super::permission::{choose_permission, outcome_for};
 use super::process::{self, AgentProcess};
 use super::startup::{self, StartupParams};
@@ -150,18 +150,22 @@ pub(crate) async fn run_actor(
     let _ = tokio::time::timeout(Duration::from_millis(500), stderr_task).await;
     let (code, signal) = process::exit_parts(status);
     if let Some(tx) = ready.tx.take() {
-        let error = ready.error.take().unwrap_or_else(|| AgentError::Startup {
-            step: "connect".into(),
-            message: result
-                .err()
-                .map_or_else(|| "connection closed".into(), |e| e.to_string()),
+        let error = ready.error.take().unwrap_or_else(|| {
+            AgentError::startup(
+                "connect",
+                result
+                    .err()
+                    .map_or_else(|| "connection closed".into(), |e| e.to_string()),
+            )
         });
-        let _ = tx.send(Err(annotate_startup_error(
-            error,
-            code,
-            signal,
-            &stderr_tail,
-        )));
+        let error = annotate_startup_error(error, code, signal, &stderr_tail);
+        // The agent's stderr is only logged at debug level while it runs; when
+        // it fails to start, what it said is the best lead (it is in `error`).
+        tracing::warn!(
+            steps = %format_startup_steps(error.startup_steps()),
+            "agent startup failed: {error}"
+        );
+        let _ = tx.send(Err(error));
     }
     let _ = events.send(AgentEvent::Exited { code, signal });
 }
@@ -178,9 +182,26 @@ fn annotate_startup_error(
         _ => String::new(),
     };
     match error {
-        AgentError::Startup { step, message } => AgentError::Startup {
+        AgentError::Startup {
+            step,
+            message,
+            steps,
+        } => AgentError::Startup {
             step,
             message: stderr.annotate(format!("{message}{exit}")),
+            steps,
+        },
+        // The agent is killed after a timeout, so its exit status says nothing.
+        AgentError::Timeout {
+            step,
+            millis,
+            steps,
+            ..
+        } => AgentError::Timeout {
+            step,
+            millis,
+            stderr: Some(stderr.text()).filter(|tail| !tail.is_empty()),
+            steps,
         },
         other => other,
     }
@@ -415,11 +436,11 @@ impl CommandLoop {
 /// Startup-step errors reported by runtime requests are plain request errors.
 fn as_request_error(e: AgentError) -> AgentError {
     match e {
-        AgentError::Startup { step, message } => AgentError::Request {
+        AgentError::Startup { step, message, .. } => AgentError::Request {
             method: step,
             message,
         },
-        AgentError::Timeout { step, millis } => AgentError::Request {
+        AgentError::Timeout { step, millis, .. } => AgentError::Request {
             method: step,
             message: format!("timed out after {millis} ms"),
         },
@@ -432,6 +453,77 @@ mod tests {
     use agent_client_protocol::JsonRpcMessage;
 
     use super::*;
+    use crate::acp::events::StartupStep;
+
+    fn tail(lines: &[&str]) -> process::StderrTail {
+        let tail = process::StderrTail::default();
+        for line in lines {
+            tail.push((*line).to_string());
+        }
+        tail
+    }
+
+    fn steps() -> Vec<StartupStep> {
+        vec![StartupStep {
+            step: "initialize".into(),
+            millis: 812,
+        }]
+    }
+
+    #[test]
+    fn a_startup_timeout_carries_the_agents_stderr_tail() {
+        let timeout = AgentError::timeout("session/set_mode", 120_000).with_startup_steps(steps());
+        let annotated = annotate_startup_error(
+            timeout,
+            None,
+            Some(15),
+            &tail(&["connect ETIMEDOUT", "retrying"]),
+        );
+        let AgentError::Timeout {
+            step,
+            millis,
+            stderr,
+            ..
+        } = &annotated
+        else {
+            panic!("{annotated:?}")
+        };
+        assert_eq!((step.as_str(), *millis), ("session/set_mode", 120_000));
+        assert_eq!(stderr.as_deref(), Some("connect ETIMEDOUT\nretrying"));
+        assert_eq!(annotated.startup_steps(), steps(), "the timings are kept");
+        assert_eq!(
+            annotated.to_string(),
+            "agent startup timed out at `session/set_mode` after 120000 ms\n\
+             --- agent stderr (tail) ---\nconnect ETIMEDOUT\nretrying"
+        );
+    }
+
+    #[test]
+    fn a_startup_timeout_without_stderr_reads_as_before() {
+        let annotated = annotate_startup_error(
+            AgentError::timeout("session/set_mode", 120_000),
+            None,
+            None,
+            &tail(&[]),
+        );
+        assert_eq!(annotated, AgentError::timeout("session/set_mode", 120_000));
+        assert_eq!(
+            annotated.to_string(),
+            "agent startup timed out at `session/set_mode` after 120000 ms"
+        );
+    }
+
+    #[test]
+    fn a_startup_failure_keeps_its_timings_and_gets_the_exit_and_stderr() {
+        let failed = AgentError::startup("session/new", "boom").with_startup_steps(steps());
+        let annotated = annotate_startup_error(failed, Some(2), None, &tail(&["it died"]));
+        assert_eq!(
+            annotated.to_string(),
+            "agent startup failed at `session/new`: boom (agent exited with code 2)\n\
+             --- agent stderr (tail) ---\nit died"
+        );
+        assert_eq!(annotated.startup_steps(), steps());
+    }
 
     #[test]
     fn the_diagnostics_request_matches_devins_vendor_method_with_any_params() {

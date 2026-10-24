@@ -8,6 +8,7 @@ use super::flow::runs_current_step;
 use super::machine::Tx;
 use super::state::{HelpSource, StepStatus, TaskStatus};
 use super::types::{HelpKind, Role};
+use crate::acp::sentence_around_message;
 use crate::prompts::reminder_prompt;
 
 /// Reminders sent before a silent turn end becomes `protocol_violation`.
@@ -129,10 +130,13 @@ impl Tx {
         };
         let running = t.status == TaskStatus::Running && runs_current_step(t, agent);
         if running {
-            let message = format!(
-                "The {} agent could not be started: {error}. Resume to try again, or cancel the task.",
-                agent.role
-            );
+            // The agent's stderr tail (when `error` has one) follows the sentence.
+            let message = sentence_around_message(error, |reason| {
+                format!(
+                    "The {} agent could not be started: {reason}. Resume to try again, or cancel the task.",
+                    agent.role
+                )
+            });
             self.raise_yhtye_help(&agent.task, HelpKind::AgentCrashed, &message);
         }
     }

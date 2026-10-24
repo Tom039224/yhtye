@@ -427,7 +427,7 @@ async fn a_chat_whose_stored_session_cannot_be_loaded_gets_a_new_one_and_a_summa
     assert_eq!(starts.len(), 1);
     assert!(!starts[0].1, "a new session");
     assert!(events.iter().any(|e| matches!(&e.body,
-        ApiEventBody::SessionFailed { session, error, retrying: true }
+        ApiEventBody::SessionFailed { session, error, retrying: true, .. }
             if session == "orchestrator:C-1" && error.contains("could not restore"))));
     let prompts = prompts_to(&events, "orchestrator:C-1");
     assert!(prompts[0].contains("could not be restored"), "{prompts:?}");

@@ -57,6 +57,14 @@ sealed interface ApiEventBody {
         @SerialName("lost_acp_session_id")
         @EncodeDefault(EncodeDefault.Mode.NEVER)
         val lostAcpSessionId: String? = null,
+        /**
+         * How long each startup step (`initialize`, `session/new` or
+         * `session/load`, `session/set_mode`, ...) took, in order; a start that
+         * slows down shows here before it fails. Absent in older logs.
+         */
+        @SerialName("startup_steps")
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val startupSteps: List<StartupStep>? = null,
     ) : ApiEventBody
 
     /**
@@ -74,6 +82,14 @@ sealed interface ApiEventBody {
          * two were not told apart); read it as false.
          */
         val retrying: Boolean,
+        /**
+         * A start that failed in the agent's startup steps: how long each took
+         * until it failed, the failing step last (so the one that hung shows
+         * with its timeout). Absent for other failures and in older logs.
+         */
+        @SerialName("startup_steps")
+        @EncodeDefault(EncodeDefault.Mode.NEVER)
+        val startupSteps: List<StartupStep>? = null,
     ) : ApiEventBody
 
     /**
