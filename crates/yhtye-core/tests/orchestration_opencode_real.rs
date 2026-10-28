@@ -42,7 +42,7 @@ async fn run_request(
     let mut events = Vec::new();
     common::orch::send(orch, request).await;
     until_healthy(rx, &mut events, REAL_TIMEOUT, |e| {
-        matches!(&e.body, ApiEventBody::Prompted { session, text }
+        matches!(&e.body, ApiEventBody::Prompted { session, text, .. }
             if session == ORCHESTRATOR_SESSION && text.contains("[yhtye:group_settled]"))
     })
     .await;

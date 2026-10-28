@@ -14,10 +14,13 @@ use crate::agents::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessDetection, HarnessInfo,
     HarnessModels, ModelEfforts, RoleSettings,
 };
+use crate::attachments::AttachmentMeta;
+use crate::directory::DirectoryListing;
 use crate::domain::{ErrorCode, ToolError};
-use crate::git::GitOverview;
+use crate::git::{BranchStatuses, GitOverview};
 use crate::remote::{Clients, PairingCode, RemoteDevice, RemoteStatus};
 use crate::secrets::SecretValue;
+use crate::stats::UsageStats;
 use crate::store::{ChatInfo, StoreError, StoredEvent};
 use crate::usage::UsageReport;
 
@@ -32,11 +35,15 @@ pub enum ApiCommand {
     /// A liveness check of the core: answers with the name of the machine it
     /// runs on (the host footer of the sidebar). The UI sends it periodically.
     Ping,
-    /// Every project known to the database, and whether it is open.
+    /// Every project known to the database, and whether it is open, most
+    /// recently used first (opening a project uses it; `reorder_projects` sets
+    /// the order by hand). Projects never used come last, in the order they were
+    /// registered.
     ListProjects,
     /// Opens (registering it on first use) the git repository at `path`: starts
     /// its orchestrator and resumes interrupted tasks. Opening an open project
-    /// returns it unchanged.
+    /// returns it unchanged. The project is used: it moves to the front of the
+    /// project order.
     OpenProject {
         path: String,
     },
@@ -56,10 +63,53 @@ pub enum ApiCommand {
     /// idle). Starts that orchestrator if it is not running (Stage 8: lazily,
     /// restoring the chat's stored session if there is one). `not_found` for an
     /// unknown chat, `invalid_state` when the chat's worktree no longer exists.
+    /// `attachments` are files staged with `stage_attachment` for this chat; the
+    /// text may be empty when there is at least one (`invalid_argument` if there
+    /// is neither). `not_found` for an attachment that does not exist,
+    /// `invalid_argument` for one that was sent before.
     SendUserMessage {
         project: String,
         chat: String,
         text: String,
+        /// Ids from `attachment_staged`, in the order to show them (a client
+        /// without attachments leaves it out).
+        #[serde(default)]
+        #[ts(optional = nullable)]
+        attachments: Vec<String>,
+    },
+    /// Saves a file the user wants to attach to a message of `chat` (the project
+    /// must be registered, the chat must exist). `data_base64` is the whole file,
+    /// of any size (a transport may limit it). `name` is made safe to save under
+    /// (directory parts are dropped); `mime` is the client's claim, corrected by
+    /// the content. Answers `attachment_staged`: its id for `send_user_message`,
+    /// its kind, and how it is expected to be delivered to the chat's
+    /// orchestrator (`delivery`): `native` when the harness it runs accepts that
+    /// kind (images, or text as embedded context), else `path`. The final choice
+    /// is made when the message is sent, with the orchestrator actually running;
+    /// the `prompted` event says what it was. `invalid_argument` for bad base64.
+    StageAttachment {
+        project: String,
+        chat: String,
+        name: String,
+        #[serde(default)]
+        #[ts(optional)]
+        mime: Option<String>,
+        data_base64: String,
+    },
+    /// Deletes a staged attachment that was not sent. `not_found` if there is
+    /// none, `invalid_state` once a message was sent with it.
+    DiscardAttachment {
+        project: String,
+        chat: String,
+        id: String,
+    },
+    /// A staged or sent attachment with its content (previews in the
+    /// conversation, also on remote devices). `not_found` if it does not exist
+    /// (or its chat was deleted).
+    GetAttachment {
+        project: String,
+        chat: String,
+        id: String,
     },
     /// The user opened `chat` in the UI: its orchestrator is started now,
     /// restoring its stored session, if it is not running and has anything to
@@ -86,6 +136,49 @@ pub enum ApiCommand {
     CompactChat {
         project: String,
         chat: String,
+    },
+    /// Stops the chat's orchestrator session (its process ends and its token is
+    /// revoked), so the chat rests until it is used again: the next message to
+    /// it starts the orchestrator again, restoring the stored session. Sessions
+    /// start lazily, so one that was never started is already asleep.
+    /// `not_found` for an unknown chat, `invalid_state` while its orchestrator
+    /// is working (starting or in a turn); stop or wait for the turn first.
+    /// Stopping an idle session reports `session_stopped`, like any other stop.
+    SleepChat {
+        project: String,
+        chat: String,
+    },
+    /// Puts the projects in the order the user made (a drag in the project list):
+    /// `ids` come first, in that order (unknown ones are ignored), then the
+    /// projects it does not name, in their order. Answers with the listing like
+    /// `list_projects`; every client re-reads it (`projects_changed`).
+    ReorderProjects {
+        ids: Vec<String>,
+    },
+    /// The order of the project's branches (BRANCHES tree), most recently used
+    /// first: the keys of its worktrees (the worktree's path) and of its local
+    /// branches that no worktree has checked out (the branch name). Items whose
+    /// key is not listed come after, in the tree's own order. Works for
+    /// projects that are not open.
+    GetBranchOrder {
+        project: String,
+    },
+    /// Puts the project's branches in the order the user made: `keys` come first
+    /// in that order, then the keys it does not name, as they were. Answers
+    /// with the order like `get_branch_order`; every client gets
+    /// `branch_order_changed`. Works for projects that are not open.
+    ReorderBranches {
+        project: String,
+        keys: Vec<String>,
+    },
+    /// Puts every chat of the project to sleep ([`ApiCommand::SleepChat`] for
+    /// each): all its orchestrator sessions stop, so the project is no longer
+    /// awake. All or none: `invalid_state` (and nothing is stopped) while any
+    /// chat's orchestrator is working (starting or in a turn). A project that
+    /// is known but not open has nothing up, so it is already asleep:
+    /// accepted. `not_found` for an unknown project.
+    SleepProject {
+        project: String,
     },
     /// The project's chats, most recently used first. Works for projects that
     /// are not open.
@@ -170,6 +263,12 @@ pub enum ApiCommand {
         #[ts(optional)]
         limit: Option<u32>,
     },
+    /// The PR / merge status of every local branch (the dots of the BRANCHES
+    /// tree). Cached for a minute; never fails (a `gh` failure reads `unknown`
+    /// for every branch). Works for projects that are not open.
+    GetBranchStatuses {
+        project: String,
+    },
     /// Subscription usage / quota of the harness (5-hour and weekly windows,
     /// plan name), Stage 6b. Cached for a minute; `refresh` asks again unless
     /// the cached report is only seconds old. `unavailable` when the harness
@@ -178,6 +277,41 @@ pub enum ApiCommand {
         #[serde(default)]
         #[ts(optional)]
         refresh: Option<bool>,
+    },
+    /// Token usage of the coding agents on the host — Claude Code, Codex and
+    /// OpenCode — for the last `days` days (default 30, at most 366; the UI
+    /// offers 7, 30, 90 and 365) ending today: per day, model, harness and
+    /// project, read from the agents' own session logs (all sessions, not only
+    /// those Yhtye started). `tz_offset_min` is the client's UTC offset in
+    /// minutes (default 0) and decides where a day begins. The first call reads
+    /// the logs and may take a while; later ones answer from what was read
+    /// (changed files are read again). `refresh` forgets it all first.
+    /// `invalid_argument` for `days` outside 1–366 or an offset beyond ±24 h.
+    GetUsageStats {
+        #[serde(default)]
+        #[ts(optional)]
+        days: Option<u32>,
+        #[serde(default)]
+        #[ts(optional)]
+        tz_offset_min: Option<i32>,
+        #[serde(default)]
+        #[ts(optional)]
+        refresh: Option<bool>,
+    },
+    /// The folders of the host (not files), to browse them when adding a
+    /// project from a client on another machine. `path` absent or empty is the
+    /// home directory of the user the core runs as (`~` and `~/…` also start
+    /// there); otherwise it is an absolute path. Hidden folders (`.name`) are
+    /// left out unless `show_hidden`. `not_found` for a path that does not
+    /// exist, `invalid_argument` for one that is not an absolute path to a
+    /// directory, `forbidden` when it cannot be read.
+    ListDirectory {
+        #[serde(default)]
+        #[ts(optional)]
+        path: Option<String>,
+        #[serde(default)]
+        #[ts(optional)]
+        show_hidden: Option<bool>,
     },
     /// The harness × model settings of every role (Stage 7b): registered
     /// harnesses, the global layer and, with `project`, its layer and the
@@ -336,6 +470,10 @@ pub struct ProjectInfo {
     /// running or merging (what the sidebar's turning ring shows). Always
     /// `false` while it is not open.
     pub running: bool,
+    /// One of its chats has an orchestrator session up (live): the project is
+    /// awake, so its ring is green (`ready`) even while no work is on. Always
+    /// `false` while it is not open.
+    pub awake: bool,
 }
 
 /// A stored (durable) event, in the same shape as [`super::ApiEvent`].
@@ -376,7 +514,13 @@ pub enum ApiResponse {
         /// as "unknown" (the Android client checks it against its own version).
         #[serde(default)]
         version: String,
+        /// The core runs without a GUI (`yhtye --headless`): clients show
+        /// another icon for the host. A core that predates the field leaves it
+        /// out, which a reader takes as `false`.
+        #[serde(default)]
+        headless: bool,
     },
+    /// Answer of `list_projects` and `reorder_projects`, in the project order.
     Projects {
         projects: Vec<ProjectInfo>,
     },
@@ -393,6 +537,15 @@ pub enum ApiResponse {
     },
     /// The command was accepted (sending, cancelling).
     Accepted,
+    /// Answer of `stage_attachment`.
+    AttachmentStaged {
+        attachment: AttachmentMeta,
+    },
+    /// Answer of `get_attachment`.
+    Attachment {
+        attachment: AttachmentMeta,
+        data_base64: String,
+    },
     Chats {
         chats: Vec<ChatInfo>,
     },
@@ -404,11 +557,26 @@ pub enum ApiResponse {
         /// The chat's orchestrator is being started (now, or by an earlier call).
         starting: bool,
     },
+    /// Answer of `get_branch_order` and `reorder_branches`.
+    BranchOrder {
+        keys: Vec<String>,
+    },
     GitOverview {
         git: GitOverview,
     },
+    BranchStatuses {
+        statuses: BranchStatuses,
+    },
     Usage {
         usage: UsageReport,
+    },
+    /// Answer of `get_usage_stats`.
+    UsageStats {
+        stats: UsageStats,
+    },
+    /// Answer of `list_directory`.
+    Directory {
+        directory: DirectoryListing,
     },
     AgentSettings {
         settings: Box<AgentSettingsView>,

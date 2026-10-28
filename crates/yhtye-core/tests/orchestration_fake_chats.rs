@@ -9,8 +9,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use common::chats::{
-    Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, new_chat, none, repo_config,
-    said, say, settle, start, started, wait,
+    Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, is_stopped, new_chat, none,
+    repo_config, said, say, settle, start, started, wait,
 };
 use common::fake_harness;
 use common::orch::{
@@ -18,10 +18,11 @@ use common::orch::{
 };
 use common::repo::{PROJECT, TempRepo};
 use serde_json::{Value, json};
+use yhtye_core::acp::AgentEvent;
 use yhtye_core::api::{ApiEvent, ApiEventBody};
-use yhtye_core::domain::{DomainEvent, GroupStatus, orchestrator_session};
+use yhtye_core::domain::{DomainEvent, ErrorCode, GroupStatus, orchestrator_session};
 use yhtye_core::git::worktree_root;
-use yhtye_core::runtime::Orchestration;
+use yhtye_core::runtime::{Orchestration, UserActionError};
 use yhtye_core::store::SessionStatus;
 
 #[tokio::test]
@@ -74,8 +75,8 @@ async fn an_orchestrator_starts_lazily_in_its_chats_worktree() {
 fn planning_scripts(hold: &Hold) -> (Value, Value) {
     let plan = |needle: &str, instruction: &str| {
         json!({"match": needle, "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": needle}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": needle, "title": needle}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": instruction,
                 "group_id": "${group_id}", "title": needle, "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": instruction}}},
             {"message": "planned"}
@@ -194,16 +195,16 @@ async fn a_second_open_group_in_the_same_worktree_is_rejected_and_other_chats_ar
     let r = TempRepo::new();
     let orch_script = json!({"turns": [
         {"match": "first", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "one"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "one"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "hold"}}},
             {"message": "started"}
         ]},
         {"match": "second", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "two"}}},
-            {"mcp_call": {"tool": "get_status", "args": {"group_id": "G-1"}}},
-            {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "G-1", "reason": "x"}}},
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g2", "title": "two"}}},
+            {"mcp_call": {"tool": "get_status", "args": {"group_id": "g1"}}},
+            {"mcp_call": {"tool": "cancel_group", "args": {"group_id": "g1", "reason": "x"}}},
             {"message": "second-done"}
         ]}
     ]});
@@ -404,6 +405,19 @@ fn started_of(e: &ApiEvent, session: &str) -> Vec<()> {
     }
 }
 
+/// The error sleeping `chat` gives (`panic` if it was accepted).
+async fn sleep_error(orch: &Orchestration, chat: &str) -> ErrorCode {
+    match orch.sleep_chat(chat).await {
+        Ok(()) => panic!("sleeping {chat} was accepted"),
+        Err(UserActionError::Rejected(e)) => e.code,
+        Err(e) => panic!("unexpected {e:?}"),
+    }
+}
+
+fn orch_turn_ended(e: &ApiEvent) -> bool {
+    matches!(&e.body, ApiEventBody::Agent { session, event: AgentEvent::TurnEnded(_) } if session == "orchestrator:C-1")
+}
+
 #[tokio::test]
 async fn a_chat_whose_stored_session_cannot_be_loaded_gets_a_new_one_and_a_summary() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -445,8 +459,8 @@ async fn a_chat_with_an_open_group_starts_when_its_group_settles_after_a_restart
     let dir = tempfile::tempdir().expect("tempdir");
     let orch_script = json!({"turns": [
         {"match": "work", "actions": [
-            {"mcp_call": {"tool": "create_group", "args": {"title": "g"}}},
-            {"mcp_call": {"tool": "create_task", "args": {
+            {"mcp_call": {"tool": "create_group", "args": {"name": "g1", "title": "g"}}},
+            {"mcp_call": {"tool": "create_task", "args": {"name": "t1",
                 "group_id": "${group_id}", "title": "t", "kind": "code",
                 "steps": [{"kind": "implement"}], "instruction": "hold"}}},
             {"crash": 3}
@@ -573,32 +587,55 @@ async fn a_chat_whose_worktree_disappeared_refuses_messages_but_keeps_its_histor
 }
 
 #[tokio::test]
-async fn group_numbers_skip_leftovers_of_a_wiped_database() {
+async fn names_used_by_leftovers_of_a_wiped_database_are_refused() {
     let r = TempRepo::new();
-    // What a database that was wiped left in git: group and task branches, and
-    // a worktree directory of a group.
+    // What a database that was wiped left in git: group and task branches
+    // (of a numbered group too), and a worktree directory of a group.
+    r.git(&["branch", "yhtye/api"]);
+    r.git(&["branch", "yhtye/web--login"]);
     r.git(&["branch", "yhtye/G-3"]);
-    r.git(&["branch", "yhtye/G-3-T-1"]);
-    std::fs::create_dir_all(worktree_root(&r.data, PROJECT).join("G-5/_group")).expect("mkdir");
+    std::fs::create_dir_all(worktree_root(&r.data, PROJECT).join("docs/_group")).expect("mkdir");
+    let group = |name: &str| json!({"mcp_call": {"tool": "create_group", "args": {"name": name, "title": "work"}}});
+    let task = |name: &str| {
+        json!({"mcp_call": {"tool": "create_task", "args": {"name": name, "group_id": "fresh",
+            "title": "t", "kind": "investigate", "steps": [{"kind": "implement"}]}}})
+    };
     let script = json!({"turns": [{"match": "hello", "actions": [
-        {"mcp_call": {"tool": "create_group", "args": {"title": "work"}}},
+        group("api"), group("web"), group("docs"), group("g-3"), group("fresh"),
+        task("login"), task("logout"),
         {"message": "planned"}
     ]}]});
     let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
     let chat = new_chat(&orch, "main").await;
     say(&orch, &chat, "hello").await;
     wait(&mut rx, &mut events, said("orchestrator:C-1", "planned")).await;
-    let created: Vec<String> = events
+
+    let replies = messages(&events, "orchestrator:C-1");
+    let errors: Vec<&String> = replies.iter().filter(|m| m.contains(":error:")).collect();
+    assert_eq!(errors.len(), 5, "{replies:#?}");
+    for (error, (name, by)) in errors.iter().zip([
+        ("api", "yhtye/api"),
+        ("web", "yhtye/web--login"),
+        ("docs", "docs"),
+        ("g-3", "yhtye/G-3"),
+        ("login", "yhtye/web--login"),
+    ]) {
+        assert!(
+            error.contains("conflict") && error.contains(name) && error.contains(by),
+            "{error}"
+        );
+        assert!(error.contains("choose another name"), "{error}");
+    }
+    let snapshot = orch.snapshot().await.expect("snapshot");
+    let groups: Vec<&str> = snapshot
+        .state
+        .groups
         .iter()
-        .filter_map(|e| match &e.body {
-            ApiEventBody::Domain {
-                event: DomainEvent::GroupCreated { group },
-            } => Some(group.id.clone()),
-            _ => None,
-        })
+        .map(|g| g.id.as_str())
         .collect();
-    assert_eq!(created, ["G-6"], "past G-3 and the G-5 directory");
-    assert!(r.branch_exists("yhtye/G-6"));
+    let tasks: Vec<&str> = snapshot.state.tasks.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!((groups, tasks), (vec!["fresh"], vec!["logout"]));
+    assert!(r.branch_exists("yhtye/fresh"));
     shutdown_and_check(orch, &events).await;
 }
 
@@ -673,5 +710,214 @@ async fn a_branch_whose_chat_could_not_be_made_is_rolled_back_so_a_retry_works()
     let again = orch.create_branch("topic", None).await;
     let text = format!("{again:?}");
     assert!(!text.contains("already exists"), "{text}");
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleep_stops_the_orchestrator_and_a_message_starts_it_again_with_its_session() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [
+        {"match": "first", "actions": [{"message": "hi"}]},
+        {"match": "second", "actions": [{"message": "back"}]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
+    let chat = new_chat(&orch, "main").await;
+
+    // A chat that never started is already asleep; an unknown chat is not found.
+    orch.sleep_chat(&chat).await.expect("sleeping an idle chat");
+    settle(&mut rx, &mut events).await;
+    assert!(
+        started(&events, "orchestrator:C-1").is_empty(),
+        "nothing started"
+    );
+    assert_eq!(sleep_error(&orch, "C-9").await, ErrorCode::NotFound);
+
+    say(&orch, &chat, "first").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-1", "hi")).await;
+    wait(&mut rx, &mut events, orch_turn_ended).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, true),
+        "up but idle"
+    );
+
+    orch.sleep_chat(&chat).await.expect("sleep");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, false),
+        "asleep"
+    );
+    // Sleeping again changes nothing.
+    orch.sleep_chat(&chat).await.expect("sleeping again");
+    settle(&mut rx, &mut events).await;
+
+    say(&orch, &chat, "second").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-1", "back")).await;
+    let starts = started(&events, "orchestrator:C-1");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(
+        starts[1].1,
+        "the stored session was loaded again: {starts:?}"
+    );
+    assert_persisted(&orch).await;
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleep_is_refused_while_the_orchestrator_is_working() {
+    let r = TempRepo::new();
+    let script = json!({"turns": [{"match": "work", "actions": ["wait_cancel"]}]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, json!({"turns": []}))).await;
+    let chat = new_chat(&orch, "main").await;
+    say(&orch, &chat, "work").await;
+    wait(&mut rx, &mut events, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "orchestrator:C-1")
+    })
+    .await;
+
+    assert_eq!(sleep_error(&orch, &chat).await, ErrorCode::InvalidState);
+
+    // Once the turn is stopped the chat sleeps.
+    orch.cancel_orchestrator_turn(&chat).await.expect("cancel");
+    wait(&mut rx, &mut events, orch_turn_ended).await;
+    orch.sleep_chat(&chat).await.expect("sleep after the turn");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    assert_eq!(
+        prompts_to(&events, "orchestrator:C-1").len(),
+        1,
+        "nothing was sent"
+    );
+    shutdown_and_check(orch, &events).await;
+}
+
+/// The error sleeping the whole project gives (`panic` if it was accepted).
+async fn sleep_project_error(orch: &Orchestration) -> ErrorCode {
+    match orch.sleep_project().await {
+        Ok(()) => panic!("sleeping the project was accepted"),
+        Err(UserActionError::Rejected(e)) => e.code,
+        Err(e) => panic!("unexpected {e:?}"),
+    }
+}
+
+fn turn_ended_of(e: &ApiEvent, session: &str) -> bool {
+    matches!(&e.body, ApiEventBody::Agent { session: s, event: AgentEvent::TurnEnded(_) } if s == session)
+}
+
+#[tokio::test]
+async fn sleeping_the_project_stops_every_chats_orchestrator_and_a_message_wakes_one_again() {
+    let r = TempRepo::new();
+    r.git(&["branch", "feature"]);
+    let script = json!({"turns": [
+        {"match": "first", "actions": [{"message": "hi"}]},
+        {"match": "second", "actions": [{"message": "back"}]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, none())).await;
+    let main = new_chat(&orch, "main").await;
+    let feature = new_chat(&orch, "feature").await;
+    let _unused = new_chat(&orch, "main").await;
+    assert_eq!(
+        (main.as_str(), feature.as_str()),
+        ("C-1", "C-2"),
+        "the chats the test talks to"
+    );
+
+    // Nothing is up yet: the project already sleeps.
+    orch.sleep_project()
+        .await
+        .expect("sleeping a sleeping project");
+    settle(&mut rx, &mut events).await;
+    assert!(
+        started(&events, "orchestrator:C-1").is_empty(),
+        "nothing started"
+    );
+
+    say(&orch, &main, "first").await;
+    say(&orch, &feature, "first").await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-1")
+    })
+    .await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-2")
+    })
+    .await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, true),
+        "up but idle"
+    );
+
+    orch.sleep_project().await.expect("sleep the project");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-2")).await;
+    assert_eq!(
+        orch.activity().await.expect("activity"),
+        (false, false),
+        "asleep"
+    );
+    // Sleeping again changes nothing.
+    orch.sleep_project().await.expect("sleeping again");
+    settle(&mut rx, &mut events).await;
+
+    // A message wakes only its own chat, with its stored session.
+    say(&orch, &feature, "second").await;
+    wait(&mut rx, &mut events, said("orchestrator:C-2", "back")).await;
+    let starts = started(&events, "orchestrator:C-2");
+    assert_eq!(starts.len(), 2, "{starts:?}");
+    assert!(
+        starts[1].1,
+        "the stored session was loaded again: {starts:?}"
+    );
+    assert_eq!(
+        started(&events, "orchestrator:C-1").len(),
+        1,
+        "the other chat sleeps on"
+    );
+    assert_persisted(&orch).await;
+    shutdown_and_check(orch, &events).await;
+}
+
+#[tokio::test]
+async fn sleeping_the_project_is_refused_while_any_orchestrator_is_working_and_stops_none() {
+    let r = TempRepo::new();
+    r.git(&["branch", "feature"]);
+    let script = json!({"turns": [
+        {"match": "idle", "actions": [{"message": "hi"}]},
+        {"match": "work", "actions": ["wait_cancel"]}
+    ]});
+    let (orch, mut rx, mut events) = start(repo_config(&r, script, json!({"turns": []}))).await;
+    let idle = new_chat(&orch, "main").await;
+    let busy = new_chat(&orch, "feature").await;
+    say(&orch, &idle, "idle").await;
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-1")
+    })
+    .await;
+    say(&orch, &busy, "work").await;
+    wait(&mut rx, &mut events, |e| {
+        matches!(&e.body, ApiEventBody::Prompted { session, .. } if session == "orchestrator:C-2")
+    })
+    .await;
+
+    // The idle chat could sleep, but the project sleeps all or none.
+    assert_eq!(sleep_project_error(&orch).await, ErrorCode::InvalidState);
+    settle(&mut rx, &mut events).await;
+    assert!(
+        !events.iter().any(|e| is_stopped(e, "orchestrator:C-1")),
+        "the idle chat was stopped by a refused sleep"
+    );
+    assert_eq!(orch.activity().await.expect("activity"), (true, true));
+
+    // Once the turn is stopped the project sleeps.
+    orch.cancel_orchestrator_turn(&busy).await.expect("cancel");
+    wait(&mut rx, &mut events, |e| {
+        turn_ended_of(e, "orchestrator:C-2")
+    })
+    .await;
+    orch.sleep_project().await.expect("sleep after the turn");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-2")).await;
+    assert_eq!(orch.activity().await.expect("activity"), (false, false));
     shutdown_and_check(orch, &events).await;
 }

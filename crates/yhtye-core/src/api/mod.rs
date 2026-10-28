@@ -15,6 +15,7 @@ use ts_rs::TS;
 
 use crate::acp::{AgentEvent, AgentOutput};
 use crate::agents::AgentChoice;
+use crate::attachments::{AttachmentDelivered, PromptCaps};
 use crate::clock::now_ms;
 use crate::domain::{DomainEvent, Role, State};
 use crate::mcp::ToolCallRecord;
@@ -121,6 +122,11 @@ pub enum ApiEventBody {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]
         lost_acp_session_id: Option<String>,
+        /// What the agent said it accepts in a prompt (`initialize`): the last
+        /// one seen for a harness is what predicts the delivery of attachments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        prompt_caps: Option<PromptCaps>,
     },
     /// A start of the session failed. `retrying` tells a failure on the way from
     /// the one that gives the start up.
@@ -159,9 +165,15 @@ pub enum ApiEventBody {
         record: ToolCallRecord,
     },
     /// A prompt was sent to a session (for the orchestrator: an inbox batch).
+    /// `text` is the text block; images and text files delivered natively are
+    /// further blocks that are not part of it.
     Prompted {
         session: String,
         text: String,
+        /// How each attachment of the batch's user messages was delivered, the
+        /// final decision (the `inbox_queued` entry has the prediction).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<AttachmentDelivered>,
     },
     /// Live: the session is being started (also a retry of a failed restore).
     /// It ends with `session_started`, `session_stopped` or a `session_failed`
@@ -172,10 +184,18 @@ pub enum ApiEventBody {
         session: String,
     },
     /// App-wide (`project` is empty, `live`, `seq` 0): a project was registered
-    /// or opened (its orchestration started in this process); clients re-read
-    /// `list_projects`.
+    /// or opened (its orchestration started in this process), or the project
+    /// order changed (a project was used, or the user reordered them; `project`
+    /// is the one used, empty for a reorder); clients re-read `list_projects`.
     ProjectsChanged {
         project: String,
+    },
+    /// App-wide: the order of `project`'s branches changed (a chat of one was
+    /// used, or the user reordered them). `keys` is the whole order, as
+    /// `get_branch_order` answers it; it replaces what a client has.
+    BranchOrderChanged {
+        project: String,
+        keys: Vec<String>,
     },
     /// App-wide: settings were changed by some client. A hint: a settings
     /// screen on display reads them again (`get_agent_settings`,
@@ -244,6 +264,7 @@ impl ApiEventBody {
             || matches!(
                 self,
                 Self::ProjectsChanged { .. }
+                    | Self::BranchOrderChanged { .. }
                     | Self::SettingsChanged { .. }
                     | Self::Resync
                     | Self::ClientsChanged { .. }
@@ -266,6 +287,7 @@ impl ApiEventBody {
         match self {
             Self::Domain { .. }
             | Self::ProjectsChanged { .. }
+            | Self::BranchOrderChanged { .. }
             | Self::SettingsChanged { .. }
             | Self::Resync
             | Self::RemoteStatusChanged { .. }

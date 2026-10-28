@@ -1,0 +1,37 @@
+# Yhtye without a GUI: the core and remote access (the Android client) as a user service.
+#
+#   systemctl --user enable --now yhtye-headless
+#   loginctl enable-linger "$USER"        # keep it running when nobody is logged in
+#   yhtye remote pair                     # pairing code for the Android app
+#   yhtye remote stop                     # (or systemctl --user stop yhtye-headless)
+#
+# This is the optional way: `yhtye --headless -d` runs the same thing as a
+# background daemon without systemd. The unit runs yhtye in the foreground (no
+# `-d`), which is what a service manager wants to supervise.
+#
+# A user unit cannot be ordered after the system's tailscaled, so yhtye starts
+# without it and retries remote access every 30 seconds until Tailscale is up.
+#
+# The agents' CLIs (claude/npx, codex, opencode, ...) must be on this service's
+# PATH, which is short under systemd. Add the directories they live in with
+# `systemctl --user edit yhtye-headless`:
+#
+#   [Service]
+#   Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+[Unit]
+Description=Yhtye (headless): orchestrator core and remote access without a GUI
+Documentation=https://github.com/Tom039224/yhtye/blob/main/SETUP.md
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/yhtye --headless
+Restart=on-failure
+RestartSec=10
+# Exit status 3: another Yhtye holds the data directory; restarting would only fail again.
+RestartPreventExitStatus=3
+# Stopping waits for every agent to shut down (SIGTERM goes to yhtye alone; what is left after it exits is killed).
+KillMode=mixed
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

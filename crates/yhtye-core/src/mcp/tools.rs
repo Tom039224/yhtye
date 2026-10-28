@@ -17,6 +17,12 @@ const SUB: &[Role] = &[Role::Implementer, Role::Reviewer];
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateGroupArgs {
+    /// The group's name, which becomes its id (group_id) and branch
+    /// `yhtye/<name>`: name it as you would a git branch for the work, a short
+    /// English slug in kebab-case, e.g. `headless-server` (lowercase letters and
+    /// digits joined by single hyphens, at most 32 chars). Unique in the project
+    /// for good: if it is taken, choose another name.
+    pub name: String,
     /// Short title of the user's request.
     pub title: String,
     /// Optional longer description.
@@ -29,6 +35,13 @@ pub struct CreateGroupArgs {
 pub struct CreateTaskArgs {
     /// Group id returned by create_group.
     pub group_id: String,
+    /// The task's name, which becomes its id (task_id) and branch
+    /// `yhtye/<group>--<name>`: name it as you would a git branch for the task's
+    /// work (without the group's name), a short English slug in kebab-case, e.g.
+    /// `remote-icon` (lowercase letters and digits joined by single hyphens, at
+    /// most 32 chars). Unique in the project for good, across all groups: if it
+    /// is taken, choose another name.
+    pub name: String,
     /// Short display name of the task.
     pub title: String,
     /// `code` (edits files in its own worktree) or `investigate` (read-only).
@@ -251,9 +264,9 @@ macro_rules! tool_catalog {
 
 tool_catalog! {
     CreateGroup => "create_group", CreateGroupArgs, ORCH,
-        "Start a group of tasks for the user's request (at most one active group per project). Returns group_id for create_task.";
+        "Start a group of tasks for the user's request (at most one active group per project). `name` (a short kebab-case English slug of the work, e.g. headless-server, at most 32 chars, unique in the project) becomes the group_id; on a conflict choose another name. Returns group_id for create_task.";
     CreateTask => "create_task", CreateTaskArgs, ORCH,
-        "Create a task in a group. Yhtye starts a separate agent for it once its dependencies are done and it has an instruction, and runs its steps in order. Returns immediately; you are woken with [yhtye:...] messages when something needs you.";
+        "Create a task in a group. `name` (a short kebab-case English slug of the task's work, e.g. remote-icon, at most 32 chars, unique in the project) becomes the task_id; on a conflict choose another name. Yhtye starts a separate agent for it once its dependencies are done and it has an instruction, and runs its steps in order. Returns immediately; you are woken with [yhtye:...] messages when something needs you.";
     SetInstruction => "set_instruction", SetInstructionArgs, ORCH,
         "Give the instruction of a task that was created without one (or is awaiting one).";
     ModifySteps => "modify_steps", ModifyStepsArgs, ORCH,
@@ -306,7 +319,21 @@ pub fn tools_for(role: Role) -> Vec<Tool> {
 /// Parses the arguments of `tool`. Malformed arguments are an `invalid_argument`
 /// tool error (not a protocol error) so the agent can read the message and retry.
 pub fn parse_call(tool: ToolName, args: Option<JsonObject>) -> Result<ToolCall, ToolError> {
-    let value = serde_json::Value::Object(args.unwrap_or_default());
+    let args = args.unwrap_or_default();
+    let named = matches!(tool, ToolName::CreateGroup | ToolName::CreateTask);
+    if named && !args.contains_key("name") {
+        let what = if tool == ToolName::CreateGroup {
+            "group"
+        } else {
+            "task"
+        };
+        return Err(ToolError::invalid_argument(format!(
+            "{} needs `name`: {}",
+            tool.as_str(),
+            crate::domain::name_rule(what)
+        )));
+    }
+    let value = serde_json::Value::Object(args);
     tool.parse_args(value).map_err(|e| {
         ToolError::invalid_argument(format!(
             "invalid arguments for {}: {e}. Check the tool's input schema.",
@@ -348,7 +375,7 @@ mod tests {
         let def = ToolName::CreateTask.definition();
         assert_eq!(def.input_schema.get("type"), Some(&json!("object")));
         let required = def.input_schema.get("required").expect("required");
-        for f in ["group_id", "title", "kind", "steps"] {
+        for f in ["group_id", "name", "title", "kind", "steps"] {
             assert!(
                 required.as_array().is_some_and(|r| r.contains(&json!(f))),
                 "{f}"
@@ -360,7 +387,9 @@ mod tests {
     fn parses_create_task_with_defaults() {
         let call = parse_call(
             ToolName::CreateTask,
-            obj(json!({"group_id":"G-1","title":"t","kind":"code","steps":[{"kind":"implement"}]})),
+            obj(
+                json!({"group_id":"api","name":"login","title":"t","kind":"code","steps":[{"kind":"implement"}]}),
+            ),
         )
         .expect("parses");
         let ToolCall::CreateTask(args) = call else {
@@ -369,15 +398,47 @@ mod tests {
         assert_eq!(args.steps, vec![StepSpec::new(StepKind::Implement)]);
         assert!(args.depends_on.is_empty());
         assert_eq!(args.instruction, None);
+        assert_eq!(args.name, "login");
+    }
+
+    #[test]
+    fn a_missing_name_says_what_a_name_must_be() {
+        let cases = [
+            (
+                ToolName::CreateGroup,
+                json!({"title": "t"}),
+                "headless-server",
+            ),
+            (
+                ToolName::CreateTask,
+                json!({"group_id":"api","title":"t","kind":"code","steps":[{"kind":"implement"}]}),
+                "remote-icon",
+            ),
+        ];
+        for (tool, args, example) in cases {
+            let err = parse_call(tool, obj(args)).expect_err("name is required");
+            assert_eq!(err.code, ErrorCode::InvalidArgument);
+            assert!(err.message.contains("needs `name`"), "{}", err.message);
+            assert!(err.message.contains("kebab-case"), "{}", err.message);
+            assert!(err.message.contains(example), "{}", err.message);
+        }
+        let def = ToolName::CreateGroup.definition();
+        let required = def.input_schema.get("required").expect("required");
+        assert!(
+            required
+                .as_array()
+                .is_some_and(|r| r.contains(&json!("name")))
+        );
     }
 
     #[test]
     fn malformed_arguments_are_invalid_argument() {
         let cases = [
             (ToolName::CreateGroup, json!({})),
+            (ToolName::CreateGroup, json!({"name": "g"})),
             (
                 ToolName::CreateTask,
-                json!({"group_id":"G-1","title":"t","kind":"docs","steps":[]}),
+                json!({"group_id":"g","name":"t","title":"t","kind":"docs","steps":[]}),
             ),
             (ToolName::Help, json!({"kind":"panic","message":"x"})),
             (ToolName::ReportStepDone, json!({"result":"x","extra":1})),

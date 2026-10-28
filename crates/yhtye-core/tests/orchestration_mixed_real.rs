@@ -244,7 +244,12 @@ async fn real_mixed_claude_orchestrator_opencode_implementer_claude_reviewer() {
             .any(|(s, t, ok)| s.ends_with("/implementer") && t == "report_step_done" && *ok),
         "the OpenCode implementer reported through MCP: {calls:?}"
     );
-    let code = execute_code(&events, "T-1/implementer");
+    let implementer = calls
+        .iter()
+        .find(|(s, ..)| s.ends_with("/implementer"))
+        .map(|(s, ..)| s.as_str())
+        .expect("an implementer session");
+    let code = execute_code(&events, implementer);
     eprintln!("implementer execute code: {code:#?}");
     assert!(
         code.iter()

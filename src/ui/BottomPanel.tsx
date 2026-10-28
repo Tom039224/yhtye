@@ -54,7 +54,7 @@ function TaskTab({ task, active, onShow, onClose }: { task: string; active: bool
     <span className={`tab-group ${active ? "active" : ""}`}>
       <button type="button" className="tab" aria-label={`${task} の出力`} aria-pressed={active} title={`${task} のエージェントの出力`} onClick={() => onShow(task)}>
         <Icon name="terminal" size={14} />
-        {task}
+        <span className="tab-label">{task}</span>
       </button>
       <IconButton className="tab-close" icon="x" size={12} label={`${task} の出力を閉じる`} onClick={() => onClose(task)} />
     </span>

@@ -97,6 +97,8 @@ const GLYPHS = {
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   "chevron-down": <path d="M6.5 9.5l5.5 5.5 5.5-5.5" />,
   "chevrons-up": <path d="M7 11l5-5 5 5M7 18l5-5 5 5" />,
+  "arrow-up": <path d="M12 19V5M6 11l6-6 6 6" />,
+  "arrow-down": <path d="M12 5v14M6 13l6 6 6-6" />,
   "arrow-left": <path d="M19 12H5M11 6l-6 6 6 6" />,
   "arrow-right": <path d="M5 12h14M13 6l6 6-6 6" />,
   user: (
@@ -119,12 +121,21 @@ const GLYPHS = {
   ),
   flag: <path d="M6 20V4M6 5h11l-2.2 4 2.2 4H6" />,
   hourglass: <path d="M7 4.5h10M7 19.5h10M8 4.5c0 4.2 4 4.6 4 7.5s-4 3.3-4 7.5M16 4.5c0 4.2-4 4.6-4 7.5s4 3.3 4 7.5" />,
+  moon: <path d="M19 14.5A7.5 7.5 0 0 1 9.5 5 7.5 7.5 0 1 0 19 14.5z" />,
   loader: <path d="M12 4.5a7.5 7.5 0 1 0 7.5 7.5" />,
   activity: <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4" />,
   wrench: <path transform="rotate(45 12 12)" d="M13.37 3.24A4 4 0 0 1 13.4 10.75V18a1.4 1.4 0 0 1-2.8 0V10.75A4 4 0 0 1 10.63 3.24L12 6z" />,
   bolt: <path d="M13 4L6.5 13.5H12L11 20l6.5-9.5H12z" />,
   bell: <path d="M7 16.5V11a5 5 0 0 1 10 0v5.5l1.5 1.5h-13zM10.4 20.5a1.8 1.8 0 0 0 3.2 0" />,
   "file-text": <path d="M7 4h7l4 4v12H7zM14 4v4h4M9.7 12.5h5M9.7 15.8h5" />,
+  file: <path d="M7 4h7l4 4v12H7zM14 4v4h4" />,
+  image: (
+    <>
+      <rect x="4.5" y="5" width="15" height="14" rx="2" />
+      <circle cx="9.5" cy="10" r="1.5" />
+      <path d="M19.5 15l-4-4-9 8" />
+    </>
+  ),
   message: <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5v8a1.5 1.5 0 0 1-1.5 1.5H11l-4 3.5V16H6.5A1.5 1.5 0 0 1 5 14.5z" />,
   "message-plus": (
     <>
@@ -146,7 +157,24 @@ const GLYPHS = {
       <path d="M6 8v8M8 6c6 0 10 2.5 10 4.5" />
     </>
   ),
+  // An open pull request (after Orca's / octicons' PR glyph: the head's line comes back into the base with an arrow).
+  "git-pull-request": (
+    <>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="18" r="2" />
+      <path d="M6 8v8M18 16V9.5A2.5 2.5 0 0 0 15.5 7h-5M13 4.5L10.5 7 13 9.5" />
+    </>
+  ),
   folder: <path d="M4 7.5A1.5 1.5 0 0 1 5.5 6H10l2 2.5h6.5A1.5 1.5 0 0 1 20 10v7.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z" />,
+  // The dashboard: a page cut into panels (a wide one over two small ones).
+  dashboard: (
+    <>
+      <rect x="4" y="4" width="16" height="7" rx="1.5" />
+      <rect x="4" y="14" width="7" height="6" rx="1.5" />
+      <rect x="14" y="14" width="6" height="6" rx="1.5" />
+    </>
+  ),
   globe: (
     <>
       <circle cx="12" cy="12" r="8.5" />
@@ -169,11 +197,26 @@ const GLYPHS = {
       <path d="M11 17.5h2" />
     </>
   ),
+  monitor: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="11" rx="1.5" />
+      <path d="M9 19.5h6M12 15.5v4" />
+    </>
+  ),
   server: (
     <>
       <rect x="4.5" y="4.5" width="15" height="6.5" rx="1.5" />
       <rect x="4.5" y="13" width="15" height="6.5" rx="1.5" />
       <path d="M8 7.75h.01M8 16.25h.01M12 7.75h4M12 16.25h4" />
+    </>
+  ),
+  // Another machine's Yhtye (a project that lives on a remote host): two ends reaching for each other.
+  remote: <path d="M4.5 7.5L9 12l-4.5 4.5M19.5 7.5L15 12l4.5 4.5M10.5 12h3" />,
+  // A server (the box) that has a terminal and no screen: `>_` under the status light.
+  "server-headless": (
+    <>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="1.5" />
+      <path d="M4.5 9.25h15M8 6.9h.01M8.25 12.25l2.75 2.5-2.75 2.5M13.25 17.25h3" />
     </>
   ),
 } satisfies Record<string, ReactNode>;

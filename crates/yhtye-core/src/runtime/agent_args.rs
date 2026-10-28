@@ -146,7 +146,8 @@ mod tests {
 
     fn args(kind: TaskKind) -> CreateTaskArgs {
         CreateTaskArgs {
-            group_id: "G-1".into(),
+            group_id: "g".into(),
+            name: "t".into(),
             title: "t".into(),
             kind,
             steps: vec![StepSpec {

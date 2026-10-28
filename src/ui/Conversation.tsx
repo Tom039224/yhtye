@@ -1,7 +1,8 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useSyncExternalStore } from "react";
 
 import type { ChatInfo, GitOverview, State } from "../api/generated";
 import { orchestratorKey, scopeState } from "../store/chats";
+import type { DraftAttachment } from "../store/drafts";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
 import { Composer } from "./Composer";
@@ -24,6 +25,7 @@ interface Props {
 
 export const NEW_CHAT_TITLE = "新しいチャット";
 const NONE: string[] = [];
+const NO_ATTACHMENTS: readonly DraftAttachment[] = [];
 const NO_CHAT_HINT = "サイドバーの「新しいチャット」から始めます";
 
 /** Where the chat's worktree is now (its branch, detached, gone; unknown until git is read). */
@@ -47,6 +49,15 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const awaiting = useAppState((s) => (s.git?.project === view.info.id ? s.git.awaiting : NONE));
   const place = chatPlace(overview, chat, awaiting);
   const placeText = placeLabel(place);
+  const project = view.info.id;
+  const attachments = useSyncExternalStore(store.drafts.subscribe, () =>
+    chat ? store.drafts.attachments(project, chat.id) : NO_ATTACHMENTS,
+  );
+  const chatId = chat?.id ?? null;
+  const loadAttachment = useMemo(
+    () => (chatId ? (id: string) => store.attachments.preview(project, chatId, id) : undefined),
+    [store, project, chatId],
+  );
   const scroller = useRef<HTMLDivElement>(null);
   useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, chat?.id);
 
@@ -104,6 +115,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             agentLabel="orchestrator"
             queued={queued}
             state={view.state}
+            loadAttachment={loadAttachment}
             before={<OlderHistory view={view} scroller={scroller} />}
           />
         ) : (
@@ -112,7 +124,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
       </div>
       {scoped ? <WaitBanner state={scoped} /> : null}
       <Composer
-        key={chat ? `${view.info.id}/${chat.id}` : "none"}
+        key={chat ? `${store.scopedKey(view.info.id)}/${chat.id}` : "none"}
         initialText={chat ? store.drafts.get(view.info.id, chat.id) : ""}
         onTextChange={(text) => {
           if (chat) store.drafts.set(view.info.id, chat.id, text);
@@ -124,6 +136,13 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
         starting={resuming || (queued.size > 0 && session?.status !== "live")}
         mentions={mentions}
         onRemoveMention={onRemoveMention}
+        attachments={attachments}
+        onAddFiles={(files) => {
+          if (chat) void store.attachments.attach(project, chat.id, files);
+        }}
+        onRemoveAttachment={(key) => {
+          if (chat) void store.attachments.remove(project, chat.id, key);
+        }}
         onSend={send}
         onCancel={() => void store.cancelTurn()}
         footer={chat ? <ContextBar usage={usage} compact={compact} onCompact={() => void store.compactChat()} /> : null}

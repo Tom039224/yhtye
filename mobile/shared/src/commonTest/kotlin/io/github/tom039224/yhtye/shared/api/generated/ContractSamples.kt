@@ -54,7 +54,37 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiCommand",
         "send_user_message",
         ApiCommand.Serializer,
-        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"Fix \\\"the\\\" bug\\nin \$HOME \\\\ path ✓\"}",
+        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"Fix \\\"the\\\" bug\\nin \$HOME \\\\ path ✓\",\"attachments\":[]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "send_user_message/attachments",
+        ApiCommand.Serializer,
+        "{\"type\":\"send_user_message\",\"project\":\"repo\",\"chat\":\"C-1\",\"text\":\"\",\"attachments\":[\"0123456789abcdef\",\"fedcba9876543210\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "stage_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"stage_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"data_base64\":\"iVBORw0KGgo=\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "stage_attachment/no_mime",
+        ApiCommand.Serializer,
+        "{\"type\":\"stage_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"name\":\"notes.txt\",\"mime\":null,\"data_base64\":\"\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "discard_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"discard_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"id\":\"0123456789abcdef\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_attachment",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_attachment\",\"project\":\"repo\",\"chat\":\"C-1\",\"id\":\"0123456789abcdef\"}",
     ),
     ContractSample(
         "ApiCommand",
@@ -73,6 +103,36 @@ internal val contractSamples: List<ContractSample> = listOf(
         "compact_chat",
         ApiCommand.Serializer,
         "{\"type\":\"compact_chat\",\"project\":\"repo\",\"chat\":\"C-1\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "sleep_chat",
+        ApiCommand.Serializer,
+        "{\"type\":\"sleep_chat\",\"project\":\"repo\",\"chat\":\"C-1\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "reorder_projects",
+        ApiCommand.Serializer,
+        "{\"type\":\"reorder_projects\",\"ids\":[\"repo\",\"beta\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_branch_order",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_branch_order\",\"project\":\"repo\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "reorder_branches",
+        ApiCommand.Serializer,
+        "{\"type\":\"reorder_branches\",\"project\":\"repo\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "sleep_project",
+        ApiCommand.Serializer,
+        "{\"type\":\"sleep_project\",\"project\":\"repo\"}",
     ),
     ContractSample(
         "ApiCommand",
@@ -142,6 +202,12 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiCommand",
+        "get_branch_statuses",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_branch_statuses\",\"project\":\"repo\"}",
+    ),
+    ContractSample(
+        "ApiCommand",
         "get_usage",
         ApiCommand.Serializer,
         "{\"type\":\"get_usage\",\"refresh\":true}",
@@ -151,6 +217,30 @@ internal val contractSamples: List<ContractSample> = listOf(
         "get_usage/default",
         ApiCommand.Serializer,
         "{\"type\":\"get_usage\",\"refresh\":null}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_usage_stats",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_usage_stats\",\"days\":90,\"tz_offset_min\":540,\"refresh\":true}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "get_usage_stats/default",
+        ApiCommand.Serializer,
+        "{\"type\":\"get_usage_stats\",\"days\":null,\"tz_offset_min\":null,\"refresh\":null}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "list_directory",
+        ApiCommand.Serializer,
+        "{\"type\":\"list_directory\",\"path\":\"/home/u\",\"show_hidden\":true}",
+    ),
+    ContractSample(
+        "ApiCommand",
+        "list_directory/home",
+        ApiCommand.Serializer,
+        "{\"type\":\"list_directory\",\"path\":null,\"show_hidden\":null}",
     ),
     ContractSample(
         "ApiCommand",
@@ -300,25 +390,31 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "pong",
         ApiResponse.Serializer,
-        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}",
+        "{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":true}",
     ),
     ContractSample(
         "ApiResponse",
         "projects",
         ApiResponse.Serializer,
-        "{\"type\":\"projects\",\"projects\":[{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true},{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":false,\"running\":false}]}",
+        "{\"type\":\"projects\",\"projects\":[{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true,\"awake\":true},{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":false,\"running\":false,\"awake\":false}]}",
     ),
     ContractSample(
         "ApiResponse",
         "project",
         ApiResponse.Serializer,
-        "{\"type\":\"project\",\"project\":{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true}}",
+        "{\"type\":\"project\",\"project\":{\"id\":\"repo\",\"name\":\"repo\",\"path\":\"/home/u/repo\",\"open\":true,\"running\":true,\"awake\":true}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "branch_order",
+        ApiResponse.Serializer,
+        "{\"type\":\"branch_order\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}",
     ),
     ContractSample(
         "ApiResponse",
         "snapshot",
         ApiResponse.Serializer,
-        "{\"type\":\"snapshot\",\"snapshot\":{\"seq\":42,\"state\":{\"project\":\"repo\",\"config\":{\"max_review_rounds\":2},\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\"},{\"id\":\"C-2\",\"worktree\":\"/home/u/wt\",\"title\":null}],\"groups\":[{\"id\":\"G-1\",\"chat\":\"C-1\",\"title\":\"Group G-1\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-1\",\"status\":\"active\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-2\",\"chat\":\"C-1\",\"title\":\"Group G-2\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-2\",\"status\":\"finishing\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-3\",\"chat\":\"C-1\",\"title\":\"Group G-3\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-3\",\"status\":\"done\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-4\",\"chat\":\"C-1\",\"title\":\"Group G-4\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-4\",\"status\":\"cancelled\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-5\",\"chat\":\"C-2\",\"title\":\"Merge\",\"summary\":\"a summary\",\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-5\",\"status\":\"merge_blocked\",\"finish_summary\":\"done\",\"detail\":\"conflict in a.rs\",\"finish_nudges\":1}],\"tasks\":[{\"id\":\"T-1\",\"group\":\"G-1\",\"title\":\"Implement\",\"kind\":\"code\",\"depends_on\":[],\"instruction\":\"Do it\",\"steps\":[{\"kind\":\"implement\",\"instruction\":null,\"status\":\"done\",\"result\":\"ok\",\"verdict\":null,\"note\":\"first\",\"nudges\":1},{\"kind\":\"review\",\"instruction\":\"Review it\",\"status\":\"running\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"checkpoint\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"done\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"running\",\"review_rounds\":0,\"workdir\":\"/home/u/wt/T-1\",\"cancel_reason\":null,\"agent\":{\"harness\":\"codex\",\"model\":null,\"effort\":null},\"review_agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":null}},{\"id\":\"T-2\",\"group\":\"G-1\",\"title\":\"Look\",\"kind\":\"investigate\",\"depends_on\":[\"T-1\"],\"instruction\":null,\"steps\":[{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fine\",\"verdict\":\"approve\",\"note\":null,\"nudges\":0},{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fix\",\"verdict\":\"needs_changes\",\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"done\",\"review_rounds\":1,\"workdir\":null,\"cancel_reason\":null}],\"helps\":[{\"id\":\"H-1\",\"task\":\"T-1\",\"step\":0,\"kind\":\"blocked\",\"message\":\"stuck\",\"source\":{\"by\":\"agent\",\"role\":\"implementer\"},\"state\":\"open\",\"agent_lost\":false,\"reply\":null},{\"id\":\"H-2\",\"task\":\"T-1\",\"step\":1,\"kind\":\"merge_conflict\",\"message\":\"x\",\"source\":{\"by\":\"yhtye\"},\"state\":\"answered\",\"agent_lost\":true,\"reply\":\"go on\"},{\"id\":\"H-3\",\"task\":\"T-2\",\"step\":0,\"kind\":\"question\",\"message\":\"?\",\"source\":{\"by\":\"agent\",\"role\":\"reviewer\"},\"state\":\"closed\",\"agent_lost\":false,\"reply\":null}],\"inbox\":[{\"id\":4,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[[\"from\",\"user\"],[\"chat\",\"C-1\"]],\"body\":\"hello\"}}],\"counters\":{\"chats\":2,\"groups\":5,\"tasks\":2,\"helps\":3,\"inbox\":4}},\"sessions\":[{\"session_key\":\"orchestrator-C-1\",\"role\":\"orchestrator\",\"task\":null,\"acp_session_id\":\"acp-orchestrator-C-1\",\"status\":\"live\",\"turn_running\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/0\",\"status\":\"stopped\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/1\",\"role\":\"reviewer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/1\",\"status\":\"suspended\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-old\"},{\"session_key\":\"T-2/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-2/0\",\"status\":\"interrupted\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"}],\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\",\"created_ms\":1790766538443,\"last_used_ms\":1790766600000},{\"id\":\"C-2\",\"worktree\":\"/home/u/repo\",\"title\":null,\"created_ms\":1790766538443,\"last_used_ms\":1790766600000}],\"starting\":[\"orchestrator:C-2\"]}}",
+        "{\"type\":\"snapshot\",\"snapshot\":{\"seq\":42,\"state\":{\"project\":\"repo\",\"config\":{\"max_review_rounds\":2},\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\"},{\"id\":\"C-2\",\"worktree\":\"/home/u/wt\",\"title\":null}],\"groups\":[{\"id\":\"G-1\",\"chat\":\"C-1\",\"title\":\"Group G-1\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-1\",\"status\":\"active\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-2\",\"chat\":\"C-1\",\"title\":\"Group G-2\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-2\",\"status\":\"finishing\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-3\",\"chat\":\"C-1\",\"title\":\"Group G-3\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-3\",\"status\":\"done\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-4\",\"chat\":\"C-1\",\"title\":\"Group G-4\",\"summary\":null,\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-4\",\"status\":\"cancelled\",\"finish_summary\":null,\"detail\":null,\"finish_nudges\":0},{\"id\":\"G-5\",\"chat\":\"C-2\",\"title\":\"Merge\",\"summary\":\"a summary\",\"base_branch\":\"main\",\"group_branch\":\"yhtye/G-5\",\"status\":\"merge_blocked\",\"finish_summary\":\"done\",\"detail\":\"conflict in a.rs\",\"finish_nudges\":1}],\"tasks\":[{\"id\":\"T-1\",\"group\":\"G-1\",\"title\":\"Implement\",\"kind\":\"code\",\"depends_on\":[],\"instruction\":\"Do it\",\"steps\":[{\"kind\":\"implement\",\"instruction\":null,\"status\":\"done\",\"result\":\"ok\",\"verdict\":null,\"note\":\"first\",\"nudges\":1},{\"kind\":\"review\",\"instruction\":\"Review it\",\"status\":\"running\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"checkpoint\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0},{\"kind\":\"done\",\"instruction\":null,\"status\":\"pending\",\"result\":null,\"verdict\":null,\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"running\",\"review_rounds\":0,\"workdir\":\"/home/u/wt/T-1\",\"cancel_reason\":null,\"agent\":{\"harness\":\"codex\",\"model\":null,\"effort\":null},\"review_agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":null}},{\"id\":\"T-2\",\"group\":\"G-1\",\"title\":\"Look\",\"kind\":\"investigate\",\"depends_on\":[\"T-1\"],\"instruction\":null,\"steps\":[{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fine\",\"verdict\":\"approve\",\"note\":null,\"nudges\":0},{\"kind\":\"review\",\"instruction\":null,\"status\":\"done\",\"result\":\"fix\",\"verdict\":\"needs_changes\",\"note\":null,\"nudges\":0}],\"current\":1,\"status\":\"done\",\"review_rounds\":1,\"workdir\":null,\"cancel_reason\":null}],\"helps\":[{\"id\":\"H-1\",\"task\":\"T-1\",\"step\":0,\"kind\":\"blocked\",\"message\":\"stuck\",\"source\":{\"by\":\"agent\",\"role\":\"implementer\"},\"state\":\"open\",\"agent_lost\":false,\"reply\":null},{\"id\":\"H-2\",\"task\":\"T-1\",\"step\":1,\"kind\":\"merge_conflict\",\"message\":\"x\",\"source\":{\"by\":\"yhtye\"},\"state\":\"answered\",\"agent_lost\":true,\"reply\":\"go on\"},{\"id\":\"H-3\",\"task\":\"T-2\",\"step\":0,\"kind\":\"question\",\"message\":\"?\",\"source\":{\"by\":\"agent\",\"role\":\"reviewer\"},\"state\":\"closed\",\"agent_lost\":false,\"reply\":null}],\"inbox\":[{\"id\":4,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[[\"from\",\"user\"],[\"chat\",\"C-1\"]],\"body\":\"hello\"}},{\"id\":5,\"chat\":\"C-1\",\"item\":{\"kind\":\"user_message\",\"attrs\":[],\"body\":\"\",\"attachments\":[{\"id\":\"0123456789abcdef\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"size\":1234,\"kind\":\"image\",\"delivery\":\"native\"},{\"id\":\"0123456789abcdef\",\"name\":\"report.pdf\",\"mime\":\"application/pdf\",\"size\":1234,\"kind\":\"file\",\"delivery\":\"path\"}]}}],\"counters\":{\"chats\":2,\"groups\":5,\"tasks\":2,\"helps\":3,\"inbox\":4}},\"sessions\":[{\"session_key\":\"orchestrator-C-1\",\"role\":\"orchestrator\",\"task\":null,\"acp_session_id\":\"acp-orchestrator-C-1\",\"status\":\"live\",\"turn_running\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/0\",\"status\":\"stopped\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"},{\"session_key\":\"T-1/1\",\"role\":\"reviewer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-1/1\",\"status\":\"suspended\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-old\"},{\"session_key\":\"T-2/0\",\"role\":\"implementer\",\"task\":\"T-1\",\"acp_session_id\":\"acp-T-2/0\",\"status\":\"interrupted\",\"turn_running\":false,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"cwd\":\"/home/u/repo\"}],\"chats\":[{\"id\":\"C-1\",\"worktree\":\"/home/u/repo\",\"title\":\"Docs\",\"created_ms\":1790766538443,\"last_used_ms\":1790766600000},{\"id\":\"C-2\",\"worktree\":\"/home/u/repo\",\"title\":null,\"created_ms\":1790766538443,\"last_used_ms\":1790766600000}],\"starting\":[\"orchestrator:C-2\"]}}",
     ),
     ContractSample(
         "ApiResponse",
@@ -331,6 +427,18 @@ internal val contractSamples: List<ContractSample> = listOf(
         "accepted",
         ApiResponse.Serializer,
         "{\"type\":\"accepted\"}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "attachment_staged",
+        ApiResponse.Serializer,
+        "{\"type\":\"attachment_staged\",\"attachment\":{\"id\":\"0123456789abcdef\",\"name\":\"shot.png\",\"mime\":\"image/png\",\"size\":1234,\"kind\":\"image\",\"delivery\":\"native\"}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "attachment",
+        ApiResponse.Serializer,
+        "{\"type\":\"attachment\",\"attachment\":{\"id\":\"0123456789abcdef\",\"name\":\"notes.txt\",\"mime\":\"text/plain\",\"size\":1234,\"kind\":\"text\",\"delivery\":\"native\"},\"data_base64\":\"aGVsbG8=\"}",
     ),
     ContractSample(
         "ApiResponse",
@@ -358,9 +466,27 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiResponse",
+        "branch_statuses",
+        ApiResponse.Serializer,
+        "{\"type\":\"branch_statuses\",\"statuses\":{\"default_branch\":\"main\",\"statuses\":[{\"branch\":\"feature/a\",\"state\":\"unmerged\",\"pr_number\":null,\"pr_url\":null},{\"branch\":\"feature/b\",\"state\":\"pr_open\",\"pr_number\":123,\"pr_url\":\"https://github.com/u/repo/pull/123\"},{\"branch\":\"feature/c\",\"state\":\"merged\",\"pr_number\":122,\"pr_url\":\"https://github.com/u/repo/pull/122\"},{\"branch\":\"feature/d\",\"state\":\"merged_with_changes\",\"pr_number\":121,\"pr_url\":\"https://github.com/u/repo/pull/121\"},{\"branch\":\"feature/e\",\"state\":\"unknown\",\"pr_number\":null,\"pr_url\":null}]}}",
+    ),
+    ContractSample(
+        "ApiResponse",
         "usage",
         ApiResponse.Serializer,
         "{\"type\":\"usage\",\"usage\":{\"plan\":\"Max\",\"windows\":[{\"kind\":\"five_hour\",\"label\":\"5-hour limit\",\"percent\":42.5,\"resets_at_ms\":1790770000000},{\"kind\":\"week\",\"label\":\"Weekly · all models\",\"percent\":7.0,\"resets_at_ms\":null},{\"kind\":\"other\",\"label\":\"Weekly · Opus\",\"percent\":100.0,\"resets_at_ms\":null}],\"fetched_at_ms\":1790766538443}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "usage_stats",
+        ApiResponse.Serializer,
+        "{\"type\":\"usage_stats\",\"stats\":{\"generated_at_ms\":1790766538443,\"period_days\":2,\"tz_offset_min\":540,\"sources\":[{\"harness\":\"claude-code\",\"found\":true,\"files\":12},{\"harness\":\"codex\",\"found\":false,\"files\":0}],\"totals\":{\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3},\"days\":[{\"date\":\"2026-10-19\",\"tokens\":{\"input\":0,\"output\":0,\"cache_read\":0,\"cache_creation\":0,\"total\":0},\"sessions\":0,\"harnesses\":[]},{\"date\":\"2026-10-20\",\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3,\"harnesses\":[{\"harness\":\"claude-code\",\"tokens\":642600,\"sessions\":3}]}],\"by_model\":[{\"name\":\"claude-opus-5-5\",\"tokens\":{\"input\":1000,\"output\":3000,\"cache_read\":500000,\"cache_creation\":70000,\"total\":574000},\"sessions\":2,\"other\":false},{\"name\":\"other\",\"tokens\":{\"input\":200,\"output\":400,\"cache_read\":60000,\"cache_creation\":8000,\"total\":68600},\"sessions\":1,\"other\":true}],\"by_harness\":[{\"name\":\"claude-code\",\"tokens\":{\"input\":1200,\"output\":3400,\"cache_read\":560000,\"cache_creation\":78000,\"total\":642600},\"sessions\":3,\"other\":false}],\"by_project\":[{\"name\":\"repo\",\"project\":\"repo\",\"tokens\":{\"input\":1000,\"output\":3000,\"cache_read\":500000,\"cache_creation\":70000,\"total\":574000},\"sessions\":2,\"other\":false},{\"name\":\"scratch\",\"project\":null,\"tokens\":{\"input\":200,\"output\":400,\"cache_read\":60000,\"cache_creation\":8000,\"total\":68600},\"sessions\":1,\"other\":false}]}}",
+    ),
+    ContractSample(
+        "ApiResponse",
+        "directory",
+        ApiResponse.Serializer,
+        "{\"type\":\"directory\",\"directory\":{\"path\":\"/home/u\",\"parent\":\"/home\",\"home\":\"/home/u\",\"is_git_repo\":false,\"entries\":[{\"name\":\"repo\",\"path\":\"/home/u/repo\",\"is_git_repo\":true},{\"name\":\"Documents\",\"path\":\"/home/u/Documents\",\"is_git_repo\":false}]}}",
     ),
     ContractSample(
         "ApiResponse",
@@ -420,13 +546,13 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiResponse",
         "remote_devices",
         ApiResponse.Serializer,
-        "{\"type\":\"remote_devices\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}",
+        "{\"type\":\"remote_devices\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766650000,\"connected\":true}]}",
     ),
     ContractSample(
         "ApiResponse",
         "clients",
         ApiResponse.Serializer,
-        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}",
+        "{\"type\":\"clients\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"connected\":true,\"last_seen_ms\":1790766650000}]}}",
     ),
     ContractSample(
         "ApiResponse",
@@ -834,7 +960,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "session_started",
         ApiEvent.serializer(),
-        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\"}}",
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"session_started\",\"session\":\"orchestrator-1\",\"role\":\"orchestrator\",\"task\":null,\"pid\":4242,\"acp_session_id\":\"acp-1\",\"resumed\":true,\"agent\":{\"harness\":\"claude-code\",\"model\":\"opus\",\"effort\":\"high\"},\"replaced\":{\"harness\":\"gone\",\"model\":null,\"effort\":null},\"cwd\":\"/home/u/repo\",\"lost_acp_session_id\":\"acp-0\",\"prompt_caps\":{\"image\":true,\"embedded_context\":false}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -886,6 +1012,12 @@ internal val contractSamples: List<ContractSample> = listOf(
     ),
     ContractSample(
         "ApiEvent",
+        "prompted/attachments",
+        ApiEvent.serializer(),
+        "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":false,\"body\":{\"type\":\"prompted\",\"session\":\"orchestrator:C-1\",\"text\":\"[yhtye:user_message]\\n[yhtye:attachment] name=shot.png\",\"attachments\":[{\"inbox_id\":5,\"id\":\"0123456789abcdef\",\"delivery\":\"native\"},{\"inbox_id\":5,\"id\":\"fedcba9876543210\",\"delivery\":\"path\"}]}}",
+    ),
+    ContractSample(
+        "ApiEvent",
         "session_starting",
         ApiEvent.serializer(),
         "{\"seq\":17,\"ts_ms\":1790766538443,\"project\":\"repo\",\"live\":true,\"body\":{\"type\":\"session_starting\",\"session\":\"orchestrator:C-2\"}}",
@@ -895,6 +1027,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "projects_changed",
         ApiEvent.serializer(),
         "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"projects_changed\",\"project\":\"repo\"}}",
+    ),
+    ContractSample(
+        "ApiEvent",
+        "branch_order_changed",
+        ApiEvent.serializer(),
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"branch_order_changed\",\"project\":\"repo\",\"keys\":[\"/home/u/repo\",\"feat/x\"]}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -930,13 +1068,13 @@ internal val contractSamples: List<ContractSample> = listOf(
         "ApiEvent",
         "remote_devices_changed",
         ApiEvent.serializer(),
-        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"remote_devices_changed\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false}]}}",
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"remote_devices_changed\",\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766600000,\"connected\":true},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"created_ms\":1790766538443,\"last_seen_ms\":null,\"connected\":false},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"created_ms\":1790766538443,\"last_seen_ms\":1790766650000,\"connected\":true}]}}",
     ),
     ContractSample(
         "ApiEvent",
         "clients_changed",
         ApiEvent.serializer(),
-        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"clients_changed\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null}]}}}",
+        "{\"seq\":0,\"ts_ms\":1790766538443,\"project\":\"\",\"live\":true,\"body\":{\"type\":\"clients_changed\",\"clients\":{\"server\":{\"host\":\"pc\"},\"devices\":[{\"id\":\"dev-0123456789abcdef\",\"name\":\"Pixel 9\",\"kind\":\"android\",\"connected\":true,\"last_seen_ms\":1790766600000},{\"id\":\"dev-fedcba9876543210\",\"name\":\"Tablet\",\"kind\":\"android\",\"connected\":false,\"last_seen_ms\":null},{\"id\":\"dev-0f1e2d3c4b5a6978\",\"name\":\"Workstation\",\"kind\":\"desktop\",\"connected\":true,\"last_seen_ms\":1790766650000}]}}}",
     ),
     ContractSample(
         "ApiEvent",
@@ -1152,7 +1290,7 @@ internal val contractSamples: List<ContractSample> = listOf(
         "WsServerMessage",
         "reply/ok",
         WsServerMessage.Serializer,
-        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\"}}",
+        "{\"id\":1,\"ok\":{\"type\":\"pong\",\"host\":\"pc\",\"version\":\"0.2.1\",\"headless\":false}}",
     ),
     ContractSample(
         "WsServerMessage",
@@ -1171,6 +1309,12 @@ internal val contractSamples: List<ContractSample> = listOf(
         "pair",
         PairRequest.serializer(),
         "{\"code\":\"ABCD2345\",\"device_name\":\"Pixel 9\"}",
+    ),
+    ContractSample(
+        "PairRequest",
+        "pair_desktop",
+        PairRequest.serializer(),
+        "{\"code\":\"ABCD2345\",\"device_name\":\"Workstation\",\"kind\":\"desktop\"}",
     ),
     ContractSample(
         "PairResponse",

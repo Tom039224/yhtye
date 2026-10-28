@@ -278,6 +278,7 @@ async fn every_client_sees_an_orchestrator_starting() {
         project: project.clone(),
         chat: "C-1".into(),
         text: "hello".into(),
+        attachments: vec![],
     };
     run(&core, send).await;
     let starting = next(&mut rx, |e| match &e.body {

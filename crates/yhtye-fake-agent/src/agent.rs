@@ -4,9 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_client_protocol::schema::v1::{
-    AgentCapabilities, CancelNotification, ContentBlock, InitializeRequest, InitializeResponse,
-    LoadSessionRequest, LoadSessionResponse, McpCapabilities, McpServer, NewSessionRequest,
-    NewSessionResponse, PermissionOption, PermissionOptionKind, PromptRequest, PromptResponse,
+    AgentCapabilities, CancelNotification, ContentBlock, EmbeddedResourceResource,
+    InitializeRequest, InitializeResponse, LoadSessionRequest, LoadSessionResponse,
+    McpCapabilities, McpServer, NewSessionRequest, NewSessionResponse, PermissionOption,
+    PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, SessionConfigOption,
     SessionConfigOptionCategory, SessionConfigSelectGroup, SessionConfigSelectOption,
     SessionConfigSelectOptions, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
@@ -71,6 +72,8 @@ struct State {
     /// Full `_meta` of `session/new` / `session/load`.
     meta: Option<serde_json::Map<String, serde_json::Value>>,
     next_seq: usize,
+    /// The content blocks of the prompt being answered.
+    blocks: Vec<ContentBlock>,
     /// A prompt turn is running (set before the turn task starts, so a steer
     /// right behind the prompt finds it).
     turn_running: bool,
@@ -129,8 +132,15 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                     .client_info
                     .as_ref()
                     .map(|c| (c.name.clone(), c.version.clone()));
+                let prompt = f1.scenario.prompt_capabilities;
                 let caps = AgentCapabilities::new()
                     .load_session(f1.scenario.load_session)
+                    .prompt_capabilities(
+                        PromptCapabilities::new()
+                            .image(prompt.image)
+                            .audio(prompt.audio)
+                            .embedded_context(prompt.embedded_context),
+                    )
                     .mcp_capabilities(McpCapabilities::new().http(true));
                 let meta = f1
                     .scenario
@@ -664,6 +674,60 @@ fn blocks_text(blocks: &[ContentBlock]) -> String {
         .join("|")
 }
 
+/// The blocks of a prompt as `report_blocks` shows them (see `scenario.rs`).
+fn blocks_json(blocks: &[ContentBlock]) -> serde_json::Value {
+    let rows: Vec<_> = blocks
+        .iter()
+        .map(|b| match b {
+            ContentBlock::Text(t) => json!({"type": "text", "text": t.text}),
+            ContentBlock::Image(i) => {
+                let data = decode_base64(&i.data);
+                json!({"type": "image", "mime": i.mime_type, "bytes": data.len(),
+                    "sha": fnv1a(&data), "uri": i.uri})
+            }
+            ContentBlock::Resource(r) => match &r.resource {
+                EmbeddedResourceResource::TextResourceContents(t) => {
+                    json!({"type": "resource", "mime": t.mime_type, "text": t.text, "uri": t.uri})
+                }
+                other => json!({"type": "resource", "other": format!("{other:?}")}),
+            },
+            other => json!({"type": "other", "debug": format!("{other:?}")}),
+        })
+        .collect();
+    serde_json::Value::Array(rows)
+}
+
+/// FNV-1a of `data` as hex: enough for a test to tell that the bytes arrived.
+fn fnv1a(data: &[u8]) -> String {
+    let hash = data.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// Standard base64 (the alphabet and `=` padding), without a dependency.
+fn decode_base64(text: &str) -> Vec<u8> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    let (mut bits, mut have) = (0u32, 0u32);
+    for v in text.bytes().filter_map(value) {
+        bits = (bits << 6) | u32::from(v);
+        have += 6;
+        if have >= 8 {
+            have -= 8;
+            out.push(u8::try_from((bits >> have) & 0xff).unwrap_or(0));
+        }
+    }
+    out
+}
+
 /// Runs a turn begun with [`Fake::begin_turn`].
 async fn run_turn(fake: &Fake, cx: &ConnectionTo<Client>, req: &PromptRequest) -> StopReason {
     let stop = run_turn_actions(fake, cx, req).await;
@@ -678,6 +742,7 @@ async fn run_turn_actions(
     let prompt = prompt_text(req);
     let actions = {
         let mut st = fake.lock();
+        st.blocks = req.prompt.clone();
         mcp::capture_prompt_vars(&prompt, &mut st.vars);
         fake.scenario.pick(&prompt, &mut st.next_seq)
     };
@@ -861,6 +926,10 @@ async fn run_action(
             update(
                 json!({"sessionUpdate": "agent_message_chunk", "content": text(&format!("meta:{meta}"))}),
             )?;
+        }
+        Action::ReportBlocks => {
+            let report = format!("blocks:{}", blocks_json(&fake.lock().blocks));
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
         Action::McpList => {
             let url = fake.lock().mcp_url.clone();

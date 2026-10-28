@@ -296,8 +296,8 @@ async fn write_inbox(
     }
     for new in after.iter().filter(|e| !old.contains(&e.id)) {
         sqlx::query(
-            "INSERT INTO inbox (project_id, id, chat_id, kind, attrs, body) \
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO inbox (project_id, id, chat_id, kind, attrs, body, attachments) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(project)
         .bind(int(new.id)?)
@@ -305,6 +305,7 @@ async fn write_inbox(
         .bind(name(&new.item.kind)?)
         .bind(json(&new.item.attrs)?)
         .bind(&new.item.body)
+        .bind(json(&new.item.attachments)?)
         .execute(&mut **tx)
         .await?;
     }
@@ -379,6 +380,7 @@ struct InboxRow {
     kind: String,
     attrs: String,
     body: String,
+    attachments: String,
 }
 
 /// Reads the whole state of `project`.
@@ -536,7 +538,8 @@ async fn load_inbox(
     project: &str,
 ) -> Result<Vec<InboxEntry>, StoreError> {
     let rows = sqlx::query_as::<_, InboxRow>(
-        "SELECT id, chat_id, kind, attrs, body FROM inbox WHERE project_id = ? ORDER BY id",
+        "SELECT id, chat_id, kind, attrs, body, attachments FROM inbox \
+         WHERE project_id = ? ORDER BY id",
     )
     .bind(project)
     .fetch_all(&mut *conn)
@@ -550,6 +553,7 @@ async fn load_inbox(
                     kind: parse(&r.kind)?,
                     attrs: from_json(&r.attrs)?,
                     body: r.body,
+                    attachments: from_json(&r.attachments)?,
                 },
             })
         })

@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import App from "./App";
+import type { View } from "./ui/IconRail";
 import type { Snapshot, State } from "./api/generated";
 import { CommandError } from "./api/transport";
 import { AppStore } from "./store/app";
@@ -15,7 +16,7 @@ import { FakeCore, MemoryTransport } from "./test/memoryTransport";
 
 const LAST = durable(FULL_RUN).at(-1)?.seq ?? 0;
 
-function setup(opts: { snapshot?: Snapshot; log?: typeof FULL_RUN.events; connected?: boolean } = {}) {
+function setup(opts: { snapshot?: Snapshot; log?: typeof FULL_RUN.events; connected?: boolean; view?: View | "default" } = {}) {
   const transport = new MemoryTransport(opts.connected === false ? { state: "connecting" } : { state: "open" });
   const core = new FakeCore(PROJECT, opts.snapshot ?? FULL_RUN.start);
   core.log = opts.log ?? durable(FULL_RUN);
@@ -24,7 +25,7 @@ function setup(opts: { snapshot?: Snapshot; log?: typeof FULL_RUN.events; connec
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App {...(opts.view === "default" ? {} : { initialView: opts.view ?? "work" })} />
     </StoreContext.Provider>,
   );
   return { transport, core, store, user: userEvent.setup() };
@@ -55,14 +56,40 @@ describe("App", () => {
     expect(screen.getByText("コアに接続していません")).toBeInTheDocument();
   });
 
-  it("opens a project from the form and renders the recorded run", async () => {
-    const { user, transport } = setup();
-    await user.click(screen.getByRole("button", { name: "プロジェクトを開く" }));
-    await user.type(screen.getByPlaceholderText("/path/to/git/repository"), "/tmp/repo");
-    await user.click(screen.getByRole("button", { name: "開く" }));
+  it("starts on the dashboard, with the rail beside it and no sidebar", async () => {
+    // The other tests start in the work view (`initialView`); the app itself starts on the dashboard.
+    setup({ view: "default" });
+    expect(screen.getByRole("region", { name: "dashboard" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ようこそ" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "ダッシュボード" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "コーディング" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("complementary", { name: "projects" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "orchestrator" })).not.toBeInTheDocument();
+  });
+
+  it("opens a project from the dashboard's list and renders the recorded run in the work view", async () => {
+    const { user, transport } = setup({ view: "default" });
+    await user.click(await screen.findByRole("button", { name: /^repo を開く/ }));
     const conversation = await screen.findByRole("region", { name: "orchestrator" });
     await within(conversation).findByText(/^I will create a group for this\./);
     expect(transport.callsOf("open_project")[0].path).toBe("/tmp/repo");
+    expect(screen.queryByRole("region", { name: "dashboard" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "コーディング" })).toHaveAttribute("aria-pressed", "true");
+    // The sidebar names the project; the rail lists it as the one on screen.
+    expect(within(screen.getByRole("complementary", { name: "projects" })).getByText("repo")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^repo に切り替え/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("adds a project with the folder browser and renders the recorded run", async () => {
+    const { user, transport } = setup({ view: "dashboard" });
+    await user.click(screen.getByRole("button", { name: "プロジェクトを追加" }));
+    const browser = await screen.findByRole("region", { name: "フォルダを選択" });
+    await user.click(await within(browser).findByRole("button", { name: "repo (git リポジトリ)" }));
+    await waitFor(() => expect(within(browser).getByTestId("folder-current")).toHaveTextContent("/home/u/repo"));
+    await user.click(within(browser).getByRole("button", { name: "このフォルダを開く" }));
+    const conversation = await screen.findByRole("region", { name: "orchestrator" });
+    await within(conversation).findByText(/^I will create a group for this\./);
+    expect(transport.callsOf("open_project")[0].path).toBe("/home/u/repo");
     // The chat's title (its first message) heads the conversation and names its row.
     expect(within(conversation).getByTestId("chat-title")).toHaveTextContent("Add hello.txt please");
     expect(within(conversation).getByText(/^I will create a group for this\./)).toBeInTheDocument();
@@ -78,6 +105,30 @@ describe("App", () => {
     const steps = within(within(task).getByLabelText("steps")).getAllByRole("listitem", { hidden: false });
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual(["implement done", "review done (approve)", "done done"]);
     expect(within(tasks).getByRole("region", { name: "group G-1" })).toHaveTextContent("1/1 完了");
+  });
+
+  it("goes between the dashboard and the work view from the rail, keeping the project open", async () => {
+    const { user, store } = setup();
+    await openProject(store);
+    const conversation = await screen.findByRole("region", { name: "orchestrator" });
+    await user.click(screen.getByRole("button", { name: "ダッシュボード" }));
+    expect(screen.getByRole("region", { name: "dashboard" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "orchestrator" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^repo を開く/ })).toHaveAttribute("aria-current", "true");
+    await user.click(screen.getByRole("button", { name: "コーディング" }));
+    expect(await screen.findByRole("region", { name: "orchestrator" })).toBeInTheDocument();
+    expect(conversation.isConnected).toBe(false); // the work view was left and drawn again
+    // A project of the rail takes the work view from the dashboard too.
+    await user.click(screen.getByRole("button", { name: "ダッシュボード" }));
+    await user.click(screen.getByRole("button", { name: /^repo に切り替え/ }));
+    expect(await screen.findByRole("region", { name: "orchestrator" })).toBeInTheDocument();
+  });
+
+  it("points to the dashboard from the work view while no project is open", async () => {
+    const { user } = setup();
+    expect(screen.getByText("プロジェクト (git リポジトリ) を開いてください。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "ダッシュボードで開く" }));
+    expect(screen.getByRole("region", { name: "dashboard" })).toBeInTheDocument();
   });
 
   it("shows a task's agent output when its title is clicked", async () => {
@@ -106,6 +157,22 @@ describe("App", () => {
     await user.type(box, "again{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("orchestration has stopped");
     expect(box).toHaveValue("again");
+  });
+
+  it("stages a pasted image as a tile, sends it with the message and keeps it in the chat's draft meanwhile", async () => {
+    const { user, store, transport, core } = setup();
+    core.attachmentDelivery = "path";
+    await openProject(store);
+    const box = screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
+    const image = new File([new Uint8Array([0x89, 0x50])], "image.png", { type: "image/png" });
+    fireEvent.paste(box, { clipboardData: { files: [image], getData: () => "" } });
+    const tiles = await screen.findByRole("list", { name: "添付ファイル" });
+    await within(tiles).findByRole("img", { name: /パスで渡す/ });
+    expect(transport.callsOf("stage_attachment")[0]).toMatchObject({ project: "repo", chat: "C-1", name: "image.png", mime: "image/png" });
+    await user.click(screen.getByRole("button", { name: "送信" }));
+    await waitFor(() => expect(screen.queryByRole("list", { name: "添付ファイル" })).not.toBeInTheDocument());
+    const [id] = core.attachments.keys();
+    expect(transport.callsOf("send_user_message")[0]).toEqual({ type: "send_user_message", project: "repo", chat: "C-1", text: "", attachments: [id] });
   });
 
   it("shows the orchestrator's context below the composer and compacts it on request", async () => {

@@ -83,6 +83,7 @@ fun clientRows(devices: List<ClientDevice>, self: String?, selfConnected: Boolea
 /** 端末の種類の言葉。 */
 fun clientKindLabel(kind: ClientKind): String = when (kind) {
     ClientKind.Android -> "Android"
+    ClientKind.Desktop -> "PC"
     ClientKind.Unrecognized -> "不明な端末"
 }
 

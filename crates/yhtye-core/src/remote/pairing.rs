@@ -16,7 +16,7 @@ pub const CODE_TTL_MS: u64 = 5 * 60 * 1000;
 /// Wrong tries after which the code is dropped.
 pub const MAX_FAILURES: u32 = 5;
 /// Upper-case letters and digits without 0, O, 1, I and L.
-const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+pub(crate) const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 /// Bytes of a device token (256 bits).
 const TOKEN_BYTES: usize = 32;
 

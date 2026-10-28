@@ -201,7 +201,9 @@ pub fn prompts_to<'a>(events: &'a [ApiEvent], session: &str) -> Vec<&'a str> {
     events
         .iter()
         .filter_map(|e| match &e.body {
-            ApiEventBody::Prompted { session: s, text } if s == session => Some(text.as_str()),
+            ApiEventBody::Prompted {
+                session: s, text, ..
+            } if s == session => Some(text.as_str()),
             _ => None,
         })
         .collect()
