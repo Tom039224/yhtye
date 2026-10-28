@@ -71,11 +71,11 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
 
 | 属性 | 内容 |
 |---|---|
-| `id` | Yhtye が採番 (`G-<連番>`) |
+| `id` | **名前** = ID。オーケストレータが `create_group` の `name` で付ける (下記「名前」) |
 | `title` / `summary` | オーケストレータが `create_group` で与える |
 | `chat` | このグループを作ったチャット (`C-<n>`)。グループ関連の通知はこのチャットのオーケストレータに届く |
 | `base_branch` | マージ先。`create_group` の時点でチャットの作業ツリーがチェックアウトしていたブランチを記録する (Stage 8e。detached HEAD なら `create_group` は `invalid_state`)。group / タスクブランチの作成と表示に使う。`finish_group` の `into` でだけ変わる (§6) |
-| `group_branch` | `yhtye/<groupId>` — `base_branch` の HEAD から作成 |
+| `group_branch` | `yhtye/<group>` — `base_branch` の HEAD から作成 |
 | `status` | `active` → `finishing` → `done` / `cancelled` / `merge_blocked` |
 
 - **active なグループは作業ツリーごとに最大 1 つ** (Stage 8 で「プロジェクトごと」から「ブランチごと」、Stage 8e で「作業ツリーごと」に変更。
@@ -101,11 +101,26 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
   選ばずにターンを終えたときの安全網である (報告: Stage 7a 結果メモ)。
 - `finish_group` で Yhtye は `group_branch` を `base_branch` に自動マージする (§6。直前に作業ツリーのブランチを確かめ、食い違いはオーケストレータに返す)。
 
+**名前 (グループとタスクの ID)**: 以前は Yhtye が `G-<連番>` / `T-<連番>` を採番していたが、名前が ID になった。
+
+- オーケストレータが `create_group` / `create_task` の必須引数 `name` で、作業内容を表す短い英語のスラッグを付ける
+  (例 `headless-server`、`remote-icon`)。それがそのまま `group_id` / `task_id` になり、状態・イベント・ツールの引数と応答・ブランチ名で使われる。
+- 書式: `^[a-z0-9]+(-[a-z0-9]+)*$`、32 文字まで (`--`・先頭や末尾の `-`・大文字は不可)。違反や `name` の欠落は `invalid_argument`
+  (規則と例を示す。Yhtye が名前を作り出すことはしない)。グループ名 `branches` は予約 (worktree ルートの `branches/` と重なるため。`conflict`)。
+- 一意性: グループ名はプロジェクト内のすべてのグループ (全チャット・過去のものも) で、タスク名はすべてのタスクで一意
+  (ツールが `task_id` だけで指すため)。削除したチャットのグループ・タスクの名前も再利用しない (`Counters.retired_names` に残す。
+  セッションキーやイベントログが ID で引かれるため)。さらに git にその名前を使うものがあれば拒否する: グループなら `yhtye/<name>` か
+  `yhtye/<name>--*` のブランチ・worktree ルート直下の `<name>` ディレクトリ、タスクならいずれかのグループの `yhtye/*--<name>` ブランチ・
+  `<group>/<name>` ディレクトリ (大文字小文字を区別せずに比べる。DB を消した後の残骸など)。かぶれば `conflict` (「その名前は使われている。別の名前を」)。
+  番号を付け足して自動でずらすことはしない (以前の「git に残る `G-<n>` の番号を飛ばす」仕組みはこれに置き換わった)。
+- 互換: 以前の `G-<n>` / `T-<n>` を含む状態・イベントログはそのまま読み込み・再生でき、進行中の古いグループも続けて完了できる。
+  古い ID のブランチ名は変わらない (§6)。`Counters` の `groups` / `tasks` は作成数として残る (ID には使わない)。チャット `C-<n>`・help `H-<n>` は従来どおり連番。
+
 ### 2.2 Task
 
 | 属性 | 内容 |
 |---|---|
-| `id` | `T-<連番>` (プロジェクト内で一意) |
+| `id` | **名前** = ID。オーケストレータが `create_task` の `name` で付ける (§2.1「名前」。プロジェクト内で一意) |
 | `title` | 短い表示名 |
 | `kind` | Yhtye 定義。当面 `code` と `investigate` の 2 種 (§3) |
 | `depends_on` | 先行タスク ID の配列。全て `done` になるまで開始しない |
@@ -123,7 +138,7 @@ Orca と同じく**作業ツリーが仕事の単位**で、ブランチ名は�
 | `implement` | タスクの担当エージェント (タスク中は同一セッションを使い続ける) | 指示を実行する。`investigate` タスクでは読み取り専用の調査 | `report_step_done(result)` |
 | `review` | **毎回新しい**レビュアーセッション | 直前までの変更 (タスクブランチの group ブランチからの差分) を審査 | `report_step_done(result, verdict)`。`verdict` は `approve` / `needs_changes` |
 | `checkpoint` | Yhtye → オーケストレータ | 直前までの結果を添えてオーケストレータを起こす | オーケストレータが `resolve_checkpoint` を呼ぶ |
-| `done` | Yhtye | 終端。`code` タスクならタスクブランチを group ブランチへマージ | マージ成功 |
+| `done` | Yhtye | 終端。`code` タスクならタスクブランチを group ブランチへ **squash** (1 コミット、§6) | マージ成功 |
 
 - `steps` の最後は必ず `done`。無ければ Yhtye が末尾に補う。`done` を途中に置くのはエラー。
 - 各 Step は `instruction` (任意) を持てる。無ければタスクの `instruction` が使われる。
@@ -172,7 +187,7 @@ help の逆向き: オーケストレータが、**実行中**のタスクの担
 
 | kind | 作業場所 | 書き込み | 完了時 |
 |---|---|---|---|
-| `code` | タスク専用の git worktree + ブランチ `yhtye/<groupId>-<taskId>` (group ブランチから分岐。Stage 3c で `/` 区切りから変更、§6) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへマージ |
+| `code` | タスク専用の git worktree + ブランチ `yhtye/<group>--<task>` (group ブランチから分岐。古い `T-<n>` のタスクは `yhtye/<group>-T-<n>`。§6) | 可 | 未コミット変更を Yhtye がコミット → group ブランチへ squash (1 コミット) |
 | `investigate` | group の統合 worktree (group ブランチ。共有、§6) | 不可 (プロンプトで禁止し、終了時に `git status` が汚れていたら変更を stash に退避して `help`) | マージなし。結果テキストのみ |
 
 kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。追加は実運用後。
@@ -238,29 +253,34 @@ kind は Yhtye 定義の列挙で、オーケストレータは選ぶだけ。�
 
 ## 6. git
 
-- **group ブランチ** `yhtye/<groupId>`: `create_group` 時に `base_branch` (= チャットの作業対象ブランチ) の HEAD から作る。
-  Yhtye 管理の**統合 worktree** (`<data_dir>/worktrees/<projectId>/<groupId>/_group`) に
-  チェックアウトする。タスクブランチのマージはここで行う。
-- **タスクブランチ** `yhtye/<groupId>-<taskId>` (例 `yhtye/G-1-T-2`): `code` タスクの開始時に
-  group ブランチの現在の HEAD から作り、専用 worktree (`.../<groupId>/<taskId>`) にチェックアウトする。
-  **Stage 3c で変更**: 当初の `yhtye/<groupId>/<taskId>` は git では作れない
-  (`refs/heads/yhtye/G-1` があると `refs/heads/yhtye/G-1/T-1` を作れない — ref はファイルなので
-  同名のディレクトリを持てない。git 2.55 で確認)。group ブランチ名 `yhtye/<groupId>` は合意どおり。
+- **group ブランチ** `yhtye/<group>`: `create_group` 時に `base_branch` (= チャットの作業対象ブランチ) の HEAD から作る。
+  Yhtye 管理の**統合 worktree** (`<data_dir>/worktrees/<projectId>/<group>/_group`) に
+  チェックアウトする。タスクブランチの squash はここで行う。
+- **タスクブランチ** `yhtye/<group>--<task>` (例 `yhtye/headless-server--remote-icon`。区切りは `-` 2 つ): `code` タスクの開始時に
+  group ブランチの現在の HEAD から作り、専用 worktree (`.../<group>/<task>`) にチェックアウトする。
+  名前は `--` を含められないので区切りは一意に決まる。`/` で区切らないのは、git が `refs/heads/yhtye/x` と
+  `refs/heads/yhtye/x/y` を同時に持てないため (ref はファイルなので同名のディレクトリを持てない。git 2.55 で確認。
+  Stage 3c で当初の `yhtye/<groupId>/<taskId>` から変更)。
+  **古い ID の互換**: `T-<n>` (連番) のタスクは以前のまま `yhtye/<group>-T-<n>` (例 `yhtye/G-1-T-2`)。
+  名前のタスクは古いグループの中でも `--` (例 `yhtye/G-46--remote-icon`)。この規則は `domain::task_branch` の 1 か所だけで決め、
+  git 操作・再起動 / 復旧・レビュー範囲 (プロンプト)・後片付けはすべてそれを使う。
 - worktree はリポジトリの外 (Yhtye のデータディレクトリ) に置き、ユーザーの作業ツリーを汚さない。
 - **タスク完了時**: 未コミット変更があれば Yhtye がコミット (メッセージはタスク ID + 最終報告の要約)
-  → 統合 worktree で `git merge --no-ff <taskBranch>` → 成功で worktree を削除 (ブランチは残す)。
+  → 統合 worktree で `git merge --squash <taskBranch>` + コミットで、**タスク 1 つを group ブランチの 1 コミット**にする
+  (マージコミットは作らない。メッセージは §6.2) → 成功で worktree を削除 (ブランチは残す)。
 - **グループ完了時** (`finish_group`、Stage 8e): **チャットの作業ツリー**で、マージの直前に 1 回だけ確認する。
   1. 作業ツリーのディレクトリがあり、**今チェックアウトしているブランチがグループの `base_branch` と同じ**か。
      違う (改名された・別のブランチに切り替わった・detached HEAD・base が消えた・作業ツリーが無い) なら**マージしない**。
      グループは `merge_blocked` になり、**状況をオーケストレータに返す** (「base は X でしたが、作業ツリーは今 Y です / detached です」と対処の案内。ユーザーにではない)。
-  2. clean (従来の規則、下記) なら `git merge --no-ff <groupBranch>`。dirty / 中断された操作 / コンフリクトも `merge_blocked`。
+  2. clean (従来の規則、下記) なら `git merge --no-ff <groupBranch>` (グループは**マージコミットで**取り込む。メッセージは §6.2)。dirty / 中断された操作 / コンフリクトも `merge_blocked`。
   - **返し方**: オーケストレータ自身の `finish_group` なら**ツールの応答** (`merge.ok = false` と説明。同じターンで対処できる)。
     それ以外 (Yhtye の代行、ユーザーの再試行) で走ったマージは受信箱の `merge_result` (従来どおり)。
   - **オーケストレータの対処**: 作業ツリーを直して (全ツールを持つ、§8.1) `finish_group` をもう一度呼ぶ (`merge_blocked` のグループにも使える)、
     または今のブランチを受け入れて **`finish_group` の `into: "<branch>"`** で呼ぶ。`into` はその時点の作業ツリーのブランチと一致しなければならず
     (違えば `invalid_argument`)、グループの `base_branch` を `into` に変えて (`group_base_changed`) からマージする。
   - Yhtye の代行 (§2.1) とユーザーの `RetryGroupMerge` も同じ確認をする。ユーザーが整えた後に UI から再試行もできる。
-- **コンフリクト**は `git merge --abort` で巻き戻したうえで `help` (`merge_conflict`) にする。
+- **コンフリクト** (タスク → group) は squash を巻き戻したうえで (squash には `MERGE_HEAD` が無く `git merge --abort` が使えないので
+  `git reset --merge`。統合 worktree は clean に戻る) `help` (`merge_conflict`) にする。
   オーケストレータは例えば `modify_steps` で「group ブランチを自分のブランチへマージして
   解消せよ」という `implement` を足し、`answer_help(resume)` する。工程が終わると再び `done` →
   マージが再試行される。
@@ -273,7 +293,7 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
   エージェントが自分でコミットしていても構わない。コンフリクト解消の途中 (MERGE_HEAD あり) なら
   このコミットがマージコミットになる。コンフリクトマーカーが残るファイルがあればコミットせず
   `merge_conflict` の help にする (マーカーが消えていれば `git add` されていなくても解消済みとみなす)。
-- **Yhtye 内部のコミット・マージ** (タスクブランチへのコミット、group ブランチへのマージ) は
+- **Yhtye 内部のコミット** (タスクブランチへのコミット、group ブランチへの squash コミット) は
   フックと署名を飛ばす (`--no-verify`、`commit.gpgSign=false`)。ユーザーのフックや pinentry で
   止まらないため。**base ブランチへのマージ**はユーザーのブランチなのでフック・署名はリポジトリの
   設定どおり。コミットの作者はリポジトリの `user.name` / `user.email`、無ければ `Yhtye <yhtye@localhost>`。
@@ -289,7 +309,7 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
   とおりコミットで完了させる)。
 - **中止したタスク**: worktree を削除する前に未コミットの変更をタスクブランチに WIP コミットして残す。
 - **中止したグループ** (Stage 5): 各タスクの後片付けの後で統合 worktree `_group` も削除する
-  (中断マージは abort、残った変更は group ブランチに WIP コミット)。ブランチは残す。
+  (中断マージ / squash は abort、残った変更は group ブランチに WIP コミット)。ブランチは残す。
 - **マージの再試行** (Stage 5): `merge_blocked` のグループはユーザーが UI から `RetryGroupMerge` で
   `finishing` に戻して base へのマージをやり直せる (他に active / finishing のグループがあれば `conflict`)。
   結果はオーケストレータに `merge_result` で知らせる。
@@ -297,8 +317,14 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
   ブランチはすべて残す。
 - **冪等性** (再起動で git 操作がやり直されるため): 既存の worktree が正しいブランチなら再利用、
   消えた worktree ディレクトリは作り直す、group ブランチが無ければ base から作り直す、
-  既にマージ済み (祖先) のタスク / group ブランチは「マージ済み」として成功、統合 worktree に
-  中断されたマージが残っていれば abort してからやり直す。`create_group` で**既存の** group
+  既にマージ済みのタスク / group ブランチは「マージ済み」として成功、統合 worktree に
+  中断されたマージ / squash が残っていれば abort してからやり直す。
+  **タスクがマージ済みか** (squash は履歴に祖先関係を残さない) は、(1) タスクブランチが group ブランチの祖先 (変更が無い、または
+  この方式になる前に `--no-ff` でマージ済み) か、(2) group ブランチの履歴のうちタスクブランチの分岐後に増えた部分 (`git log <taskBranch>..HEAD`)
+  に `Yhtye-Task: <task>` トレーラーを持つコミット (旧方式のマージコミットは件名 `Merge <branch> (<task>) into <groupBranch>`) があるか、で決める。
+  どちらでもなければ squash する。squash しても何もステージされない (変更が既に group にある) なら、コミットせず「変更なし」で成功。
+  Yhtye が squash の途中 (ステージ済み・コミット前) で止まった場合は `SQUASH_MSG` が残るので、次の操作の前に `git reset --merge` で戻す
+  (統合 worktree は Yhtye 専用。コミット後に止まった場合は上の判定でマージ済みになる)。`create_group` で**既存の** group
   ブランチが base と別のコミットを指している場合は採用せず失敗 (前回の DB の残骸などを黙って使わない)。
   メイン作業ツリーに中断されたマージが残っている場合は自動で abort せず `merge_blocked`。
 - **DB と worktree の場所**: どちらも Yhtye のデータディレクトリ (DB は `yhtye.sqlite3`、
@@ -306,7 +332,10 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
   `.git/info/exclude` 等の設定は不要。
 - **レビュアーへの差分の渡し方**: review Step のプロンプトにタスクブランチと group ブランチの名前、
   `git status --short` と `git diff $(git merge-base <groupBranch> HEAD)` (コミット済み + 未コミット)
-  を明記する。レビュアーはタスクの worktree で動く。
+  を明記する。レビュアーはタスクの worktree で動く。squash は group ブランチにタスクブランチへの祖先関係を作らないので、
+  `merge-base` はタスクの分岐点 (コンフリクト解消で group ブランチを取り込んだ後はその時点の group ブランチ) のままで、
+  他のタスクが先に squash された後でも差分はそのタスクの変更だけ。squash 後に始まる依存タスクは group ブランチの HEAD から分岐するので
+  先行タスクの成果を含んで始まる。
 - **再起動のフォールバック**: 新しいセッションで Step をやり直すとき、プロンプトに worktree の
   `git status --short` と分岐点からの `git diff` (最大 16 KiB) を添える (§10)。
 
@@ -341,6 +370,58 @@ Stage 3c で決めた細部 (実装は [`core-design.md`](core-design.md) §7):
 - **Stage 8d からの撤去** (Stage 8e): ブランチ改名の追跡 (reflog の `Branch: renamed …` を見て `chat_branch_changed` で紐づけを書き換える)と、
   動いているオーケストレータの cwd の取り直し (checkout されたら止めて別の作業ツリーで起動し直す) は**無くなった**。
   コマンドの結果に即座に反応して紐づけを変えるのは安全でない、というユーザー判断による。
+
+### 6.2 コミットメッセージ (Yhtye が作るコミット)
+
+Yhtye が group / base ブランチに作るコミットはメッセージの形が決まっている。組み立ては `git/message.rs` (純粋関数)、
+材料は `GitOp` で渡す (`FinishTask.title` / `agent` / `reviewers`、`MergeGroup.title` / `summary` / `tasks`。どれも serde の既定値付きで、古いログ・状態はそのまま読める)。
+コミッタ / 作者は変えない (リポジトリの `user.name` / `user.email`、無ければ `Yhtye <yhtye@localhost>`)。
+
+**タスク → group (squash の 1 コミット)**:
+
+```
+<タスクの title>
+
+- <タスクブランチの各コミットの件名 (マージコミットを除く)。古い順>   ← コミットが無ければこの段落は無い
+
+♪ Created with Yhtye v0.0.0: github.com/Tom039224/yhtye
+
+Yhtye-Group: <group id>
+Yhtye-Task: <task id>
+Yhtye-Agent: <harness>/<model>/<effort>
+Yhtye-Reviewer: <同じ形式。review Step があったときだけ>
+```
+
+- 箇条書きは `git log --no-merges --reverse <groupBranch>..<taskBranch>` の件名。コンフリクト解消で group ブランチを取り込んでいても、
+  group 側のコミットは含まれない。Yhtye 自身の「未コミット変更のコミット」の件名 (`<task>: <title>`) も含まれる。
+- トレーラーは**最後の段落**なので `git interpret-trailers --parse` / `git log --format='%(trailers)'` で読める。
+  `Yhtye-Task` は「マージ済み」の判定 (§6 冪等性) にも使う。
+- `Yhtye-Agent` / `Yhtye-Reviewer` は、そのタスクの実装 / review セッションが**実際に起動された** harness × model × effort
+  (ランタイムが解決した値。セッション記録の `agent`)。ドメインは task の上書き指定しか知らないので、ランタイムが `FinishTask` を git に渡す前に
+  セッション記録から埋める (`runtime/commit_agents.rs`)。無い部分は省く (`harness` だけ、`harness/model`、model 無しで effort があれば `harness/effort`)。
+  どれも分からなければ行ごと省く。review Step が複数あれば `Yhtye-Reviewer` を (違うものだけ) 古い順に並べる。
+- フッターの版は当面固定の `0.0.0` (`git::CREATED_WITH_VERSION`。`CARGO_PKG_VERSION` ではない)。リリースの版から自動で入れる仕組みは
+  リポジトリ直下の `TODO.md` (「0.1.0 リリース時」) に残してある。
+
+**group → base (`git merge --no-ff`)**:
+
+```
+Merge <group ブランチ> into <base ブランチ>
+
+<group の title>
+
+<finish_group の summary。あれば>
+
+- <task id>: <task title>   ← group にマージされた (done の) code タスク。マージされた順。中止したタスク・investigate は含めない
+
+♪ Created with Yhtye v0.0.0: github.com/Tom039224/yhtye
+
+Yhtye-Group: <group id>
+```
+
+- 「マージされた順」は状態には持たず、group ブランチの履歴から決める (`<base の先端>..<groupBranch>` の `Yhtye-Task` トレーラー、
+  旧方式のマージコミットの件名の `(<task>)`)。履歴に見つからないタスク (変更が無く何もコミットされなかった等) は作成順で後ろに付く。
+- 空の title / summary / タスク一覧の段落は省く。title は 1 行に整える。
 
 ## 7. エージェントのターンとプロトコル違反
 

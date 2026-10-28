@@ -2,6 +2,8 @@
 // constructed event log. Never used on app runtime paths.
 
 import type {
+  AttachmentDelivery,
+  AttachmentMeta,
   AgentChoice,
   AgentRole,
   AgentSettingsLayer,
@@ -10,9 +12,11 @@ import type {
   ApiCommand,
   ApiEvent,
   ApiResponse,
+  BranchStatuses,
   ChatInfo,
   ClientDevice,
   Clients,
+  DirectoryListing,
   GitOverview,
   HarnessDetection,
   HarnessInfo,
@@ -25,8 +29,10 @@ import type {
   RemoteStatus,
   Snapshot,
   UsageReport,
+  UsageStats,
 } from "../api/generated";
 import { CommandError, type ConnectionStatus, Listeners, type Transport, toCommandError } from "../api/transport";
+import { sortByOrder, toFront } from "../store/order";
 
 type Handler = (cmd: ApiCommand) => ApiResponse | Promise<ApiResponse>;
 
@@ -86,6 +92,10 @@ export class FakeCore {
   info: ProjectInfo;
   /** Other projects the core knows (listed after `info`; `open_project` finds them by path). */
   others: ProjectInfo[] = [];
+  /** The project order (ids, most recently used first); `open_project` uses a project. */
+  projectOrder: string[] = [];
+  /** The branch order of the project (keys, most recently used first). */
+  branchOrder: string[] = [];
   /** Commands that should fail, by type. */
   failures = new Map<ApiCommand["type"], CommandError>();
   /** Largest page the fake returns (whatever the client asks for). */
@@ -99,8 +109,24 @@ export class FakeCore {
     commits: [],
     truncated: false,
   };
+  /** Served for `get_branch_statuses`. */
+  branchStatuses: BranchStatuses = { default_branch: "main", statuses: [] };
   /** Served for `get_usage` (`null`: the core reports it unavailable). */
   usage: UsageReport | null = null;
+  /** Served for `get_usage_stats`; `null`: a small canned report of the period asked (see [`cannedUsageStats`]). */
+  usageStats: UsageStats | null = null;
+  /** The folders of the fake host served by `list_directory`: path → its sub-folders. The home is `/home/u`. */
+  fsTree: Record<string, FakeFolder[]> = {
+    "/": [{ name: "home" }, { name: "tmp" }],
+    "/home": [{ name: "u" }],
+    "/home/u": [{ name: "Documents" }, { name: "repo", git: true }, { name: ".config" }],
+    "/home/u/Documents": [],
+    "/home/u/repo": [{ name: "src" }, { name: ".github" }],
+    "/home/u/repo/src": [],
+    "/home/u/repo/.github": [],
+    "/home/u/.config": [],
+    "/tmp": [],
+  };
   /** Agent settings served by `get/set_agent_settings` (a small model of the core's layers). */
   agents = new FakeAgentSettings();
   /** Harness detection served by `get_harnesses` / `detect_harnesses` / `set_harness_path`. */
@@ -116,8 +142,14 @@ export class FakeCore {
   branchError: CommandError | null = null;
   /** The host name `ping` answers with. */
   host = "test-host";
+  /** Whether `ping` says the core runs without a GUI. */
+  headless = false;
   /** Chats `open_chat` reports as starting (their orchestrator had something to resume). */
   starting = new Set<string>();
+  /** The delivery `stage_attachment` predicts. */
+  attachmentDelivery: AttachmentDelivery = "native";
+  /** Staged and sent attachments with their content (`stage_attachment` adds them). */
+  attachments = new Map<string, { meta: AttachmentMeta; data: string }>();
   /** Called before answering a command (to interleave pushed events). */
   before: ((cmd: ApiCommand) => void | Promise<void>) | null = null;
 
@@ -161,16 +193,58 @@ export class FakeCore {
     return { type: "harnesses", harnesses };
   }
 
+  /** The projects as `list_projects` lists them: in the project order. */
+  private listing(): ProjectInfo[] {
+    return sortByOrder([this.info, ...this.others], this.projectOrder, (p) => p.id);
+  }
+
+  /** `list_directory` over [`fsTree`]: sub-folders sorted ignoring case, hidden ones only on request. */
+  private listDirectory(path: string | null, showHidden: boolean): DirectoryListing {
+    const home = "/home/u";
+    const wanted = path === null || path.trim() === "" || path === "~" ? home : path.replace(/^~\//, `${home}/`);
+    const dir = wanted.length > 1 ? wanted.replace(/\/+$/, "") : wanted;
+    if (!dir.startsWith("/")) throw new CommandError("invalid_argument", `${dir} is not an absolute path`);
+    const folders = this.fsTree[dir];
+    if (!folders) throw new CommandError("not_found", `${dir} does not exist`);
+    const child = (name: string) => (dir === "/" ? `/${name}` : `${dir}/${name}`);
+    return {
+      path: dir,
+      parent: dir === "/" ? null : dir.slice(0, dir.lastIndexOf("/")) || "/",
+      home,
+      is_git_repo: false,
+      entries: folders
+        .filter((f) => showHidden || !f.name.startsWith("."))
+        .map((f) => ({ name: f.name, path: child(f.name), is_git_repo: f.git === true }))
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    };
+  }
+
   handle(cmd: ApiCommand): ApiResponse {
     const failure = this.failures.get(cmd.type);
     if (failure) throw failure;
     switch (cmd.type) {
       case "ping":
-        return { type: "pong", host: this.host, version: "0.1.0" };
+        return { type: "pong", host: this.host, version: "0.1.0", headless: this.headless };
       case "list_projects":
-        return { type: "projects", projects: [this.info, ...this.others] };
-      case "open_project":
-        return { type: "project", project: { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true } };
+        return { type: "projects", projects: this.listing() };
+      case "open_project": {
+        const project = { ...(this.others.find((p) => p.path === cmd.path) ?? this.info), open: true };
+        this.projectOrder = toFront(this.projectOrder, project.id);
+        return { type: "project", project };
+      }
+      case "reorder_projects": {
+        const known = this.listing().map((p) => p.id);
+        const ids = cmd.ids.filter((id) => known.includes(id));
+        this.projectOrder = [...ids, ...this.projectOrder.filter((id) => !ids.includes(id))];
+        return { type: "projects", projects: this.listing() };
+      }
+      case "get_branch_order":
+        return { type: "branch_order", keys: [...this.branchOrder] };
+      case "reorder_branches": {
+        const keys = cmd.keys.filter((k, i) => k && cmd.keys.indexOf(k) === i);
+        this.branchOrder = [...keys, ...this.branchOrder.filter((k) => !keys.includes(k))];
+        return { type: "branch_order", keys: [...this.branchOrder] };
+      }
       case "get_snapshot":
         return { type: "snapshot", snapshot: this.snapshot };
       case "list_events": {
@@ -181,6 +255,8 @@ export class FakeCore {
       }
       case "get_git_overview":
         return { type: "git_overview", git: this.git };
+      case "get_branch_statuses":
+        return { type: "branch_statuses", statuses: this.branchStatuses };
       case "open_chat":
         if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
         return { type: "chat_opened", starting: this.starting.has(cmd.chat) };
@@ -193,6 +269,22 @@ export class FakeCore {
         if (!title) throw new CommandError("invalid_argument", "the title must not be empty");
         return { type: "chat", chat: { ...chat, title } };
       }
+      case "stage_attachment": {
+        const id = `a${this.attachments.size + 1}`.padEnd(16, "0");
+        const mime = cmd.mime ?? "application/octet-stream";
+        const kind = mime.startsWith("image/") ? "image" : mime.startsWith("text/") ? "text" : "file";
+        const meta: AttachmentMeta = { id, name: cmd.name, mime, size: atob(cmd.data_base64).length, kind, delivery: this.attachmentDelivery };
+        this.attachments.set(id, { meta, data: cmd.data_base64 });
+        return { type: "attachment_staged", attachment: meta };
+      }
+      case "get_attachment": {
+        const found = this.attachments.get(cmd.id);
+        if (!found) throw new CommandError("not_found", `no attachment ${cmd.id}`);
+        return { type: "attachment", attachment: found.meta, data_base64: found.data };
+      }
+      case "discard_attachment":
+        if (!this.attachments.delete(cmd.id)) throw new CommandError("not_found", `no attachment ${cmd.id}`);
+        return { type: "accepted" };
       case "delete_chat":
         if (!this.snapshot.chats.some((c) => c.id === cmd.chat)) throw new CommandError("not_found", `no chat ${cmd.chat}`);
         return { type: "accepted" };
@@ -203,6 +295,10 @@ export class FakeCore {
       case "get_usage":
         if (!this.usage) throw new CommandError("unavailable", "usage: no harness is configured to report usage");
         return { type: "usage", usage: this.usage };
+      case "get_usage_stats":
+        return { type: "usage_stats", stats: this.usageStats ?? cannedUsageStats(cmd.days ?? 30, cmd.tz_offset_min ?? 0) };
+      case "list_directory":
+        return { type: "directory", directory: this.listDirectory(cmd.path ?? null, cmd.show_hidden ?? false) };
       case "get_agent_settings":
         return { type: "agent_settings", settings: this.agents.view(cmd.project ?? null) };
       case "set_agent_settings":
@@ -255,6 +351,57 @@ export class FakeCore {
         return { type: "accepted" };
     }
   }
+}
+
+/** A folder of [`FakeCore.fsTree`]. */
+export interface FakeFolder {
+  name: string;
+  /** It holds a `.git`. */
+  git?: boolean;
+}
+
+/** `count` consecutive dates (`YYYY-MM-DD`), the last being `last`. */
+function lastDates(count: number, last: string): string[] {
+  const end = Date.parse(`${last}T00:00:00Z`);
+  return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * 86_400_000).toISOString().slice(0, 10));
+}
+
+/** A small `get_usage_stats` report: Claude Code used on the last two days of the period, nothing before. */
+export function cannedUsageStats(days: number, tzOffsetMin: number): UsageStats {
+  const tokens = (input: number, output: number, cacheRead: number, cacheCreation: number) => ({
+    input,
+    output,
+    cache_read: cacheRead,
+    cache_creation: cacheCreation,
+    total: input + output + cacheRead + cacheCreation,
+  });
+  const dates = lastDates(days, "2026-10-20");
+  const usage = [tokens(100, 200, 3000, 400), tokens(200, 400, 6000, 800)];
+  const day = (date: string, i: number) => {
+    const t = usage[i - (days - usage.length)];
+    return {
+      date,
+      tokens: t ?? tokens(0, 0, 0, 0),
+      sessions: t ? 1 : 0,
+      harnesses: t ? [{ harness: "claude-code", tokens: t.total, sessions: 1 }] : [],
+    };
+  };
+  const sum = tokens(300, 600, 9000, 1200);
+  return {
+    generated_at_ms: 1_792_000_000_000,
+    period_days: days,
+    tz_offset_min: tzOffsetMin,
+    sources: [
+      { harness: "claude-code", found: true, files: 2 },
+      { harness: "codex", found: false, files: 0 },
+      { harness: "opencode", found: false, files: 0 },
+    ],
+    totals: { tokens: sum, sessions: 2 },
+    days: dates.map(day),
+    by_model: [{ name: "claude-opus-5-5", tokens: sum, sessions: 2, other: false }],
+    by_harness: [{ name: "claude-code", tokens: sum, sessions: 2, other: false }],
+    by_project: [{ name: "repo", project: "repo", tokens: sum, sessions: 2, other: false }],
+  };
 }
 
 /** The core's remote access in miniature: a server that starts unless `startError` says why not. */
@@ -324,7 +471,7 @@ export class FakeRemote {
 
 /** A paired device as `list_clients` shows it. */
 export function clientOf(d: RemoteDevice): ClientDevice {
-  return { id: d.id, name: d.name, kind: "android", connected: d.connected, last_seen_ms: d.last_seen_ms };
+  return { id: d.id, name: d.name, kind: d.kind, connected: d.connected, last_seen_ms: d.last_seen_ms };
 }
 
 const ROLES: AgentRole[] = ["orchestrator", "implementer", "investigator", "reviewer"];

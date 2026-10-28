@@ -20,11 +20,20 @@ use crate::api::{
     LoggedEvent, ProjectInfo, SettingsKind, Snapshot, TextKind, WsReply, WsRequest,
     WsServerMessage,
 };
+use crate::attachments::{AttachmentDelivered, AttachmentDelivery, PromptCaps};
+use crate::directory::{DirectoryEntry, DirectoryListing};
 use crate::domain::{DomainEvent, Role, ToolError};
-use crate::git::{GitBranch, GitCommit, GitOverview, GitWorktree};
+use crate::git::{
+    BranchState, BranchStatus, BranchStatuses, GitBranch, GitCommit, GitOverview, GitWorktree,
+};
 use crate::mcp::ToolCallRecord;
 use crate::remote::{
-    Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError, RemoteStatus,
+    ClientKind, Clients, PairRequest, PairResponse, PairingCode, RemoteDevice, RemoteError,
+    RemoteStatus,
+};
+use crate::stats::{
+    StatsBucket, StatsDay, StatsDayHarness, StatsProject, StatsSource, StatsTokens, StatsTotals,
+    UsageStats,
 };
 use crate::store::{ChatInfo, SessionRecord, SessionStatus};
 use crate::usage::{UsageReport, UsageWindow, UsageWindowKind};
@@ -94,6 +103,31 @@ fn commands() -> Vec<Sample> {
                 "text": "Fix \"the\" bug\nin $HOME \\ path ✓"}),
         ),
         (
+            "send_user_message/attachments",
+            json!({"type": "send_user_message", "project": "repo", "chat": "C-1",
+                "text": "", "attachments": ["0123456789abcdef", "fedcba9876543210"]}),
+        ),
+        (
+            "stage_attachment",
+            json!({"type": "stage_attachment", "project": "repo", "chat": "C-1",
+                "name": "shot.png", "mime": "image/png", "data_base64": "iVBORw0KGgo="}),
+        ),
+        (
+            "stage_attachment/no_mime",
+            json!({"type": "stage_attachment", "project": "repo", "chat": "C-1",
+                "name": "notes.txt", "data_base64": ""}),
+        ),
+        (
+            "discard_attachment",
+            json!({"type": "discard_attachment", "project": "repo", "chat": "C-1",
+                "id": "0123456789abcdef"}),
+        ),
+        (
+            "get_attachment",
+            json!({"type": "get_attachment", "project": "repo", "chat": "C-1",
+                "id": "0123456789abcdef"}),
+        ),
+        (
             "open_chat",
             json!({"type": "open_chat", "project": "repo", "chat": "C-1"}),
         ),
@@ -104,6 +138,27 @@ fn commands() -> Vec<Sample> {
         (
             "compact_chat",
             json!({"type": "compact_chat", "project": "repo", "chat": "C-1"}),
+        ),
+        (
+            "sleep_chat",
+            json!({"type": "sleep_chat", "project": "repo", "chat": "C-1"}),
+        ),
+        (
+            "reorder_projects",
+            json!({"type": "reorder_projects", "ids": ["repo", "beta"]}),
+        ),
+        (
+            "get_branch_order",
+            json!({"type": "get_branch_order", "project": "repo"}),
+        ),
+        (
+            "reorder_branches",
+            json!({"type": "reorder_branches", "project": "repo",
+                "keys": ["/home/u/repo", "feat/x"]}),
+        ),
+        (
+            "sleep_project",
+            json!({"type": "sleep_project", "project": "repo"}),
         ),
         (
             "list_chats",
@@ -149,8 +204,25 @@ fn commands() -> Vec<Sample> {
             "get_git_overview",
             json!({"type": "get_git_overview", "project": "repo", "limit": 120}),
         ),
+        (
+            "get_branch_statuses",
+            json!({"type": "get_branch_statuses", "project": "repo"}),
+        ),
         ("get_usage", json!({"type": "get_usage", "refresh": true})),
         ("get_usage/default", json!({"type": "get_usage"})),
+        (
+            "get_usage_stats",
+            json!({"type": "get_usage_stats", "days": 90, "tz_offset_min": 540, "refresh": true}),
+        ),
+        (
+            "get_usage_stats/default",
+            json!({"type": "get_usage_stats"}),
+        ),
+        (
+            "list_directory",
+            json!({"type": "list_directory", "path": "/home/u", "show_hidden": true}),
+        ),
+        ("list_directory/home", json!({"type": "list_directory"})),
         (
             "get_agent_settings",
             json!({"type": "get_agent_settings", "project": "repo"}),
@@ -277,6 +349,7 @@ fn project_info(open: bool) -> ProjectInfo {
         path: "/home/u/repo".into(),
         open,
         running: open,
+        awake: open,
     }
 }
 
@@ -365,10 +438,23 @@ fn state() -> Value {
         ],
         "inbox": [
             {"id": 4, "chat": "C-1", "item": {"kind": "user_message",
-                "attrs": [["from", "user"], ["chat", "C-1"]], "body": "hello"}}
+                "attrs": [["from", "user"], ["chat", "C-1"]], "body": "hello"}},
+            {"id": 5, "chat": "C-1", "item": {"kind": "user_message", "attrs": [], "body": "",
+                "attachments": [attachment("shot.png", "image"), attachment("report.pdf", "file")]}}
         ],
         "counters": {"chats": 2, "groups": 5, "tasks": 2, "helps": 3, "inbox": 4}
     })
+}
+
+/// An attachment's metadata as the API writes it (`kind`: `image`, `text` or `file`).
+fn attachment(name: &str, kind: &str) -> Value {
+    let (mime, delivery) = match kind {
+        "image" => ("image/png", "native"),
+        "text" => ("text/plain", "native"),
+        _ => ("application/pdf", "path"),
+    };
+    json!({"id": "0123456789abcdef", "name": name, "mime": mime, "size": 1234,
+        "kind": kind, "delivery": delivery})
 }
 
 fn snapshot() -> Snapshot {
@@ -446,6 +532,7 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-0123456789abcdef".into(),
             name: "Pixel 9".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: Some(1_790_766_600_000),
             connected: true,
@@ -453,9 +540,18 @@ fn devices() -> Vec<RemoteDevice> {
         RemoteDevice {
             id: "dev-fedcba9876543210".into(),
             name: "Tablet".into(),
+            kind: ClientKind::Android,
             created_ms: 1_790_766_538_443,
             last_seen_ms: None,
             connected: false,
+        },
+        RemoteDevice {
+            id: "dev-0f1e2d3c4b5a6978".into(),
+            name: "Workstation".into(),
+            kind: ClientKind::Desktop,
+            created_ms: 1_790_766_538_443,
+            last_seen_ms: Some(1_790_766_650_000),
+            connected: true,
         },
     ]
 }
@@ -556,6 +652,106 @@ fn responses() -> Vec<Sample> {
         ],
         fetched_at_ms: 1_790_766_538_443,
     };
+    let tokens = |input, output, cache_read, cache_creation| StatsTokens {
+        input,
+        output,
+        cache_read,
+        cache_creation,
+        total: input + output + cache_read + cache_creation,
+    };
+    let usage_stats = UsageStats {
+        generated_at_ms: 1_790_766_538_443,
+        period_days: 2,
+        tz_offset_min: 540,
+        sources: vec![
+            StatsSource {
+                harness: "claude-code".into(),
+                found: true,
+                files: 12,
+            },
+            StatsSource {
+                harness: "codex".into(),
+                found: false,
+                files: 0,
+            },
+        ],
+        totals: StatsTotals {
+            tokens: tokens(1_200, 3_400, 560_000, 78_000),
+            sessions: 3,
+        },
+        days: vec![
+            StatsDay {
+                date: "2026-10-19".into(),
+                tokens: StatsTokens::default(),
+                sessions: 0,
+                harnesses: vec![],
+            },
+            StatsDay {
+                date: "2026-10-20".into(),
+                tokens: tokens(1_200, 3_400, 560_000, 78_000),
+                sessions: 3,
+                harnesses: vec![StatsDayHarness {
+                    harness: "claude-code".into(),
+                    tokens: 642_600,
+                    sessions: 3,
+                }],
+            },
+        ],
+        by_model: vec![
+            StatsBucket {
+                name: "claude-opus-5-5".into(),
+                tokens: tokens(1_000, 3_000, 500_000, 70_000),
+                sessions: 2,
+                other: false,
+            },
+            StatsBucket {
+                name: "other".into(),
+                tokens: tokens(200, 400, 60_000, 8_000),
+                sessions: 1,
+                other: true,
+            },
+        ],
+        by_harness: vec![StatsBucket {
+            name: "claude-code".into(),
+            tokens: tokens(1_200, 3_400, 560_000, 78_000),
+            sessions: 3,
+            other: false,
+        }],
+        by_project: vec![
+            StatsProject {
+                name: "repo".into(),
+                project: Some("repo".into()),
+                tokens: tokens(1_000, 3_000, 500_000, 70_000),
+                sessions: 2,
+                other: false,
+            },
+            StatsProject {
+                name: "scratch".into(),
+                project: None,
+                tokens: tokens(200, 400, 60_000, 8_000),
+                sessions: 1,
+                other: false,
+            },
+        ],
+    };
+    let directory = DirectoryListing {
+        path: "/home/u".into(),
+        parent: Some("/home".into()),
+        home: "/home/u".into(),
+        is_git_repo: false,
+        entries: vec![
+            DirectoryEntry {
+                name: "repo".into(),
+                path: "/home/u/repo".into(),
+                is_git_repo: true,
+            },
+            DirectoryEntry {
+                name: "Documents".into(),
+                path: "/home/u/Documents".into(),
+                is_git_repo: false,
+            },
+        ],
+    };
     let models = HarnessModels {
         harness: "claude-code".into(),
         models: vec![
@@ -583,6 +779,7 @@ fn responses() -> Vec<Sample> {
     let prompted = ApiEventBody::Prompted {
         session: "orchestrator-C-1".into(),
         text: "hello".into(),
+        attachments: Vec::new(),
     };
     let cases = [
         (
@@ -590,6 +787,7 @@ fn responses() -> Vec<Sample> {
             ApiResponse::Pong {
                 host: "pc".into(),
                 version: "0.2.1".into(),
+                headless: true,
             },
         ),
         (
@@ -602,6 +800,12 @@ fn responses() -> Vec<Sample> {
             "project",
             ApiResponse::Project {
                 project: project_info(true),
+            },
+        ),
+        (
+            "branch_order",
+            ApiResponse::BranchOrder {
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (
@@ -619,6 +823,19 @@ fn responses() -> Vec<Sample> {
         ),
         ("accepted", ApiResponse::Accepted),
         (
+            "attachment_staged",
+            ApiResponse::AttachmentStaged {
+                attachment: de(attachment("shot.png", "image")),
+            },
+        ),
+        (
+            "attachment",
+            ApiResponse::Attachment {
+                attachment: de(attachment("notes.txt", "text")),
+                data_base64: "aGVsbG8=".into(),
+            },
+        ),
+        (
             "chats",
             ApiResponse::Chats {
                 chats: vec![chat_info("C-1", Some("Docs"))],
@@ -632,7 +849,52 @@ fn responses() -> Vec<Sample> {
         ),
         ("chat_opened", ApiResponse::ChatOpened { starting: true }),
         ("git_overview", ApiResponse::GitOverview { git }),
+        (
+            "branch_statuses",
+            ApiResponse::BranchStatuses {
+                statuses: BranchStatuses {
+                    default_branch: Some("main".into()),
+                    statuses: vec![
+                        BranchStatus {
+                            branch: "feature/a".into(),
+                            state: BranchState::Unmerged,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                        BranchStatus {
+                            branch: "feature/b".into(),
+                            state: BranchState::PrOpen,
+                            pr_number: Some(123),
+                            pr_url: Some("https://github.com/u/repo/pull/123".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/c".into(),
+                            state: BranchState::Merged,
+                            pr_number: Some(122),
+                            pr_url: Some("https://github.com/u/repo/pull/122".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/d".into(),
+                            state: BranchState::MergedWithChanges,
+                            pr_number: Some(121),
+                            pr_url: Some("https://github.com/u/repo/pull/121".into()),
+                        },
+                        BranchStatus {
+                            branch: "feature/e".into(),
+                            state: BranchState::Unknown,
+                            pr_number: None,
+                            pr_url: None,
+                        },
+                    ],
+                },
+            },
+        ),
         ("usage", ApiResponse::Usage { usage }),
+        (
+            "usage_stats",
+            ApiResponse::UsageStats { stats: usage_stats },
+        ),
+        ("directory", ApiResponse::Directory { directory }),
         (
             "agent_settings",
             ApiResponse::AgentSettings {
@@ -1149,6 +1411,10 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
         replaced: full.then(|| de(json!({"harness": "gone", "model": null, "effort": null}))),
         cwd: full.then(|| "/home/u/repo".into()),
         lost_acp_session_id: full.then(|| "acp-0".into()),
+        prompt_caps: full.then_some(PromptCaps {
+            image: true,
+            embedded_context: false,
+        }),
     };
     let mut out: Vec<(String, ApiEventBody)> = domain_events()
         .into_iter()
@@ -1206,6 +1472,26 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             ApiEventBody::Prompted {
                 session: "orchestrator-C-1".into(),
                 text: "<user_message>hi</user_message>".into(),
+                attachments: Vec::new(),
+            },
+        ),
+        (
+            "prompted/attachments".into(),
+            ApiEventBody::Prompted {
+                session: "orchestrator:C-1".into(),
+                text: "[yhtye:user_message]\n[yhtye:attachment] name=shot.png".into(),
+                attachments: vec![
+                    AttachmentDelivered {
+                        inbox_id: 5,
+                        id: "0123456789abcdef".into(),
+                        delivery: AttachmentDelivery::Native,
+                    },
+                    AttachmentDelivered {
+                        inbox_id: 5,
+                        id: "fedcba9876543210".into(),
+                        delivery: AttachmentDelivery::Path,
+                    },
+                ],
             },
         ),
         (
@@ -1218,6 +1504,13 @@ fn bodies() -> Vec<(String, ApiEventBody)> {
             "projects_changed".into(),
             ApiEventBody::ProjectsChanged {
                 project: "repo".into(),
+            },
+        ),
+        (
+            "branch_order_changed".into(),
+            ApiEventBody::BranchOrderChanged {
+                project: "repo".into(),
+                keys: vec!["/home/u/repo".into(), "feat/x".into()],
             },
         ),
         (
@@ -1310,6 +1603,7 @@ fn server_messages() -> Vec<Sample> {
                 ok: ApiResponse::Pong {
                     host: "pc".into(),
                     version: "0.2.1".into(),
+                    headless: false,
                 },
             }),
         ),
@@ -1330,8 +1624,14 @@ fn server_messages() -> Vec<Sample> {
 
 fn remote_http() -> Vec<Sample> {
     let request: PairRequest = de(json!({"code": "ABCD2345", "device_name": "Pixel 9"}));
+    let desktop: PairRequest = de(json!({
+        "code": "ABCD2345",
+        "device_name": "Workstation",
+        "kind": "desktop",
+    }));
     vec![
         sample("PairRequest", "pair", &request),
+        sample("PairRequest", "pair_desktop", &desktop),
         sample(
             "PairResponse",
             "pair",

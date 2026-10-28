@@ -77,25 +77,86 @@ button:disabled { cursor: default; }
   display: flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border-pill); border-radius: 5px;
   font: 500 11px/1 var(--font-mono); color: var(--text-quaternary);
 }
-.dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--branch-dot); }
-.dot-ok { background: var(--status-done-bar); }
-.dot-busy { background: var(--status-implementing-bar); }
-.dot-bad { background: var(--status-handling-bar); }
 
 .body { flex: 1; min-width: 0; min-height: 0; display: flex; }
 
-.rail {
-  width: 44px; flex: none; background: var(--surface-chrome); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 0;
+/* The rail is 44px wide in the layout (RAIL_WIDTH in ui/layout.ts; the sidebar's width limits
+   count on it). What grows is its panel, an overlay: while the pointer is over the rail, or the
+   keyboard focus is in it (`:focus-visible`, so a click that leaves the focus on a button does not
+   keep it open), or a project's menu is open, the panel widens over the sidebar. The labels are
+   always in the DOM and only shown here, so jsdom (no :hover) sees them too. They are shown at
+   once, but the panel clips them (overflow: hidden) until its width has grown: the pointer only
+   crossing the rail (shorter than the delay) shows nothing. The keyboard and the menu open it
+   without the delay. Collapsed, every row is a 28px square on the 44px column. */
+.rail { position: relative; width: 44px; flex: none; z-index: 20; }
+.rail-panel {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 44px; overflow: hidden;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  background: var(--surface-chrome); border-right: 1px solid var(--border);
+  transition: width 0.14s cubic-bezier(0.3, 0, 0.2, 1), box-shadow 0.14s;
 }
-.rail-button {
-  position: relative; width: 28px; height: 28px; border: 0; border-radius: 6px; background: none;
-  display: flex; align-items: center; justify-content: center; color: var(--text-dim);
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-panel { width: 232px; box-shadow: var(--rail-shadow); }
+.rail:hover:not(:has(:focus-visible, .row-menu)) .rail-panel { transition-delay: 0.12s; }
+
+.rail-row {
+  position: relative; width: 100%; height: 28px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0;
+  border: 0; border-radius: 6px; background: none; color: var(--text-dim); text-align: left; font-size: 12.5px; white-space: nowrap;
 }
-.rail-button:hover { background: var(--surface-hover); color: var(--text-tertiary); }
-.rail-button.active { background: var(--surface-chip); color: var(--accent); }
-.rail-button.active::before {
+.rail-row:hover { background: var(--surface-hover); color: var(--text-tertiary); }
+.rail-row.active { background: var(--surface-chip); color: var(--accent); }
+/* The amber marker bar outside the row (design §3.2): the view on screen, and the project on screen in the work view. */
+.rail-row.active::before {
   content: ""; position: absolute; left: -8px; top: 6px; width: 2px; height: 16px; border-radius: 1px; background: var(--accent);
+}
+.rail-row[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.rail-row[aria-disabled="true"]:hover { background: none; }
+.rail-row:focus-visible { outline-offset: -1px; }
+.rail-icon { width: 28px; height: 28px; flex: none; display: flex; align-items: center; justify-content: center; }
+.rail-label { display: none; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-label { display: block; }
+
+/* "プロジェクト": the heading keeps its height when collapsed (its icon alone, on the column), so the
+   dots do not move when the panel opens. */
+.rail-section { min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.rail-projects { position: relative; flex: 1 1 auto; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+.rail-heading {
+  display: flex; align-items: center; gap: 8px; height: 20px; flex: none; margin: 0; padding: 0;
+  font: 500 10px/1 var(--font-mono); letter-spacing: 0.14em; color: var(--text-faint); white-space: nowrap;
+}
+.rail-heading .icon { width: 28px; flex: none; color: var(--text-faintest); }
+.rail-heading .rail-label { flex: 0 1 auto; }
+.rail-empty { margin: 0; padding: 2px 0 0 36px; white-space: nowrap; font: 400 10.5px/1.6 var(--font-text); color: var(--text-dim); }
+/* The list reaches the panel's edges (its padding puts the rows back on the column) so that its
+   clipping leaves room for the active row's marker, 8px left of the row. */
+.rail-project-list {
+  flex: 1 1 auto; min-height: 0; margin: 0 -8px; padding: 0 8px 12px; list-style: none; display: flex; flex-direction: column; gap: 2px;
+  overflow-x: hidden; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain;
+}
+.rail-project-list::-webkit-scrollbar { display: none; }
+/* A long list fades out at its foot (its last row scrolls clear of the fade, the list's bottom padding). */
+.rail-projects::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 14px; pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--surface-chrome));
+}
+.rail-project { flex: none; }
+.rail-project-row { color: var(--text-quaternary); }
+/* The project on screen while another view is: the selected row, without the marker. */
+.rail-project-row.current:not(.active) { background: var(--surface-selected); color: var(--text-primary); }
+.rail-project-label .name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.rail-project-label .host-tag { flex: 0 1 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-dim); font: 400 10.5px/1.3 var(--font-mono); }
+.rail:is(:hover, :has(:focus-visible), :has(.row-menu)) .rail-project-label { display: flex; align-items: center; gap: 6px; }
+.rail-bottom { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+
+/* A project's status dot (rail, dashboard): lit green with a breathing halo while work is on in it,
+   hollow and neutral otherwise. The halo is a ring outside the dot, so the dot itself stays solid. */
+.project-dot { position: relative; width: 8px; height: 8px; flex: none; border-radius: 50%; border: 1.5px solid var(--ring-stopped); }
+.project-dot-running { border-color: var(--ring-running-head); background: var(--ring-running-head); }
+.project-dot-running::after {
+  content: ""; position: absolute; inset: -4.5px; border-radius: 50%; border: 3px solid var(--ring-running-track);
+  animation: ypulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-dot-running::after { opacity: 1; }
 }
 
 .statusbar {
@@ -131,9 +192,12 @@ button:disabled { cursor: default; }
   color: var(--status-handling-card-text);
 }
 
-.runs-view { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface-panel); }
-.runs-view p { font: 400 12.5px/1 var(--font-mono); color: var(--text-dim); }
-.main-empty { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--surface-chat); }
+.main-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: var(--surface-chat); }
+.main-empty-action {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border: 1px solid var(--border-card); border-radius: 6px;
+  background: var(--surface-inset); color: var(--text-muted); font-size: 12px;
+}
+.main-empty-action:hover { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text-primary); }
 
 /* ---- buttons -------------------------------------------------------------- */
 
@@ -169,13 +233,6 @@ button:disabled { cursor: default; }
   border-color: var(--ring-running-track); border-top-color: var(--ring-running-head);
   animation: yspin 0.9s linear infinite;
 }
-
-.open-form { display: flex; gap: 4px; padding: 6px 12px 0; }
-.open-form input {
-  flex: 1; min-width: 0; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border-card);
-  background: var(--surface-inset); font: 400 10.5px/1.5 var(--font-mono); color: var(--text-body);
-}
-.open-form input::placeholder { color: var(--text-dim); }
 
 .side-footer { margin-top: auto; padding: 8px 12px; border-top: 1px solid var(--border-subtle); display: flex; align-items: center; gap: 7px; }
 .host { font: 500 10.5px/1.4 var(--font-mono); color: var(--text-tertiary); }
@@ -248,6 +305,7 @@ button:disabled { cursor: default; }
   font: 400 11px/1.5 var(--font-mono); color: var(--text-faint);
 }
 .notice .notice-body { flex: 1 1 100%; color: var(--text-muted); }
+.notice .mono { min-width: 0; overflow-wrap: anywhere; }
 /* The orchestrator's message to a task's agent: the accent marks it as the orchestrator's (design §3.4),
    the bar and inset ground keep it apart from the agent's own plain text. */
 .orch-msg { border-left: 2px solid var(--accent); border-radius: 0 6px 6px 0; background: var(--surface-inset); padding: 7px 12px 8px; min-width: 0; }
@@ -283,10 +341,13 @@ details.tool { display: block; }
 }
 .group-card-header .icon { color: var(--text-faint); }
 .group-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-card-header .dim { font: 400 10.5px/1 var(--font-mono); }
+/* Group and task ids are names of up to 32 characters (orchestration-model §2.1): they give way
+   to the titles, cut short with an ellipsis (their title attribute has the whole). */
+.group-card-header .dim { flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 10.5px/1.4 var(--font-mono); }
 .group-card-body { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font: 400 11.5px/1.4 var(--font-mono); color: var(--text-quaternary); }
 .group-card-row { display: flex; align-items: center; gap: 8px; }
-.group-card-row .n { color: var(--text-faint); }
+.group-card-row .n { flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+.group-card-row-title { min-width: 0; overflow-wrap: anywhere; }
 .tone-icon { flex: none; }
 .tone-icon-waiting { color: var(--text-faint); }
 .tone-icon-implementing { color: var(--status-implementing-bar); }
@@ -330,9 +391,66 @@ details.tool { display: block; }
 .mention:hover { background: var(--surface-hover-strong); }
 .mention .at { color: var(--accent); flex: none; }
 .mention .x { color: var(--text-dim); }
-.mention .label { overflow: hidden; text-overflow: ellipsis; }
+.mention-id { flex: 0 1 auto; min-width: 3ch; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
+.mention .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .composer-hint { width: 100%; display: flex; align-items: center; gap: 6px; font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim); }
 .composer-hint .icon { flex: none; }
+/* The + (attach files) at the text's lower left, centred on the 28px send button like the text's first row. */
+.composer-attach { margin-bottom: 2px; }
+/* Files dragged over the composer: an accent ring says it takes them. */
+.composer-dragging { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+/* ---- attachments: the composer's and a sent message's, equal square tiles ---- */
+.composer-attachments, .msg-attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+.msg-attachments { justify-content: flex-end; }
+/* A user message with attachments: the text's bubble, then its tiles below it, both on the right. */
+.msg-user-stack { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.attachment-tile {
+  position: relative; flex: none; width: 84px; height: 84px; overflow: hidden;
+  border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-card);
+}
+.attachment-tile-failed { border-color: var(--status-handling-card-border); }
+.attachment-face { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; }
+button.attachment-face { cursor: zoom-in; }
+button.attachment-face:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+.attachment-thumb { display: block; width: 100%; height: 100%; object-fit: cover; }
+.attachment-file {
+  width: 100%; height: 100%; padding: 10px 6px 6px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  color: var(--text-muted);
+}
+.attachment-ext { font: 600 10px/1 var(--font-mono); letter-spacing: 0.04em; color: var(--text-secondary); }
+.attachment-name {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 9.5px/1.3 var(--font-mono); color: var(--text-faint);
+}
+.attachment-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--surface-base) 55%, transparent); color: var(--text-secondary);
+}
+.attachment-overlay-failed { background: color-mix(in srgb, var(--status-handling-card-bg) 70%, transparent); color: var(--status-handling-fg); }
+/* Upper left: how it reaches the agent (native: the model gets it; path: a saved file it reads). */
+.attachment-delivery {
+  position: absolute; top: 4px; left: 4px; width: 18px; height: 18px; border-radius: 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--surface-base) 80%, transparent); color: var(--text-secondary);
+}
+.attachment-delivery-native { color: var(--accent); }
+.icon-button.attachment-remove {
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: color-mix(in srgb, var(--surface-base) 80%, transparent); color: var(--text-secondary);
+}
+.icon-button.attachment-remove:hover:not(:disabled) { background: var(--surface-hover-strong); color: var(--text-primary); }
+/* An image shown large: Esc, the × or a click beside it closes it. */
+.attachment-viewer { z-index: 60; cursor: zoom-out; }
+.attachment-viewer-body { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 8px; cursor: default; }
+.attachment-viewer-body img {
+  max-width: 90vw; max-height: calc(90vh - 28px); object-fit: contain; border-radius: 6px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+}
+.attachment-viewer-body figcaption { font: 400 11px/1.4 var(--font-mono); color: var(--text-secondary); }
+.icon-button.attachment-viewer-close {
+  position: absolute; top: 16px; right: 16px; width: 32px; height: 32px;
+  background: var(--surface-chip); color: var(--text-primary);
+}
 /* Below the composer, right-aligned: the orchestrator's context meter and the compact button. */
 .context-bar {
   display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; padding-top: 6px;
@@ -358,7 +476,7 @@ details.tool { display: block; }
 /* An absolutely positioned box is clipped and scrolled by the scroll container that is its
    containing block, and by nothing else. Without this, the .sr-only labels inside a long list
    stay at their place in the page, below the window, and make the whole page scrollable. */
-.scroll, .side-list, .settings-body, .picker-list, .bg-list, .project-options, .md pre, .md table { position: relative; }
+.scroll, .side-list, .settings-body, .picker-list, .rail-project-list, .dashboard-scroll, .md pre, .md table { position: relative; }
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
   background: rgba(8, 7, 6, 0.72);
@@ -384,7 +502,11 @@ details.tool { display: block; }
 .settings-head {
   flex: none; display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border);
 }
-.settings-title { margin: 0; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+.settings-title { flex: none; margin: 0; white-space: nowrap; font: 600 14px/1.4 var(--font-text); color: var(--text-primary); }
+/* A remote host on screen: whose settings these are (a long name gives way, the heading does not). */
+.settings-host { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font: 400 11.5px/1.5 var(--font-mono); color: var(--text-muted); white-space: nowrap; }
+.settings-host-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.settings-head .scope-toggle { flex: none; }
 .settings-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 20px 32px; }
 .scope-toggle { display: flex; border: 1px solid var(--border-card); border-radius: 5px; overflow: hidden; }
 .scope-toggle button {
@@ -478,7 +600,7 @@ details.tool { display: block; }
   display: flex; align-items: center; gap: 9px; min-width: 0;
   font: 400 10.5px/1.5 var(--font-mono); color: var(--text-dim);
 }
-.group-id { flex: none; font-weight: 500; color: var(--text-muted); }
+.group-id { flex: 0 1 auto; min-width: 4ch; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--text-muted); }
 .group-branches { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .group-branches .icon { flex: none; }
 .group-count { display: inline-flex; align-items: center; gap: 3px; flex: none; color: var(--text-muted); }
@@ -512,7 +634,10 @@ details.tool { display: block; }
 .task-card-done, .task-card-cancelled { background: var(--surface-card-muted); border-color: var(--border-muted); gap: 6px; }
 .task-card-handling { background: var(--status-handling-card-bg); border-color: var(--status-handling-card-border); }
 .task-header { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.task-id { font: 500 11px/1 var(--font-mono); color: var(--text-muted); flex: none; }
+.task-id {
+  flex: 0 1 auto; min-width: 4ch; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 11px/1.4 var(--font-mono); color: var(--text-muted);
+}
 .task-title { font-size: 12.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .task-title:hover { color: var(--accent-hover); }
 .task-card-done .task-title, .task-card-cancelled .task-title { color: var(--text-quaternary); }
@@ -603,6 +728,8 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .tab-group.active { background: var(--surface-chip); }
 .tab-group .tab { background: none; padding-right: 3px; }
 .tab-group.active .tab { color: var(--text-primary); }
+/* A long task name is cut short (the button's label and title have the whole). */
+.tab-label { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
 .tab-group .tab-close { width: 18px; height: 18px; margin-right: 2px; border-radius: 4px; }
 .bottom-meta { display: inline-flex; align-items: center; gap: 5px; font: 400 10.5px/1 var(--font-mono); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; }
 .bottom-meta .icon { flex: none; }
@@ -625,9 +752,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .graph-row > svg { position: absolute; left: 0; top: 0; height: 28px; overflow: visible; }
 .graph-sha { font: 500 10.5px/1 var(--font-mono); color: var(--text-faint); flex: none; }
 .graph-subject { font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.graph-badges { margin-left: auto; display: flex; gap: 4px; flex: none; }
+/* The badges keep their width (up to 60% of the row; then they share it, each cut short) and the subject gives way. */
+.graph-badges { margin-left: auto; display: flex; gap: 4px; flex: none; min-width: 0; max-width: 60%; }
 .git-badge {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 4ch; max-width: 24ch;
   padding: 1px 6px; border-radius: 3px; background: var(--surface-chip-dim);
   font: 500 10px/1.5 var(--font-mono); color: var(--text-faint); white-space: nowrap;
 }
@@ -635,7 +763,9 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .git-badge-reviewing { background: var(--git-badge-reviewing-bg); color: var(--git-badge-reviewing-fg); }
 .git-badge-handling { background: var(--git-badge-handling-bg); color: var(--git-badge-handling-fg); }
 .git-badge-done { background: var(--git-badge-done-bg); color: var(--git-badge-done-fg); }
-.git-badge-head { color: var(--text-quaternary); }
+.git-badge-head { color: var(--text-quaternary); flex: none; }
+.git-badge .icon { flex: none; }
+.git-badge-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* Markdown in agent messages (src/ui/Markdown.tsx) */
 .msg-md { white-space: normal; }
@@ -718,6 +848,23 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .remote-heading { margin: 4px 0 0; font: 600 12px/1.4 var(--font-text); color: var(--text-muted); }
 .remote-device { flex-wrap: wrap; }
 .remote-device .secret-name { overflow-wrap: anywhere; min-width: 0; }
+
+/* Settings › 接続先 (HostsSettingsSection): the form that pairs with a host, and the hosts paired with. */
+.host-form { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.host-form > * { max-width: 100%; }
+.host-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; font: 400 11.5px/1.4 var(--font-text); color: var(--text-muted); }
+.host-form > .host-field { width: min(560px, 100%); }
+.host-form > .host-field .agent-search { width: 100%; box-sizing: border-box; }
+.host-fields { display: flex; flex-wrap: wrap; gap: 12px; }
+.host-fields .host-field { flex: 1 1 200px; }
+.host-fields .host-field-port { flex: 0 1 100px; }
+.host-fields .host-field-code { flex: 0 1 160px; }
+.host-fields .agent-search { width: 100%; box-sizing: border-box; }
+.host-problem { align-items: flex-start; }
+.host-problem > span { min-width: 0; overflow-wrap: anywhere; }
+.host-detail { display: block; margin-top: 2px; color: var(--text-dim); font: 400 10.5px/1.5 var(--font-mono); }
+.remote-host .client-kind { color: var(--text-dim); }
+.host-note { flex-basis: 100%; margin: 0; padding-left: 24px; font: 400 11px/1.6 var(--font-mono); color: var(--status-handling-fg); }
 
 /* ---- branches tree (Stage 8) ---------------------------------------------- */
 

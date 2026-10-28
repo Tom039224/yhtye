@@ -37,7 +37,6 @@ What works:
 What is not done, and limitations:
 
 - Linux only (see below). No installers, no auto-update.
-- The history ("runs") view is on hold and shows an empty state.
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
@@ -131,6 +130,44 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    to the orchestrator. Tasks work in worktrees outside your repository under the data directory
    (`~/.local/share/io.github.tom039224.yhtye`, or `YHTYE_DATA_DIR`).
 
+## Headless mode (no GUI)
+
+On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
+option of the same binary). It is for working with that machine from the Android app.
+
+```sh
+yhtye --headless -d [--port N] [--data-dir DIR] [--model NAME]   # run as a background daemon (it survives closing the terminal; log: <data dir>/headless.log)
+yhtye --headless [...]                                           # run in the foreground (stop with Ctrl+C)
+yhtye remote pair | devices | revoke <id> | status | stop        # ask the running headless instance (over a Unix domain socket)
+```
+
+To manage it as a service instead, the Arch package also installs a systemd user service (optional:
+`systemctl --user enable --now yhtye-headless`).
+
+Prerequisites: you are logged in to Tailscale and the node is **not a tagged node**. A server without a GUI often has no
+Secret Service keyring; then secret environment variables cannot be used (a warning is logged at start). Under systemd,
+make sure the agents' CLIs are on the service's `PATH`. Steps and details are in [`SETUP.md`](SETUP.md#gui-の無いマシンで動かす-ヘッドレス) (Japanese).
+
+## Connecting from the PC to another host
+
+The desktop app can also be a **client** of a Yhtye running on another PC or on a headless server. That host's projects are listed after this
+PC's own in the project pull-down (with a **remote icon** after the name); picking one makes the screen drive that host's orchestrator, tasks and git.
+As with the Android app, it goes over Tailscale and only reaches hosts of the same Tailscale user.
+
+1. On the host, run Yhtye, turn remote access on and show a pairing code: "Settings → Remote access → Add device" in the desktop app, or
+   `yhtye remote pair` on a headless host.
+2. In this PC's Yhtye open "Settings → Connections" (the "接続先" section), and paste the `yhtye://pair?…` link (clicking such a link opens the same screen),
+   or type the host, port and code. Check "this PC's name" (the name it is listed under on the host) and press "接続" (Connect). Nothing is sent until you press it.
+3. Once connected, the host's projects appear in the pull-down. The "open repository" box opens a path on the host that is on screen.
+
+- The list under the form shows each host's state, and lets you reconnect to one that is down, or delete it. A host that removed this device shows
+  "このホストから外されました" (removed by the host). Removing the device from the host's own list is done on that host.
+- While a remote host is on screen, settings such as "Agents" are that host's (its name is next to the heading); its "Remote access" (its own server,
+  adding and revoking devices) can only be managed on that host itself.
+- Without a usable OS keyring the device token cannot be stored, and you have to pair again after restarting Yhtye (the screen says so).
+
+Steps and troubleshooting are in [`SETUP.md`](SETUP.md#pc-から別のホストに接続する) (Japanese).
+
 ## Android app
 
 A client for operating the Yhtye running on your PC from an Android device over Tailscale (Kotlin + Jetpack Compose,
@@ -142,7 +179,7 @@ notifies you when the work is done and it is your turn. Design: [`docs/planned/a
 
 - The PC and the device are connected with the **same Tailscale account**. Yhtye on the PC listens only on Tailscale
   addresses and accepts only devices of the same user.
-- Yhtye (the desktop app) is running on the PC; the app connects only while it runs.
+- Yhtye (the desktop app, or `yhtye --headless` without a GUI) is running on the PC; the app connects only while it runs.
 - Android 8.0 (API 26) or later.
 
 ### Installing
@@ -151,7 +188,7 @@ notifies you when the work is done and it is your turn. Design: [`docs/planned/a
    `yhtye-android-<version>.apk` from an `android-v…` release.
 2. Open the APK. Android asks you to allow installing unknown apps for the browser (or file manager) you used; allow it and install.
 3. On first start, turn on "Settings → Remote access" in Yhtye on the PC to show a QR code, and scan it with the app's
-   "Scan QR code" (or use "Enter manually") to pair.
+   "Scan QR code" (or use "Enter manually") to pair. On a server without a GUI, `yhtye remote pair` draws the QR code in the terminal.
 
 The APK is signed with the author's key. An update is a new APK signed with the same key installed over the old one;
 your pairing and other data are kept.
@@ -221,6 +258,10 @@ first start.
 | [`docs/planned/`](docs/planned/) | Planned features |
 
 The UI design originated in Claude Design; the original and the spec are in [`docs/design/`](docs/design/).
+
+## Acknowledgements
+
+The usage statistics (the token usage dashboard) are inspired by [agentsview](https://github.com/kenn-io/agentsview) (MIT, Kenn Software LLC). Where the agents keep their session logs and how to read them follows its parsers; the implementation is our own, in Rust.
 
 ## License
 

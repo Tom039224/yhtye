@@ -5,15 +5,19 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import io.github.tom039224.yhtye.YhtyeTheme
+import io.github.tom039224.yhtye.ui.panels.MainView
 import io.github.tom039224.yhtye.shared.api.generated.AgentEvent
 import io.github.tom039224.yhtye.shared.api.generated.AgentOutput
 import io.github.tom039224.yhtye.shared.api.generated.ApiCommand
@@ -30,6 +34,9 @@ import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
 import io.github.tom039224.yhtye.shared.sync.orchestratorKey
 import io.github.tom039224.yhtye.ui.conversation.NO_CHAT_HINT
+import io.github.tom039224.yhtye.ui.conversation.pngBytes
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -45,14 +52,14 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * 中央の会話: 本物の同期層 ([AppStore]) を偽のコアの上で動かし、画面の操作がコアへの要求になることを確かめる
  * (楽観的に変えない。表示はコアの状態とイベントから)。
  */
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(qualifiers = "w400dp-h800dp")
 class ConversationScreenTest {
     @get:Rule
@@ -82,7 +89,7 @@ class ConversationScreenTest {
         sync.start()
         rule.setContent {
             YhtyeTheme(darkTheme = true) {
-                MainScreen("device", sync, onReconnect = {}, onUnpair = {}, gestureInsets = WindowInsets(0))
+                MainScreen("device", sync, onReconnect = {}, onUnpair = {}, gestureInsets = WindowInsets(0), initialView = MainView.Work)
             }
         }
         scope.launch { sync.openProject(PROJECT.path) }
@@ -129,6 +136,33 @@ class ConversationScreenTest {
         assertEquals("Please also add a README", sent.text)
         rule.waitForIdle()
         assertEquals("", rule.onNodeWithTag("composer-input").fetchSemanticsNode().config[SemanticsProperties.EditableText].text)
+    }
+
+    @Test
+    fun `a staged attachment shows as a tile and is sent with the message even without text`() {
+        open()
+        sync.attachments.stage(PROJECT.id, chat.id, "shot.png", "image/png", pngBytes())
+        settle { core.attachments.isNotEmpty() && rule.onAllNodes(hasTestTag("attachment-thumb")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("モデルに直接渡す (native) · 送信時に確定").assertExists()
+
+        rule.onNodeWithTag("composer-send").performClick()
+        settle { core.callsOf<ApiCommand.SendUserMessage>().isNotEmpty() }
+        val sent = core.callsOf<ApiCommand.SendUserMessage>().single()
+        assertEquals("", sent.text)
+        assertEquals(listOf("att-1"), sent.attachments)
+        settle { rule.onAllNodes(hasTestTag("composer-attachments")).fetchSemanticsNodes().isEmpty() }
+    }
+
+    @Test
+    fun `the x on a tile discards the staged attachment`() {
+        open()
+        sync.attachments.stage(PROJECT.id, chat.id, "notes.bin", "application/octet-stream", byteArrayOf(1, 2, 3))
+        settle { core.attachments.isNotEmpty() }
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("notes.bin を外す").performClick()
+        settle { core.callsOf<ApiCommand.DiscardAttachment>().isNotEmpty() }
+        assertTrue(core.attachments.isEmpty())
+        rule.onNodeWithTag("composer-attachments").assertDoesNotExist()
     }
 
     @Test
@@ -234,6 +268,29 @@ class ConversationScreenTest {
         rule.onNodeWithTag("menu-delete").performClick()
         rule.onNodeWithText("実行中のため削除できません。先に停止してください。").assertExists()
         rule.onNodeWithTag("delete-confirm").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sleep is offered for the idle orchestrator and sends the command`() {
+        open()
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").performClick()
+        settle { core.callsOf<ApiCommand.SleepChat>().isNotEmpty() }
+        assertEquals(chat.id, core.callsOf<ApiCommand.SleepChat>().single().chat)
+    }
+
+    @Test
+    fun `sleep is hidden for a sleeping chat`() {
+        open(recording.end.copy(sessions = recording.end.sessions.filter { it.sessionKey != orchestrator }))
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").assertDoesNotExist()
+    }
+
+    @Test
+    fun `sleep is disabled while the turn runs`() {
+        open(working())
+        rule.onNodeWithTag("chat-menu").performClick()
+        rule.onNodeWithTag("menu-sleep").assertIsNotEnabled()
     }
 
     @Test

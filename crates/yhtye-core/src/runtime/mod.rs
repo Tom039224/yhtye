@@ -4,6 +4,7 @@
 
 mod agent_args;
 mod chats;
+mod commit_agents;
 mod core;
 mod driver;
 mod emitter;
@@ -12,6 +13,7 @@ mod launch;
 mod messages;
 mod orchestration;
 mod port;
+mod prompt;
 mod repeats;
 mod sessions;
 mod transcript;

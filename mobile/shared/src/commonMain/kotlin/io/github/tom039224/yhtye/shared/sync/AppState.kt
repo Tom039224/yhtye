@@ -1,9 +1,11 @@
 package io.github.tom039224.yhtye.shared.sync
 
 import io.github.tom039224.yhtye.shared.api.generated.ClientDevice
+import io.github.tom039224.yhtye.shared.api.generated.BranchStatuses
 import io.github.tom039224.yhtye.shared.api.generated.GitOverview
 import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.api.generated.UsageReport
+import io.github.tom039224.yhtye.shared.api.generated.UsageStats
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 
 /** [AppStore] が公開するアプリ全体の状態 (不変。`AppStore.state` の値)。PC の `AppState` に当たる。 */
@@ -20,7 +22,11 @@ data class AppState(
     val busy: Busy = Busy(),
     /** 表示中のプロジェクトの git の概要 (ブランチの木・会話のヘッダ)。 */
     val git: GitView? = null,
+    /** 表示中のプロジェクトのブランチの順 (読むまでは null)。 */
+    val branchOrder: BranchOrderView? = null,
     val usage: UsageView = UsageView(),
+    /** ホストのエージェントの利用統計 (ダッシュボード。コアの `get_usage_stats`)。 */
+    val stats: StatsView = StatsView(),
     val host: HostView = HostView(),
     /** ペアリング済みの端末 (コアの `list_clients`。並びはコアのまま)。左パネルの下端でホストの下に出す。 */
     val clients: List<ClientDevice> = emptyList(),
@@ -43,7 +49,14 @@ data class GitView(
      * 読み直すまでは作業ツリーが一覧に無くても「見つからない」にしない ([placeOf] の `awaiting`)。
      */
     val awaiting: List<String> = emptyList(),
+    /** ブランチごとの PR / マージの状態 (BRANCHES の木の点)。 */
+    val statuses: BranchStatuses? = null,
+    /** [statuses] を最後に読んだ時刻 (エポックからのミリ秒)。 */
+    val statusesAt: Long = 0,
 )
+
+/** プロジェクトのブランチの順 (コアのリスト。新しく使った順): 作業ツリーのパスと、作業ツリーの無いブランチの名前。 */
+data class BranchOrderView(val project: String, val keys: List<String>)
 
 /** サブスクリプションの使用量 (コアがハーネスから読む)。 */
 data class UsageView(
@@ -53,6 +66,31 @@ data class UsageView(
     val loading: Boolean = false,
 )
 
+/**
+ * ホストのエージェントのトークン使用量の統計 (コアが各エージェントのセッションログから数える)。使用量のメーター ([UsageView]) と
+ * 違い、期間 ([days]) を選べる。読み直している間も前の [report] を持ち続ける (画面が空にならない)。
+ */
+data class StatsView(
+    val report: UsageStats? = null,
+    /** 最後の読み取りが失敗した理由 (読み直し始めると消える。[report] は前のまま残す)。 */
+    val error: String? = null,
+    val loading: Boolean = false,
+    /** 選ばれている期間 (日数。[STATS_PERIODS] のどれか、または 1–[MAX_STATS_DAYS])。 */
+    val days: Int = DEFAULT_STATS_DAYS,
+) {
+    /** [report] が選ばれている期間のものでない (期間を変えて読み込み中、または読み込みに失敗した)。 */
+    val isStale: Boolean get() = report != null && report.periodDays != days.toLong()
+}
+
+/** 画面が出す期間 (日数)。コアは 1–[MAX_STATS_DAYS] を受ける。 */
+val STATS_PERIODS: List<Int> = listOf(7, 30, 90, 365)
+
+/** 期間を選ぶ前の既定。コアの既定でもある。 */
+const val DEFAULT_STATS_DAYS: Int = 30
+
+/** コアが受ける期間の上限。 */
+const val MAX_STATS_DAYS: Int = 366
+
 /** コアが動いているマシン (ping の最後の応答)。 */
 data class HostView(
     /** ホスト名 (最初の応答までは null)。 */
@@ -61,6 +99,8 @@ data class HostView(
     val lastPingAt: Long? = null,
     /** PC の Yhtye の版 (`0.1.0`)。ping が版を返さない古い PC では null (互換性の判定は「不明」)。 */
     val version: String? = null,
+    /** PC の Yhtye が GUI 無しで動いている (`yhtye --headless`)。ping が答えない古い PC では false (GUI のあるホスト扱い)。 */
+    val headless: Boolean = false,
 )
 
 const val MAX_ERRORS: Int = 5

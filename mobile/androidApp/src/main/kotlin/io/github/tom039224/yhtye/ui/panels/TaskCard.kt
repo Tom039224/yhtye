@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -372,8 +371,16 @@ private fun CardBody(
     ) {
         Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
             TaskStatusChip(task, tone)
-            Text(task.id, color = idColor, fontFamily = MonoFont, fontSize = 11.5.sp, modifier = Modifier.padding(start = 8.dp))
-            Spacer(Modifier.weight(1f))
+            // 名前は 32 文字まで: ボタンを押し出さず省略記号で切る (読み上げは全体)
+            Text(
+                task.id,
+                color = idColor,
+                fontFamily = MonoFont,
+                fontSize = 11.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 8.dp).testTag("task-id-${task.id}"),
+            )
             IconButton(
                 onClick = onMention,
                 modifier = Modifier.size(40.dp).semantics { contentDescription = "${task.id} をオーケストレータへ引用" }.testTag("mention-button-${task.id}"),

@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 
 use super::driver::Driver;
 use super::launch::FirstPrompts;
+use super::prompt::Prompt;
 use super::sessions::{AgentPick, StoredSession};
 use crate::acp::AgentError;
+use crate::attachments::AttachmentMeta;
 use crate::domain::{
-    COMPACT_PROMPT, Chat, DomainCommand, INTERNAL_BRANCH_PREFIX, InboxItem, InboxKind,
+    COMPACT_PROMPT, Chat, DomainCommand, INTERNAL_BRANCH_PREFIX, InboxEntry, InboxItem, InboxKind,
     OrchestratorResume, ToolError, TurnOutcome, chat_of_session, check_target_branch,
-    lost_session_note, orchestrator_session, render_batch,
+    lost_session_note, orchestrator_session,
 };
 use crate::git::{BranchWorktreeError, CreateBranchError};
 use crate::mcp::{SessionBinding, ToolCall};
@@ -72,12 +74,15 @@ impl Driver {
         &mut self,
         chat: String,
         text: String,
+        attachments: Vec<AttachmentMeta>,
     ) -> Result<(), ToolError> {
         self.chat_worktree(&chat)?;
-        match self
-            .execute(DomainCommand::UserMessage { chat, text })
-            .await
-        {
+        let command = DomainCommand::UserMessage {
+            chat,
+            text,
+            attachments,
+        };
+        match self.execute(command).await {
             Some(Err(e)) => Err(e),
             _ => Ok(()),
         }
@@ -122,7 +127,21 @@ impl Driver {
         }
         self.sessions.stop(&key);
         self.orchestrators.forget(&chat);
+        self.remove_attachments(&chat).await;
         Ok(())
+    }
+
+    /// Deletes the files attached to the messages of a deleted chat. Failing to
+    /// is only logged: the chat is gone either way.
+    async fn remove_attachments(&self, chat: &str) {
+        let store = self.cfg.attachment_store();
+        let (project, chat) = (self.cfg.project.clone(), chat.to_string());
+        let removed = tokio::task::spawn_blocking(move || store.remove_chat(&project, &chat)).await;
+        match removed {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!("could not delete the attachments of a chat: {e}"),
+            Err(e) => tracing::warn!("deleting the attachments of a chat failed: {e}"),
+        }
     }
 
     /// Sends [`COMPACT_PROMPT`] as is (not as an inbox batch, so the harness
@@ -156,6 +175,51 @@ impl Driver {
                 "could not send {COMPACT_PROMPT} to the orchestrator of chat {chat}: {e}"
             ))),
         }
+    }
+
+    /// Stops the orchestrator session of `chat`: its process ends and its token
+    /// is revoked, but its stored session is kept, so the next message to the
+    /// chat starts it again with `session/load`. Refused while the orchestrator
+    /// is starting or in a turn (stop the turn first; a sleep never cuts one
+    /// off). A session that was never started is already asleep: accepted.
+    pub(super) fn sleep_chat(&mut self, chat: &str) -> Result<(), ToolError> {
+        self.check_sleepable(chat)?;
+        self.sessions.stop(&orchestrator_session(chat));
+        Ok(())
+    }
+
+    /// Puts every chat to sleep like [`Self::sleep_chat`], all or none: if any
+    /// chat's orchestrator is starting or in a turn the sleep is refused (for
+    /// the first such chat) and no session is stopped.
+    pub(super) fn sleep_project(&mut self) -> Result<(), ToolError> {
+        let chats: Vec<String> = self.state.chats.iter().map(|c| c.id.clone()).collect();
+        for chat in &chats {
+            self.check_sleepable(chat)?;
+        }
+        for chat in &chats {
+            self.sessions.stop(&orchestrator_session(chat));
+        }
+        Ok(())
+    }
+
+    /// Whether `chat` may sleep now: `not_found` for an unknown chat,
+    /// `invalid_state` while its orchestrator is starting or in a turn.
+    fn check_sleepable(&self, chat: &str) -> Result<(), ToolError> {
+        if self.state.chat(chat).is_none() {
+            return Err(ToolError::not_found(format!("no chat {chat}")));
+        }
+        let key = orchestrator_session(chat);
+        if self.sessions.is_starting(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is starting; sleep it once it is idle"
+            )));
+        }
+        if self.sessions.is_live(&key) && !self.sessions.is_idle(&key) {
+            return Err(ToolError::invalid_state(format!(
+                "the orchestrator of chat {chat} is working; stop its turn before sleeping the chat"
+            )));
+        }
+        Ok(())
     }
 
     /// The worktree of `chat` if its directory still exists: `not_found` for
@@ -324,20 +388,24 @@ impl Driver {
     /// session cannot be restored).
     pub(super) fn launch_orchestrator(&mut self, chat: &str, plan: StartPlan) {
         let key = orchestrator_session(chat);
-        let items: Vec<InboxItem> = self.state.inbox_of(chat).map(|e| e.item.clone()).collect();
-        let up_to = self.state.inbox_of(chat).last().map(|e| e.id);
+        let entries: Vec<InboxEntry> = self.state.inbox_of(chat).cloned().collect();
+        let up_to = entries.last().map(|e| e.id);
         let fallback = plan.resume.is_some().then(|| {
-            let lost = InboxItem::new(
-                InboxKind::Restarted,
-                &[],
-                lost_session_note(&self.state, chat),
-            );
-            render_batch(&[vec![lost], items.clone()].concat())
+            let lost = InboxEntry {
+                id: 0,
+                chat: chat.to_string(),
+                item: InboxItem::new(
+                    InboxKind::Restarted,
+                    &[],
+                    lost_session_note(&self.state, chat),
+                ),
+            };
+            Prompt::Inbox([vec![lost], entries.clone()].concat())
         });
-        let queued = if items.is_empty() {
+        let queued = if entries.is_empty() {
             VecDeque::new()
         } else {
-            VecDeque::from([render_batch(&items)])
+            VecDeque::from([Prompt::Inbox(entries)])
         };
         let binding = SessionBinding::orchestrator(key.clone(), self.cfg.project.clone(), chat);
         let first = FirstPrompts { queued, fallback };
@@ -431,8 +499,9 @@ impl Driver {
             return;
         };
         if self.sessions.is_idle(&key) {
-            let items: Vec<_> = self.state.inbox_of(chat).map(|e| e.item.clone()).collect();
-            self.sessions.queue_and_deliver(&key, render_batch(&items));
+            let entries: Vec<InboxEntry> = self.state.inbox_of(chat).cloned().collect();
+            self.sessions
+                .queue_and_deliver(&key, Prompt::Inbox(entries));
             let chat = chat.to_string();
             self.execute(DomainCommand::InboxDelivered { chat, up_to })
                 .await;

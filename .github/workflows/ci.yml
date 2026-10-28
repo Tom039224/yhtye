@@ -67,6 +67,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # Builds and tests the Android client (mobile/) the way a developer does: `./gradlew build` runs the
+  # unit tests (shared on the JVM, the Compose screens on Robolectric), Android lint and the debug and
+  # release builds. It needs no signing key: without the YHTYE_* variables the release APK is simply
+  # left unsigned (the signed build is only made by android-release.yml on a tag). The tests that need a
+  # real PC-side server are skipped unless YHTYE_REAL_SERVER_TEST=1, which is not set here. It is a job
+  # of its own so that it runs next to the others. The Gradle reports are kept only when the build fails.
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      # Installs the command-line tools and accepts the licenses; Gradle (AGP) downloads the platform and
+      # the build tools it needs.
+      - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the long-gone `tools` package, which makes sdkmanager fail.
+          packages: platform-tools
+      # Caches the Gradle user home (dependencies, wrapper) between runs; only the default branch writes it.
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Build and test
+        working-directory: mobile
+        run: ./gradlew --no-daemon build
+      - name: Upload the reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-reports
+          path: |
+            mobile/**/build/reports
+            mobile/**/build/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   rust:
     runs-on: ubuntu-latest
     env:

@@ -19,6 +19,7 @@
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
+//!   "prompt_capabilities": {"image": true, "embedded_context": true},  // advertised in `initialize` (default: none)
 //!   "steering": false,          // true: advertise and serve `_session/steering`
 //!   "steer_continues": false,   // true (with "steering"): a steered turn goes on
 //!   "turns": [
@@ -62,6 +63,15 @@
 //! With no turn running it answers `promptRequired` when asked to by
 //! `_meta.steering.idleBehavior`, else `startedNewTurn` and runs the text as a
 //! turn of its own (whose result goes nowhere).
+//!
+//! Prompt blocks: `prompt_capabilities` is what the agent says it accepts in
+//! `initialize` (`image`, `audio`, `embedded_context`; absent = none, like an
+//! agent that only reads text). `"report_blocks"` reports the content blocks of
+//! the prompt it is answering as one message, `blocks:` and a JSON array with
+//! one entry per block: `{"type":"text","text":…}`, `{"type":"image","mime":…,
+//! "bytes":<decoded size>,"sha":<fnv1a hex of the decoded data>,"uri":…}` or
+//! `{"type":"resource","mime":…,"text":…,"uri":…}`. Only the text blocks join
+//! the prompt text a turn is matched on (`match`).
 //!
 //! MCP actions: `{"mcp_call": {"tool": "create_group", "args": {"title": "x"}}}`
 //! and `"mcp_list"` use the first HTTP MCP server passed in `session/new`.
@@ -131,6 +141,9 @@ pub struct Scenario {
     /// `session/load` response and at the start of every turn.
     #[serde(default)]
     pub vendor_notifications: Vec<VendorNotification>,
+    /// What `initialize` advertises as `promptCapabilities` (none by default).
+    #[serde(default)]
+    pub prompt_capabilities: PromptCapabilitiesScript,
     /// Advertise and serve `_session/steering`.
     #[serde(default)]
     pub steering: bool,
@@ -139,6 +152,18 @@ pub struct Scenario {
     pub steer_continues: bool,
     #[serde(default)]
     pub turns: Vec<Turn>,
+}
+
+/// The `promptCapabilities` the agent advertises.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PromptCapabilitiesScript {
+    #[serde(default)]
+    pub image: bool,
+    #[serde(default)]
+    pub audio: bool,
+    #[serde(default)]
+    pub embedded_context: bool,
 }
 
 /// The JSON-RPC error `fail_at` answers with.
@@ -211,6 +236,8 @@ pub enum Action {
     ReportClientInfo,
     /// Reports `meta:<json>` (the `_meta` received in `session/new` / `session/load`).
     ReportMeta,
+    /// Reports `blocks:<json>`: the content blocks of the prompt (see above).
+    ReportBlocks,
     /// Writes `text` to `path` (relative to the working directory).
     WriteFile {
         path: String,

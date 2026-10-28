@@ -5,6 +5,7 @@ import io.github.tom039224.yhtye.shared.api.generated.AgentEvent
 import io.github.tom039224.yhtye.shared.api.generated.AgentOutput
 import io.github.tom039224.yhtye.shared.api.generated.ApiEvent
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
+import io.github.tom039224.yhtye.shared.api.generated.AttachmentMeta
 import io.github.tom039224.yhtye.shared.api.generated.ChatInfo
 import io.github.tom039224.yhtye.shared.api.generated.DomainConfig
 import io.github.tom039224.yhtye.shared.api.generated.DomainEvent
@@ -47,7 +48,7 @@ val CANCEL_RUN: Recording by lazy { recording("fake-cancel.json") }
 /** オーケストレータが落ち着いたグループを開けたままにし、Yhtye が催促してから終える (Stage 7a)。 */
 val UNFINISHED_RUN: Recording by lazy { recording("fake-unfinished.json") }
 
-val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false)
+val PROJECT = ProjectInfo(id = "repo", name = "repo", path = "/tmp/repo", open = true, running = false, awake = false)
 
 fun durable(r: Recording): List<ApiEvent> = r.events.filter { !it.live }
 
@@ -82,11 +83,11 @@ fun prompted(seq: Long, session: String, text: String = "p"): ApiEvent = ev(seq,
 fun domain(seq: Long, event: DomainEvent, project: String = "repo"): ApiEvent =
     ev(seq, ApiEventBody.Domain(event), project = project)
 
-fun inbox(seq: Long, id: Long, chat: String, kind: InboxKind, text: String): ApiEvent =
-    domain(seq, DomainEvent.InboxQueued(InboxEntry(id, chat, InboxItem(kind, emptyList(), text))))
+fun inbox(seq: Long, id: Long, chat: String, kind: InboxKind, text: String, attachments: List<AttachmentMeta> = emptyList()): ApiEvent =
+    domain(seq, DomainEvent.InboxQueued(InboxEntry(id, chat, InboxItem(kind, emptyList(), text, attachments))))
 
-fun userMessage(seq: Long, inboxId: Long, text: String, chat: String = "C-1"): ApiEvent =
-    inbox(seq, inboxId, chat, InboxKind.UserMessage, text)
+fun userMessage(seq: Long, inboxId: Long, text: String, chat: String = "C-1", attachments: List<AttachmentMeta> = emptyList()): ApiEvent =
+    inbox(seq, inboxId, chat, InboxKind.UserMessage, text, attachments)
 
 fun delivered(seq: Long, upTo: Long, chat: String = "C-1"): ApiEvent = domain(seq, DomainEvent.InboxDelivered(chat, upTo))
 

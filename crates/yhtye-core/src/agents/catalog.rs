@@ -19,6 +19,7 @@ use crate::acp::{
     AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, GROK_BUILD_EFFORT_CONFIG_ID, HarnessConfig,
     MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
 };
+use crate::attachments::PromptCaps;
 use crate::secrets::Secrets;
 
 /// Shown when an agent is started and no harness is registered.
@@ -90,6 +91,11 @@ pub struct HarnessPreset {
     /// Models the harness lists but cannot run (selecting them is refused):
     /// left out of the model listing.
     pub unusable_models: Vec<String>,
+    /// What the harness is expected to accept in a prompt until one of its
+    /// sessions has said so (`initialize`): predicts how an attachment will be
+    /// delivered (images as image blocks, text as embedded context) before the
+    /// orchestrator runs. A harness not known to take them is sent paths only.
+    pub prompt_caps: PromptCaps,
 }
 
 /// A registered harness, for the UI.
@@ -153,6 +159,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::ALL,
         }
     }
 
@@ -191,6 +198,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: true,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 
@@ -219,6 +227,7 @@ impl HarnessPreset {
             model_source: ModelSource::Codex,
             requires_model: true,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::ALL,
         }
     }
 
@@ -247,6 +256,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 
@@ -278,6 +288,7 @@ impl HarnessPreset {
                 .iter()
                 .map(|m| (*m).to_string())
                 .collect(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 
@@ -305,6 +316,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 
@@ -331,6 +343,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 
@@ -357,6 +370,7 @@ impl HarnessPreset {
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
         }
     }
 

@@ -71,6 +71,8 @@ data class TranscriptSource(
     val streaming: Streamed?,
     val queued: Set<Long> = emptySet(),
     val state: State? = null,
+    /** ユーザーの発言の添付の画像を取る (無ければ種類のアイコンだけ)。 */
+    val loadAttachment: LoadAttachment? = null,
 ) {
     /** 会話の上端より前に読んでいない履歴がある。 */
     val hasOlder: Boolean get() = (project?.historyStart ?: 1) > 1
@@ -78,8 +80,12 @@ data class TranscriptSource(
 
 /** 中央の会話。 */
 @Composable
-fun TranscriptList(model: ConversationModel, onLoadOlder: () -> Unit, modifier: Modifier = Modifier) {
-    TranscriptList(TranscriptSource(model.project, model.items, model.streaming, model.queued, model.state), onLoadOlder, modifier)
+fun TranscriptList(model: ConversationModel, onLoadOlder: () -> Unit, modifier: Modifier = Modifier, loadAttachment: LoadAttachment? = null) {
+    TranscriptList(
+        TranscriptSource(model.project, model.items, model.streaming, model.queued, model.state, loadAttachment),
+        onLoadOlder,
+        modifier,
+    )
 }
 
 /**
@@ -117,7 +123,7 @@ fun TranscriptList(
         if (source.hasOlder) {
             item(key = OLDER_KEY) { OlderHistoryRow(source.project, onLoadOlder) }
         }
-        items(items, key = ::itemKey) { item -> TranscriptRow(item, source.queued, source.state) }
+        items(items, key = ::itemKey) { item -> TranscriptRow(item, source.queued, source.state, source.loadAttachment) }
         if (streaming?.thought?.isNotEmpty() == true) item(key = STREAM_THOUGHT_KEY) { StreamingThought(streaming.thought) }
         if (streaming?.message?.isNotEmpty() == true) item(key = STREAM_MESSAGE_KEY) { StreamingMessage(streaming.message) }
     }
