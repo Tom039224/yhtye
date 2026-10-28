@@ -29,8 +29,11 @@ pub const MODEL_CONFIG_ID: &str = "model";
 
 /// Id of the OpenCode preset.
 pub const OPENCODE: &str = "opencode";
-/// Id of the Claude Code preset.
+/// Id of the Claude Code preset (billed to the user's claude.ai subscription).
 pub const CLAUDE_CODE: &str = "claude-code";
+/// Id of the Claude Code preset billed to an Anthropic API key
+/// ([`HarnessConfig::claude_code_api`]).
+pub const CLAUDE_CODE_API: &str = "claude-code-api";
 /// Id of the Codex preset.
 pub const CODEX: &str = "codex";
 /// Id of the Devin preset.
@@ -100,17 +103,50 @@ pub struct HarnessInfo {
 
 impl HarnessPreset {
     /// Claude Code (`HarnessConfig::claude_code*`) with `model` as the config's
-    /// own model (used when a choice names none).
+    /// own model (used when a choice names none), billed to the user's claude.ai
+    /// subscription. The label is `Claude Code`; [`HarnessPreset::with_label`]
+    /// puts the subscription's name in it.
     #[must_use]
     pub fn claude_code(model: &str) -> Self {
+        Self::claude(
+            CLAUDE_CODE,
+            "Claude Code",
+            model,
+            HarnessConfig::claude_code,
+            HarnessConfig::claude_code_usage_probe(),
+        )
+    }
+
+    /// Claude Code billed to an Anthropic API key (`Claude Code (API)`,
+    /// `HarnessConfig::claude_code_api`): the same launch as
+    /// [`HarnessPreset::claude_code`], with the key from the secret
+    /// `YHTYE_ANTHROPIC_API_KEY` (also for listing the models).
+    #[must_use]
+    pub fn claude_code_api(model: &str) -> Self {
+        Self::claude(
+            CLAUDE_CODE_API,
+            "Claude Code (API)",
+            model,
+            HarnessConfig::claude_code_api,
+            HarnessConfig::claude_code_api_probe(),
+        )
+    }
+
+    fn claude(
+        id: &str,
+        label: &str,
+        model: &str,
+        config: fn(&str) -> HarnessConfig,
+        probe: HarnessConfig,
+    ) -> Self {
         Self {
-            id: CLAUDE_CODE.into(),
-            label: "Claude Code".into(),
-            orchestrator: HarnessConfig::claude_code(model),
-            implementer: HarnessConfig::claude_code(model),
-            investigator: HarnessConfig::claude_code(model),
-            reviewer: HarnessConfig::claude_code(model),
-            probe: Some(HarnessConfig::claude_code_usage_probe()),
+            id: id.into(),
+            label: label.into(),
+            orchestrator: config(model),
+            implementer: config(model),
+            investigator: config(model),
+            reviewer: config(model),
+            probe: Some(probe),
             model_env: Some("ANTHROPIC_MODEL".into()),
             model_config_env: None,
             effort_config_id: Some(EFFORT_CONFIG_ID.into()),
@@ -118,6 +154,13 @@ impl HarnessPreset {
             requires_model: false,
             unusable_models: Vec::new(),
         }
+    }
+
+    /// The same preset shown as `label`.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
     }
 
     /// OpenCode (`opencode acp`, `HarnessConfig::opencode`) for every role

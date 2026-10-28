@@ -40,7 +40,8 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 
 | ハーネス | 入れるもの | Yhtye の起動方法 | 認証 |
 |---|---|---|---|
-| Claude Code | Node 22+ (`npx`) だけ。`claude` CLI は不要 (アダプタが SDK 同梱のバイナリを使う) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく |
+| Claude Code (サブスク) | Node 22+ (`npx`) だけ。`claude` CLI は不要 (アダプタが SDK 同梱のバイナリを使う) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく。モデル選択画面には契約名つき (`Claude Code (Claude Max)` など) で出る |
+| Claude Code (API) | 同上 (サブスク版と同じ `npx`。`npx` が見つかれば常に出る) | 同上 | API キーで課金する。「秘密の環境変数」に `YHTYE_ANTHROPIC_API_KEY` を登録する (下記)。モデル選択画面には `Claude Code (API)` で出る |
 | OpenCode | `opencode` | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
 | Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
 | Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
@@ -177,6 +178,20 @@ Codex は `~/.codex/config.toml` の設定で API キーを環境変数から取
 
 OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、アダプタが返すモデル一覧をそのまま出すだけで、実機では確認していない。
 
+### Claude Code を API キーで課金する (`Claude Code (API)`)
+
+Claude Code は 2 つに分かれて出る。ログイン済みの claude.ai のサブスクを使う `Claude Code (Claude Max)` など (ハーネス id `claude-code`、組み込みの既定) と、
+Anthropic の API キーを使う `Claude Code (API)` (id `claude-code-api`)。タスクごと・役割ごとに、設定の候補表やオーケストレータの選択で切り替える。
+API 版を使うには、設定の「秘密の環境変数」に名前 **`YHTYE_ANTHROPIC_API_KEY`**、値に API キー (`sk-ant-...`) を登録する。
+
+- このキーは **`Claude Code (API)` にだけ** `ANTHROPIC_API_KEY` として渡る。他のハーネスやサブスク版には渡らない (一般の秘密のように全エージェントには入らない)。
+- 登録がないまま `Claude Code (API)` を使うと、起動前に「Claude Code (API) には秘密の環境変数 YHTYE_ANTHROPIC_API_KEY の登録が必要です」と失敗する (モデル一覧も取得できない)。
+- サブスク版は `ANTHROPIC_API_KEY` と `ANTHROPIC_AUTH_TOKEN` を環境から**取り除いて**起動する。シェルや別の秘密で `ANTHROPIC_API_KEY` を持っていても、サブスク版が API 課金になることはない。
+  (ゲートウェイ用の `ANTHROPIC_AUTH_TOKEN` で Claude Code を使っていた場合は、サブスク版では使えない。)
+- `Claude Code (API)` は `ANTHROPIC_AUTH_TOKEN` と `CLAUDE_CODE_OAUTH_TOKEN` を取り除く (API キーより先に使われるため)。
+- サブスク名は `~/.claude/.credentials.json` (`CLAUDE_CONFIG_DIR` があればその下) から読む。読めなければ `Claude Code (サブスク)` と出る (macOS はキーチェーンなのでこの表示になる)。
+- 使用量の表示 (`/usage`) はサブスク側のもの。API 版の課金は Anthropic のコンソールで見る。
+
 ### 秘密の環境変数とキーリング
 
 - Linux では Secret Service (D-Bus) が動いている必要がある。gnome-keyring、KeePassXC の Secret Service 連携、KWallet など。
@@ -261,7 +276,8 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 | 「使えるハーネスがありません」と出てエージェントが起動しない | 設定 › ハーネス で、どのハーネスも「未インストール」になっていないか確認する。Claude Code は `npx` が必要 (Node 22+ を入れる)。入れたら「再検出」 |
 | ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`、Google Antigravity = `agy_acp_server.par`、Grok Build = `grok`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` も) のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
 | 手動パスを保存したのに使えない | 表示された理由を確認する。絶対パスの実行可能な通常ファイルでなければならない (ディレクトリやシンボリックリンク先が無い、実行権限が無い、など)。壊れた手動パスは自動検出に戻らないので、直すか「自動検出に戻す」 |
-| Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する |
+| Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する (サブスク版)。`Claude Code (API)` は `YHTYE_ANTHROPIC_API_KEY` の登録と、キーが有効かを確認する |
+| `Claude Code (API)` が「YHTYE_ANTHROPIC_API_KEY の登録が必要です」で起動しない | 設定 › 「秘密の環境変数」に名前 `YHTYE_ANTHROPIC_API_KEY`、値に Anthropic の API キーを登録する |
 | OpenCode で認証エラー | `opencode auth login` を済ませる |
 | Devin が認証エラーになる / 起動しない | `devin auth login` を済ませる (`devin auth status` で確認)。`WINDSURF_API_KEY` を使うなら「秘密の環境変数」に登録する。Devin は一部未検証なので、それでも動かないときは `docs/architecture/acp-harnesses.md` §10 の手動検証チェックリストを参照して報告してほしい |
 | MiniMax Code が認証エラー (`Authentication required`) になる | `mcode login` を済ませる。それでも動かないときは `docs/architecture/acp-harnesses.md` §11 を参照して報告してほしい (一部未検証) |

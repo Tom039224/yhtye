@@ -74,7 +74,10 @@ English: [README-EN.md](README-EN.md)
 - Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code / Google Antigravity / Grok Build の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
-  ただし登録した変数は**すべてのエージェント**に渡る。
+  ただし登録した変数は**すべてのエージェント**に渡る (例外: `YHTYE_ANTHROPIC_API_KEY`)。
+- Claude Code は、ログイン済みのサブスクで動く `Claude Code (Claude Max)` など (`claude-code`) と、Anthropic の API キーで課金される `Claude Code (API)` (`claude-code-api`) の
+  2 つのハーネスとして選べる。API 版を使うには、秘密の環境変数 **`YHTYE_ANTHROPIC_API_KEY`** にキーを登録する (このキーは API 版だけに `ANTHROPIC_API_KEY` として渡り、
+  サブスク版は `ANTHROPIC_API_KEY` を環境から取り除いて起動するので、API 課金にならない)。詳しくは [SETUP.md](SETUP.md)。
 
 ## 使い方
 
