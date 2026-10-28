@@ -106,6 +106,16 @@ describe("harness settings", () => {
     expect(within(grok).getByRole("textbox", { name: "Grok Build の grok のパス" })).toBeTruthy();
   });
 
+  it("shows pi found in its agent directory, with npx that runs its adapter", async () => {
+    const { dialog } = await openHarnesses((c) => {
+      c.harnesses.found.pi = { path: "/home/u/.pi/agent/bin/pi", source: "known_dir" };
+    });
+    const pi = row(dialog, "pi");
+    expect(within(pi).getByText("インストール済み")).toBeTruthy();
+    expect(requirements(pi)).toEqual(["pi/home/u/.pi/agent/bin/pi既知の場所", "npx/usr/bin/npx自動検出のみ"]);
+    expect(within(pi).getByRole("textbox", { name: "pi の pi のパス" })).toBeTruthy();
+  });
+
   it("saves a manual path, then goes back to the automatic search", async () => {
     const { user, dialog, core } = await openHarnesses((c) => c.harnesses.executables.add(OPENCODE_BIN));
     const opencode = row(dialog, "OpenCode");

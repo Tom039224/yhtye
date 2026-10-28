@@ -22,12 +22,12 @@ function draftsOf(list: HarnessDetection[]): Record<string, string> {
 
 /**
  * The settings' "ハーネス" section: whether each harness (Claude Code, OpenCode,
- * Codex, Devin, MiniMax Code, Google Antigravity, Grok Build) is installed, where
+ * Codex, Devin, MiniMax Code, Google Antigravity, Grok Build, pi) is installed, where
  * its commands were found, and a manual path for its main executable that
  * replaces the automatic search (PATH, then ~/.local/bin, ~/.cargo/bin,
  * ~/.bun/bin, /usr/local/bin, and the harness's own places: MiniMax Code's
  * ~/.minimax-code/bin, Antigravity's ~/.local/share/agy-acp-server, Grok Build's
- * ~/.grok/bin). Opening it makes the core look again; the agent settings offer
+ * ~/.grok/bin, pi's ~/.pi/agent/bin). Opening it makes the core look again; the agent settings offer
  * the installed harnesses. A change made elsewhere (another device) is read
  * again, unless a path is being typed (then a banner offers it).
  */
