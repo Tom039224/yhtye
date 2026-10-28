@@ -166,6 +166,47 @@ Google Antigravity にログインしていません (Yhtye は代わりにロ�
 (Zed など別の ACP クライアントで一度ログインしてもよい。API キーを使うなら type を \
 `gemini-api-key` にして環境変数 GEMINI_API_KEY を渡す)。詳しくは SETUP.md の「Google Antigravity」。";
 
+/// The pi ACP adapter run through `npx` (an exact version, like
+/// [`CLAUDE_AGENT_ACP`]; `docs/architecture/acp-harnesses.md` §14). pi has no ACP
+/// of its own: the adapter embeds the pi SDK and uses the user's `~/.pi/agent`
+/// (settings, credentials, extensions, sessions) as `pi` does.
+pub const PI_ACP: &str = "@openma/pi-acp@0.1.8";
+
+/// The adapter's environment variable with the model of new sessions,
+/// `<provider>/<id>` with an optional `:<thinking level>` (`orcarouter/x/y:low`).
+/// pi's model and thinking level are set only through it: the adapter saves
+/// every `session/set_config_option` (model, thinking) to the user's own
+/// `~/.pi/agent/settings.json` as pi's defaults.
+pub const PI_ACP_MODEL_ENV: &str = "PI_ACP_MODEL";
+
+/// The adapter's environment variable that skips its startup banner (a
+/// `agent_message_chunk` with the pi version and loaded resources).
+pub const PI_ACP_QUIET_STARTUP_ENV: &str = "PI_ACP_QUIET_STARTUP";
+
+/// The id of pi's effort option (category `thought_level`). It exists only
+/// while the model reasons, and its values depend on the model (`off`, `low`,
+/// ... `xhigh`).
+pub const PI_EFFORT_CONFIG_ID: &str = "thinking";
+
+/// Appended to every role prompt of pi ([`HarnessConfig::system_prompt_note`]):
+/// pi declares MCP tools only as `tool_search` first, so the tool names of the
+/// role prompts (`mcp__yhtye__report_step_done`) are not tools until they are
+/// loaded (`docs/architecture/acp-harnesses.md` §14).
+pub const PI_MCP_NOTE: &str = "\
+Note for pi: Yhtye's tools (`report_step_done`, `help`, `create_group`, ...) \
+are on the MCP server named `yhtye` and are deferred: they are not among your \
+tools until you load them. First load them with `tool_search` (for example \
+`report_step_done`); once loaded, call a tool as `mcp__yhtye__<name>` \
+(`mcp__yhtye__report_step_done`).";
+
+/// Appended to the startup error of pi when it answers that authentication is
+/// required ([`HarnessConfig::login_hint`]): the adapter uses the user's own
+/// pi credentials and Yhtye never calls its `authenticate`.
+pub const PI_LOGIN_HINT: &str = "\
+pi にログインしていません (Yhtye は代わりにログインしません)。ターミナルで `pi` を起動して \
+`/login` するか、使うプロバイダの API キー (例: `ANTHROPIC_API_KEY`) を環境変数で設定して \
+もう一度始めてください。";
+
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelect {
@@ -475,6 +516,39 @@ impl HarnessConfig {
         }
     }
 
+    /// pi through `@openma/pi-acp` (`npx`, [`PI_ACP`]), see
+    /// `docs/architecture/acp-harnesses.md` §14. pi has no modes, so none is set,
+    /// and the model and thinking level are not set as config options either:
+    /// the adapter would save them to the user's own `settings.json`
+    /// ([`crate::agents::HarnessPreset::config`] passes the chosen ones in
+    /// [`PI_ACP_MODEL_ENV`]; nothing is chosen here, so pi's own default applies
+    /// otherwise). The startup banner is switched off ([`PI_ACP_QUIET_STARTUP_ENV`]);
+    /// the rest of the user's environment (`PI_CODING_AGENT_DIR`, ...) is
+    /// inherited as it is. The role prompt is prepended to the first prompt
+    /// (`_meta.systemPrompt` is ignored), with [`PI_MCP_NOTE`] appended. pi asks
+    /// no tool approvals itself; the extension dialogs that arrive as permission
+    /// requests are answered [`PermissionPolicy::OnceOnly`], and an authentication
+    /// error is followed by [`PI_LOGIN_HINT`].
+    #[must_use]
+    pub fn pi() -> Self {
+        Self {
+            command: "npx".into(),
+            args: vec!["-y".into(), PI_ACP.into()],
+            env: BTreeMap::from([(PI_ACP_QUIET_STARTUP_ENV.into(), "1".into())]),
+            env_remove: Vec::new(),
+            mode_after_new: None,
+            model: None,
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            client_info: None,
+            permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: Some(PI_MCP_NOTE.into()),
+            login_hint: Some(PI_LOGIN_HINT.into()),
+        }
+    }
+
     /// A bare harness running `command args...` with no mode/model configuration.
     #[must_use]
     pub fn plain(command: impl Into<String>, args: Vec<String>) -> Self {
@@ -654,6 +728,44 @@ mod tests {
     }
 
     #[test]
+    fn pi_runs_the_pinned_adapter_and_sets_neither_mode_model_nor_effort() {
+        let h = HarnessConfig::pi();
+        assert_eq!(
+            (h.command.as_str(), h.args.as_slice()),
+            (
+                "npx",
+                &["-y".to_string(), "@openma/pi-acp@0.1.8".to_string()][..]
+            ),
+            "the adapter version is pinned exactly"
+        );
+        assert_eq!(
+            h.env,
+            BTreeMap::from([("PI_ACP_QUIET_STARTUP".to_string(), "1".to_string())]),
+            "only the banner is switched off: the user's pi environment is inherited"
+        );
+        assert!(h.env_remove.is_empty());
+        assert_eq!(h.mode_after_new, None, "pi has no modes");
+        assert!(
+            h.model.is_none() && h.effort.is_none(),
+            "set_config_option would save them to ~/.pi/agent/settings.json"
+        );
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+        assert!(h.session_meta.is_none());
+        assert_eq!(h.client_info, None, "no other product's name is claimed");
+        let note = h.system_prompt_note.expect("the MCP note");
+        assert!(
+            note.contains("tool_search") && note.contains("mcp__yhtye__<name>"),
+            "{note}"
+        );
+        let hint = h.login_hint.expect("how to log in");
+        assert!(
+            hint.contains("`/login`") && hint.contains("API キー"),
+            "{hint}"
+        );
+    }
+
+    #[test]
     fn other_harnesses_keep_the_default_client_info_permission_policy_and_prompt() {
         for h in [
             HarnessConfig::claude_code("haiku"),
@@ -662,11 +774,14 @@ mod tests {
             HarnessConfig::plain("x", vec![]),
         ] {
             assert_eq!(h.client_info, None);
-            assert_eq!(h.login_hint, None, "only Antigravity points to a login");
+            assert_eq!(
+                h.login_hint, None,
+                "only Antigravity and pi point to a login"
+            );
             assert_eq!(h.permission_policy, PermissionPolicy::Default);
             assert_eq!(
                 h.system_prompt_note, None,
-                "only Devin adds to the role prompt"
+                "only Devin and pi add to the role prompt"
             );
             assert!(!h.env_remove.iter().any(|v| v == "RUST_LOG"));
         }

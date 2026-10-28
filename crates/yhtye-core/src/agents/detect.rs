@@ -11,7 +11,9 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
-use super::catalog::{ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE};
+use super::catalog::{
+    ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE, PI,
+};
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -20,7 +22,7 @@ pub const OPENCODE_COMMAND: &str = "opencode";
 /// itself is fetched by `npx`).
 pub const CODEX_COMMAND: &str = "codex";
 
-/// Runs the Claude Code and Codex adapters (`npx -y <adapter>`).
+/// Runs the Claude Code, Codex and pi adapters (`npx -y <adapter>`).
 pub const NPX_COMMAND: &str = "npx";
 
 /// The Devin executable.
@@ -69,6 +71,18 @@ pub const GROK_BUILD_INSTALL_DIR: &str = "~/.grok/bin";
 /// `bin` directory is where `grok` is.
 pub const GROK_BUILD_ROOT_ENV: &str = "GROK_HOME";
 
+/// The pi executable (the adapter that runs pi's SDK is fetched by `npx`; `pi`
+/// is how the user logs in and sets pi up, so it is what says pi is installed).
+pub const PI_COMMAND: &str = "pi";
+
+/// Where pi's own tools and installers put executables (`~/.pi/agent/bin`),
+/// which a shell such as fish does not have in its `PATH`.
+pub const PI_INSTALL_DIR: &str = "~/.pi/agent/bin";
+
+/// The environment variable that moves pi's config directory (`~/.pi/agent`),
+/// so its `bin` directory is where `pi` may be.
+pub const PI_ROOT_ENV: &str = "PI_CODING_AGENT_DIR";
+
 /// Directories searched after `PATH` (a desktop app often starts with a shorter
 /// `PATH` than the user's shell has). `~` is the `HOME` of the environment.
 pub const KNOWN_DIRS: [&str; 4] = [
@@ -105,7 +119,7 @@ pub struct HarnessSpec {
 
 /// The known harnesses, in the order the built-in default prefers them
 /// ([`super::default_choice`] has the rule).
-pub const HARNESS_SPECS: [HarnessSpec; 7] = [
+pub const HARNESS_SPECS: [HarnessSpec; 8] = [
     HarnessSpec {
         id: CLAUDE_CODE,
         label: "Claude Code",
@@ -175,6 +189,16 @@ pub const HARNESS_SPECS: [HarnessSpec; 7] = [
         root_env: Some(GROK_BUILD_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[GROK_BUILD_INSTALL_DIR],
+    },
+    HarnessSpec {
+        id: PI,
+        label: "pi",
+        main: PI_COMMAND,
+        aliases: &[],
+        also: &[NPX_COMMAND],
+        root_env: Some(PI_ROOT_ENV),
+        root_subdirs: &["bin"],
+        extra_dirs: &[PI_INSTALL_DIR],
     },
 ];
 
@@ -587,6 +611,7 @@ mod tests {
             "mcode",
             "agy_acp_server.par",
             "grok",
+            "pi",
         ] {
             fake_bin(bin.path(), name, 0o755);
         }
@@ -601,7 +626,8 @@ mod tests {
                 "devin",
                 "minimax-code",
                 "antigravity",
-                "grok-build"
+                "grok-build",
+                "pi"
             ]
         );
         assert!(all.iter().all(|d| d.installed));
@@ -634,6 +660,20 @@ mod tests {
         );
         assert_eq!(codex.override_path, None);
         assert_eq!(codex.override_error, None);
+
+        let pi = by_id(&all, "pi");
+        assert_eq!(pi.label, "pi");
+        assert_eq!(
+            pi.resolved_path.as_deref(),
+            Some(bin.path().join("pi").to_str().expect("utf-8")),
+            "the main executable is pi, not npx"
+        );
+        let commands: Vec<&str> = pi.requirements.iter().map(|r| r.command.as_str()).collect();
+        assert_eq!(commands, ["pi", "npx"], "the adapter runs through npx");
+        assert_eq!(
+            pi.found("npx"),
+            Some(bin.path().join("npx").to_str().expect("utf-8"))
+        );
     }
 
     #[test]
@@ -651,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_npx_takes_claude_code_and_codex_with_it() {
+    fn a_missing_npx_takes_claude_code_codex_and_pi_with_it() {
         let bin = tempfile::tempdir().expect("tempdir");
         for name in [
             "opencode",
@@ -660,6 +700,7 @@ mod tests {
             "mcode",
             "agy_acp_server",
             "grok",
+            "pi",
         ] {
             fake_bin(bin.path(), name, 0o755);
         }
@@ -669,6 +710,10 @@ mod tests {
         assert!(!codex.installed, "codex needs npx as well");
         assert!(codex.resolved_path.is_some(), "codex itself was found");
         assert_eq!(codex.found("npx"), None);
+        let pi = by_id(&all, "pi");
+        assert!(!pi.installed, "pi's adapter needs npx as well");
+        assert!(pi.resolved_path.is_some(), "pi itself was found");
+        assert_eq!(pi.found("npx"), None);
         assert!(by_id(&all, "opencode").installed);
         assert!(by_id(&all, "devin").installed);
         assert!(by_id(&all, "minimax-code").installed);
@@ -741,6 +786,83 @@ mod tests {
         assert_eq!(d.resolved_path.as_deref(), first.to_str());
         assert_eq!(d.path_source, PathSource::Path);
         assert_eq!(d.requirements.len(), 1, "grok alone, no npx");
+    }
+
+    #[test]
+    fn pi_is_found_in_its_agent_directory_and_in_the_one_the_environment_names() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let agent = tempfile::tempdir().expect("tempdir");
+        let empty = tempfile::tempdir().expect("tempdir");
+        let npx_dir = tempfile::tempdir().expect("tempdir");
+        let install = home.path().join(".pi/agent/bin");
+        std::fs::create_dir_all(&install).expect("mkdir");
+        std::fs::create_dir_all(agent.path().join("bin")).expect("mkdir");
+        let default = fake_bin(&install, "pi", 0o755);
+        let npx = fake_bin(npx_dir.path(), "npx", 0o755);
+        let home_var = path_of(&home);
+        let path_var = std::env::join_paths([empty.path(), npx_dir.path()])
+            .expect("join_paths")
+            .to_string_lossy()
+            .into_owned();
+        let find = |vars: &[(&str, &str)]| {
+            let found = detect_harnesses(env(vars), &[], &HashMap::new());
+            let d = by_id(&found, "pi").clone();
+            (d.installed, d.resolved_path, d.path_source)
+        };
+        let base = [("HOME", home_var.as_str()), ("PATH", path_var.as_str())];
+
+        // The shell's PATH (fish) does not have it: pi's own directory does, and
+        // npx (which runs the adapter) is on the PATH.
+        assert_eq!(
+            find(&base),
+            (
+                true,
+                default.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        let found = detect_harnesses(env(&base), &[], &HashMap::new());
+        assert_eq!(by_id(&found, "pi").found("npx"), npx.to_str());
+        assert_eq!(
+            find(&[("PATH", &path_var)]),
+            (false, None, PathSource::None),
+            "without a HOME there is nowhere to look"
+        );
+
+        // The agent directory the environment names is searched first; a relative one is not.
+        let moved = fake_bin(&agent.path().join("bin"), "pi", 0o755);
+        let root_var = path_of(&agent);
+        let with_root = [base[0], base[1], ("PI_CODING_AGENT_DIR", root_var.as_str())];
+        assert_eq!(
+            find(&with_root),
+            (
+                true,
+                moved.to_str().map(str::to_string),
+                PathSource::KnownDir
+            )
+        );
+        let relative = [base[0], base[1], ("PI_CODING_AGENT_DIR", "relative/agent")];
+        assert_eq!(find(&relative).1, default.to_str().map(str::to_string));
+
+        // The other harnesses do not look there, and `PATH` still comes first.
+        fake_bin(&install, "devin", 0o755);
+        let found = detect_harnesses(env(&base), &[], &HashMap::new());
+        assert!(!by_id(&found, "devin").installed);
+        let on_path = tempfile::tempdir().expect("tempdir");
+        let first = fake_bin(on_path.path(), "pi", 0o755);
+        let path_first = std::env::join_paths([on_path.path(), npx_dir.path()])
+            .expect("join_paths")
+            .to_string_lossy()
+            .into_owned();
+        let found = detect_harnesses(
+            env(&[("HOME", home_var.as_str()), ("PATH", path_first.as_str())]),
+            &[],
+            &HashMap::new(),
+        );
+        let d = by_id(&found, "pi");
+        assert_eq!(d.resolved_path.as_deref(), first.to_str());
+        assert_eq!(d.path_source, PathSource::Path);
+        assert!(d.installed);
     }
 
     #[test]
@@ -1039,6 +1161,7 @@ mod tests {
             HarnessPreset::minimax_code("mcode"),
             HarnessPreset::antigravity("agy_acp_server.par"),
             HarnessPreset::grok_build("grok"),
+            HarnessPreset::pi(),
         ];
         assert_eq!(presets.len(), HARNESS_SPECS.len());
         for (spec, preset) in HARNESS_SPECS.iter().zip(&presets) {
