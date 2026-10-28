@@ -47,7 +47,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
 | Google Antigravity (基本動作は実機確認済み・一部未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
 | Grok Build (基本動作は実機確認済み・一部未検証) | xAI の Grok Build CLI (`grok`)。標準のインストール先は `~/.grok/bin/grok` | `grok agent --no-leader stdio` | `grok login` で先にログインしておく (下記) |
-| pi (起動・モデル一覧・MCP の配線は実機確認済み、本物のモデルでの 1 ターンは未検証) | pi coding agent (`pi`、標準では `~/.pi/agent/bin` など) と、**Node 22.19 以上**の `npx` (pi 本体は起動せず、アダプタが pi の SDK を組み込む) | `npx -y @openma/pi-acp@0.1.8` | `pi` を起動して `/login` するか、使うプロバイダの API キー (例 `ANTHROPIC_API_KEY`) を環境変数に入れる。Yhtye はログインしない (下記) |
+| pi (起動・モデル一覧・MCP の配線と、LM Studio のローカルモデルでの 1 ターンは実機確認済み、クラウドのモデルは未検証) | pi coding agent (`pi`、標準では `~/.pi/agent/bin` など) と、**Node 22.19 以上**の `npx` (pi 本体は起動せず、アダプタが pi の SDK を組み込む) | `npx -y @openma/pi-acp@0.1.8` | `pi` を起動して `/login` するか、使うプロバイダの API キー (例 `ANTHROPIC_API_KEY`) を環境変数に入れる。Yhtye はログインしない (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
 - Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
@@ -164,12 +164,14 @@ Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) �
 - `/logout` (あなたの認証を消すスラッシュコマンド) は Yhtye からは送られない (エージェントへのプロンプトは必ず `[yhtye:…]` の見出しで始まる)。
 - 利用枠は Google アカウント (または API キー) から使われる。Yhtye は課金を管理しない。
 
-### pi (起動・モデル一覧・MCP の配線は実機確認済み、本物のモデルでの 1 ターンは未検証)
+### pi (起動・モデル一覧・MCP の配線と、LM Studio のローカルモデルでの 1 ターンは実機確認済み、クラウドのモデルは未検証)
 
 pi coding agent (1.3.0) にはネイティブの ACP が無いので、Yhtye はサードパーティのアダプタ **`@openma/pi-acp` 0.1.8** を `npx` で動かす (pi の SDK を組み込み、あなたの `~/.pi/agent` の設定・認証・拡張・skills を使う。
 pi 本体の `pi` は起動しない)。**Yhtye の acp 層から実際のアダプタで確認した**のは、起動、モデル一覧 (197 個)、モデルごとの effort の読み取り、選んだモデルでの開始、Yhtye の MCP の配線。
-**まだ確かめていない**のは、本物のモデルでの 1 ターン、実装エージェントとしての `report_step_done` による完了、オーケストレータとしての利用、拡張の許可ダイアログ、本物のモデルでの再開 (`session/load`)、Windows / macOS。
-(クレジットの都合で、モデルへのプロンプトは流していない。3 回は課金エラーでモデルに届かなかった。) 調査の結果と手動検証チェックリストは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14。
+加えて、pi の LM Studio パッケージ (`npm:pi-lmstudio`) と、ローカルの LM Studio にロードした **LFM3 1.7B (`lmstudio/lfm3-1.7b`)** で、本物のモデルでの 1 ターン (思考のストリームつき)、実装エージェントとしての
+`tool_search` → `mcp__yhtye__report_step_done` による完了報告 (2 回中 2 回)、`session/load` での再開、`session/cancel`、steering を確認した。
+**まだ確かめていない**のは、クラウドのモデル (orcarouter のものは課金・無料枠の都合で 3 回とも届かなかった) での 1 ターン、オーケストレータとしての利用、拡張の許可ダイアログ、Windows / macOS。
+調査の結果と手動検証チェックリストは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14。
 
 - **前提**: `pi` と `npx` が見つかること (設定 › ハーネス の必要なコマンド)。`pi` の標準の置き場所は `~/.pi/agent/bin` (環境変数 `PI_CODING_AGENT_DIR` で場所を変えているなら、その `bin`)。アダプタは **Node 22.19 以上**が要る。
   初回の `npx` はアダプタのダウンロードがある (キャッシュなしで約 9 秒。起動のタイムアウトは 120 秒)。
@@ -181,10 +183,13 @@ pi 本体の `pi` は起動しない)。**Yhtye の acp 層から実際のアダ
   Yhtye はモデルも effort も設定の option としては送らず、環境変数で渡す (書き換わらない。実機で `settings.json`・`auth.json`・`models-store.json` の前後のハッシュが一致することを確認した)。
 - **effort (思考の深さ、pi では `thinking`)** は、推論に対応したモデルにだけあり、値もモデルごとに違う (例: `claude-haiku-4.5` は `off` / `low` / `medium` / `high` / `xhigh`、`gpt-5-mini` は `minimal` / `low` / `medium` / `high` / `xhigh`、
   `deepseek-chat` は無し)。設定 › エージェント でモデルを選ぶと、そのモデルで一覧用のセッションを起動して調べるため、**効果の一覧が出るまで約 1.5 秒かかる**。選ばなければ pi の既定 (多くは `medium`) になる。
+- **費用なしで試すには**: pi に LM Studio のパッケージ (`~/.pi/agent/settings.json` の `packages` に `npm:pi-lmstudio`) を入れ、ローカルの LM Studio (既定 `http://localhost:1234`) にモデルをロードしておくと、
+  設定 › エージェント のモデル一覧に `lmstudio/<id>` が出る。それを選べば費用なしで流せる (小さなモデルは失敗することもある)。effort は `thinking=off` にしてもモデルによっては思考のストリームが出続ける。
 - **許可**: pi にはツールの承認が無い。あなたの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) が確認や選択のダイアログを出したときだけ許可確認が来て、Yhtye が「1 回だけ許可」(確認なら `yes`、選択なら最初の `choice-0`) で自動的に通す
   (実機では未確認)。**拡張は全部読み込まれる**ので、危険な選択肢を出す拡張は入れないでおく。サンドボックスは無い。
 - **システムプロンプトと MCP**: Yhtye の役割の指示は最初のプロンプトの前に付ける (アダプタが `_meta` のシステムプロンプトを無視するため)。pi は MCP のツールを**遅延公開**する (最初は `tool_search` だけがツールで、それを呼ぶと
-  `mcp__yhtye__<name>` が使える) ので、Yhtye は指示の後ろに「まず `tool_search` で読み込んでから呼ぶ」という注記を付ける。**弱いモデルが読み込めず報告できない恐れがある** (未検証)。
+  `mcp__yhtye__<name>` が使える) ので、Yhtye は指示の後ろに「まず `tool_search` で読み込んでから呼ぶ」という注記を付ける。1.7B の小さなローカルモデル (LFM3) でも、2 回中 2 回 `tool_search` で読み込んで報告できた
+  (1 回は先に bash でツール名を打って失敗してから自力で直した)。もっと弱いモデルでは読み込めず報告できない恐れがある。
 - **あなたの `AGENTS.md` / `CLAUDE.md` と skills も読まれる**: pi の組み込みプロンプトは cwd (エージェントの作業ツリー) の `AGENTS.md` / `CLAUDE.md` (同じ階層に `AGENTS.md` があれば `CLAUDE.md` は読まれない) と `~/.agents/skills` の一覧を含む。
   プロジェクトの `.pi/` は信頼していないので読まれない (Yhtye は信頼させない: リポジトリの `.pi/` が拡張を実行できてしまうため)。
 - **触らない環境変数**: Yhtye は `PI_CODING_AGENT_DIR` (あなたの設定と認証をそのまま使う)・`PI_OFFLINE` (付けるとモデルカタログの更新が止まる)・`PI_TELEMETRY`・`PI_ACP_TRUST_PROJECTS` を設定しない。起動時のバナーを消す `PI_ACP_QUIET_STARTUP=1` だけを付ける。
