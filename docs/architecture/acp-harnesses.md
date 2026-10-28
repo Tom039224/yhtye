@@ -33,6 +33,7 @@ ACP は元々 Zed が Claude Code / Gemini CLI などのエージェントをエ
 | MiniMax Code | **実装済み・基本動作は実機確認済み (T-26)** — MiniMax Code CLI の `mcode acp`、§11。`mcode` が見つかれば全役割で選べる (`PATH` に無くても `~/.minimax-code/bin` を探す)。mcode 0.6.2 で起動・モデル一覧・モデルと effort の設定・1 ターンを確認。`permissionMode` はユーザーの全体設定に書き込まれるので**触らない** (§11.2) |
 | Grok Build | **実装済み・基本動作は実機確認済み (T-29)** — xAI の Grok Build CLI の `grok agent --no-leader stdio`、§12。`grok` が見つかれば全役割で選べる (`PATH` に無くても `~/.grok/bin` を探す)。grok 1.0.46・grok.com の Free プラン (モデルは `grok-4.7` だけ) で起動・モデル一覧・モデルと effort の設定、実装エージェントとしての `report_step_done` (Yhtye の MCP 経由) まで確認。許可要求の自動応答 (実機では要求が来なかった)、`session/load`、cancel は未確認 (§12.8) |
 | Google Antigravity | **実装済み・基本動作は実機確認済み (T-34, T-36)** — Google の公式 ACP サーバー `agy_acp_server` (v1.3.0)、§13。`agy_acp_server.par` が見つかれば全役割で選べる (`PATH` に無くても `$AGY_ACP_SERVER_HOME`、`~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` を探す)。Yhtye は `authenticate` を呼ばない (ログインは利用者が先に済ませる、§13.7)。effort は無い (思考レベルはモデルの id に含まれる)。Google アカウントでのログイン後、`gemini-3.8-flash-low` の実装エージェントとしてドキュメント変更のタスクを `report_step_done` (Yhtye の MCP 経由) まで完了。許可要求の自動応答 (要求が来なかった)、`session/load`、cancel は未確認 (§13.8) |
+| pi | **実装済み・起動・モデル一覧・effort・MCP の配線は実機確認済み、本物のモデルでの 1 ターンは未検証** — pi coding agent (pi 1.3.0) にはネイティブの ACP が無いので、サードパーティのアダプタ `@openma/pi-acp` 0.1.8 (npx、完全固定。pi の SDK を組み込み、`~/.pi/agent` の設定・認証・拡張をそのまま使う)、§14。`pi` と `npx` が見つかれば全役割で選べる (`PATH` に無くても `$PI_CODING_AGENT_DIR/bin`、`~/.pi/agent/bin` を探す)。**モデルの指定が要る** (組み込みの既定は無い。選ばないと pi は一覧の先頭の、たいてい最も高いモデルで動く)。モデルと effort は環境変数 `PI_ACP_MODEL` で渡し、`set_config_option` は送らない (ユーザーの `~/.pi/agent/settings.json` を書き換えるため、§14.3)。Yhtye は `authenticate` を呼ばない (ログインは `pi` で先に済ませる、§14.7)。Node 22.19 以上が要る。クレジットの都合でモデルへのプロンプトは未検証 (§14.9、§14.11) |
 | Cursor CLI / Gemini CLI / GitHub Copilot | 未着手 |
 | Muse Code | 未着手。サードパーティ製 ACP アダプタが要る可能性 |
 
@@ -157,6 +158,7 @@ ACP 本体ではなくアダプタ側の独自拡張。実行中のターンに�
   | Claude Code (claude-agent-acp 0.84.0) | **対応** (能力を広告。実機テスト `acp_claude_real.rs` の `real_steer_is_injected_into_the_running_turn`) |
   | Codex (codex-acp 2.0.0) | **対応** (能力を広告。アイドル時の `idleBehavior` は無視、上記) |
   | OpenCode | 非対応 (能力なし、送ると -32601) |
+  | pi (`@openma/pi-acp` 0.1.8) | **対応** (能力を広告 `_meta.steering.supported`。偽の LLM で実行中のターンに `injected` を確認、アイドル時は未確認、§14.8) |
   | Devin / MiniMax Code / Grok Build / Google Antigravity | 未確認。能力フラグ次第で自動的に使う/使わない |
 - 偽エージェントはシナリオの `steering: true` で能力を広告し、注入されたら実行中ターンの次の
   動作か待ちで `steered:<text>` を出して `end_turn` で終える (`session/cancel` が来ていれば
@@ -722,7 +724,8 @@ T-21 の実測を受けた変更 **[Yhtye]**: 役割プロンプトの後ろに 
   (T-29 で、id の除外を `always` / `for_session` を**含む**ものへ広げた。Grok Build の `allow_always_bash`・`allow_edits_for_session` のため、§12.2)。
   無ければ `Cancelled`。位置ではなく kind で選ぶ点は他と同じ。偽エージェントで確認 (`permissions_never_pick_mode_switches_plans_or_standing_grants`)。
   RepoPrompt が除く `*_global` は id では見ない (kind が `allow_once` のものだけを選ぶので、通常は同じ結果。`allow_once` の kind で `_global` の id が来たら選んでしまう)。
-- 他のハーネス (Claude Code・OpenCode・Codex) は従来の方針のまま (`PermissionPolicy::Default`)。
+- 他のハーネス (Claude Code・OpenCode・Codex) は従来の方針のまま (`PermissionPolicy::Default`)。`OnceOnly` を使うのは Devin・MiniMax Code・Grok Build・Google Antigravity と pi
+  (pi は §14.4。ツールの承認は無く、拡張のダイアログ `yes` / `choice-<n>` だけが来る)。
 - **[実測]** `bypass` では、MCP のツール呼び出し (`mcp_list_tools`) を含めて `session/request_permission` は来なかった。ファイル作成・シェル実行では試していない。
 
 ### 10.7 MCP (HTTP) — 接続は通る。ツールはメタツール経由
@@ -1271,3 +1274,183 @@ Windows / macOS のビルド。
 6. **プロンプトのストリーム**: メッセージ・思考・ツール呼び出し・`usage_update` が Yhtye の画面に期待どおり出るか。`Ready` 前の `available_commands_update` が画面に出ないか。(**一部済**: T-36 でターンが流れて完了した。画面の表示の細部は未確認)
 7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.gemini/antigravity-acp/settings.json` と `acp_token.json` のハッシュを比べる (`auth.type` はログインのときに自分で書いた分だけが変わる)。
    `/logout` が Yhtye 経由で送られないこと (チャットに `/logout` と打ってもログアウトしないこと)。(**未**)
+
+## 14. pi: `@openma/pi-acp` (pi 1.3.0 + アダプタ 0.1.8、**起動・モデル一覧・effort・MCP の配線は実機確認、本物のモデルでの 1 ターンは未検証**)
+
+> 実装は Devin (§10)・MiniMax Code (§11)・Grok Build (§12)・Google Antigravity (§13) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) だが、**ネイティブの ACP を持たない**ので
+> サードパーティのアダプタを選ぶ調査から始めた (2026-10-26、§14.0)。アダプタの実機調査 (JSON-RPC を直接送る調査。LLM は**偽のもの**を差し込み、課金されるモデルは呼んでいない、§14.1) で分かったことに合わせて実装し、
+> その後 Yhtye 自身の acp 層 (`HarnessPreset::pi().config(..)`、`ModelService`) から、モデル一覧・effort・MCP の配線を実機で確かめた (2026-10-28、§14.9)。
+> モデルへのプロンプトはクレジットを使うので、確認のための課金は避けた (§14.9 に 402 で届かなかった 3 回を記す)。**本物のモデルで 1 ターン (`EndTurn`) 流したことはまだ無い** (§14.11)。
+> ラベル: **[調査]** = アダプタを直接調べて分かったこと (偽の LLM を含む)、**[ソース]** = アダプタのソースを読んで分かったこと (実機では試していない)、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
+> 節番号: §13 は Google Antigravity (T-34/T-36)。
+
+### 14.0 アダプタの選定 (調査、2026-10-26)
+
+pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要るので、アダプタを比べた。決め手は **Yhtye の MCP (HTTP) を pi に渡せること**
+(オーケストレーションは MCP のツールを呼ぶことで進むので、これが通らないと実装者は報告できず、オーケストレータは `create_group` を呼べない、§10.7)。
+
+| 候補 | 結果 |
+|---|---|
+| **`@openma/pi-acp` 0.1.8 (採用)** | 2026-10-17 公開、Apache-2.0、ACP レジストリには**未掲載**。pi の SDK を組み込み (`createAgentSessionRuntime`)、`~/.pi/agent` の設定・認証・拡張・skills・sessions をそのまま使う (**pi 本体のバイナリは起動しない**)。`mcpCapabilities` = `{http: true, sse: false}`、`loadSession`、`_meta.steering.supported`、`session/cancel` に対応 **[調査]**。懸念: v0.1.x の**単独メンテ**、依存の pi SDK が `^1.1.0` で npx は lock しないので **1.4.0 が入る** (ユーザーの pi 本体は 1.3.0)、**Node 22.19 以上が要る** |
+| `svkozak/pi-acp` 0.0.34 | ★743、ACP レジストリ掲載、MIT。`pi --mode rpc` を子プロセスで起動する。`mcpCapabilities.http` が **false** で、MCP を pi に渡さない **[実測]** → **不採用** |
+| `@geohar/pi-acp` 0.3.2 | `--mcp-config` を pi に渡すが、pi 1.3.0 が `Unknown option: --mcp-config` で拒否し、`session/new` が `-32603` で失敗する **[実測]** → **不採用** |
+| `pi-acpinator` 0.1.0 (Rust) | 同じく `--mcp-config` を使う → 不採用 (アダプタ自体は起動していない) |
+| `@victor-software-house/pi-acp` | archived |
+| DxTa、regadas、`acp-go-pi`、`beyond5959/acp-adapter`、0xSero | 小規模・古い・MCP 不可 |
+
+### 14.1 調査のまとめ (`@openma/pi-acp` 0.1.8 + 内蔵の pi SDK 1.4.0)
+
+| 項目 | 結果 |
+|---|---|
+| 配布・起動 | npm の `@openma/pi-acp`。`npx -y @openma/pi-acp@0.1.8` (引数は無い)。`initialize` まで約 0.8〜1.0 秒 (npx が温まっていて +1.6 秒、キャッシュなしの cold は 9 秒) **[調査]** |
+| `initialize` | `agentInfo` = `openma-pi-acp` / `0.1.8`。`authMethods` = `api-key:anthropic` / `openai` / `google` / `openrouter` / `xai` / `groq` / `mistral` / `deepseek` / `zai` / `minimax` の **10 個**。Yhtye は `authenticate` を呼ばない (§14.7)。`mcpCapabilities` = `{http: true, sse: false}`、`loadSession: true`、最上位 `_meta.steering.supported` **[調査]** |
+| `session/new` の応答 | **`modes` も `models` も無く、`configOptions` だけ**: `model` (select、category `model`、値は `<provider>/<id>` で **id 自体に `/` を含む**)、`thinking` (category `thought_level`、**推論対応のモデルだけ**に出て、値はモデルごとに違う。既定 `medium`)、`auto_compaction` (category `model_config`、`on` / `off`)。既定のモデルは pi の `defaultModel`、無ければ**一覧の先頭** (この環境では高価な `claude-fable-5`) **[調査]** |
+| **設定ファイルの書き換え** | **`session/set_config_option` は `persist: true` 固定で、ユーザーの `~/.pi/agent/settings.json` (`defaultProvider` / `defaultModel` / `defaultThinkingLevel`) を書き換える** **[調査]**。調査中に一度実際に書き換わり、元に戻した。→ Yhtye は `set_config_option` を**送らず**、環境変数 `PI_ACP_MODEL=<provider/id>[:<thinking>]` で渡す (これは**永続化しない** **[実測]**、§14.3) |
+| MCP | `mcpServers` の http を受け取り、**ヘッダーもそのまま送る**。接続は遅延。公開は **`exposure: "deferred"` 固定**: 最初に宣言されるのは **`tool_search` だけ**で、`tool_search` を呼ぶと `mcp__<server>__<tool>` が宣言される (偽の LLM で `tool_search` → MCP のツール → `bash` → 最終テキストまで確認)。ツール名は pi 組み込みの MCP と同じ `mcp__<server>__<tool>`。ユーザー自身の `~/.pi/agent/mcp.json` はソース上は読まれない (**[ソース]**、未検証) **[調査]** |
+| 許可 | pi は**ツールの承認の仕組みを持たず** `session/request_permission` は来ない **[調査]**。来るのは拡張の `ctx.ui.confirm` / `ctx.ui.select` のときだけ: confirm は `yes` (`allow_once`) / `no` (`reject_once`)、select は `choice-<n>` が全部 `allow_once` **[ソース]** |
+| システムプロンプト | **`_meta.systemPrompt.append` は無視される** **[調査]** → `FirstPrompt`。pi の組み込みプロンプトは約 6.9 KB で、`~/.agents/skills` の一覧と、cwd の `AGENTS.md` / `CLAUDE.md` を含む (**同じ階層に `AGENTS.md` があれば `CLAUDE.md` は読まれない** **[調査]**) |
+| セッション・cancel・steering | 記録は `~/.pi/agent/sessions/--<cwd>--/*.jsonl` で、**最初のプロンプトで作られる**。再起動後の `session/load` で履歴を再生し、文脈も引き継がれた (偽の LLM)。`session/cancel` は `stopReason: cancelled` で止まり、**実行中の `bash` も止まる**。`_session/steering` は実行中のターンに `injected` **[調査]** |
+| 失敗 | 認証なしは `session/new` が **`-32000` `"Authentication required: no model is available: ..."`** (§14.7)。プロバイダのエラーは `session/prompt` が **`-32603` `"Internal error: 402: ..."`** + `data.pi.failure` (402 の課金エラーにも `rate_limited` が付くので、分類はあてにならない) **[調査]** |
+| 起動バナー | 起動時に pi のバージョンと読み込んだ資源を **`agent_message_chunk` で流す**ので、環境変数 `PI_ACP_QUIET_STARTUP=1` で消す **[調査]** |
+| pi 固有の読み込み | ユーザーの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) は**全部ロードされる**。プロジェクトの `.pi/` は**信頼していなければ読まれない** (openma の既定) **[調査]**。SDK は初回に `~/.pi/agent/mcp-auth.json` (`{}`) を作る **[調査]** |
+
+### 14.2 起動、環境、設定ファイル (`HarnessConfig::pi` / `HarnessPreset::pi`)
+
+- **起動**: `npx -y @openma/pi-acp@0.1.8` (**完全固定**、`PI_ACP` 定数。Claude Code / Codex のアダプタと同じ理由)。`command` は検出で見つけた `npx` の絶対パス **[Yhtye]**。
+  **pi 本体は起動しない** (アダプタが SDK を組み込む)。初回は npx のダウンロードがあるので起動のタイムアウトは他と同じ 120 秒。
+- **環境**: 追加するのは **`PI_ACP_QUIET_STARTUP=1` だけ** (`PI_ACP_QUIET_STARTUP_ENV`。起動バナーを `agent_message_chunk` として画面に流さない)。除く環境変数は無い (`env_remove` は空)。
+  次の変数には**意図して触らない** **[Yhtye]**:
+  - **`PI_ACP_TRUST_PROJECTS` は付けない**: 付けると、リポジトリの `.pi/` が拡張を実行できてしまう (信頼していないプロジェクトの `.pi/` は読まれない openma の既定のままにする)。
+  - `PI_OFFLINE`: 付けるとモデルカタログの更新が止まる。 `PI_TELEMETRY`: pi の利用者の設定に任せる。 `PI_CODING_AGENT_DIR`: ユーザーの設定・認証をそのまま使う (別の場所を指していればそこが使われる)。
+- **モードは無い**: `mode_after_new = None` (`session/set_mode` を送らない。`modes` が `session/new` の応答に無い)。**`model` / `effort` も `HarnessConfig` には入れない** (`None`): どちらも `set_config_option` で
+  送ると `settings.json` に保存されるため (§14.3)。モデルと effort は preset が環境変数に入れる。
+- **`clientInfo` は偽装しない** (`client_info: None`、`yhtye` のまま通る)。
+- **ユーザーの設定は書かない**: Yhtye は `settings.json` / `auth.json` / `models-store.json` を書き換えない **[実測]** (§14.9 で前後の sha256 が一致)。SDK が初回に作る `~/.pi/agent/mcp-auth.json` (`{}`) だけは Yhtye の起動で作られうる。
+- **記録は溜まる**: セッションの記録 (`~/.pi/agent/sessions/`) は最初のプロンプトで作られるので、プロンプトを送らないモデル一覧の読み取りでは増えない (はず、**[調査]** の「最初のプロンプトで作られる」から)。
+  Yhtye は後片付けをしない (エージェントのセッションは pi の `sessions` に残る)。
+
+### 14.3 モデルと effort — `PI_ACP_MODEL` (`HarnessPreset::model_effort_env`)
+
+- **モデルと effort は環境変数 `PI_ACP_MODEL` だけで渡す**: 値は `<provider>/<id>`、effort があれば `:<thinking>` を後ろに付ける (`orcarouter/anthropic/claude-haiku-4.5:low`)。
+  `HarnessPreset::model_effort_env = Some("PI_ACP_MODEL")` (新設。`model_config_env` (Codex の `CODEX_CONFIG`) とは別で、**値は JSON でなく `<model>[:<effort>]`**)。設定すると `HarnessPreset::config` は
+  環境変数を入れるだけで**何も `set_config_option` で設定せず** (`model` も `effort` も `None` のまま、モードも無し)、モデル無しの effort は何の後ろにも付けられないので無視する **[Yhtye]**。
+  **永続化されない** **[実測]** (`PI_ACP_MODEL` で始めた前後で `settings.json` の sha256 が同じ)。
+- **一覧**: `session/new` の `configOptions` の `model` (グループ付きなので平らにする、§15.6)。**一覧のセッションも何も設定しない** (`set_config_option` を送らない)。
+  既定のモデル (`current`) は pi の `defaultModel`。この環境では `orcarouter/anthropic/claude-fable-5` で、197 個、約 2.5 秒 **[実測]**。
+- **`requires_model = true`**: **組み込みの既定のモデルは無い** (一覧はユーザーのプロバイダのもので、Yhtye が決められない)。選ばずに始めると pi は一覧の先頭 (たいてい最も高いモデル) で動くので、
+  Codex と同じく**選ばなければ始めない**: `AgentCatalog::validate` が `pi: a model is required` で保存を拒否し、起動時は
+  「`pi にはモデルの指定が必要です (設定 › ハーネス でモデルを選んでください)`」の `AgentError::Setup` になる **[Yhtye]**。
+- **effort (`thinking`)**: `effort_config_id = Some("thinking")` (`PI_EFFORT_CONFIG_ID`)。この option は**推論対応のモデルにだけ出て、値もモデルごとに違う**
+  (`off` / `minimal` / `low` / `medium` / `high` / `xhigh` のうちの部分集合)。`auto_compaction` は effort ではない (取り違えない)。Antigravity と同じ「effort 無し」ではなく、Claude Code / OpenCode のように**あるモデルにだけある**。
+  - **モデル一覧の読み取り (`probe_models`) では effort を読まない** (`efforts: None`)。モデルを選んで読めない (選ぶと保存される) ので、モデルごとにセッションを起動し直す必要があり、197 個ぶんは読めないため。
+  - **`get_efforts` (`list_model_efforts`)**: そのモデルを `PI_ACP_MODEL=<model>` で**起動し直した一覧用のセッション** (`HarnessPreset::probe_config_for(model)`) の `session/new` の option から `thinking` を読む。
+    **約 1.5 秒 / モデル**。`thinking` が無いモデルは空 (= effort 無し)。結果は他のハーネスと同じく (ハーネス, モデル) ごとにキャッシュし、保存時の検査 (`check_efforts`) はこれに照らす
+    (推論しないモデルへの effort、別のモデルの段階は拒否される)。
+  - `PI_ACP_MODEL` のモデルが一覧に無くても、アダプタは**失敗せずその名前のまま始める** (別のモデルに黙って差し替わらない) **[実測]**。プロンプトを送ってはじめてプロバイダ側で失敗する。
+    **プロバイダ名なしの id** (`claude-haiku-4.5`) は `github-copilot` の認証エラー (`-32000`) で `session/new` が失敗し、ログインのヒントが付く **[実測]**。
+    effort の無いモデルに `:low` を付けると suffix は落とされる (保存の検査が拒否するので通常は起きない)。未知の段階 (`:nonsense`) は**モデル名の一部**になる **[実測]**。
+
+### 14.4 許可の自動応答: `PermissionPolicy::OnceOnly`
+
+- **pi にはツールの承認が無い**ので `session/request_permission` は通常来ない **[調査]**。来るのは**ユーザーの拡張**が `ctx.ui.confirm` / `ctx.ui.select` を使うときだけ: confirm は `yes` (kind `allow_once`) と `no` (`reject_once`)、
+  select は `choice-<n>` (**全部 `allow_once`**) **[ソース]**。
+- preset は **`PermissionPolicy::OnceOnly`** にする **[Yhtye]**: kind が `allow_once` のものだけを選ぶ (`acp/permission.rs`、§10.6)。confirm では `yes`、select では**先頭の `choice-0`** が選ばれる
+  (拡張の選択肢の意味は Yhtye には分からない。`allow_once` の最初のものを選ぶ)。`reject_once` しか無ければ `Cancelled`。
+  select の `choice-<n>` を自動で選ぶのは、拡張が出す選択肢の中身を判断できないことの割り切りで、**拡張が危険な選択肢を並べていれば最初のものが選ばれる** (§14.11)。
+- 偽エージェントで確認 (`permissions_of_extension_dialogs_pick_the_allow_once_option`): `no` / `yes` から `yes`、`choice-0..2` から `choice-0`、`no` だけなら `Cancelled`。
+  **[未検証]** 実際に拡張がダイアログを出す場合 (§14.11)。
+
+### 14.5 システムプロンプトと MCP
+
+- **`_meta.systemPrompt.append` が無視される** **[調査]** ので、`SystemPromptStyle::FirstPrompt` (最初のプロンプトの前にテキストとして付ける。`session/load` で復元したセッションには付けない) **[Yhtye]**。
+  pi 自身の組み込みプロンプト (約 6.9 KB。`~/.agents/skills` の一覧と cwd の `AGENTS.md` / `CLAUDE.md` を含む) は残り、Yhtye の役割プロンプトはその上の会話の最初に載る。
+  エージェントの cwd は git worktree なので、リポジトリの `AGENTS.md` / `CLAUDE.md` が読まれる (同じ階層に `AGENTS.md` があれば `CLAUDE.md` は読まれない)。
+- **役割プロンプトの後ろに注記 `PI_MCP_NOTE`** (`HarnessConfig::system_prompt_note`、全役割) **[Yhtye]**: pi は MCP のツールを**遅延公開**するので、役割プロンプトにある `mcp__yhtye__report_step_done` という名前は、
+  読み込むまでツールとして存在しない。注記 (英語): 「Yhtye のツール (`report_step_done`、`help`、`create_group` …) は MCP サーバー `yhtye` にあり**遅延**している: 読み込むまで自分のツールに無い。まず **`tool_search`** で読み込み
+  (例: `report_step_done`)、読み込めたら `mcp__yhtye__<name>` で呼ぶ」。Devin の `DEVIN_MCP_NOTE` (§10.7) と同じ仕組みで、Devin・pi 以外には付かない。
+- **[実測]** Yhtye の MCP をつないだセッションで、アダプタ内で処理されるスラッシュコマンド `/tools` と `/status` (**モデルは呼ばない**) を送った: アクティブなツールは **`read, bash, edit, write, tool_search`** で、
+  Yhtye のツールは `tool_search` の後ろに隠れている (遅延公開のとおり)。`/status` はアダプタが **pi 1.4.0 を内蔵**していることを示した。
+  **[未検証]** 実際のモデルが `tool_search` を呼んで `mcp__yhtye__report_step_done` に辿り着けるか (弱いモデルで失敗する可能性、§14.11)。
+
+### 14.6 検出と既定の順
+
+- **検出** (`agents/detect.rs`): `HarnessSpec` の `pi` は**主実行ファイルが `pi`** (`PI_COMMAND`。設定 › ハーネス に出る名前で、手動パスで置き換えるのもこれ)、`also` が **`npx`** (アダプタを走らせる)。
+  **`pi` と `npx` の両方が見つかったときだけ**インストール済み: `pi` の本体はアダプタが組み込むので起動はしないが、ユーザーが `pi` でログイン (`/login`) と設定をするので「pi を使っている」印として要る。
+  探す順は `PATH` → **`$PI_CODING_AGENT_DIR/bin`** (`PI_ROOT_ENV`。絶対パスのときだけ) → 共通の既知の場所 (`~/.local/bin` など) → **`~/.pi/agent/bin`** (`PI_INSTALL_DIR`。pi 自身のツールの置き場所で、fish などでは `PATH` に入らない)
+  (`HarnessSpec::root_env` / `root_subdirs = ["bin"]` / `extra_dirs`、Grok Build と同じ形)。ほかのハーネスはこれらの場所を探さない。`npx` が無ければ `pi` があっても未インストール (Claude Code・Codex と同じ)。
+  preset は `HarnessPreset::pi().with_command(<見つけた npx>)` で登録する (`presets_from`)。
+- **ハーネスの id は `pi`、表示名も `pi`**。**組み込みの既定の順は claude-code > opencode > devin > minimax-code > antigravity > grok-build > pi > codex** (`DEFAULT_ORDER`):
+  **モデルの指定が要る pi と Codex は最後** (選ばなくても動くハーネスが先)。pi は Codex より先 (どちらも他に無いときだけ既定になり、起動時に「設定でモデルを選んで」と案内して失敗する)。
+
+### 14.7 ログインと失敗の見え方
+
+- **ログインは `pi` で先に済ませる** (Yhtye は `authenticate` を**呼ばない**。アダプタの `authMethods` は 10 個の `api-key:<provider>` だが、呼ぶのは利用者が選ぶことで、Yhtye が代わりに認証を始めることはしない)。
+  ターミナルで `pi` を起動して `/login` するか、使うプロバイダの API キー (`ANTHROPIC_API_KEY` など) を環境変数で設定する。認証は `~/.pi/agent/auth.json` が使われ、Yhtye は読み書きしない。
+  API キーは「設定 › 秘密の環境変数」に登録しても渡せる (**すべてのエージェント**に渡る、§9.5)。
+- **未ログインの失敗** **[調査]**: `initialize` は通り、`session/new` が **`-32000` `"Authentication required: no model is available: ..."`** で失敗する。Yhtye では起動エラー (step = `session/new`) として読め、
+  `HarnessConfig::login_hint` (`PI_LOGIN_HINT`) が既存の起動エラーのメッセージの後ろに付く: 「pi にログインしていません (Yhtye は代わりにログインしません)。ターミナルで `pi` を起動して `/login` するか、
+  使うプロバイダの API キー (例: `ANTHROPIC_API_KEY`) を環境変数で設定してもう一度始めてください」。ヒントは **`session/new` / `session/load` の `-32000` にだけ**付き、ほかのエラーには付かない
+  (Antigravity と pi だけが `login_hint` を持つ、§13.7)。偽エージェントで確認 (`an_authentication_error_says_how_to_log_in_when_opening_or_loading_a_session`)。
+- **プロバイダのエラー**: `session/prompt` が **`-32603` `"Internal error: 402: ..."`** + `data.pi.failure` で失敗する **[調査]**。分類は信用できない (**課金エラー (402) にも `rate_limited` が付く**)。Yhtye は分類を見ず、
+  通常のターンのエラーとして扱う (§9.6 のような「喋って `end_turn`」ではなく JSON-RPC のエラー)。
+
+### 14.8 そのほか
+
+- **steering** (`_session/steering`、§4.5): アダプタは `initialize` の最上位 `_meta.steering.supported` を広告する。偽の LLM で**実行中のターンに `injected` された** **[調査]**。アイドル時の挙動は未検証 (§14.11)。
+- **起動バナーは `PI_ACP_QUIET_STARTUP=1` で消す** (§14.2)。消さないと、毎セッションの最初に `agent_message_chunk` が 1 つ増えて画面に出る。
+- **拡張**: ユーザーの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) は**全部ロードされる** (Yhtye のエージェントでも)。拡張がダイアログを出せば §14.4 のとおり自動で応答される。
+  プロジェクトの `.pi/` は信頼していなければ読まれず、Yhtye は信頼させない (§14.2)。
+- **`mcp-auth.json`**: SDK が初回に `~/.pi/agent/mcp-auth.json` (`{}`) を作る **[調査]**。ユーザーの `~/.pi/agent/mcp.json` は**ソース上は読まれない** (**[ソース]**、未検証)。
+- **別の pi のバージョン**: ユーザーの pi 本体は 1.3.0 だが、アダプタは SDK **1.4.0** を内蔵するので、`~/.pi/agent` の形式が版で変わる場合は食い違いうる (`^1.1.0` で npx が lock しないため、新しい版が入ることもある)。
+  アダプタの版は `PI_ACP` で完全固定しているが、**SDK の版は固定できない**。
+
+### 14.9 実機の結果 (Yhtye の acp 層から、2026-10-28、pi 1.3.0、アダプタ 0.1.8 / 内蔵 SDK 1.4.0)
+
+すべて **[実測]**。`HarnessPreset::pi()` と `ModelService` を使い、モデルへのプロンプトは送っていない (下の 402 を除く)。
+
+| 項目 | 結果 |
+|---|---|
+| モデル一覧 | **197 個、約 2.5 秒**。`current` は `orcarouter/anthropic/claude-fable-5` (pi の既定。高価なので `requires_model` で選ばせる) |
+| 無料モデルでの開始 | id に `free` を含む orcarouter のモデルは `orcarouter/orcarouter/free` の 1 つだけ。effort は空 (約 1.8 秒)。`PI_ACP_MODEL` で開始すると約 1.7 秒で `model=orcarouter/orcarouter/free`、option は `model` と `auto_compaction`、`steering=true` |
+| effort のモデル差 (`session/new` の option を読んだだけ) | `claude-haiku-4.5` は `off, low, medium, high, xhigh`、`gpt-5-mini` は `minimal, low, medium, high, xhigh`、`deepseek-chat` は**無し**。`claude-haiku-4.5` を `PI_ACP_MODEL=…:low` で開始すると `thinking=low` |
+| MCP の配線 | §14.5。アクティブなツールは `read, bash, edit, write, tool_search`、Yhtye のツールは `tool_search` の後ろ。`/status` で内蔵 pi 1.4.0 を確認 |
+| 未知のモデル id | `orcarouter/nobody/gone` を `PI_ACP_MODEL` に渡してもアダプタは失敗せず**その名前のまま**始まる (別のモデルに差し替わらない。プロンプトでプロバイダ側が失敗する)。プロバイダ名なしの id (`claude-haiku-4.5`) は `github-copilot` の認証エラー (`-32000`) で `session/new` が失敗しヒントが付く。effort の無いモデルに `:low` を付けると suffix は落ち、未知の段階 (`:nonsense`) はモデル名の一部になる (§14.3) |
+| プロンプト (課金なし) | 調査時に orcarouter の有料モデル (`haiku-4.5`、`gemini-2.5-flash-lite`) の 2 回が **402 out of credits**、実装時に無料モデルの 1 回が **402 `free_quota_exhausted`** (約 0.45 秒、`pi.failure` は `rate_limited`)。いずれも**モデルに届いておらずトークン消費なし** |
+| 設定ファイル | `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` は各確認の前後で **sha256 が一致** (変化なし)。作ったセッションは削除した |
+
+### 14.10 自動テストで確認したこと (偽エージェント、pi 本体・アダプタ本体ではない)
+
+pi はユーザーのプロバイダと認証が要り、`set_config_option` はユーザーの `settings.json` に保存されるので、実機を呼ぶテストはリポジトリに置いていない (確認は一時的なテストで行い、消した)。
+偽エージェントを pi 風に振る舞わせる (`crates/yhtye-fake-agent`、`tests/common/pi.rs`): シナリオに `model_env` (開始するモデルを `<model>[:<effort>]` で読む環境変数。一覧に無いモデルはそのまま、effort 無しで始める)、
+`efforts_without_default` (`thinking` に `default` の行が無く、先頭の段階から始まる)、`model_groups` (モデルの option をプロバイダでグループ化)、`boolean_options` (`auto_compaction`)、
+動作 `report_env` (偽エージェント自身の環境変数を `env:NAME=value;...` で報告) を足した。
+
+- `tests/acp_fake_pi.rs` (8 本): モデルと effort が環境変数だけで渡り `set_mode` も `set_config_option` も届かない (コロンを含むモデル id、effort 無し、推論しないモデルの `auto_compaction`、モデル無しは何も渡さない)、
+  一覧に無いモデルは別のモデルに差し替わらずそのまま、役割プロンプトが最初のプロンプトにだけ付き `PI_MCP_NOTE` が後ろに付き `clientInfo` が `yhtye` のまま、許可の自動応答が `yes` / `choice-0` を選び `reject_once` だけなら `Cancelled`、
+  認証エラーが `session/new` と `session/load` でヒントを付けほかのエラーには付けない、steering が `initialize` から読まれ実行中のターンに入る、一覧がモデルだけを読み effort を読まず `set_config_option` を送らない、
+  `get_efforts` がそのモデルで始めたセッションの段階を返す (モデルごとに違い、`auto_compaction` は effort でなく、保存の検査はそれに照らす)。
+- `acp/config.rs` (`pi_runs_the_pinned_adapter_and_sets_neither_mode_model_nor_effort`)、`agents/catalog.rs` (`pi_preset_passes_model_and_effort_in_the_environment_and_sets_no_option`、
+  `pi_without_a_model_asks_for_one_and_runs_once_the_settings_name_it`)、`agents/detect.rs` (`pi_is_found_in_its_agent_directory_and_in_the_one_the_environment_names`、`a_missing_npx_takes_claude_code_codex_and_pi_with_it`)、
+  `agents/installed.rs` (登録・`npx` が無ければ登録しない・既定の順で pi が Codex の前、Grok Build などの後)、`tests/harness_detection.rs` (Core 経由で `pi` と `npx` が見つかり登録される)、
+  フロントエンドの `HarnessSettings.test.tsx` (`~/.pi/agent/bin/pi` が既知の場所で見つかり `npx` と並ぶ) と `FakeHarnesses` (`memoryTransport.ts`)。
+
+### 14.11 未検証の項目と手動検証チェックリスト (pi を持ちクレジットのある人向け)
+
+**未検証**: 本物のモデルでの 1 ターン (`EndTurn`)、`tool_search` 経由で `mcp__yhtye__report_step_done` を呼べるか (弱いモデルで失敗する可能性)、`agent_thought_chunk`、
+拡張が実際に許可ダイアログを出す場合、`~/.pi/agent/mcp.json` の影響、`~/.pi/agent/AGENTS.md`、アイドル時の steering、Windows / macOS、npx の cold start。
+
+前提: pi が `pi` と `npx` で「インストール済み」と出て (設定 › ハーネス)、`pi` で `/login` 済みか API キーを環境変数に入れてある。設定 › エージェントで pi の行 (モデルは必ず選ぶ) を implementer などに足して、小さなタスクを流す。
+結果 (成否・観察・pi とアダプタの版) を、この節に **[実測]** として書き足す。**済** / **未** を各項目の末尾に書いて、進んだ形を残す。
+**前後で `~/.pi/agent/settings.json` と `auth.json` のハッシュを比べる** (項目 8)。
+
+1. **本物のモデルで 1 ターン**: 安いモデル (や無料のモデル) を選んで小さなタスクを流す。`EndTurn` で終わり、メッセージ・ツール呼び出し・`usage_update` が画面に出るか。(**未**)
+2. **実装エージェントとしてタスクを完了できる**: 1 ファイルの変更のタスクを流し、モデルが `tool_search` で `report_step_done` を読み込み、`mcp__yhtye__report_step_done` を呼んでタスクが完了状態まで進むか。
+   **弱いモデルで読み込めずに報告なしのターンになる**ようなら、`PI_MCP_NOTE` の文面の見直しが要る。(**未**。配線は §14.9 で確認済み)
+3. **オーケストレータとして使える**: `create_group` → `create_task` → `finish_group` まで通るか (`tool_search` で複数のツールを読めるか)。(**未**)
+4. **`agent_thought_chunk`**: 推論するモデルで、思考が画面に出るか。(**未**)
+5. **拡張の許可ダイアログ**: `ctx.ui.confirm` / `ctx.ui.select` を出す拡張を入れて、`session/request_permission` が来て `yes` / `choice-0` が自動で選ばれるか (選ばれた結果が拡張に伝わるか)。(**未**)
+6. **`~/.pi/agent/mcp.json` と `~/.pi/agent/AGENTS.md`**: ユーザー自身の MCP のサーバーがつながるか (ソースでは読まれないはず)、`AGENTS.md` が組み込みプロンプトに入るか。(**未**)
+7. **`session/load` と `session/cancel` と steering**: 本物のモデルでタスクを流して Yhtye を再起動し、セッションが再開できるか (§14.1 では偽の LLM で済)。実行中の中止で `stopReason: cancelled` で止まるか。
+   アイドル時の steering (`startedNewTurn` で追えないターンが始まらないか、§4.5)。(**未**。偽の LLM では済)
+8. **設定ファイルが変わらない**: 1〜7 の前後で `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` のハッシュを比べる (Yhtye は書かない)。(**済**: §14.9。プロンプトを流した後は**未**)
+9. **別の環境**: Windows / macOS、npx の cold start (キャッシュなしで約 9 秒かかる。`startup_timeout` 120 秒に収まるか)、Node 22.19 未満での失敗の見え方。(**未**)

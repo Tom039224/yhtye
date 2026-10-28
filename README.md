@@ -25,8 +25,8 @@ English: [README-EN.md](README-EN.md)
 - 作業ツリーごとの複数のチャット: BRANCHES のツリー (作業ツリーを今のブランチ名で表示) から新しいチャットを作る (ブランチはアプリから作成でき、専用の作業ツリーで動く)。
   チャットは並行して動かせ、過去のチャットも再開できる (グループは作成時に作業ツリーがチェックアウトしていたブランチへマージされ、マージ前にずれていればオーケストレータが対処する)
 - 役割 (オーケストレータ / 実装 / 調査 / レビュー) ごとのハーネス・モデル・effort の設定 (全体とプロジェクトごと)
-- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)、MiniMax Code (基本動作は実機確認済み・一部未検証)、Google Antigravity (起動と未ログインの失敗だけ実機確認、ログイン後は未検証)、Grok Build (基本動作は実機確認済み・一部未検証)。
-  実行ファイル (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `~/.local/share/agy-acp-server` なども、`grok` は `~/.grok/bin` も探す)。
+- ハーネス: Claude Code、OpenCode、Codex (OpenRouter のモデル一覧)、Devin (基本動作は実機確認済み・一部未検証)、MiniMax Code (基本動作は実機確認済み・一部未検証)、Google Antigravity (起動と未ログインの失敗だけ実機確認、ログイン後は未検証)、Grok Build (基本動作は実機確認済み・一部未検証)、pi (サードパーティのアダプタ `@openma/pi-acp` 経由。起動・モデル一覧・effort・MCP の配線は実機確認、本物のモデルでの 1 ターンは未検証)。
+  実行ファイル (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` と `npx`) が `PATH` や `~/.local/bin` などで見つかったものだけが選べる (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `~/.local/share/agy-acp-server` なども、`grok` は `~/.grok/bin` も、`pi` は `~/.pi/agent/bin` も探す)。
   設定の「ハーネス」タブで検出状態の確認、パスの手動指定、再検出ができる
 - 中断したタスクの再開、タスクのキャンセル、マージコンフリクトなどのオーケストレータによる対処
 - API キーなどの秘密の環境変数の登録 (OS のキーリングに保存)
@@ -53,6 +53,13 @@ English: [README-EN.md](README-EN.md)
 - Grok Build (`grok agent --no-leader stdio`) は grok 1.0.46・grok.com の Free プラン (`grok-4.7`) の実機で、起動・モデル一覧・モデルと effort の設定・
   実装エージェントとしてのタスクの完了 (`report_step_done`) までを確認した (プロンプトは 2 回だけ)。許可確認が来たときの自動応答、オーケストレータとしての利用、
   未ログイン時、再開は未確認 ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §12)
+- pi (pi coding agent 1.3.0) にはネイティブの ACP が無いので、サードパーティのアダプタ `@openma/pi-acp` 0.1.8 を `npx` で動かす (pi の SDK (1.4.0) を組み込み、あなたの `~/.pi/agent` を使う。Node 22.19 以上が要る)。
+  Yhtye の acp 層から実際のアダプタで、起動・モデル一覧 (197 個)・モデルごとの effort の読み取り・選んだモデルでの開始・Yhtye の MCP の配線 (pi は MCP のツールを `tool_search` で読み込んでから使うので、役割プロンプトに注記を付ける)
+  までを確認した。クレジットの都合でモデルへのプロンプトは流していない (3 回は課金エラーでモデルに届かなかった)。**本物のモデルでの 1 ターン、実装エージェントとしての `report_step_done` による完了、
+  オーケストレータとしての利用、拡張の許可ダイアログ、本物のモデルでの再開は未検証**
+  ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14)。**モデルの指定が必須** (pi には組み込みの既定が無く、選ばないと一覧の先頭の、たいてい最も高いモデルで動くため)。
+  モデルと effort は環境変数 `PI_ACP_MODEL` で渡し、`set_config_option` は送らない (アダプタがあなたの `~/.pi/agent/settings.json` に保存してしまうため)。ログインは Yhtye から行わない
+  (`pi` で `/login` するか、プロバイダの API キーを環境変数に入れる)
 
 段階計画と各段階の結果は [`docs/PLAN.md`](docs/PLAN.md)。
 
@@ -69,9 +76,10 @@ English: [README-EN.md](README-EN.md)
   Yhtye はタスクの結果を統合し、最後に **base ブランチへマージする**。大事なリポジトリで試す前にバックアップかリモートへの push を。
 - エージェントの実行は権限確認なしで進む設定 (Claude Code は `bypassPermissions` 相当、Codex は `agent-full-access`、Devin は `bypass`)。
   MiniMax Code は mcode 自身の既定 (`auto`: 作業ディレクトリ内の書き込みと MCP は確認なし。作業ディレクトリ外へのシェルの書き込み・削除も実機では確認なしで通った。確認が来たときは自動で 1 回だけ許可) で動かす。
-  Google Antigravity は既定の `default` モードのまま動かす (実機では未確認)。Grok Build はモードが無く、あなたの `~/.grok/config.toml` の権限の設定に従う。
-  許可確認が来たときは Yhtye が自動で 1 回だけ許可する。サンドボックスは無い。
-- Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code / Google Antigravity / Grok Build の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
+  Google Antigravity は既定の `default` モードのまま動かす (実機では未確認)。Grok Build はモードが無く、あなたの `~/.grok/config.toml` の権限の設定に従う。pi にはツールの承認が無く、あなたの pi の拡張が出すダイアログだけが許可確認として来る。
+  許可確認が来たときは Yhtye が自動で 1 回だけ許可する。サンドボックスは無い。pi ではあなたの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) がすべて読み込まれ、作業ツリーの `AGENTS.md` / `CLAUDE.md` も読まれる。
+  リポジトリの `.pi/` は読まれない (Yhtye は信頼させない)。
+- Claude Code / OpenCode / Codex (OpenRouter) / Devin / MiniMax Code / Google Antigravity / Grok Build / pi の利用料金や利用枠は、それぞれのサービスからあなたに課金・消費される。
   Yhtye は課金を管理しない。
 - 秘密の環境変数の値は OS のキーリング (Secret Service など) にだけ保存し、Yhtye のデータベースには名前しか置かない。
   ただし登録した変数は**すべてのエージェント**に渡る。

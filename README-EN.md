@@ -28,8 +28,8 @@ What works:
   and per project.
 - Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), Devin (basic operation verified against the
   real Devin on the free plan), MiniMax Code (basic operation verified against mcode 0.6.2), Google Antigravity (only
-  startup and the logged-out failure verified against the real server), and Grok Build (basic operation verified against grok 1.0.46). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) are found on
-  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
+  startup and the logged-out failure verified against the real server), Grok Build (basic operation verified against grok 1.0.46), and pi (through the third-party adapter `@openma/pi-acp`; startup, the model list, efforts and the MCP wiring verified, a turn with a real model not yet). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` + `npx`) are found on
+  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`, `pi` in `~/.pi/agent/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
   path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
 - Secret environment variables (API keys), stored in the OS keyring.
@@ -61,6 +61,12 @@ What is not done, and limitations:
   startup, the model list, setting the model and effort, and an implementer task completing through `report_step_done`
   (only two prompts were sent). Answering permission requests, the orchestrator role, the logged-out error and resuming
   are unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §12, Japanese).
+- pi (pi coding agent 1.3.0) has no ACP of its own, so Yhtye runs the third-party adapter `@openma/pi-acp` 0.1.8 through `npx` (it embeds the pi SDK, which is 1.4.0, and uses your `~/.pi/agent`;
+  it needs Node 22.19+). From Yhtye's ACP layer, against the real adapter, we verified startup, the model list (197 models), reading the efforts of a model, starting on a chosen model, and that
+  Yhtye's MCP is wired (pi lists MCP tools only after a `tool_search`, so the role prompt carries a note about it); no model was prompted for lack of credits (the three prompts that were sent failed with provider billing errors (402) before reaching the model).
+  **A turn with a real model, an implementer reporting through `report_step_done`, the orchestrator role, extension permission dialogs and resuming with a real model are unverified**
+  ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14, Japanese). **A model must be chosen** (pi has no built-in default; otherwise it would start on the first, often the priciest, model of its list).
+  The model and effort are passed in the `PI_ACP_MODEL` environment variable, never as config options, because the adapter would save those to your `~/.pi/agent/settings.json`; Yhtye does not log in for you (log in with `pi` and `/login`, or set the provider's API key).
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
@@ -79,9 +85,10 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
   `agent-full-access`, Devin with `bypass`; MiniMax Code runs on mcode's own default `auto`: writes inside the working
   directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; Google
   Antigravity stays in its `default` mode (unverified against the real server); Grok Build has no modes and follows the
-  permission setting of your `~/.grok/config.toml`; a confirmation that does arrive is answered "allow once"
-  automatically). There is no sandbox.
-- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity and Grok Build usage is billed to you, or counted against your quota, by
+  permission setting of your `~/.grok/config.toml`; pi asks for no tool approvals at all, and a dialog that one of your pi extensions raises is answered "allow once"
+  automatically; a confirmation that does arrive elsewhere is answered "allow once"
+  automatically). There is no sandbox. Your pi extensions (`~/.pi/agent/extensions`, the `packages` of `settings.json`) are all loaded, and so is the `AGENTS.md` / `CLAUDE.md` of the worktree; the project's own `.pi/` is not (Yhtye does not trust it).
+- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity, Grok Build and pi usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
   keeps only the names. A registered variable is passed to **every** agent.
@@ -104,11 +111,12 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    | MiniMax Code (partly verified) | MiniMax Code CLI (`mcode`), logged in with `mcode login` | `mcode acp` |
    | Google Antigravity (startup verified only) | the ACP server zip `agy-acp-server-<version>-linux-x86_64.zip` (`agy_acp_server.par` + `localharness_external`, in one directory), signed in as described in SETUP.md | `agy_acp_server` (no arguments) |
    | Grok Build (partly verified) | Grok Build CLI (`grok`, installed to `~/.grok/bin`), logged in with `grok login` | `grok agent --no-leader stdio` |
+   | pi (partly verified) | pi coding agent (`pi`, e.g. in `~/.pi/agent/bin`), `npx` with **Node 22.19+**, logged in with `/login` in `pi` or the provider's API key in the environment | `npx -y @openma/pi-acp@0.1.8` |
 
    At least one harness is needed. Yhtye registers only the harnesses whose executables it finds: on `PATH`, then in
    `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin` (`mcode` is also looked for in `~/.minimax-code/bin`,
    or `$MCODE_INSTALL_ROOT/bin`; `agy_acp_server.par`, or `agy_acp_server`, in `$AGY_ACP_SERVER_HOME`, `~/.local/share/agy-acp-server`
-   and `~/.gemini/antigravity-acp/bin`; `grok` in `~/.grok/bin`, or `$GROK_HOME/bin`). Claude Code is registered when `npx` is found; the
+   and `~/.gemini/antigravity-acp/bin`; `grok` in `~/.grok/bin`, or `$GROK_HOME/bin`; `pi` in `~/.pi/agent/bin`, or `$PI_CODING_AGENT_DIR/bin`, and pi also needs `npx`). Claude Code is registered when `npx` is found; the
    others are optional. If you installed something elsewhere, or after starting Yhtye, open the settings' "ハーネス" tab
    to see what was found, give an absolute path by hand, and press "再検出" (detect again); no restart is needed.
    If your Codex config gets its OpenRouter key from an environment variable, register that variable under

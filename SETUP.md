@@ -11,7 +11,7 @@ Yhtye を動かしたい人向け。開発する人は [`docs/DEVELOPMENT.md`](d
 |---|---|---|
 | WebKitGTK 4.1 | アプリのウィンドウ | `pkg-config --modversion webkit2gtk-4.1` |
 | git | worktree とマージ | `git --version` |
-| Node 22+ (`npx` 含む) | Claude Code と Codex の ACP アダプタ (`npx` で取得して起動) | `node --version` |
+| Node 22+ (`npx` 含む) | Claude Code・Codex・pi の ACP アダプタ (`npx` で取得して起動)。**pi のアダプタは Node 22.19 以上** | `node --version` |
 | Rust 1.98+ | ビルド | `rustc --version` |
 | pnpm 11+ | ビルド | `pnpm --version` |
 | Secret Service (gnome-keyring / KeePassXC / KWallet など) | 秘密の環境変数を使うときだけ | 下記 |
@@ -36,7 +36,7 @@ Debian / Ubuntu のパッケージ名は CI (`.github/workflows/ci.yml`) のも�
 Yhtye は自前でエージェントを実装せず、既存のハーネスを [ACP](https://agentclientprotocol.com) で起動する。
 使うハーネスを先に入れてログインしておく。**ハーネスは 1 つ以上必要**。Yhtye は実行ファイルが見つかったハーネスだけを登録するので、
 どれも見つからないとエージェントを起動できない (「使えるハーネスがありません (設定 › ハーネス を確認)」)。
-Claude Code は `npx` が見つかれば登録される (最初に試すならこれ)。OpenCode・Codex・Devin・MiniMax Code・Google Antigravity・Grok Build は任意。
+Claude Code は `npx` が見つかれば登録される (最初に試すならこれ)。OpenCode・Codex・Devin・MiniMax Code・Google Antigravity・Grok Build・pi は任意。
 
 | ハーネス | 入れるもの | Yhtye の起動方法 | 認証 |
 |---|---|---|---|
@@ -47,6 +47,7 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 | MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
 | Google Antigravity (基本動作は実機確認済み・一部未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
 | Grok Build (基本動作は実機確認済み・一部未検証) | xAI の Grok Build CLI (`grok`)。標準のインストール先は `~/.grok/bin/grok` | `grok agent --no-leader stdio` | `grok login` で先にログインしておく (下記) |
+| pi (起動・モデル一覧・MCP の配線は実機確認済み、本物のモデルでの 1 ターンは未検証) | pi coding agent (`pi`、標準では `~/.pi/agent/bin` など) と、**Node 22.19 以上**の `npx` (pi 本体は起動せず、アダプタが pi の SDK を組み込む) | `npx -y @openma/pi-acp@0.1.8` | `pi` を起動して `/login` するか、使うプロバイダの API キー (例 `ANTHROPIC_API_KEY`) を環境変数に入れる。Yhtye はログインしない (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
 - Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
@@ -58,18 +59,19 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 設定画面 (アイコンレール下部の歯車) の「ハーネス」タブで、各ハーネスの状態を確認し、パスを指定し、見つけ直せる。
 
 - **状態**: ハーネスごとに「インストール済み / 未インストール」と、必要なコマンドがどこで見つかったか (`PATH` / 既知の場所 / 手動) を出す。
-  必要なコマンドは、Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`、Google Antigravity = `agy_acp_server.par` (別名 `agy_acp_server` も可)、Grok Build = `grok`。
+  必要なコマンドは、Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`、Google Antigravity = `agy_acp_server.par` (別名 `agy_acp_server` も可)、Grok Build = `grok`、pi = `pi` と `npx` (pi 本体は起動しないが、`pi` で行うログインと設定の印として要り、起動は `npx`)。
   すべて見つかったハーネスだけが、設定の「エージェント」タブの候補になる。
 - **自動検出の範囲**: 実行ファイルを、まず `PATH` (絶対パスの項目) から、次に既知の場所
   `~/.local/bin` → `~/.cargo/bin` → `~/.bun/bin` → `/usr/local/bin` の順に探す。デスクトップのランチャーから起動した Yhtye はシェルの設定を
   読まず `PATH` が短いことがあるので、`~/.local/bin` などを別に見ている。MiniMax Code (`mcode`) と Grok Build (`grok`) は、それぞれのインストーラの標準の場所
   `~/.minimax-code/bin` (環境変数 `MCODE_INSTALL_ROOT` があれば、その `bin`)・`~/.grok/bin` (環境変数 `GROK_HOME` があれば、その `bin`) も見る (fish などでは `PATH` に入らないことが多いため)。
   Google Antigravity (`agy_acp_server.par`) も、環境変数 `AGY_ACP_SERVER_HOME` (zip を展開したディレクトリ。その `bin` も)、`~/.local/share/agy-acp-server`、`~/.gemini/antigravity-acp/bin` を見る。
+  pi (`pi`) も、`~/.pi/agent/bin` (環境変数 `PI_CODING_AGENT_DIR` があれば、その `bin`) を見る (fish などでは `PATH` に入らないことが多いため)。`npx` は上の共通の場所だけ。
   実行ファイルは走らせず (`--version` なし)、実行可能な通常ファイルかどうかだけを見る (`.par` のような拡張子があってもよい)。
-- **手動パス**: 上の範囲に無い場所に入れたときは、そのハーネスの主実行ファイル (Claude Code は `npx`、他は `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) の
+- **手動パス**: 上の範囲に無い場所に入れたときは、そのハーネスの主実行ファイル (Claude Code は `npx`、他は `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi`) の
   **絶対パス**を入力して「保存」する。保存すると自動検出より優先される。実行可能な通常ファイルでなければ保存できない。
   後でそのファイルが壊れたり消えたりすると、そのハーネスは未インストール扱いになり、理由が表示される (自動検出には**戻らない**)。「自動検出に戻す」で消せる。
-  手動パスで置き換えるのは主実行ファイルだけで、Codex の `npx` は常に自動検出。
+  手動パスで置き換えるのは主実行ファイルだけで、Codex と pi の `npx` は常に自動検出。
 - **再検出**: タブを開いたとき、「再検出」ボタン、手動パスの保存のたびに見つけ直す。「再検出」はモデル一覧のキャッシュも捨てる。
   すでに動いているエージェントには影響せず、新しく起動するエージェントから反映される。
 
@@ -162,6 +164,34 @@ Antigravity は **Google 公式の ACP サーバー `agy_acp_server` (v1.3.0) �
 - `/logout` (あなたの認証を消すスラッシュコマンド) は Yhtye からは送られない (エージェントへのプロンプトは必ず `[yhtye:…]` の見出しで始まる)。
 - 利用枠は Google アカウント (または API キー) から使われる。Yhtye は課金を管理しない。
 
+### pi (起動・モデル一覧・MCP の配線は実機確認済み、本物のモデルでの 1 ターンは未検証)
+
+pi coding agent (1.3.0) にはネイティブの ACP が無いので、Yhtye はサードパーティのアダプタ **`@openma/pi-acp` 0.1.8** を `npx` で動かす (pi の SDK を組み込み、あなたの `~/.pi/agent` の設定・認証・拡張・skills を使う。
+pi 本体の `pi` は起動しない)。**Yhtye の acp 層から実際のアダプタで確認した**のは、起動、モデル一覧 (197 個)、モデルごとの effort の読み取り、選んだモデルでの開始、Yhtye の MCP の配線。
+**まだ確かめていない**のは、本物のモデルでの 1 ターン、実装エージェントとしての `report_step_done` による完了、オーケストレータとしての利用、拡張の許可ダイアログ、本物のモデルでの再開 (`session/load`)、Windows / macOS。
+(クレジットの都合で、モデルへのプロンプトは流していない。3 回は課金エラーでモデルに届かなかった。) 調査の結果と手動検証チェックリストは [`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14。
+
+- **前提**: `pi` と `npx` が見つかること (設定 › ハーネス の必要なコマンド)。`pi` の標準の置き場所は `~/.pi/agent/bin` (環境変数 `PI_CODING_AGENT_DIR` で場所を変えているなら、その `bin`)。アダプタは **Node 22.19 以上**が要る。
+  初回の `npx` はアダプタのダウンロードがある (キャッシュなしで約 9 秒。起動のタイムアウトは 120 秒)。
+- **ログインは Yhtye から行わない**: ターミナルで `pi` を起動して `/login` するか、使うプロバイダの API キー (例 `ANTHROPIC_API_KEY`) を環境変数に入れる (設定 › 秘密の環境変数に登録すると**すべてのエージェント**に渡る)。
+  未ログインだと、起動時に `Authentication required: no model is available: …` と上の手順を示す短い説明が、エージェントの起動エラー (またはモデル一覧のエラー) として出る。
+- **モデルの指定が必須** (設定 › エージェント で必ずモデルを選ぶ): pi には組み込みの既定のモデルが無く、選ばないと pi は**自分の一覧の先頭の、たいてい最も高いモデル**で動いてしまう。選ばずに始めると
+  「pi にはモデルの指定が必要です (設定 › ハーネス でモデルを選んでください)」と出て始まらない。組み込みの既定の順では pi は Codex の前の最後の方 (ほかに使えるハーネスが無いときだけ既定になる)。
+- **モデルと effort は環境変数 `PI_ACP_MODEL` で渡す**: アダプタは設定のモデルや思考レベルを変えるたびに、あなたの `~/.pi/agent/settings.json` (`defaultProvider` / `defaultModel` / `defaultThinkingLevel`) を**書き換える**ので、
+  Yhtye はモデルも effort も設定の option としては送らず、環境変数で渡す (書き換わらない。実機で `settings.json`・`auth.json`・`models-store.json` の前後のハッシュが一致することを確認した)。
+- **effort (思考の深さ、pi では `thinking`)** は、推論に対応したモデルにだけあり、値もモデルごとに違う (例: `claude-haiku-4.5` は `off` / `low` / `medium` / `high` / `xhigh`、`gpt-5-mini` は `minimal` / `low` / `medium` / `high` / `xhigh`、
+  `deepseek-chat` は無し)。設定 › エージェント でモデルを選ぶと、そのモデルで一覧用のセッションを起動して調べるため、**効果の一覧が出るまで約 1.5 秒かかる**。選ばなければ pi の既定 (多くは `medium`) になる。
+- **許可**: pi にはツールの承認が無い。あなたの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) が確認や選択のダイアログを出したときだけ許可確認が来て、Yhtye が「1 回だけ許可」(確認なら `yes`、選択なら最初の `choice-0`) で自動的に通す
+  (実機では未確認)。**拡張は全部読み込まれる**ので、危険な選択肢を出す拡張は入れないでおく。サンドボックスは無い。
+- **システムプロンプトと MCP**: Yhtye の役割の指示は最初のプロンプトの前に付ける (アダプタが `_meta` のシステムプロンプトを無視するため)。pi は MCP のツールを**遅延公開**する (最初は `tool_search` だけがツールで、それを呼ぶと
+  `mcp__yhtye__<name>` が使える) ので、Yhtye は指示の後ろに「まず `tool_search` で読み込んでから呼ぶ」という注記を付ける。**弱いモデルが読み込めず報告できない恐れがある** (未検証)。
+- **あなたの `AGENTS.md` / `CLAUDE.md` と skills も読まれる**: pi の組み込みプロンプトは cwd (エージェントの作業ツリー) の `AGENTS.md` / `CLAUDE.md` (同じ階層に `AGENTS.md` があれば `CLAUDE.md` は読まれない) と `~/.agents/skills` の一覧を含む。
+  プロジェクトの `.pi/` は信頼していないので読まれない (Yhtye は信頼させない: リポジトリの `.pi/` が拡張を実行できてしまうため)。
+- **触らない環境変数**: Yhtye は `PI_CODING_AGENT_DIR` (あなたの設定と認証をそのまま使う)・`PI_OFFLINE` (付けるとモデルカタログの更新が止まる)・`PI_TELEMETRY`・`PI_ACP_TRUST_PROJECTS` を設定しない。起動時のバナーを消す `PI_ACP_QUIET_STARTUP=1` だけを付ける。
+- アダプタは初回に `~/.pi/agent/mcp-auth.json` (`{}`) を作る。エージェントのセッションの記録は `~/.pi/agent/sessions/` に残る (Yhtye は後片付けしない)。
+- アダプタの版 (0.1.8) は固定だが、アダプタが依存する pi の SDK は固定できず、あなたの `pi` (1.3.0) と違う版 (1.4.0) が入る。
+- プロバイダの課金エラー (402 など) は、ターンのエラー (`Internal error: 402: …`) として出る。エラーの分類 (`rate_limited` など) は課金エラーにも付くのでアテにならない。利用料金は各プロバイダから使われる。Yhtye は課金を管理しない。
+
 ### Codex (OpenRouter)
 
 実機で確認したのは OpenRouter 経由だけ。Codex の設定 `model_provider` が `openrouter` のとき、
@@ -194,6 +224,7 @@ OpenAI / ChatGPT のログインなど OpenRouter 以外のプロバイダは、
 | Devin | 基本動作は実機 (無料プラン) で確認済み、実装エージェントとしてタスクの完了 (`report_step_done`) まで確認済み。権限確認なしの `bypass` モードで動かす。Yhtye の HTTP の MCP にはつながるが、Devin はツールを MCP の一覧・呼び出し用のツール経由で使う (Yhtye が指示に注記を付ける) |
 | MiniMax Code | 基本動作 (起動・モデル一覧・モデルと effort の設定・1 ターンの応答) は実機で確認済み。Yhtye の MCP 経由のタスクの完了は未確認。`permissionMode` とモードは変えず、mcode の既定 `auto` で動かす (確認が来れば 1 回だけ許可) |
 | Grok Build | 基本動作は実機 (Free プラン) で確認済み、実装エージェントとしてタスクの完了 (`report_step_done`) まで確認済み。モードが無く、許可の扱いはあなたの `~/.grok/config.toml` に従う (確認が来れば 1 回だけ許可)。MCP のツールは `search_tool` / `use_tool` 経由。オーケストレータとしては未確認 |
+| pi | 起動・モデル一覧・effort の読み取り・MCP の配線は実機で確認済み。本物のモデルでの 1 ターン、`report_step_done` による完了、オーケストレータとしての利用は未確認。**モデルの指定が必須** (組み込みの既定が無い)。ツールの承認は無く、拡張のダイアログだけが許可確認として来る (1 回だけ許可)。MCP のツールは遅延公開で、`tool_search` で読み込んでから呼ぶ (Yhtye が指示に注記を付ける)。Node 22.19 以上が要る。サードパーティのアダプタ (`@openma/pi-acp`、v0.1.x の単独メンテ) |
 
 ## ビルドとインストール
 
@@ -224,8 +255,8 @@ makepkg -si
 1. 起動する。左の欄でプロジェクトのディレクトリ (git リポジトリ) を入力して「開く」。
 2. 歯車 (アイコンレール下部) で、役割ごと (オーケストレータ / 実装 / 調査 / レビュー) のハーネス・モデル・effort を選ぶ。
    「全体」と「このプロジェクト」で切り替えられる。変更はすぐ保存され、新しく起動するエージェントから有効になる。
-   設定していない役割の組み込みの既定は、見つかったハーネスのうち Claude Code → OpenCode → Devin → MiniMax Code → Google Antigravity → Grok Build → Codex の順で最初のもの
-   (Codex はモデルの指定が要るので、ほかに無いときだけ。そのときは設定でモデルを選ぶよう案内が出る)。
+   設定していない役割の組み込みの既定は、見つかったハーネスのうち Claude Code → OpenCode → Devin → MiniMax Code → Google Antigravity → Grok Build → pi → Codex の順で最初のもの
+   (pi と Codex はモデルの指定が要るので、ほかに無いときだけ。そのときは設定でモデルを選ぶよう案内が出る)。
    Claude Code のモデルは環境変数 `YHTYE_MODEL` (未設定なら `haiku`)。
    試すときは Haiku で安く済ませ、本格的に使うときにモデルを上げるとよい。
 3. 会話欄のオーケストレータに自然文で依頼を送る。
@@ -259,7 +290,7 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 |---|---|
 | Wayland + NVIDIA で起動直後に `Error 71 ... dispatching to Wayland display` を出して落ちる | 起動時に自動で `WEBKIT_DISABLE_DMABUF_RENDERER=1` を設定して回避する。効かないときは `WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/release/yhtye` で起動する (この変数を自分で設定済みなら Yhtye は触らない) |
 | 「使えるハーネスがありません」と出てエージェントが起動しない | 設定 › ハーネス で、どのハーネスも「未インストール」になっていないか確認する。Claude Code は `npx` が必要 (Node 22+ を入れる)。入れたら「再検出」 |
-| ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`、Google Antigravity = `agy_acp_server.par`、Grok Build = `grok`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` も) のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
+| ハーネスが「未インストール」のまま / 設定の「エージェント」に出ない | 設定 › ハーネス で、必要なコマンド (Claude Code = `npx`、OpenCode = `opencode`、Codex = `codex` と `npx`、Devin = `devin`、MiniMax Code = `mcode`、Google Antigravity = `agy_acp_server.par`、Grok Build = `grok`、pi = `pi` と `npx`) が「見つかりません」になっていないか見る。`PATH`、`~/.local/bin`、`~/.cargo/bin`、`~/.bun/bin`、`/usr/local/bin` (`mcode` は `~/.minimax-code/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` も、`pi` は `~/.pi/agent/bin` も) のどこにも無ければ、主実行ファイルの絶対パスを手動で指定するか、入れ直して「再検出」する |
 | 手動パスを保存したのに使えない | 表示された理由を確認する。絶対パスの実行可能な通常ファイルでなければならない (ディレクトリやシンボリックリンク先が無い、実行権限が無い、など)。壊れた手動パスは自動検出に戻らないので、直すか「自動検出に戻す」 |
 | Claude Code が認証エラーになる | Claude Code で一度ログインして `~/.claude` に認証情報があるか確認する |
 | OpenCode で認証エラー | `opencode auth login` を済ませる |
@@ -268,6 +299,10 @@ Yhtye はあなたのリポジトリにはマージ以外では何も書かな�
 | Google Antigravity が `Authentication required` になる | `${GEMINI_HOME:-~/.gemini}/antigravity-acp/settings.json` の `auth.type` を `oauth-personal` (または API キーなら `gemini-api-key` と環境変数 `GEMINI_API_KEY`) にして始め直す。上の「Google Antigravity」を参照 (ログイン後の動作は未検証) |
 | Google Antigravity が「Could not find default localharness binary」で失敗する | `agy_acp_server.par` と `localharness_external` を同じディレクトリに置く。`.par` へのリンクを使うなら環境変数 `ANTIGRAVITY_HARNESS_PATH` に `localharness_external` の絶対パスを渡す |
 | Grok Build が起動しない / 認証エラーになる | `grok login` を済ませる (`grok models` でログイン状態とモデルが出るか確認)。設定 › ハーネス で `grok` のパスが `~/.grok/bin/grok` (別の `grok` ではない) か確認する。それでも動かないときは `docs/architecture/acp-harnesses.md` §12 を参照して報告してほしい (一部未検証) |
+| pi が `Authentication required: no model is available` になる | ターミナルで `pi` を起動して `/login` するか、使うプロバイダの API キーを環境変数に入れる (設定 › 秘密の環境変数でもよい)。上の「pi」を参照 (本物のモデルでの動作は未検証) |
+| pi が「モデルの指定が必要です」で始まらない | pi には組み込みの既定のモデルが無い。設定 › エージェント で pi の行のモデルを選ぶ |
+| pi の起動で `npx` が失敗する / 構文エラーが出る | アダプタは Node 22.19 以上が要る。`node --version` を確認して更新する |
+| pi でプロンプトが `Internal error: 402` で失敗する | プロバイダ側のクレジット切れ・無料枠の上限。モデルには届いていない。プロバイダ (orcarouter など) の残高を確認する。詳しくは `docs/architecture/acp-harnesses.md` §14 |
 | Codex が空のトークンで失敗する | 「秘密の環境変数」に `config.toml` が参照している変数を登録する |
 | 秘密の登録やエージェント起動が「キーリングが使えない」で失敗する | Secret Service (gnome-keyring / KeePassXC など) を起動してロックを解除する |
 | グループが「マージ待ち」で止まる | base ブランチをチェックアウトし、作業ツリーを clean にして再試行する |
