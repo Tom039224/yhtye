@@ -28,7 +28,7 @@ What works:
   and per project.
 - Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), Devin (basic operation verified against the
   real Devin on the free plan), MiniMax Code (basic operation verified against mcode 0.6.2), Google Antigravity (only
-  startup and the logged-out failure verified against the real server), Grok Build (basic operation verified against grok 1.0.46), and pi (through the third-party adapter `@openma/pi-acp`; startup, the model list, efforts and the MCP wiring verified, a turn with a real model not yet). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` + `npx`) are found on
+  startup and the logged-out failure verified against the real server), Grok Build (basic operation verified against grok 1.0.46), and pi (through the third-party adapter `@openma/pi-acp`; startup, the model list, efforts and the MCP wiring verified, and a turn, an implementer's `report_step_done` and resuming with a local LM Studio model; cloud models and the orchestrator role not yet). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` + `npx`) are found on
   `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`, `pi` in `~/.pi/agent/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
   path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
@@ -63,8 +63,9 @@ What is not done, and limitations:
   are unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §12, Japanese).
 - pi (pi coding agent 1.3.0) has no ACP of its own, so Yhtye runs the third-party adapter `@openma/pi-acp` 0.1.8 through `npx` (it embeds the pi SDK, which is 1.4.0, and uses your `~/.pi/agent`;
   it needs Node 22.19+). From Yhtye's ACP layer, against the real adapter, we verified startup, the model list (197 models), reading the efforts of a model, starting on a chosen model, and that
-  Yhtye's MCP is wired (pi lists MCP tools only after a `tool_search`, so the role prompt carries a note about it); no model was prompted for lack of credits (the three prompts that were sent failed with provider billing errors (402) before reaching the model).
-  **A turn with a real model, an implementer reporting through `report_step_done`, the orchestrator role, extension permission dialogs and resuming with a real model are unverified**
+  Yhtye's MCP is wired (pi lists MCP tools only after a `tool_search`, so the role prompt carries a note about it). The three prompts sent to cloud models (orcarouter) failed with provider billing errors (402) before reaching the model, but with the
+  pi package `npm:pi-lmstudio` and **LFM3 1.7B (`lmstudio/lfm3-1.7b`) loaded in a local LM Studio (no cost)** we also verified one turn (`EndTurn`, with the thought stream), an implementer finishing through `tool_search` →
+  `mcp__yhtye__report_step_done` (2 of 2 runs), resuming with `session/load`, `session/cancel`, and steering (running and idle). **A turn with a cloud model, the orchestrator role and extension permission dialogs are unverified**
   ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14, Japanese). **A model must be chosen** (pi has no built-in default; otherwise it would start on the first, often the priciest, model of its list).
   The model and effort are passed in the `PI_ACP_MODEL` environment variable, never as config options, because the adapter would save those to your `~/.pi/agent/settings.json`; Yhtye does not log in for you (log in with `pi` and `/login`, or set the provider's API key).
 

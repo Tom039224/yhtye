@@ -1275,12 +1275,13 @@ Windows / macOS のビルド。
 7. **設定ファイルが変わらない**: 1〜6 の前後で `~/.gemini/antigravity-acp/settings.json` と `acp_token.json` のハッシュを比べる (`auth.type` はログインのときに自分で書いた分だけが変わる)。
    `/logout` が Yhtye 経由で送られないこと (チャットに `/logout` と打ってもログアウトしないこと)。(**未**)
 
-## 14. pi: `@openma/pi-acp` (pi 1.3.0 + アダプタ 0.1.8、**起動・モデル一覧・effort・MCP の配線は実機確認、本物のモデルでの 1 ターンは未検証**)
+## 14. pi: `@openma/pi-acp` (pi 1.3.0 + アダプタ 0.1.8、**起動・モデル一覧・effort・MCP の配線に加え、LM Studio のローカルモデル (LFM3-1.7B) で 1 ターン・実装エージェントの完了報告・再開・中止・steering まで実機確認。クラウドのモデルとオーケストレータは未検証**)
 
 > 実装は Devin (§10)・MiniMax Code (§11)・Grok Build (§12)・Google Antigravity (§13) と同じ形 (`HarnessConfig` / `HarnessPreset` / 検出 / 偽エージェント) だが、**ネイティブの ACP を持たない**ので
 > サードパーティのアダプタを選ぶ調査から始めた (2026-10-26、§14.0)。アダプタの実機調査 (JSON-RPC を直接送る調査。LLM は**偽のもの**を差し込み、課金されるモデルは呼んでいない、§14.1) で分かったことに合わせて実装し、
 > その後 Yhtye 自身の acp 層 (`HarnessPreset::pi().config(..)`、`ModelService`) から、モデル一覧・effort・MCP の配線を実機で確かめた (2026-10-28、§14.9)。
-> モデルへのプロンプトはクレジットを使うので、確認のための課金は避けた (§14.9 に 402 で届かなかった 3 回を記す)。**本物のモデルで 1 ターン (`EndTurn`) 流したことはまだ無い** (§14.11)。
+> orcarouter のモデルはクレジット切れ・無料枠切れ (402) でプロンプトが届かなかった (§14.9 に 3 回を記す) が、同じ日に **LM Studio のローカルモデル `lmstudio/lfm3-1.7b` (弱い小型モデル、費用なし)** で
+> 1 ターン・実装エージェントとしての `report_step_done`・`session/load`・cancel・steering を実機で流せた (§14.9.1)。**クラウドのモデルでの 1 ターンとオーケストレータ役は未検証** (§14.11)。
 > ラベル: **[調査]** = アダプタを直接調べて分かったこと (偽の LLM を含む)、**[ソース]** = アダプタのソースを読んで分かったこと (実機では試していない)、**[実測]** = Yhtye の acp 層から実機で確かめたこと、**[Yhtye]** = このリポジトリの実装。
 > 節番号: §13 は Google Antigravity (T-34/T-36)。
 
@@ -1326,7 +1327,8 @@ pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要る
   送ると `settings.json` に保存されるため (§14.3)。モデルと effort は preset が環境変数に入れる。
 - **`clientInfo` は偽装しない** (`client_info: None`、`yhtye` のまま通る)。
 - **ユーザーの設定は書かない**: Yhtye は `settings.json` / `auth.json` / `models-store.json` を書き換えない **[実測]** (§14.9 で前後の sha256 が一致)。SDK が初回に作る `~/.pi/agent/mcp-auth.json` (`{}`) だけは Yhtye の起動で作られうる。
-- **記録は溜まる**: セッションの記録 (`~/.pi/agent/sessions/`) は最初のプロンプトで作られるので、プロンプトを送らないモデル一覧の読み取りでは増えない (はず、**[調査]** の「最初のプロンプトで作られる」から)。
+- **記録は溜まる**: セッションの記録 (`~/.pi/agent/sessions/--<cwd>--/*.jsonl`) は最初のプロンプトで作られるので、プロンプトを送らないモデル一覧の読み取りでは**記録のファイルは増えない**。
+  ただし **cwd ごとの空のディレクトリ (`--<cwd>--`) は一覧・effort の読み取りのセッションでも作られる** **[実測]** (2026-10-28、一時ディレクトリを cwd にした一覧用のセッションが空のディレクトリを残した)。
   Yhtye は後片付けをしない (エージェントのセッションは pi の `sessions` に残る)。
 
 ### 14.3 モデルと effort — `PI_ACP_MODEL` (`HarnessPreset::model_effort_env`)
@@ -1370,7 +1372,9 @@ pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要る
   (例: `report_step_done`)、読み込めたら `mcp__yhtye__<name>` で呼ぶ」。Devin の `DEVIN_MCP_NOTE` (§10.7) と同じ仕組みで、Devin・pi 以外には付かない。
 - **[実測]** Yhtye の MCP をつないだセッションで、アダプタ内で処理されるスラッシュコマンド `/tools` と `/status` (**モデルは呼ばない**) を送った: アクティブなツールは **`read, bash, edit, write, tool_search`** で、
   Yhtye のツールは `tool_search` の後ろに隠れている (遅延公開のとおり)。`/status` はアダプタが **pi 1.4.0 を内蔵**していることを示した。
-  **[未検証]** 実際のモデルが `tool_search` を呼んで `mcp__yhtye__report_step_done` に辿り着けるか (弱いモデルで失敗する可能性、§14.11)。
+  **[実測]** 実際のモデル (LM Studio の `lmstudio/lfm3-1.7b`、1.7B の弱い小型モデル) は、`tool_search` で `report_step_done` を読み込み、`mcp__yhtye__report_step_done` を呼べた (2 回中 2 回成功、§14.9.1)。
+  1 回目は**先に bash で `mcp__yhtye__report_step_done '…'` と打って `command not found` (exit 127) になり**、その後 `tool_search` を呼んで読み込み、成功した。つまり注記は効いたが、最初の一手を間違えることがある
+  (注記の「まず `tool_search` で」の強調を強める余地はあるが、1.7B でも自力で回復した)。2 回目は最初から `tool_search` を呼んだ。
 
 ### 14.6 検出と既定の順
 
@@ -1396,7 +1400,7 @@ pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要る
 
 ### 14.8 そのほか
 
-- **steering** (`_session/steering`、§4.5): アダプタは `initialize` の最上位 `_meta.steering.supported` を広告する。偽の LLM で**実行中のターンに `injected` された** **[調査]**。アイドル時の挙動は未検証 (§14.11)。
+- **steering** (`_session/steering`、§4.5): アダプタは `initialize` の最上位 `_meta.steering.supported` を広告する。偽の LLM で**実行中のターンに `injected` された** **[調査]**。本物のモデル (LM Studio) でも、ターン中は `Injected` でそのターンの中身に反映され `TurnEnded` は 1 回だけ、アイドル時は `PromptRequired` で何も始まらなかった **[実測]** (§14.9)。
 - **起動バナーは `PI_ACP_QUIET_STARTUP=1` で消す** (§14.2)。消さないと、毎セッションの最初に `agent_message_chunk` が 1 つ増えて画面に出る。
 - **拡張**: ユーザーの拡張 (`~/.pi/agent/extensions`、`settings.json` の `packages`) は**全部ロードされる** (Yhtye のエージェントでも)。拡張がダイアログを出せば §14.4 のとおり自動で応答される。
   プロジェクトの `.pi/` は信頼していなければ読まれず、Yhtye は信頼させない (§14.2)。
@@ -1406,7 +1410,7 @@ pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要る
 
 ### 14.9 実機の結果 (Yhtye の acp 層から、2026-10-28、pi 1.3.0、アダプタ 0.1.8 / 内蔵 SDK 1.4.0)
 
-すべて **[実測]**。`HarnessPreset::pi()` と `ModelService` を使い、モデルへのプロンプトは送っていない (下の 402 を除く)。
+すべて **[実測]**。`HarnessPreset::pi()` と `ModelService` を使い、この節の表ではモデルへのプロンプトは送っていない (下の 402 を除く)。本物のモデル (LM Studio) でのプロンプトは §14.9.1。
 
 | 項目 | 結果 |
 |---|---|
@@ -1417,6 +1421,35 @@ pi 1.3.0 は ACP を話さない (`--mode text|json|rpc` だけ)。ACP が要る
 | 未知のモデル id | `orcarouter/nobody/gone` を `PI_ACP_MODEL` に渡してもアダプタは失敗せず**その名前のまま**始まる (別のモデルに差し替わらない。プロンプトでプロバイダ側が失敗する)。プロバイダ名なしの id (`claude-haiku-4.5`) は `github-copilot` の認証エラー (`-32000`) で `session/new` が失敗しヒントが付く。effort の無いモデルに `:low` を付けると suffix は落ち、未知の段階 (`:nonsense`) はモデル名の一部になる (§14.3) |
 | プロンプト (課金なし) | 調査時に orcarouter の有料モデル (`haiku-4.5`、`gemini-2.5-flash-lite`) の 2 回が **402 out of credits**、実装時に無料モデルの 1 回が **402 `free_quota_exhausted`** (約 0.45 秒、`pi.failure` は `rate_limited`)。いずれも**モデルに届いておらずトークン消費なし** |
 | 設定ファイル | `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` は各確認の前後で **sha256 が一致** (変化なし)。作ったセッションは削除した |
+
+#### 14.9.1 LM Studio のローカルモデルでの実機確認 (2026-10-28、`lmstudio/lfm3-1.7b`)
+
+すべて **[実測]**。背景: orcarouter のモデルは課金・無料枠の都合で届かなかったので、ユーザーが pi に LM Studio のパッケージ (`~/.pi/agent/settings.json` の `packages` に `npm:pi-lmstudio`) を足し、
+ローカルの LM Studio (既定 `http://localhost:1234`) に **LFM3 1.7B** (`arch=lfm3`、`Q4_K_M`、コンテキスト 262144、LM Studio の capabilities は `tool_use`) をロードした。費用はかからない。
+このタスクではプロンプトを **LM Studio のモデルだけ**に送り、他のプロバイダのモデルには送っていない。LM Studio の設定とロード済みモデルは変更していない (GET で確認しただけ)。
+Yhtye の acp 層 (`HarnessPreset::pi().with_command("/usr/bin/npx").config(AgentRole::Implementer, Some(model), effort)`、`probe_models` / `probe_efforts`、Yhtye の `McpHost` に `report_step_done` を記録する `ToolPort`) から
+一時テスト (リポジトリには置いていない) で流した。プロンプトは合計 8 回。pi 1.3.0 本体は起動せず、アダプタ 0.1.8 (内蔵 SDK 1.4.0)。
+
+| 項目 | 結果 |
+|---|---|
+| モデル一覧 | **197 個、約 2.6 秒** (orcarouter 172 + **lmstudio 25**)。`current` は変わらず `orcarouter/anthropic/claude-fable-5`。LM Studio のモデルは `lmstudio/<id>` の形 (LM Studio の `/v1/models` の 26 個から埋め込みモデル `text-embedding-nomic-embed-text-v1.5` を除いた LLM / VLM の 25 個。id 自体に `/` を含むものもある: `lmstudio/google/gemma-4-12b-qat`)。LFM3 1.7B は **`lmstudio/lfm3-1.7b`** (表示名 `LFM3 1.7B`) |
+| effort | `lmstudio/lfm3-1.7b` は **`off` / `minimal` / `low` / `medium` / `high`** (約 1.5 秒)。選ばなければ `thinking=medium`。`PI_ACP_MODEL=lmstudio/lfm3-1.7b:off` で開始すると `thinking=off` になる |
+| 起動 | 約 2.0〜5.6 秒で `Ready` (`agent` = `openma-pi-acp` 0.1.8、option は `model` / `thinking` / `auto_compaction`、`model` = `lmstudio/lfm3-1.7b`、`modes` なし)。起動のバナーは来ない |
+| (a) 1 ターン | 「Reply with exactly one word: pong」→ **`EndTurn`、約 1.4 秒**、応答 `pong`。`agent_thought_chunk` が **38 個**届き (`The user asks me to reply with exactly one word…`)、`usage_update` も 1 つ届いた。`agent_message_chunk` は 3 個 |
+| (a) effort `off` | `thinking=off` で開始して同じプロンプトを流すと、**約 0.57 秒で `EndTurn`、応答 `pong`。それでも `agent_thought_chunk` は 33 個届く**。LFM3 は LM Studio の側で思考を常に出すモデルのため、pi の `thinking=off` は思考のストリームを止めない (option の値が変わるだけ) |
+| (b) 実装エージェント (Yhtye の MCP つき、`system_prompt(Implementer)` + `PI_MCP_NOTE`、`step_prompt` の「README.md に `hello from yhtye` の行を足す」、一時ディレクトリ) | **2 回中 2 回成功**。**`report_step_done` (`result` あり) が Yhtye の MCP に届き、README.md に行が足された**。1 回目: `EndTurn`、約 4.9 秒、ツール呼び出しは `bash (pwd)` → `Read file` → `bash (printf … >> README.md)` → **`bash (mcp__yhtye__report_step_done '…')` が `command not found` (exit 127)** → `tool_search 'report_step_done'` (`Loaded 1 tool … mcp__yhtye__report_step_done`) → `yhtye: report_step_done` (`{"ok":true}`)。2 回目: `EndTurn`、約 6.1 秒、`bash (ls -la)` → **`tool_search 'report_step_done'`** → `Read file` → `bash (printf … >> README.md)` → `Read file` → `yhtye: report_step_done`。許可要求は 0 件 |
+| (c) `session/load` | プロンプト 1 回 (「Remember the codeword PINEAPPLE-42. Reply only: ok」→ `ok`) の後に Yhtye のエージェントを終了し、同じ `acp_session_id` で `resume` して起動: **約 2.4 秒、`resumed=true`、同じ id**。`Ready` の前に履歴の再生 (`user_message`、`thought`、`message`、`session_info`) が届き、続けて「What was the codeword?」→ **`PINEAPPLE-42`** (文脈が続く)、`EndTurn` |
+| (c) `session/cancel` | 「1500 語の物語を書いて」の最初の `agent_message_chunk` の直後に `cancel`: **約 0.11 秒で `StopReason::Cancelled`** |
+| (c) steering | `supports_steering = true`。**アイドル時**に `_session/steering` を送ると **`PromptRequired`** (何も始まらず、後続のイベントもない)。**ターン中** (物語の最初のチャンクの後) に「New instruction: stop the story now and reply with only the word STEERED-OK.」を送ると **`Injected` (約 7 ms)**、ターンは続いて **`TurnEnded` が 1 回だけ**。小さなモデルは物語を止めずに最後まで書いてから末尾に `STEERED-OK` を足した (注入は反映されたが、中止の指示には従わなかった)。`TurnEnded` の後 5 秒は追加のイベントなし |
+| 設定ファイル | `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` の sha256 は、着手時と全部のプロンプトの後で**一致** (`settings.json` は `packages` に `npm:pi-orcarouter` と `npm:pi-lmstudio` が入った状態、`f3aa7a5a…`)。Yhtye は `set_config_option` を送っていない |
+| 後始末 | 確認で作られた `~/.pi/agent/sessions/--tmp-.tmp*--` 9 個 (記録のあるものと、一覧・effort の読み取りが残した空のもの) を削除した。`pi-acp` のプロセスは残っていない |
+
+観察:
+- **pi の組み込みプロンプトに `~/.agents/skills` の一覧が入る**ことが、モデルの思考の中に現れた (1 回目の思考に「The available skills include orca-cli, orchestration, find-skills, hallmark」)。§14.5 のとおり。
+- 弱い小型モデルでも、`PI_MCP_NOTE` の案内で `tool_search` → `mcp__yhtye__<name>` の 2 段階に辿り着いた。1 回目は bash にツール名を打つ誤りを 1 回挟んだが、エラー (`command not found`) の後に自力で `tool_search` に切り替えた。
+  応答の本文は 2 回とも `report_step_done` を呼んだ後に「Step … complete」と短く添えるだけで、報告の `result` は妥当な文 (`Appended the line "hello from yhtye" to README.md. …`) だった。
+- ツール呼び出しの `raw_input` はストリームで少しずつ届く (`{}` → `{"command": ""}` → … → 完成形)。ツール名の表示は途中で `bash` → `pwd` のように変わる (画面にそのまま出すなら最後の `title` が正)。
+- 思考のストリーム (`agent_thought_chunk`) は推論するローカルモデルで確かに届く (§14.11 の項目 4 は済)。
 
 ### 14.10 自動テストで確認したこと (偽エージェント、pi 本体・アダプタ本体ではない)
 
@@ -1434,23 +1467,30 @@ pi はユーザーのプロバイダと認証が要り、`set_config_option` は
   `agents/installed.rs` (登録・`npx` が無ければ登録しない・既定の順で pi が Codex の前、Grok Build などの後)、`tests/harness_detection.rs` (Core 経由で `pi` と `npx` が見つかり登録される)、
   フロントエンドの `HarnessSettings.test.tsx` (`~/.pi/agent/bin/pi` が既知の場所で見つかり `npx` と並ぶ) と `FakeHarnesses` (`memoryTransport.ts`)。
 
-### 14.11 未検証の項目と手動検証チェックリスト (pi を持ちクレジットのある人向け)
+### 14.11 未検証の項目と手動検証チェックリスト (pi を持つ人向け。LM Studio のローカルモデルなら費用なしで試せる)
 
-**未検証**: 本物のモデルでの 1 ターン (`EndTurn`)、`tool_search` 経由で `mcp__yhtye__report_step_done` を呼べるか (弱いモデルで失敗する可能性)、`agent_thought_chunk`、
-拡張が実際に許可ダイアログを出す場合、`~/.pi/agent/mcp.json` の影響、`~/.pi/agent/AGENTS.md`、アイドル時の steering、Windows / macOS、npx の cold start。
+**検証済み (LM Studio のローカルモデル `lmstudio/lfm3-1.7b` で、§14.9.1)**: 本物のモデルでの 1 ターン (`EndTurn`)、`agent_thought_chunk`、`usage_update`、`tool_search` 経由で `mcp__yhtye__report_step_done` を呼んでの実装エージェントの完了報告 (2 回中 2 回)、
+`session/load` での再開、`session/cancel`、steering (アイドル時と実行中)、プロンプト後の設定ファイルのハッシュ。
+**未検証**: クラウドのモデル (orcarouter など) での 1 ターン、**オーケストレータとして使えるか** (`create_group` → `create_task` → `finish_group`、複数のツールを `tool_search` で読めるか)、
+拡張が実際に許可ダイアログを出す場合、`~/.pi/agent/mcp.json` の影響、`~/.pi/agent/AGENTS.md`、Yhtye 全体を再起動したあとの再開 (acp 層の `resume` は確認済み)、Windows / macOS、npx の cold start。
 
-前提: pi が `pi` と `npx` で「インストール済み」と出て (設定 › ハーネス)、`pi` で `/login` 済みか API キーを環境変数に入れてある。設定 › エージェントで pi の行 (モデルは必ず選ぶ) を implementer などに足して、小さなタスクを流す。
+前提: pi が `pi` と `npx` で「インストール済み」と出て (設定 › ハーネス)、`pi` で `/login` 済みか API キーを環境変数に入れてある。**費用をかけずに試すなら、pi に LM Studio のパッケージ (`npm:pi-lmstudio`) を入れて、
+ローカルの LM Studio にモデルをロードし、`lmstudio/<id>` を選ぶ** (§14.9.1)。設定 › エージェントで pi の行 (モデルは必ず選ぶ) を implementer などに足して、小さなタスクを流す。
 結果 (成否・観察・pi とアダプタの版) を、この節に **[実測]** として書き足す。**済** / **未** を各項目の末尾に書いて、進んだ形を残す。
 **前後で `~/.pi/agent/settings.json` と `auth.json` のハッシュを比べる** (項目 8)。
 
-1. **本物のモデルで 1 ターン**: 安いモデル (や無料のモデル) を選んで小さなタスクを流す。`EndTurn` で終わり、メッセージ・ツール呼び出し・`usage_update` が画面に出るか。(**未**)
+1. **本物のモデルで 1 ターン**: 安いモデル (や無料のモデル、ローカルのモデル) を選んで小さなタスクを流す。`EndTurn` で終わり、メッセージ・ツール呼び出し・`usage_update` が画面に出るか。
+   (**済**: LM Studio の `lmstudio/lfm3-1.7b`、約 1.4 秒、§14.9.1。クラウドのモデルは**未**)
 2. **実装エージェントとしてタスクを完了できる**: 1 ファイルの変更のタスクを流し、モデルが `tool_search` で `report_step_done` を読み込み、`mcp__yhtye__report_step_done` を呼んでタスクが完了状態まで進むか。
-   **弱いモデルで読み込めずに報告なしのターンになる**ようなら、`PI_MCP_NOTE` の文面の見直しが要る。(**未**。配線は §14.9 で確認済み)
+   **弱いモデルで読み込めずに報告なしのターンになる**ようなら、`PI_MCP_NOTE` の文面の見直しが要る。
+   (**済**: `lmstudio/lfm3-1.7b` で 2 回中 2 回。1 回目は bash に `mcp__yhtye__report_step_done` と打って失敗してから `tool_search` で回復した。§14.5 / §14.9.1。タスク全体 (ステップの進行) を流す確認は**未**、`report_step_done` が MCP に届くところまで)
 3. **オーケストレータとして使える**: `create_group` → `create_task` → `finish_group` まで通るか (`tool_search` で複数のツールを読めるか)。(**未**)
-4. **`agent_thought_chunk`**: 推論するモデルで、思考が画面に出るか。(**未**)
+4. **`agent_thought_chunk`**: 推論するモデルで、思考が画面に出るか。(**済**: `lmstudio/lfm3-1.7b` で届く (「pong」の 1 ターンで 38 個)。`thinking=off` でも届く (33 個)、§14.9.1)
 5. **拡張の許可ダイアログ**: `ctx.ui.confirm` / `ctx.ui.select` を出す拡張を入れて、`session/request_permission` が来て `yes` / `choice-0` が自動で選ばれるか (選ばれた結果が拡張に伝わるか)。(**未**)
-6. **`~/.pi/agent/mcp.json` と `~/.pi/agent/AGENTS.md`**: ユーザー自身の MCP のサーバーがつながるか (ソースでは読まれないはず)、`AGENTS.md` が組み込みプロンプトに入るか。(**未**)
-7. **`session/load` と `session/cancel` と steering**: 本物のモデルでタスクを流して Yhtye を再起動し、セッションが再開できるか (§14.1 では偽の LLM で済)。実行中の中止で `stopReason: cancelled` で止まるか。
-   アイドル時の steering (`startedNewTurn` で追えないターンが始まらないか、§4.5)。(**未**。偽の LLM では済)
-8. **設定ファイルが変わらない**: 1〜7 の前後で `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` のハッシュを比べる (Yhtye は書かない)。(**済**: §14.9。プロンプトを流した後は**未**)
+6. **`~/.pi/agent/mcp.json` と `~/.pi/agent/AGENTS.md`**: ユーザー自身の MCP のサーバーがつながるか (ソースでは読まれないはず)、`AGENTS.md` が組み込みプロンプトに入るか。(**未**。`~/.agents/skills` の一覧が入ることはモデルの思考から確認、§14.9.1)
+7. **`session/load` と `session/cancel` と steering**: 本物のモデルでタスクを流して Yhtye を再起動し、セッションが再開できるか。実行中の中止で `stopReason: cancelled` で止まるか。
+   アイドル時の steering (`startedNewTurn` で追えないターンが始まらないか、§4.5)。
+   (**済**: `lmstudio/lfm3-1.7b`。同じ `acp_session_id` で `resume` して文脈が続いた (約 2.4 秒、履歴の再生あり)、cancel は約 0.11 秒で `Cancelled`、アイドル時は `PromptRequired`、実行中は `Injected` で `TurnEnded` は 1 回。
+   ただしエージェントを `shutdown` して acp 層で再接続した確認で、Yhtye アプリ全体の再起動を通した確認は**未**)
+8. **設定ファイルが変わらない**: 1〜7 の前後で `~/.pi/agent/settings.json`・`auth.json`・`models-store.json` のハッシュを比べる (Yhtye は書かない)。(**済**: §14.9 と §14.9.1。LM Studio のプロンプト 8 回の後も一致)
 9. **別の環境**: Windows / macOS、npx の cold start (キャッシュなしで約 9 秒かかる。`startup_timeout` 120 秒に収まるか)、Node 22.19 未満での失敗の見え方。(**未**)
