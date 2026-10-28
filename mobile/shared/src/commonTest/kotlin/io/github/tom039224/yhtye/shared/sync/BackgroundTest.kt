@@ -82,7 +82,7 @@ class BackgroundTest {
 
     @Test
     fun hasWorkWhenAnotherProjectIsRunningButOnlyAnOpenOne() {
-        val other = ProjectInfo("other", "other", "/tmp/other", open = true, running = true)
+        val other = ProjectInfo("other", "other", "/tmp/other", open = true, running = true, awake = true)
         assertTrue(hasWork(app(view(), listOf(PROJECT, other))))
         assertFalse(hasWork(app(view(), listOf(PROJECT, other.copy(running = false)))))
         // 開いていないプロジェクトの running は残骸
@@ -422,7 +422,7 @@ class BackgroundTest {
 
     @Test
     fun showChatOpensTheChatOfTheLoadedProjectAndAnotherProject() = runTest {
-        val other = ProjectInfo("beta", "beta", "/tmp/beta", open = false, running = false)
+        val other = ProjectInfo("beta", "beta", "/tmp/beta", open = false, running = false, awake = false)
         core.others = listOf(other)
         val store = newStore(core)
         openAndSettle(store)

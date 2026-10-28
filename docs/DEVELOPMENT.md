@@ -58,6 +58,7 @@ Debian / Ubuntu 系のビルド依存は [`.github/workflows/ci.yml`](../.github
 pnpm install
 pnpm tauri dev      # デスクトップアプリとして起動 (本物のコア + Claude Code)
 pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に起動 → http://localhost:1420
+cargo run -p yhtye -- --headless --data-dir /tmp/yhtye-headless   # GUI 無し (DISPLAY 不要) で本物のコア + リモート接続
 ```
 
 - 既定のエージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
@@ -65,14 +66,63 @@ pnpm dev:browser    # ブラウザで開発: WS ブリッジ + Vite を同時に
   `PATH` か既知の場所 (`~/.local/bin` など。`mcode` は `~/.minimax-code/bin` と `$MCODE_INSTALL_ROOT/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` と `$GROK_HOME/bin` も、`pi` は `~/.pi/agent/bin` と `$PI_CODING_AGENT_DIR/bin` も) にあるときだけ選べる。pi は Node 22.19 以上の `npx` でアダプタ (`@openma/pi-acp`) を動かし、
   実機を呼ぶテストは置いていない (pi のユーザー設定に書き込まれるため。偽エージェントの `tests/acp_fake_pi.rs` だけ。[`acp-harnesses.md`](architecture/acp-harnesses.md) §14.10)。設定を開いたときと「再検出」で見つけ直し、パスは手動でも指定できる
   ([`core-design.md`](architecture/core-design.md) §15.2)。
-- アプリのデータ (SQLite と worktree) は `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`。
+- アプリのデータ (SQLite と worktree) は `--data-dir` / `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`
+  (`src-tauri/src/data_dir.rs`。GUI とヘッドレスで共通)。
   以前の識別子 `com.tom039224.yhtye` のディレクトリが残っていれば、初回起動時に新しい名前へ自動で移す
   (両方あるときは触らない。`src-tauri/src/legacy_data.rs`)。
   Yhtye はプロジェクトのリポジトリには何も書かない (マージ以外)。
-- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する)。
-  並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+- 同じデータディレクトリで 2 つ目のアプリは起動しない (`yhtye.lock` を排他ロックし、取れなければ理由を出して終了する。
+  終了コードは GUI が 1、ヘッドレスが 3)。並べて動かすときは `YHTYE_DATA_DIR` を変える。開発用ブリッジは別のデータなので関係ない。
+  **例外 (T-97)**: 既定のデータディレクトリの GUI がもう動いていて、同じく既定のディレクトリで GUI を起動したときは、ロックの前に
+  `tauri-plugin-single-instance` が引数を動いている方へ渡し (ウィンドウが前に出る)、2 つ目は終了コード 0 で終わる (`yhtye://pair?…` のリンクを開く OS の
+  起動がこの経路。`--data-dir` / `YHTYE_DATA_DIR` を指定した GUI には働かない。ヘッドレスが既定のディレクトリを持っているときの GUI は従来どおりロックで終了コード 1)。
 - アプリを閉じる / Ctrl+C で全エージェントを止めてから終了する。未完了の作業があるプロジェクトは
   次の起動時に自動で開き、中断したタスクを再開する。
+
+### ヘッドレス起動 (`yhtye --headless`)
+
+ウィンドウを開かずコアとリモート接続だけを動かす実行時オプション (cargo feature ではない。`main()` が引数を最初に見るので、`DISPLAY` の無い環境でも落ちない。
+設計は [`core-design.md`](architecture/core-design.md) §9、使い方は [`SETUP.md`](../SETUP.md))。
+
+```sh
+yhtye --headless [-d] [--port N] [--data-dir DIR] [--model NAME]   # -d: デーモン (切り離して戻る。ログは <データディレクトリ>/headless.log)
+yhtye remote pair | devices | revoke <id> | status | stop [--data-dir DIR]   # 動いているヘッドレスへ (<データディレクトリ>/yhtye.sock)
+env -u DISPLAY -u WAYLAND_DISPLAY target/release/yhtye --headless --data-dir /tmp/yhtye-headless   # 実機での確認の例
+```
+
+- 確認のしかた: 上のように DISPLAY を外して起動し、別の端末で `yhtye remote status` / `pair` が答え、SIGTERM で「all agents stopped」を出して終了コード 0 になること。
+  フラグ無しで DISPLAY を外すと案内を出して終了コード 1。Tailscale の無い環境では、起動時に「remote access is not running: … (trying again every 30 s)」が出る (これが再試行の確認になる)。
+- `-d` の確認: 起動した側が戻り (終了コード 0)、デーモンが新しいセッションのリーダーとして残り、`remote status` が PID を答え、2 つ目の `-d` が終了コード 3、
+  `remote stop` で終わって制御ソケットが消えること (`src-tauri/tests/headless_daemon.rs` が本物のバイナリで確かめる)。端末を閉じる確認は、`script` などの疑似端末から `-d` を起動して端末側を落とす。
+- ログは stderr、stdout は人間向けの表示 (端末のときだけペアリングの案内)。`RUST_LOG` で調整する。デーモンではどちらもログファイルへ行く。
+- テスト: 引数 (`cli.rs`)、データディレクトリの規則 (`data_dir.rs`)、制御口のプロトコルとクライアント (`headless/control.rs`)、デーモンの起動 (`headless/daemon.rs`)、
+  表示 (`headless/report.rs`)、リモートの再試行 (`headless/mod.rs`)、本物のバイナリでのデーモン (`tests/headless_daemon.rs`) は `cargo test -p yhtye`。コアの `Ping` が `headless` を返すことは `crates/yhtye-core/tests/core_facade.rs`。
+
+### 別のホストへの接続 (PC の GUI、T-97)
+
+PC の GUI が別の Yhtye (別の PC、`--headless` のホスト) に接続する。設計は [`core-design.md`](architecture/core-design.md) §9「PC のクライアント」・§11・§18.10。
+ブラウザ (`pnpm dev:browser`) では使えない (Tauri のシェルが WS を張る)。
+
+```sh
+# ホスト (1 台目): ウィンドウ無しで起動し、ペアリングコードを出す (Tailscale が要る)
+yhtye --headless --data-dir /tmp/yhtye-host && yhtye remote pair --data-dir /tmp/yhtye-host    # → yhtye://pair?… と QR
+# クライアント (2 台目): GUI を起動して、出た URI を引数に別のプロセスとして開く (OS がリンクのクリックでする起動と同じ)
+yhtye 'yhtye://pair?v=1&host=…&ip=100.x.y.z&port=1423&code=ABCD2345&sid=…'    # 動いている GUI があればそこへ渡る
+```
+
+- リンクを開くと設定が「接続先」で開き、リンクが入った状態になる (行き先のホストとポート・端末名が出る)。「接続」を押すまでペアリングしない (T-98。T-97 の確認ダイアログは
+  この節に置き換えた)。ペアリングを済ませると、プロジェクトの一覧にホストのプロジェクトがこの PC のものの後ろに並び、名前の右にリモートのアイコンが付く
+  (同じ名前があるときだけホスト名も添える)。ホスト側の `yhtye remote devices` に `desktop` として載る。手入力 (ホスト・ポート・コード) も同じ節。
+- **試すときは環境を分ける**: `XDG_DATA_HOME` / `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_RUNTIME_DIR` / `HOME` を一時ディレクトリにして `dbus-run-session` の中で動かすと、
+  普段のアプリのデータ・キーリング・単一インスタンスの D-Bus 名・`yhtye://` の既定のハンドラ (debug ビルドは `register_all()` が `xdg-mime default` を実行する) に触れない。
+  画面が無ければ Xvfb (`Xvfb :98 -screen 0 1440x900x24`、`DISPLAY=:98`、`WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1`)。
+  キーリングを試すなら同じバスの中で `echo -n pw | gnome-keyring-daemon --login` (無ければトークンはそのプロセスの間だけで、再起動後は自動接続しない)。
+  1 台でホストを用意するなら `cargo run -p yhtye-core --example remote_server -- --port 14231` (§18.6。標準入力の `open <path>` / `code` / `devices`)。
+- テスト: Tauri 層 (`src-tauri/src/remote_hosts/tests.rs`: エラーの対応・イベントと通知の JSON・ペアリングの入力・起動時の自動接続、`deep_link.rs`: リンクの待ち行列と
+  設定ファイル、`cli.rs`: リンクの引数)、WebView の `src/api/tauri.test.ts` (ホストごとの送信とイベントの振り分け・接続状態)、`src/api/remoteHosts.test.ts`、
+  `src/store/hosts.test.ts` (登録簿)、`src/store/appHosts.test.ts` (キーの前置・ホストの版)、`src/ui/Hosts.test.tsx` (プロジェクトの選択とリモートのアイコン・
+  接続の帯・フッタ)、`src/ui/HostsSettings.test.tsx` (設定の「接続先」・リンクで開く流れ・リモートのホストが出ているときの「リモート接続」)、`src/ui/hostLabels.test.ts` (文言)。
+  Rust の `the_messages_the_screen_tells_apart_start_as_it_expects` は、UI がペアリングの失敗の文言を選ぶ手がかり (英語のメッセージの先頭) を固定する。
 
 ### ブラウザで動かす (開発・E2E 用)
 
@@ -157,12 +207,15 @@ html / body / `#root` は `height: 100%` + `overflow: hidden` で固定してあ
   (html / body / `#root` の高さと overflow、`.app` の位置と `min-width` が無いこと、`min-height: 0` / `min-width: 0`、
   スクロール領域がすべて `position` を持つこと)。
 - **`pnpm check:layout` (`scripts/check-layout.mjs`)**: playwright-core + Chromium (headless) で、
-  `layout-harness.html` (本物の `App` をメモリ上のコアで動かす開発専用ページ。`src/test/layoutHarness.tsx`) を
+  `layout-harness.html` (本物の `App` をメモリ上のコアで動かす開発専用ページ。`src/test/layoutHarness.tsx`。
+  `?scenario=` で中身、`?view=dashboard|work|runs` で最初のビューを選ぶ。既定は work) を
   画面の状態ごとに開き、`document.scrollingElement` の `scrollHeight <= innerHeight`、`scrollWidth <= innerWidth`、
   `scrollX / scrollY == 0`、枠 (`.app` `.body` `.sidebar` `.conversation` `.right` など) の中身がはみ出していないこと、
-  ポップアップ (⋯ メニュー・プロジェクトのプルダウン・モデル一覧) がウィンドウ内に収まっていることを確かめる。
+  ポップアップ (⋯ メニュー・プロジェクトのメニュー・モデル一覧) と、展開したレールのパネル (サイドバーの上に重なるオーバーレイ。レイアウト上は 44px のまま) がウィンドウ内に収まっていることを確かめる。
   状態は、プロジェクト無し・記録した実行・大量の会話/タスク/ブランチ・ホイール操作・各ポップアップ・設定・
-  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・下部パネルに 8 個のタスクタブを開いた状態
+  エラーバナー・パネルの限界までのリサイズ・Tab で全部の部品に触れる・別のホストを持つ状態 (`hosts`: 長い名前・失効・再接続待ちのホスト。
+  展開したレール・リモートのプロジェクトを開いた画面・設定の「接続先」・リンクを受けた画面)・展開式のレール (閉じた・ポインタ・キーボード・メニュー、
+  長い一覧のスクロール)・ダッシュボード (長い名前の多数のプロジェクト、7 / 90 日の統計、フォルダブラウザ、統計の失敗・ログ無し)・下部パネルに 8 個のタスクタブを開いた状態
   (タブ列が横スクロールして全部に届くこと、git の見出しやセッションの選択が潰れないこと) を 1060x600 から 1920x1080 まで。
   Rust のコアは要らない (Vite だけを空いているポートで起動する)。画面を足す・直すときは実行しておく。
 
@@ -178,7 +231,9 @@ YHTYE_LAYOUT_ONLY="task tabs" pnpm check:layout           # 名前に文字列�
 新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す (はみ出し以外の検査は `verify` に書く)。
 
 CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロントエンドのビルドとテスト、
-`pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)。
+`pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)、
+Android クライアントの `./gradlew build` (`android` ジョブ。ユニットテスト・lint・debug/release のビルド。署名鍵は使わず release は未署名、
+本物の PC 側サーバーが要るテストは飛ばす。失敗したときはレポートをアーティファクト `android-reports` に残す (7 日))。
 `layout` ジョブは ubuntu-latest に入っている Google Chrome を `YHTYE_CHROMIUM=/usr/bin/google-chrome` で使う
 (playwright-core は CDP で動かすだけなので、`playwright install` のダウンロードと apt のパッケージが要らない)。
 ヘッドレスでディスプレイは無く、Vite のポートは空きから自動で選ぶ。失敗したときは全状態のスクリーンショットを
@@ -318,6 +373,7 @@ Android アプリは GitHub Releases に署名済みの APK を添付して配�
 - アプリは `BuildConfig.VERSION_NAME` で自分の版を読む (`ThisApp.version`)。
 - **PC の版**はワークスペースの版 (`Cargo.toml` の `[workspace.package] version`)。`src-tauri` は `version.workspace = true`、`tauri.conf.json` と `package.json` は同じ値を手で合わせ、
   `crates/yhtye-core/tests/app_version.rs` が一致を見る。PC の版を上げるときは 3 か所を一緒に変える。`ping` の応答 (`pong{host, version}`) が PC の版をアプリに伝える。
+  PC (Linux) 版の出し方は [Linux デスクトップ版のリリース](#linux-デスクトップ版のリリース)。
 - **互換性の規則**は `mobile/shared/.../shared/version/Compatibility.kt` (0.x は `0.<minor>` が同じ、1.0 以降はメジャーが同じで PC のマイナー ≥ スマホのマイナー、パッチは見ない)。
   規則を変えたら README の表とテスト (`CompatibilityTest`) も直す。
 
@@ -399,3 +455,74 @@ rm /tmp/test.p12
 (Semantic Versioning。GitHub がプレリリースとした物も含む) があれば知らせる。リポジトリの名前や所有者を変えるときは、この定数 (`RELEASES_URL` / `RELEASE_PAGE_URL`) と
 README のリンクを直す。URL は `https://` だけを受け付ける (アプリは PC との通信のために平文を許すので、更新の確認は別の歯止めを持つ)。
 ネットワークの制限 (`TailscaleHosts`: PC との平文の接続先を Tailscale のアドレスに限る) は更新の確認とは無関係で、そのまま。
+
+## Linux デスクトップ版のリリース
+
+デスクトップ版 (`src-tauri/`) は、タグを push すると GitHub Actions が Linux 用にビルドし、GitHub Releases に **AppImage・deb・rpm** と `SHA256SUMS` を添付する。
+対象は x86_64 の Linux だけ。自動更新は無く、署名もしない (配る物のチェックサムは `SHA256SUMS`)。Android 版は別のタグで別に出す ([Android のリリース](#リリース-github-releases-に署名済み-apk-を出す))。
+
+### 版番号
+
+- **タグ**: `linux-v<major>.<minor>.<patch>` (例 `linux-v0.1.0`)。数字だけで、先頭の 0 は付けない。`android-v…` のタグとは無関係。
+- **PC の版は 3 か所**にあり、一緒に変える: ワークスペースの `Cargo.toml` の `[workspace.package] version`、`src-tauri/tauri.conf.json` の `version`、`package.json` の `version`
+  (`src-tauri/Cargo.toml` は `version.workspace = true`)。`crates/yhtye-core/tests/app_version.rs` が CI で一致を見る。
+  ワークフローは、さらに**タグの版とこの 3 か所が全部同じ**であることを確かめ、違えば何も作らずに失敗する (`linux-v0.1.1` を打ったのに 3 か所が 0.1.0 のまま、など)。
+  バンドルのファイル名と deb の `Version` は `tauri.conf.json` の版から付く。
+- 版が `0.` で始まる間は**プレリリース** (Latest にはしない)。リリース名・本文に、互換する Android アプリの版を「Android 版 0.1.x と互換」のように書く
+  (1.0 以降は「Android 版 1.0.x〜1.3.x と互換」。PC のマイナー以下のマイナーの Android が互換)。規則は Android 側と同じで、
+  [`Compatibility.kt`](../mobile/shared/src/commonMain/kotlin/io/github/tom039224/yhtye/shared/version/Compatibility.kt) と README の「Android 版」にある。
+
+### 出し方
+
+1. 3 か所の版を上げて `main` に入れる。互換性が変わる変更を含むときは (0.x ならマイナー、1.0 以降は規則に従って)、Android アプリの版との組み合わせも考える。
+2. 出したいコミット (通常は `main` の先頭。CI が通っていること) にタグを打って push する。
+
+   ```sh
+   git switch main && git pull
+   git tag linux-v0.1.0
+   git push origin linux-v0.1.0
+   ```
+
+3. `.github/workflows/linux-release.yml` が動く (タグの push だけで動く。`ci.yml` とは別)。2 つの job でできている。
+   - **`build`** (`contents: read` だけ。Ubuntu 22.04 のコンテナ): タグの形式を検査 → apt で Tauri のビルド依存を入れる → チェックアウト → **3 か所の版がタグと同じか**検査 →
+     pnpm 11・Node 22・Rust stable → `pnpm install --frozen-lockfile` → `pnpm tauri build --bundles appimage,deb,rpm -- --locked` →
+     AppImage・deb・rpm がちょうど 1 つずつあって版を持つこと、deb の `Version` と `/usr/bin/yhtye`、AppImage が `--help` で起動することを確認 →
+     `yhtye-linux-<版>-x86_64.AppImage` / `.deb` / `.rpm` と `SHA256SUMS` を artifact にする。リポジトリのコード (依存の install スクリプトを含む) が動くのはここだけ。
+   - **`release`** (`contents: write`。リポジトリのコードは動かさない): artifact を落として `sha256sum --check` → `gh release create` (リリース名は
+     `Yhtye Linux 0.1.0 (Android 版 0.1.x と互換)`、`--verify-tag --latest=false`、版が `0.` で始まる間は `--prerelease`)。`build` が失敗したら動かない。
+   - ビルドは Rust のコンパイルが重い (16 コアの手元で約 6 分。ランナーはもっとかかる。`timeout-minutes: 60`)。
+4. Actions の画面で成功を確かめ、リリースのページから落として確かめる (`sha256sum --check --ignore-missing SHA256SUMS`、AppImage の起動、deb / rpm のインストール)。
+   最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「デスクトップ版のプレビルドはまだ無い」という記述を直す (今はソースからのビルドだけを案内している)。
+
+**Ubuntu 22.04 のコンテナ**でビルドするのは、AppImage / deb / rpm が「ビルドした環境の glibc・WebKitGTK 以上」を要求するため。新しい環境 (Arch など) で作ると古い Debian / Ubuntu では動かない物になる。
+`ubuntu-22.04` のランナーは GitHub が廃止する (2026-09-17 から非推奨、2027-04-17 に廃止、その前に停止日あり) ので、`ubuntu-latest` の上で `container: ubuntu:22.04` を使う。
+ベースを替えるときは `container:` の 1 行と、apt で入れる依存のパッケージ名 (`ci.yml` の `Install system dependencies` と同じもの) を見直す。
+AppImage のバンドルは `linuxdeploy` とそのプラグインをビルド中にダウンロードするので、その取得の失敗は再実行で直ることがある
+(失敗した run も依存のビルドキャッシュを残す (`cache-on-failure`) ので、同じタグの再実行は Rust のコンパイルを飛ばせる)。
+
+### 間違えたとき
+
+- **`build` が失敗した**: 何も公開されていない。原因を直して、タグを消して打ち直す (リモートのタグを消してから、直したコミットに打つ)。一時的な失敗なら Actions で job を再実行するだけでよい。
+
+  ```sh
+  git push origin :refs/tags/linux-v0.1.0 && git tag -d linux-v0.1.0
+  git tag linux-v0.1.0 && git push origin linux-v0.1.0
+  ```
+
+- **リリースが作られたあとで間違いに気づいた**: リリースとタグを消して (`gh release delete linux-v0.1.0 --cleanup-tag`)、直してから打ち直す。
+  **配ったあとの版を作り直さない** (同じ版の別のファイルを出すと、落とした人の `SHA256SUMS` と合わなくなる)。直すなら次のパッチを出す。
+  `release` が途中で失敗して添付が足りないリリースが残ったときも、同じように消して打ち直す。
+
+### `packaging/arch` との関係
+
+関係しない。`packaging/arch/PKGBUILD` は GitHub の `main` をクローンして `pnpm tauri build --no-bundle` でビルドする `yhtye-git` パッケージで、リリースのファイル名も `linux-v*` のタグも見ない。
+Arch / CachyOS の人はこれまでどおりソースから入れる (AppImage / deb / rpm は Arch 用ではない)。
+
+### ローカルで試す
+
+```sh
+pnpm tauri build --bundles deb    # target/release/bundle/deb/Yhtye_<版>_amd64.deb (遅い。AppImage / rpm も作るなら appimage,rpm を足す)
+```
+
+ただし配る物は CI で作る (手元のディストリビューションの glibc に縛られるため)。CI と同じ Ubuntu 22.04 の環境は、`ubuntu:22.04` のコンテナにワークフローの `Install system dependencies` の依存と
+Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれば再現できる。

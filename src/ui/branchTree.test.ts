@@ -43,6 +43,22 @@ describe("buildTree", () => {
     expect(tree.otherBranches).toEqual(["topic"]);
   });
 
+  it("orders the worktrees and the other branches by the branch order, the rest after in git's order", () => {
+    const overview: GitOverview = {
+      ...CHAT_GIT,
+      branches: [...CHAT_GIT.branches, { name: "topic", sha: "t".repeat(40) }, { name: "alpha", sha: "a".repeat(40) }],
+    };
+    const natural = buildTree(CHAT_INFOS, overview);
+    expect(natural.worktrees.map((w) => w.path)).toEqual([MAIN_WT, FEAT_WT]);
+    expect(natural.otherBranches).toEqual(["topic", "alpha"]);
+
+    const ordered = buildTree(CHAT_INFOS, overview, [], [FEAT_WT, "alpha", "gone"]);
+    expect(ordered.worktrees.map((w) => w.path)).toEqual([FEAT_WT, MAIN_WT]);
+    expect(ordered.otherBranches).toEqual(["alpha", "topic"]);
+    // The chats of a node keep their own order (newest first).
+    expect(ordered.worktrees.flatMap((w) => w.chats.map((c) => c.id))).toEqual(["C-2", "C-1"]);
+  });
+
   it("puts the chats of a worktree git no longer lists under lost", () => {
     const gone = { id: "C-3", worktree: "/gone", title: null, created_ms: 1, last_used_ms: 1 };
     const tree = buildTree([...CHAT_INFOS, gone], CHAT_GIT);

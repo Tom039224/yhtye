@@ -107,7 +107,7 @@ async fn upgrade(
         return (status, why).into_response();
     }
     let core = shared.core.clone();
-    ws.on_upgrade(move |socket| {
+    yhtye_core::ws::accept_large_messages(ws).on_upgrade(move |socket| {
         run_session(socket, core, SessionPolicy::LOCAL, CancellationToken::new())
     })
 }

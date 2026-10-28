@@ -476,7 +476,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 1. ~~`~/.claude` を効かせるか~~ → **常に有効** (現状維持: CLAUDE.md・フック・スキルを読み込む、MCP サーバーだけ隔離)。
    [`orchestration-model.md`](architecture/orchestration-model.md) §11 / [`acp-harnesses.md`](architecture/acp-harnesses.md) §5.2。
 2. **runs (履歴) ビューの中身** → **保留** (「現状は何もありません」の空表示のまま)。再開するときの案は前回の推奨
-   (過去のグループ一覧 → クリックで会話のその位置へ)。
+   (過去のグループ一覧 → クリックで会話のその位置へ)。→ **のちに仮置きの空ビューごと削除した**。
 3. ~~「対処の内容を見る」「差分を見る」の遷移先~~ → **ボタンを出さない** ([`orchestrator-desktop.md`](design/orchestrator-desktop.md) §3.4 / §8)。
 4. ~~他ハーネスの追加~~ → **Stage 7b / 7c として実施予定** (下の Stage 7 の節)。
 5. ~~配布バイナリでの DMABUF~~ → **起動時に Wayland + NVIDIA を検出したときだけ設定** (7a で実装、[`core-design.md`](architecture/core-design.md) §9)。

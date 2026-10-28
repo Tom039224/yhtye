@@ -94,6 +94,7 @@ fn send(project: &str, chat: &str, text: &str) -> ApiCommand {
         project: project.into(),
         chat: chat.into(),
         text: text.into(),
+        attachments: vec![],
     }
 }
 
@@ -106,6 +107,22 @@ async fn until(rx: &mut broadcast::Receiver<ApiEvent>, done: impl Fn(&ApiEvent) 
         if done(&ev) {
             return;
         }
+    }
+}
+
+/// Waits until `done` has held for every one of `sessions` (in any order).
+async fn until_each(
+    rx: &mut broadcast::Receiver<ApiEvent>,
+    sessions: &[&str],
+    done: impl Fn(&ApiEvent, &str) -> bool,
+) {
+    let mut pending: Vec<&str> = sessions.to_vec();
+    while !pending.is_empty() {
+        let ev = tokio::time::timeout(TIMEOUT, rx.recv())
+            .await
+            .expect("timed out waiting for an event")
+            .expect("event stream open");
+        pending.retain(|session| !done(&ev, session));
     }
 }
 
@@ -187,7 +204,7 @@ async fn chats_are_created_listed_and_used_through_the_api() {
 #[tokio::test]
 async fn creating_chats_and_sending_report_bad_input() {
     let r = TempRepo::new();
-    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&["branch", "yhtye/g1"]);
     let core = Core::start(core_config(&r, hello_script()))
         .await
         .expect("core");
@@ -195,7 +212,7 @@ async fn creating_chats_and_sending_report_bad_input() {
     let create = |branch: &str| chat_on(&project, Some(branch), None);
     assert_eq!(code(&core, create("nope")).await, ApiErrorCode::NotFound);
     assert_eq!(
-        code(&core, create("yhtye/G-1")).await,
+        code(&core, create("yhtye/g1")).await,
         ApiErrorCode::InvalidArgument
     );
     assert_eq!(
@@ -251,13 +268,13 @@ async fn a_chat_can_be_made_in_a_worktree_given_by_its_path() {
         std::fs::canonicalize(&r.repo).expect("repo")
     );
     let internal = r.data.join("internal");
-    r.git(&["branch", "yhtye/G-1"]);
+    r.git(&["branch", "yhtye/g1"]);
     r.git(&[
         "worktree",
         "add",
         "-q",
         &internal.to_string_lossy(),
-        "yhtye/G-1",
+        "yhtye/g1",
     ]);
     let bad = [
         (
@@ -700,5 +717,155 @@ async fn compact_chat_sends_the_command_through_the_api_once_the_orchestrator_is
         ApiResponse::Accepted
     ));
     until(&mut rx, said("orchestrator:C-1", "compacted")).await;
+    core.shutdown().await;
+}
+
+async fn activity_of(core: &Core, project: &str) -> (bool, bool) {
+    let ApiResponse::Projects { projects } = run(core, ApiCommand::ListProjects).await else {
+        panic!("a project list");
+    };
+    let p = projects
+        .iter()
+        .find(|p| p.id == project)
+        .expect("the project is listed");
+    (p.running, p.awake)
+}
+
+#[tokio::test]
+async fn sleep_chat_stops_the_chat_and_the_project_rests_until_it_is_used_again() {
+    let r = TempRepo::new();
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    let chat = create_chat(&core, &project, "main").await.id;
+    let sleep = |chat: &str| ApiCommand::SleepChat {
+        project: project.clone(),
+        chat: chat.into(),
+    };
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, false),
+        "a project just opened is idle and asleep"
+    );
+    assert_eq!(code(&core, sleep("C-9")).await, ApiErrorCode::NotFound);
+
+    run(&core, send(&project, &chat, "hello")).await;
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::Agent { session, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, true),
+        "the chat is up but idle"
+    );
+
+    assert!(matches!(
+        run(&core, sleep(&chat)).await,
+        ApiResponse::Accepted
+    ));
+    until(&mut rx, |e| {
+        matches!(&e.body, ApiEventBody::SessionStopped { session, suspended: false }
+            if session == "orchestrator:C-1")
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, false),
+        "the chat sleeps"
+    );
+    // Sleeping again changes nothing.
+    assert!(matches!(
+        run(&core, sleep(&chat)).await,
+        ApiResponse::Accepted
+    ));
+
+    // The next message starts the orchestrator again with its stored session.
+    run(&core, send(&project, &chat, "hello")).await;
+    let mut resumed = None;
+    while resumed.is_none() {
+        let ev = tokio::time::timeout(TIMEOUT, rx.recv())
+            .await
+            .expect("timed out waiting for the restart")
+            .expect("event stream open");
+        if let ApiEventBody::SessionStarted {
+            session,
+            resumed: r,
+            ..
+        } = &ev.body
+            && session == "orchestrator:C-1"
+        {
+            resumed = Some(*r);
+        }
+    }
+    assert_eq!(resumed, Some(true), "the stored session was loaded again");
+    until(&mut rx, said("orchestrator:C-1", "hi")).await;
+    assert!(activity_of(&core, &project).await.1);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn sleep_project_stops_every_chat_and_a_project_that_is_not_open_is_already_asleep() {
+    let r = TempRepo::new();
+    r.git(&["branch", "topic"]);
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    let mut rx = core.subscribe();
+    let project = open(&core, &r).await;
+    let main = create_chat(&core, &project, "main").await.id;
+    let topic = create_chat(&core, &project, "topic").await.id;
+    let sleep = |project: &str| ApiCommand::SleepProject {
+        project: project.into(),
+    };
+    assert_eq!(code(&core, sleep("nope")).await, ApiErrorCode::NotFound);
+
+    for chat in [&main, &topic] {
+        run(&core, send(&project, chat, "hello")).await;
+    }
+    let sessions = ["orchestrator:C-1", "orchestrator:C-2"];
+    until_each(&mut rx, &sessions, |e, session| {
+        matches!(&e.body, ApiEventBody::Agent { session: s, event: yhtye_core::acp::AgentEvent::TurnEnded(_) }
+            if s == session)
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, true),
+        "both chats are up but idle"
+    );
+
+    assert!(matches!(
+        run(&core, sleep(&project)).await,
+        ApiResponse::Accepted
+    ));
+    until_each(&mut rx, &sessions, |e, session| {
+        matches!(&e.body, ApiEventBody::SessionStopped { session: s, suspended: false } if s == session)
+    })
+    .await;
+    assert_eq!(
+        activity_of(&core, &project).await,
+        (false, false),
+        "every chat sleeps"
+    );
+    // Sleeping again changes nothing.
+    assert!(matches!(
+        run(&core, sleep(&project)).await,
+        ApiResponse::Accepted
+    ));
+    core.shutdown().await;
+
+    // After a restart the project is known but not open: nothing is up, so it is already asleep.
+    let core = Core::start(core_config(&r, hello_script()))
+        .await
+        .expect("core");
+    assert!(matches!(
+        run(&core, sleep(&project)).await,
+        ApiResponse::Accepted
+    ));
     core.shutdown().await;
 }

@@ -34,7 +34,7 @@ function setup(snapshot: Snapshot, log: ApiEvent[]) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   return { transport, core, store };

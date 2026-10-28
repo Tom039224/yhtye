@@ -8,8 +8,10 @@ use serde_json::Value;
 
 use super::event::DomainEvent;
 use super::types::{MessageOutcome, MessageVia, Role, TaskKind, ToolError};
+use crate::agents::AgentChoice;
+use crate::attachments::AttachmentMeta;
 use crate::mcp::SessionBinding;
-use crate::mcp::tools::{CreateGroupArgs, MessageTaskArgs, ToolCall};
+use crate::mcp::tools::{CreateGroupArgs, CreateTaskArgs, MessageTaskArgs, ToolCall};
 
 /// The agent session working on one step of a task. The runtime keeps one
 /// implementer session per task and a fresh reviewer session per review step.
@@ -52,15 +54,26 @@ pub enum GitOp {
         group_branch: String,
         base_branch: String,
     },
-    /// `code`: commit leftovers, merge into the group branch, remove the worktree.
-    /// `investigate`: check that the tree is still clean.
+    /// `code`: commit leftovers, squash into the group branch as one commit,
+    /// remove the worktree. `investigate`: check that the tree is still clean.
     FinishTask {
         group: String,
         task: String,
         kind: TaskKind,
+        /// Message of the commit of what the agents left uncommitted.
         message: String,
         group_branch: String,
         base_branch: String,
+        /// The task's title: the squash commit's subject (empty in older ops).
+        #[serde(default)]
+        title: String,
+        /// The agent that implemented the task, as its session was started
+        /// (the runtime fills it in; `None`: unknown).
+        #[serde(default)]
+        agent: Option<AgentChoice>,
+        /// The agents of the task's review steps, oldest first, without repeats.
+        #[serde(default)]
+        reviewers: Vec<AgentChoice>,
     },
     /// A cancelled `code` task: commit leftovers to its branch, remove the worktree.
     RemoveWorkspace { group: String, task: String },
@@ -78,7 +91,23 @@ pub enum GitOp {
         /// orchestrator's inbox as `merge_result`.
         #[serde(default)]
         trigger: MergeTrigger,
+        /// The group's title and `finish_group`'s summary (empty: none), for
+        /// the merge commit's message.
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        summary: String,
+        /// The `code` tasks that were merged into the group (done ones).
+        #[serde(default)]
+        tasks: Vec<GroupTask>,
     },
+}
+
+/// A task of a group as the group's merge commit lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupTask {
+    pub id: String,
+    pub title: String,
 }
 
 /// Who started a group's merge into its base branch.
@@ -148,10 +177,17 @@ pub enum DomainCommand {
         chat: String,
         args: CreateGroupArgs,
         base_branch: String,
-        /// The highest group number git already has (branches or worktree
-        /// directories left by an earlier database): the new group is numbered
-        /// past it, and past every group of the state.
-        taken: u32,
+        /// What in git already uses the group's name (a branch or worktree
+        /// directory left by an earlier database, read by the runtime); `None`:
+        /// nothing. The name is then refused, like one the state has.
+        taken_in_git: Option<String>,
+    },
+    /// `create_task` (a tool call of `binding`), with what in git already uses
+    /// the task's name (its branch or worktree directory; see `CreateGroup`).
+    CreateTask {
+        binding: SessionBinding,
+        args: CreateTaskArgs,
+        taken_in_git: Option<String>,
     },
     /// Any other tool call.
     Tool {
@@ -180,6 +216,9 @@ pub enum DomainCommand {
     UserMessage {
         chat: String,
         text: String,
+        /// Staged attachments sent with it.
+        #[serde(default)]
+        attachments: Vec<AttachmentMeta>,
     },
     /// The orchestrator's turn ended (Stage 7a: a settled group it left open
     /// gets a reminder, then Yhtye finishes it).

@@ -6,7 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import appCss from "../App.css?raw";
 import tokensCss from "../styles/tokens.css?raw";
+import dashboardCss from "./dashboard.css?raw";
 import iconCss from "./icon.css?raw";
+import { RAIL_WIDTH } from "./layout";
 import sidebarCss from "./sidebar.css?raw";
 
 interface Rule {
@@ -48,7 +50,7 @@ function parseRules(css: string): Rule[] {
   return rules;
 }
 
-const RULES = [tokensCss, appCss, sidebarCss, iconCss].flatMap(parseRules);
+const RULES = [tokensCss, appCss, sidebarCss, iconCss, dashboardCss].flatMap(parseRules);
 
 /** The value `selector` gets for `property`: the last rule that sets it wins. */
 function valueOf(selector: string, property: string): string | undefined {
@@ -94,5 +96,30 @@ describe("the page frame", () => {
     expect(scrollAreas.length).toBeGreaterThan(0);
     const unpositioned = scrollAreas.map((r) => r.selector).filter((selector) => !["relative", "absolute", "fixed"].includes(valueOf(selector, "position") ?? "static"));
     expect(unpositioned).toEqual([]);
+  });
+});
+
+describe("the rail", () => {
+  it("takes the same 44px of the layout whether or not its panel is expanded", () => {
+    expect(RULES.filter((r) => r.selector === ".rail" && r.declarations.has("width")).map((r) => r.declarations.get("width"))).toEqual([`${RAIL_WIDTH}px`]);
+    expect(valueOf(".rail", "flex")).toBe("none");
+    // The sidebar's largest width counts on the rail's.
+    expect(appCss).toContain(`calc(100% - ${RAIL_WIDTH}px - 380px - 420px)`);
+  });
+
+  it("grows its panel over the sidebar instead: absolutely positioned, widened on hover, keyboard focus or an open menu", () => {
+    expect(valueOf(".rail", "position")).toBe("relative");
+    expect(valueOf(".rail-panel", "position")).toBe("absolute");
+    expect(valueOf(".rail-panel", "width")).toBe(`${RAIL_WIDTH}px`);
+    const states = String.raw`\.rail:is\(:hover, :has\(:focus-visible\), :has\(\.row-menu\)\)`;
+    expect(appCss).toMatch(new RegExp(`${states} \\.rail-panel \\{[^}]*width: \\d+px`));
+    expect(appCss).toMatch(new RegExp(`${states} \\.rail-label \\{ display: block`));
+    // Collapsed, the labels are out of the way (they stay in the document).
+    expect(valueOf(".rail-label", "display")).toBe("none");
+  });
+
+  it("scrolls the project list inside the panel, not the panel", () => {
+    expect(valueOf(".rail-project-list", "overflow-y")).toBe("auto");
+    expect(valueOf(".rail-panel", "overflow")).toBe("hidden");
   });
 });

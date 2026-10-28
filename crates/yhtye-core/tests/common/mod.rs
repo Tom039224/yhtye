@@ -5,6 +5,7 @@ pub mod antigravity;
 pub mod chats;
 pub mod codex;
 pub mod devin;
+pub mod fake_tailscale;
 #[cfg(unix)]
 pub mod gate;
 pub mod grok_build;

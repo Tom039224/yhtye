@@ -60,6 +60,7 @@ import kotlin.math.abs
 
 // Discord 型の 3 パネル (docs/planned/android-client.md「段階 3」のジェスチャ、モックの「パネルの位置」「ジェスチャ」)。
 // 中央の画面が指に追従して横にずれ、下の左パネル/右パネルが見える。開いたとき中央を [PEEK] 残し、そこのタップで閉じる。
+// 左パネルは [PanelShell] の `leftMaxWidth` でもっと狭くできる (ダッシュボードでは広がったレールの幅。中央はその右端で止まる)。
 // 幅の広い端末 (WindowSizeClass の Expanded) では左右のパネルを常時表示し、ジェスチャは使わない。
 
 /** パネルが開いたとき中央が見えている幅 (モックの `--peek`)。 */
@@ -102,7 +103,11 @@ class PanelShellState internal constructor(initial: Panel?, private val scope: C
     var wide: Boolean by mutableStateOf(false)
         internal set
 
-    internal var panelWidth: Float by mutableFloatStateOf(0f)
+    /** 左パネルの幅 (px)。[PanelShell] の `leftMaxWidth` で右パネルより狭くなる。 */
+    internal var leftWidth: Float by mutableFloatStateOf(0f)
+
+    /** 右パネルの幅 (px)。画面の幅から [PEEK] を引いたもの。 */
+    internal var rightWidth: Float by mutableFloatStateOf(0f)
     private var animation: Job? = null
     internal var initialized = false
 
@@ -119,9 +124,17 @@ class PanelShellState internal constructor(initial: Panel?, private val scope: C
     }
 
     internal fun positionOf(panel: Panel?): Float = when (panel) {
-        Panel.Left -> panelWidth
-        Panel.Right -> -panelWidth
+        Panel.Left -> leftWidth
+        Panel.Right -> -rightWidth
         null -> 0f
+    }
+
+    /** 左パネルの幅が変わった: 左が開いていれば中央を新しい位置へアニメーションで動かす (閉じていれば動かさない)。 */
+    internal fun resizeLeft(width: Float) {
+        if (leftWidth == width) return
+        leftWidth = width
+        if (wide || !initialized || open != Panel.Left) return
+        settleTo(Panel.Left, velocity = 0f, durationMs = BUTTON_SETTLE_MS)
     }
 
     internal fun stopAnimation() {
@@ -175,7 +188,7 @@ val LocalPanelShell = staticCompositionLocalOf<PanelShellState?> { null }
  * - 子が先に横の動きを取ったら (横にはみ出したコードブロック・表の `horizontalScroll`、右パネルのタスクカードのスワイプ)
  *   その指はパネルを動かさない。縦のスクロールが先に動いたときも同じ。
  * - 最初のタッチスロップを越えた向きで決める。縦ならその指では横に切り替えない。
- * - 1 回のスワイプで動くのは今の位置から隣まで。離した位置と速さで開く/閉じるを決める ([SwipeThresholds])。
+ * - 1 回のスワイプで動くのは今の位置から隣まで。離した位置と速さで開く/閉じるを決める ([SwipeThresholds]。位置は隣までの道のりの割合)。
  * - 戻る (予測型を含む) は開いているパネル → 中央 の順に 1 段ずつ閉じる。
  */
 @Composable
@@ -188,25 +201,33 @@ fun PanelShell(
     gestureInsets: WindowInsets = WindowInsets.systemGestures,
     /** 中央の上に積んだ画面 (タスク詳細・設定) が開いている間などはパネルを動かさない。 */
     swipeEnabled: Boolean = true,
-    /** 右パネルを開けるか (履歴のビューには右パネルが無い。モックと同じ)。 */
+    /** 右パネルを開けるか (ダッシュボードには右パネルが無い)。 */
     rightEnabled: Boolean = true,
+    /** 左パネルの幅の上限 (既定は画面の幅から [PEEK] を引いた幅)。画面より広くしても変わらない。開いている間に変えると中央が動く。 */
+    leftMaxWidth: Dp = Dp.Infinity,
 ) {
     BoxWithConstraints(modifier.fillMaxSize().background(Yhtye.colors.bgApp)) {
         val sizeClass = WindowSizeClass.BREAKPOINTS_V1.computeWindowSizeClass(maxWidth.value, maxHeight.value)
         val wide = sizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
         val density = LocalDensity.current
-        val panelWidthPx = with(density) { (maxWidth - PEEK).toPx() }
-        LaunchedEffect(wide, panelWidthPx) {
-            state.wide = wide
-            state.panelWidth = panelWidthPx
+        val fullWidth = (maxWidth - PEEK).coerceAtLeast(0.dp)
+        val leftWidth = minOf(fullWidth, leftMaxWidth.coerceAtLeast(0.dp))
+        val fullWidthPx = with(density) { fullWidth.toPx() }
+        val leftWidthPx = with(density) { leftWidth.toPx() }
+        // 左パネルの中身 (ダッシュボードのレールの固定) が最初の合成から幅の広い端末だと分かるように、ここで書く
+        state.wide = wide
+        LaunchedEffect(wide, fullWidthPx) {
+            state.rightWidth = fullWidthPx
+            state.leftWidth = leftWidthPx
             state.snapToOpen()
             state.initialized = true
         }
+        LaunchedEffect(leftWidthPx) { state.resizeLeft(leftWidthPx) }
         CompositionLocalProvider(LocalPanelShell provides state) {
             if (wide) {
                 WideLayout(left, right, center)
             } else {
-                NarrowLayout(state, left, right, center, gestureInsets, swipeEnabled, rightEnabled, panelWidthPx)
+                NarrowLayout(state, left, right, center, gestureInsets, swipeEnabled, rightEnabled, fullWidth, leftWidth)
             }
         }
     }
@@ -233,7 +254,8 @@ private fun NarrowLayout(
     gestureInsets: WindowInsets,
     swipeEnabled: Boolean,
     rightEnabled: Boolean,
-    panelWidthPx: Float,
+    panelWidth: Dp,
+    leftWidth: Dp,
 ) {
     val c = Yhtye.colors
     val density = LocalDensity.current
@@ -242,7 +264,6 @@ private fun NarrowLayout(
     val edgeStart = gestureInsets.getLeft(density, direction).toFloat()
     val edgeEnd = gestureInsets.getRight(density, direction).toFloat()
     val fling = with(density) { SwipeThresholds.FLING_DP_PER_SECOND.dp.toPx() }
-    val panelWidth = with(density) { panelWidthPx.toDp() }
 
     PredictiveBack(state)
 
@@ -261,7 +282,10 @@ private fun NarrowLayout(
     ) {
         val offset = state.offset
         if (offset > 0f) {
-            Box(Modifier.width(panelWidth).fillMaxHeight().background(c.bgPanel).testTag("panel-left")) { left() }
+            // 中央に隠れる分は [panelWidth] まで (左パネルの幅が変わる間も背景が途切れない)。中身は [leftWidth]
+            Box(Modifier.width(panelWidth).fillMaxHeight().background(c.bgPanel).testTag("panel-left")) {
+                Box(Modifier.width(leftWidth).fillMaxHeight()) { left() }
+            }
         }
         if (offset < 0f) {
             Box(
@@ -286,7 +310,8 @@ private fun NarrowLayout(
             center()
             if (shifted) {
                 // 開いているパネルの横に残った中央: 中身を触らせず、タップで閉じる (モックの #shield)
-                val share = if (panelWidthPx > 0f) minOf(1f, abs(offset) / panelWidthPx) else 1f
+                val sideWidth = if (offset > 0f) state.leftWidth else state.rightWidth
+                val share = if (sideWidth > 0f) minOf(1f, abs(offset) / sideWidth) else 1f
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -349,8 +374,8 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.panelDra
     }
     state.stopAnimation()
     val base = state.positionOf(state.open)
-    val lo = if (base > 0f || !rightEnabled) 0f else -state.panelWidth
-    val hi = if (base < 0f) 0f else state.panelWidth
+    val lo = if (base > 0f || !rightEnabled) 0f else -state.rightWidth
+    val hi = if (base < 0f) 0f else state.leftWidth
     var cancelled = false
     while (true) {
         val change: PointerInputChange? = awaitPointerEvent(PointerEventPass.Initial).changes.firstOrNull { it.id == down.id }
@@ -371,8 +396,9 @@ private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.panelDra
 }
 
 /**
- * 離したとき: 速ければその向きの隣へ、そうでなければ指を動かした距離が [SwipeThresholds.PANEL_COMMIT_SHARE] を超えていれば
- * ドラッグを始めた位置 ([base]) の隣へ、足りなければ [base] に戻る。開閉が変わったら軽く震わせる。
+ * 離したとき: 速ければその向きの隣へ、そうでなければ指を動かした距離が隣までの道のりの [SwipeThresholds.PANEL_COMMIT_SHARE]
+ * を超えていればドラッグを始めた位置 ([base]) の隣へ、足りなければ [base] に戻る (左右のパネルの幅が違っても割合は同じ)。
+ * 開閉が変わったら軽く震わせる。
  */
 private fun settleAfterDrag(
     state: PanelShellState,
@@ -384,15 +410,17 @@ private fun settleAfterDrag(
     haptic: HapticFeedback,
 ) {
     val pos = state.offset
-    val snaps = listOf(-state.panelWidth, 0f, state.panelWidth).filter { it in lo..hi }
+    val snaps = listOf(-state.rightWidth, 0f, state.leftWidth).filter { it in lo..hi }
     // 右パネルを開いたまま右パネルが無くなったときなどは、範囲内の最寄りから始めたことにする
     val anchor = base.coerceIn(lo, hi)
-    val commit = state.panelWidth * SwipeThresholds.PANEL_COMMIT_SHARE
+    val share = SwipeThresholds.PANEL_COMMIT_SHARE
+    val next = snaps.firstOrNull { it > anchor + 0.5f }
+    val previous = snaps.lastOrNull { it < anchor - 0.5f }
     val target = when {
         velocity > fling -> snaps.firstOrNull { it > pos + 0.5f } ?: snaps.last()
         velocity < -fling -> snaps.lastOrNull { it < pos - 0.5f } ?: snaps.first()
-        pos - anchor > commit -> snaps.firstOrNull { it > anchor + 0.5f } ?: anchor
-        pos - anchor < -commit -> snaps.lastOrNull { it < anchor - 0.5f } ?: anchor
+        next != null && pos - anchor > (next - anchor) * share -> next
+        previous != null && anchor - pos > (anchor - previous) * share -> previous
         else -> anchor
     }
     val panel = when {

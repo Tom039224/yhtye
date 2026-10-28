@@ -16,6 +16,7 @@ import io.github.tom039224.yhtye.background.OpenChatRequest
 import io.github.tom039224.yhtye.shared.api.generated.Snapshot
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.LoadPhase
+import io.github.tom039224.yhtye.ui.panels.MainView
 import io.github.tom039224.yhtye.ui.settings.DevicePane
 import io.github.tom039224.yhtye.ui.settings.UnavailableDevicePane
 import kotlinx.coroutines.CoroutineScope
@@ -43,8 +44,18 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
     val openChat = mutableStateOf<OpenChatRequest?>(null)
     val handled = mutableListOf<OpenChatRequest>()
 
-    /** [snapshot] のプロジェクトを開いて画面を出す。[configure] はコアの答え (プロジェクトの一覧・git) を変える。 */
-    fun open(snapshot: Snapshot = recording.end, insets: WindowInsets = WindowInsets(0), configure: TestCore.() -> Unit = {}) {
+    /**
+     * [snapshot] のプロジェクトを開いて画面を出す。[configure] はコアの答え (プロジェクトの一覧・git) を変える。[view] は最初の
+     * ビュー (アプリはダッシュボードから始まるが、多くのテストは会話を見るのでコーディングから)。[withProject] が false なら
+     * プロジェクトを開かない (一覧だけ読む)。
+     */
+    fun open(
+        snapshot: Snapshot = recording.end,
+        insets: WindowInsets = WindowInsets(0),
+        view: MainView = MainView.Work,
+        withProject: Boolean = true,
+        configure: TestCore.() -> Unit = {},
+    ) {
         core = TestCore(snapshot, recording.events.filter { !it.live && it.seq <= snapshot.seq }).apply(configure)
         val s = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         scope = s
@@ -65,12 +76,17 @@ class MainHarness(private val rule: AndroidComposeTestRule<*, ComponentActivity>
                         handled += it
                         openChat.value = null
                     },
+                    initialView = view,
                 )
             }
         }
         s.launch { sync.refreshProjects() }
-        s.launch { sync.openProject(PROJECT.path) }
-        settle { sync.state.value.project?.phase == LoadPhase.Ready && sync.state.value.git?.overview != null }
+        if (withProject) {
+            s.launch { sync.openProject(PROJECT.path) }
+            settle { sync.state.value.project?.phase == LoadPhase.Ready && sync.state.value.git?.overview != null }
+        } else {
+            settle { sync.state.value.projects.isNotEmpty() || core.projects.isEmpty() }
+        }
         rule.waitForIdle()
     }
 

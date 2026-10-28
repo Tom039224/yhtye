@@ -212,6 +212,34 @@ describe("commands", () => {
     ]);
   });
 
+  it("sends the chat's staged attachments with the message, and only then takes them out of the draft", async () => {
+    const s = newStore();
+    await open(s);
+    const file = (name: string) => new File(["hi"], name, { type: "text/plain" });
+    await s.attachments.attach(PROJECT.id, "C-2", [file("a.txt"), file("b.txt")]);
+    await s.attachments.attach(PROJECT.id, "C-1", [file("other.txt")]);
+    const ids = s.drafts.attachments(PROJECT.id, "C-2").map((a) => a.meta?.id);
+    core.failures.set("send_user_message", new CommandError("unavailable", "stopped"));
+    expect(await s.sendMessage("")).toBe(false);
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toHaveLength(2);
+    core.failures.clear();
+    expect(await s.sendMessage("")).toBe(true);
+    expect(transport.callsOf("send_user_message").at(-1)).toEqual({ type: "send_user_message", project: "repo", chat: "C-2", text: "", attachments: ids });
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toEqual([]);
+    // Another chat's draft stays.
+    expect(s.drafts.attachments(PROJECT.id, "C-1")).toHaveLength(1);
+  });
+
+  it("forgets a deleted chat's draft attachments", async () => {
+    const s = newStore();
+    await open(s);
+    s.drafts.set(PROJECT.id, "C-2", "unsent");
+    await s.attachments.attach(PROJECT.id, "C-2", [new File(["x"], "x.txt", { type: "text/plain" })]);
+    await s.deleteChat("C-2");
+    expect(s.drafts.get(PROJECT.id, "C-2")).toBe("");
+    expect(s.drafts.attachments(PROJECT.id, "C-2")).toEqual([]);
+  });
+
   it("creates a chat in a worktree, or in a branch's, and selects it", async () => {
     const s = newStore();
     await open(s);
@@ -403,11 +431,33 @@ describe("pinging the core", () => {
 
   it("pings when the connection opens and keeps the host name and the time of the answer", async () => {
     const s = newStore();
-    expect(s.getState().host).toEqual({ name: null, lastPingAt: null });
+    expect(s.getState().host).toEqual({ name: null, version: null, compatibility: null, headless: false, lastPingAt: null });
     await vi.advanceTimersByTimeAsync(0);
     expect(transport.callsOf("ping")).toHaveLength(1);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: Date.now() });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: Date.now() });
     s.stop();
+  });
+
+  it("keeps that the host runs without a GUI, and reads a core that does not say as having one", async () => {
+    core.headless = true;
+    const s = newStore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.getState().host.headless).toBe(true);
+    s.stop();
+
+    // A core that predates the field leaves it out of its pong.
+    const handle = core.handle.bind(core);
+    core.handle = (cmd) => {
+      const reply = handle(cmd);
+      if (reply.type !== "pong") return reply;
+      const { headless: _headless, ...older } = reply;
+      return older as typeof reply;
+    };
+    const old = newStore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(old.getState().host.name).toBe("test-host");
+    expect(old.getState().host.headless).toBe(false);
+    old.stop();
   });
 
   it("pings every few seconds, and stops while the connection is closed", async () => {
@@ -418,7 +468,7 @@ describe("pinging the core", () => {
     transport.setStatus({ state: "closed", reason: "gone", retryInMs: null });
     await vi.advanceTimersByTimeAsync(PING_INTERVAL_MS * 3);
     expect(transport.callsOf("ping")).toHaveLength(3);
-    expect(s.getState().host).toEqual({ name: "test-host", lastPingAt: answered });
+    expect(s.getState().host).toEqual({ name: "test-host", version: "0.1.0", compatibility: null, headless: false, lastPingAt: answered });
     // It picks up again on reconnecting.
     transport.setStatus({ state: "open" });
     await vi.advanceTimersByTimeAsync(0);

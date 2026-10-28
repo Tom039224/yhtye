@@ -93,6 +93,24 @@
   --usage-5h: oklch(0.7 0.14 55);
   --usage-week: oklch(0.72 0.11 150);
 
+  /* Dashboard (Issue #18; tokens.md "ダッシュボード"). A harness's color in every chart: fixed
+     lightness/chroma, hues apart from the accent (amber) and the running green. The last is neutral. */
+  --chart-series-0: oklch(0.7 0.11 250);
+  --chart-series-1: oklch(0.72 0.11 185);
+  --chart-series-2: oklch(0.7 0.11 300);
+  --chart-series-3: oklch(0.7 0.13 20);
+  --chart-series-4: oklch(0.8 0.11 95);
+  --chart-series-5: #9a948a;
+  /* The activity heatmap: one amber ramp, the unused day a step above the card. */
+  --heat-0: #2b2825;
+  --heat-1: color-mix(in srgb, var(--accent) 28%, #2b2825);
+  --heat-2: color-mix(in srgb, var(--accent) 50%, #2b2825);
+  --heat-3: color-mix(in srgb, var(--accent) 74%, #2b2825);
+  --heat-4: var(--accent);
+  /* The rail's panel while it lies over the sidebar; a panel that opens over the page. */
+  --rail-shadow: 8px 0 24px rgba(0, 0, 0, 0.45);
+  --overlay-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+
   --font-wordmark: "Space Grotesk", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --font-text: "Noto Sans JP", system-ui, -apple-system, "Hiragino Kaku Gothic ProN", sans-serif;

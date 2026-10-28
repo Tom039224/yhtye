@@ -11,6 +11,7 @@ import io.github.tom039224.yhtye.shared.api.generated.ProjectInfo
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.client.CoreConnection
 import io.github.tom039224.yhtye.shared.client.RpcException
+import io.github.tom039224.yhtye.shared.deviceUtcOffsetMin
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.CoroutineContext
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -78,16 +81,22 @@ class AppStore(
         val gitCommits: Long = 120,
         /** ドメインの変化の後に git を読み直すまでの間 (変化はまとまって来る)。 */
         val gitRefreshMs: Long = 400,
+        /** ブランチの PR / マージの状態を使い回す間 (`gh` はネットワークを使う)。 */
+        val branchStatusTtlMs: Long = 60_000,
         /** 表示していないプロジェクトで作業が始まった・終わった後にプロジェクト一覧を読み直すまでの間。 */
         val activityRefreshMs: Long = 200,
         /** 使用量を読み直す間隔 (つながっていて前面の間。コアは 1 分キャッシュする)。 */
         val usageRefreshMs: Long = 5 * 60_000,
+        /** この端末の UTC からのずれ (分。エポックからのミリ秒の時点の) を返す: 利用統計の 1 日の区切り。 */
+        val utcOffsetMin: (atEpochMs: Long) -> Int = ::deviceUtcOffsetMin,
         /** コアに ping する間隔 (つながっていて前面の間。ホストの表示)。 */
         val pingIntervalMs: Long = 3_000,
         /** ping の応答をこれ以上待たない。 */
         val pingTimeoutMs: Long = 5_000,
         /** プロジェクトを開く・ブランチを作る・マージなど時間の掛かる要求の待ち時間。 */
         val longCallTimeoutMs: Long = 180_000,
+        /** 添付の base64 の変換など、大きなデータの処理の実行先。テストは呼び出し元のまま ([EmptyCoroutineContext])。 */
+        val workContext: CoroutineContext = Dispatchers.Default,
     )
 
     private val confined: CoroutineDispatcher =
@@ -101,6 +110,22 @@ class AppStore(
 
     /** 設定画面のコマンドと、設定が変わった知らせ。 */
     val settings: SettingsCommands = SettingsCommands(core)
+
+    /** ホストのフォルダを辿ってプロジェクトに開く (プロジェクトの追加。コアが動いているマシンのフォルダなので、端末のものではない)。 */
+    val folders: FolderBrowser = FolderBrowser(core, this.scope) { path -> openProject(path) }
+
+    /** 会話の添付の画像のメモリキャッシュ ([TranscriptItem.User.attachments] の中身を取る)。 */
+    val attachmentPreviews: AttachmentPreviews =
+        AttachmentPreviews(core, this.scope, AttachmentPreviews.Options(workContext = options.workContext))
+
+    /** チャットごとの入力中の添付 (ステージ・破棄と状態)。送るのは [sendMessage]。 */
+    val attachments: AttachmentComposer =
+        AttachmentComposer(
+            core,
+            this.scope,
+            attachmentPreviews,
+            AttachmentComposer.Options(stageTimeoutMs = options.longCallTimeoutMs, workContext = options.workContext),
+        )
 
     private val _usersTurns = MutableSharedFlow<UsersTurn>(
         extraBufferCapacity = USERS_TURN_BUFFER,
@@ -121,9 +146,13 @@ class AppStore(
     private var activityTimer: Job? = null
     private var activityToken = 0L
     private var usageTimer: Job? = null
+    /** 統計の読みごとに進める: 最後に始めた読みだけが状態を変える (期間を続けて変えても前の答えが勝たない)。 */
+    private var statsToken = 0L
     private var pingTimer: Job? = null
     private var pinging = false
     private var clientsToken = 0L
+    /** 読み・ドラッグ・`branch_order_changed` ごとに進める: 最後のものだけを残す。 */
+    private var branchOrderToken = 0L
     private var foreground = true
     private var started = false
     private val background = BackgroundTurns()
@@ -170,26 +199,99 @@ class AppStore(
         }
     }
 
-    suspend fun openProject(path: String) {
+    /**
+     * プロジェクトをユーザーが並べた順にする ([ids] は一覧の全部)。すぐ出し、コアの一覧に置き換える。断られたら
+     * コアの順に戻す。
+     */
+    suspend fun reorderProjects(ids: List<String>) {
         onConfined {
-            set { it.copy(busy = it.busy.copy(opening = true)) }
-            try {
-                val r = report<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs) ?: return@onConfined
-                set { it.copy(projects = upsertProject(it.projects, r.project)) }
-                load(r.project)
-            } finally {
-                set { it.copy(busy = it.busy.copy(opening = false)) }
-            }
+            val before = _state.value.projects
+            set { it.copy(projects = ids.flatMap { id -> before.filter { p -> p.id == id } }) }
+            val r = report<ApiResponse.Projects>(ApiCommand.ReorderProjects(ids))
+            if (r != null) set { it.copy(projects = r.projects) } else refreshProjects()
         }
     }
 
-    /** 選択中のチャットに送る。受け付けられたか (受け付けられなければコンポーザは文を残す)。 */
+    /**
+     * 表示中のプロジェクトのブランチをユーザーが並べた順にする: [keys] は画面に出ているものの順 (作業ツリーのパスと
+     * ブランチ名)。ほかのキーはコアがそのまま続ける。すぐ出す。
+     */
+    suspend fun reorderBranches(keys: List<String>) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val token = ++branchOrderToken
+            val known = _state.value.branchOrder?.takeIf { it.project == project }?.keys.orEmpty()
+            set { it.copy(branchOrder = BranchOrderView(project, mergeOrder(keys, known))) }
+            val r = report<ApiResponse.BranchOrder>(ApiCommand.ReorderBranches(project, keys))
+            if (r == null) refreshBranchOrder() else if (token == branchOrderToken) setBranchOrder(project, r.keys)
+        }
+    }
+
+    /** 表示中のプロジェクトのブランチの順を読み直す (失敗したら前のまま: 順は好みでしかない)。 */
+    suspend fun refreshBranchOrder() {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val token = ++branchOrderToken
+            val r = try {
+                core.expect<ApiResponse.BranchOrder>(ApiCommand.GetBranchOrder(project))
+            } catch (e: RpcException) {
+                return@onConfined
+            }
+            if (token == branchOrderToken) setBranchOrder(project, r.keys)
+        }
+    }
+
+    private fun setBranchOrder(project: String, keys: List<String>) {
+        if (_state.value.project?.info?.id != project) return
+        set { it.copy(branchOrder = BranchOrderView(project, keys)) }
+    }
+
+    suspend fun openProject(path: String) {
+        val reason = tryOpenProject(path) ?: return
+        onConfined { pushError("${commandName(ApiCommand.OpenProject(path))} failed: $reason") }
+    }
+
+    /**
+     * [openProject] の、断られた理由をその場に出す画面 (ダッシュボードの「プロジェクトを追加」) 用: 失敗を画面のエラー
+     * ([AppState.errors]) に積まず、コアの理由を返す。開けたら null。
+     */
+    suspend fun tryOpenProject(path: String): String? = onConfined {
+        set { it.copy(busy = it.busy.copy(opening = true)) }
+        try {
+            val r = try {
+                core.expect<ApiResponse.Project>(ApiCommand.OpenProject(path), options.longCallTimeoutMs)
+            } catch (e: RpcException) {
+                return@onConfined describe(e)
+            }
+            // プロジェクトを開くのは使うこと: 先頭になる (コアもそうする)
+            set { it.copy(projects = toFrontProject(it.projects, r.project)) }
+            load(r.project)
+            null
+        } finally {
+            set { it.copy(busy = it.busy.copy(opening = false)) }
+        }
+    }
+
+    /**
+     * 選択中のチャットに送る。入力中の添付 ([attachments]) のステージ済みのものも付ける (本文が空でも添付があれば送れる。
+     * [canSendMessage])。受け付けられたか (受け付けられなければコンポーザは文と添付を残す)。アップロード中・失敗した添付が
+     * あるときは送らずエラーにする。
+     */
     suspend fun sendMessage(text: String): Boolean = onConfined {
         val view = _state.value.project
         val chat = view?.selectedChat ?: return@onConfined false
+        val project = view.info.id
+        val pending = attachments.pending(project, chat)
+        if (!pending.isSettled()) {
+            pushError("send_user_message failed: wait for the attachments to be uploaded (or remove the ones that failed)")
+            return@onConfined false
+        }
+        val ids = pending.stagedIds()
         set { it.copy(busy = it.busy.copy(sending = true)) }
         try {
-            report<ApiResponse.Accepted>(ApiCommand.SendUserMessage(view.info.id, chat, text)) != null
+            val accepted = report<ApiResponse.Accepted>(ApiCommand.SendUserMessage(project, chat, text, ids)) != null
+            if (accepted) attachments.markSent(project, chat, ids)
+            accepted
         } finally {
             set { it.copy(busy = it.busy.copy(sending = false)) }
         }
@@ -308,9 +410,31 @@ class AppStore(
         onConfined {
             val project = _state.value.project?.info?.id ?: return@onConfined
             core.expect<ApiResponse.Accepted>(ApiCommand.DeleteChat(project, chat))
-            drafts.set(project, chat, "")
+            forgetComposer(project, chat)
             if (_state.value.project?.info?.id != project) return@onConfined
             updateChats { removeChatNow(it, chat) }
+        }
+    }
+
+    /**
+     * チャットを眠らせる: オーケストレータのプロセスを止める (保存したセッションは残るので、次の文で戻ってくる)。
+     * 断られたら (ターンが動いている) エラーに出す。
+     */
+    suspend fun sleepChat(chat: String) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            report<ApiResponse.Accepted>(ApiCommand.SleepChat(project, chat))
+        }
+    }
+
+    /**
+     * プロジェクトのチャットをみな眠らせる (表示していないプロジェクトも): すべてのオーケストレータのプロセスを止めて、
+     * プロジェクトは動いていない扱いになる。一括で、断られたら (どれかのターンが動いている) 何も止めずエラーに出す。
+     * 表示していないプロジェクトの一覧は、コアの `session_stopped` を受けて更新する。
+     */
+    suspend fun sleepProject(project: String) {
+        onConfined {
+            report<ApiResponse.Accepted>(ApiCommand.SleepProject(project))
         }
     }
 
@@ -373,18 +497,42 @@ class AppStore(
             val project = _state.value.project?.info?.id ?: return@onConfined
             val token = ++gitToken
             val prev = _state.value.git?.takeIf { it.project == project }
-            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty())) }
+            val statuses = prev?.statuses
+            val statusesAt = prev?.statusesAt ?: 0
+            set { it.copy(git = GitView(project, prev?.overview, error = null, loading = true, awaiting = prev?.awaiting.orEmpty(), statuses = statuses, statusesAt = statusesAt)) }
             try {
                 val r = core.expect<ApiResponse.GitOverview>(ApiCommand.GetGitOverview(project, options.gitCommits))
                 if (token != gitToken) return@onConfined
                 // 待っていたチャットは全部作られた後に読んだ: その作業ツリーは載っている
-                set { it.copy(git = GitView(project, r.git)) }
+                set { it.copy(git = GitView(project, r.git, statuses = statuses, statusesAt = statusesAt)) }
+                refreshBranchStatuses()
             } catch (e: RpcException) {
                 if (token != gitToken) return@onConfined
                 set {
                     val git = it.git?.takeIf { g -> g.project == project } ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
                     it.copy(git = git.copy(error = describe(e), loading = false))
                 }
+            }
+        }
+    }
+
+    /**
+     * ブランチの PR / マージの状態を読み直す (BRANCHES の木の点)。最近読んだものは使い回す (`gh` はネット
+     * ワークを使う)。失敗したら前のまま (点は次の読み直しまで「不明」)。
+     */
+    suspend fun refreshBranchStatuses(force: Boolean = false) {
+        onConfined {
+            val project = _state.value.project?.info?.id ?: return@onConfined
+            val prev = _state.value.git?.takeIf { it.project == project }
+            if (!force && prev?.statuses != null && now() - prev.statusesAt < options.branchStatusTtlMs) return@onConfined
+            try {
+                val r = core.expect<ApiResponse.BranchStatuses>(ApiCommand.GetBranchStatuses(project))
+                if (_state.value.project?.info?.id != project) return@onConfined
+                val git = _state.value.git?.takeIf { it.project == project }
+                    ?: GitView(project, awaiting = prev?.awaiting.orEmpty())
+                set { it.copy(git = git.copy(project = project, statuses = r.statuses, statusesAt = now())) }
+            } catch (_: RpcException) {
+                // 前のまま (上を見よ)。
             }
         }
     }
@@ -403,6 +551,31 @@ class AppStore(
                 UsageView(error = describe(e))
             }
             set { it.copy(usage = usage) }
+        }
+    }
+
+    /**
+     * ホストの利用統計を [days] 日分 (今日まで。1–[MAX_STATS_DAYS] に丸める) 読み、その期間を選んだことにする。日の区切りはこの
+     * 端末のタイムゾーン ([Options.utcOffsetMin])。最初の 1 回はコアがログを読むので時間が掛かる ([Options.longCallTimeoutMs])。
+     * [refresh] はコアに読んだものを忘れさせて読み直させる。読み直している間は前の統計を持ち続け、失敗しても消さない
+     * ([StatsView.error] と [StatsView.isStale] で分かる)。続けて呼ぶと最後の呼びだけが状態を変える。
+     */
+    suspend fun refreshStats(days: Int = _state.value.stats.days, refresh: Boolean = false) {
+        onConfined {
+            val period = days.coerceIn(1, MAX_STATS_DAYS)
+            val token = ++statsToken
+            set { it.copy(stats = it.stats.copy(days = period, loading = true, error = null)) }
+            val offset = options.utcOffsetMin(now()).coerceIn(-MAX_UTC_OFFSET_MIN, MAX_UTC_OFFSET_MIN)
+            val command = ApiCommand.GetUsageStats(period.toLong(), offset, refresh.takeIf { it })
+            try {
+                val stats = core.expect<ApiResponse.UsageStats>(command, options.longCallTimeoutMs).stats
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(report = stats, loading = false)) }
+            } catch (e: RpcException) {
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(error = describe(e), loading = false)) }
+            } catch (e: CancellationException) {
+                if (token == statsToken) set { it.copy(stats = it.stats.copy(loading = false)) }
+                throw e
+            }
         }
     }
 
@@ -425,6 +598,7 @@ class AppStore(
         background.forget(info.id)
         prefs.set(LAST_PROJECT_KEY, info.path)
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
         try {
             val snap = core.expect<ApiResponse.Snapshot>(ApiCommand.GetSnapshot(info.id)).snapshot
             if (token != loadToken) return
@@ -552,12 +726,17 @@ class AppStore(
         scope.launch { refreshProjects() }
         scope.launch { resync(view.info) }
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
     }
 
     /** アプリ全体のイベント (プロジェクトが無い): 他のクライアントから、または追いつきのヒント。 */
     private fun onAppWide(body: ApiEventBody) {
         when (body) {
             is ApiEventBody.ProjectsChanged -> scope.launch { refreshProjects() }
+            is ApiEventBody.BranchOrderChanged -> {
+                branchOrderToken++ // 読んでいる途中の答えより新しい
+                setBranchOrder(body.project, body.keys)
+            }
             is ApiEventBody.SettingsChanged -> settings.notify(SettingsChange(body.kind, body.project, body.revision))
             ApiEventBody.Resync -> catchUpAll()
             is ApiEventBody.ClientsChanged -> {
@@ -579,6 +758,7 @@ class AppStore(
         if (_state.value.project?.phase != LoadPhase.Ready) return
         requestCatchUp()
         scope.launch { refreshGit() }
+        scope.launch { refreshBranchOrder() }
         openSelectedChat()
     }
 
@@ -683,7 +863,7 @@ class AppStore(
             } catch (e: RpcException) {
                 null // 次の ping でまた試す
             } ?: return
-            set { it.copy(host = HostView(pong.host, now(), pong.version.trim().ifEmpty { null })) }
+            set { it.copy(host = HostView(pong.host, now(), pong.version.trim().ifEmpty { null }, pong.headless)) }
         } finally {
             pinging = false
         }
@@ -757,7 +937,7 @@ class AppStore(
     }
 
     /**
-     * チャットを増やす・減らすかもしれない変更 (他のクライアントのものも) 用の [updateProject]: 消えたチャットの下書きを
+     * チャットを増やす・減らすかもしれない変更 (他のクライアントのものも) 用の [updateProject]: 消えたチャットの下書き・入力中の添付を
      * 消し、表示中のチャットが変わったら (消された、またはチャットの無いプロジェクトに作られた) ユーザーが選んだのと
      * 同じく覚えて開く。
      */
@@ -768,11 +948,18 @@ class AppStore(
         if (before == null || after == null || before.info.id != after.info.id || before.chats == after.chats) return
         val project = after.info.id
         val remaining = after.chats.mapTo(HashSet()) { it.id }
-        before.chats.filter { it.id !in remaining }.forEach { drafts.set(project, it.id, "") }
+        before.chats.filter { it.id !in remaining }.forEach { forgetComposer(project, it.id) }
         val next = after.selectedChat
         if (next == before.selectedChat) return
         prefs.set(chatPrefKey(project), next)
         if (next != null && after.phase == LoadPhase.Ready) scope.launch { openChat(project, next) }
+    }
+
+    /** 消えたチャットのコンポーザが持っていたもの: 下書き・入力中の添付・添付のプレビュー。 */
+    private fun forgetComposer(project: String, chat: String) {
+        drafts.set(project, chat, "")
+        attachments.forgetChat(project, chat)
+        attachmentPreviews.forgetChat(project, chat)
     }
 
     private fun updateProject(f: (ProjectView) -> ProjectView) {
@@ -789,11 +976,14 @@ class AppStore(
 
     private companion object {
         const val USERS_TURN_BUFFER = 64
+
+        /** コアが受ける UTC からのずれの上限 (±24 時間)。 */
+        const val MAX_UTC_OFFSET_MIN = 24 * 60
     }
 }
 
-private fun upsertProject(list: List<ProjectInfo>, p: ProjectInfo): List<ProjectInfo> =
-    if (list.any { it.id == p.id }) list.map { if (it.id == p.id) p else it } else list + p
+/** [p] を先頭に (一覧に無ければ足す、あれば置き換える)。 */
+private fun toFrontProject(list: List<ProjectInfo>, p: ProjectInfo): List<ProjectInfo> = listOf(p) + list.filter { it.id != p.id }
 
 /** 保存されたイベント (`list_events`) を流れてくるイベントと同じ形に。 */
 internal fun toApiEvent(e: LoggedEvent): ApiEvent = ApiEvent(e.seq, e.tsMs, e.project, e.live, e.body)

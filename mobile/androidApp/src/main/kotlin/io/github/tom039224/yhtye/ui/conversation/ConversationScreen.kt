@@ -26,10 +26,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -37,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -46,14 +49,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.tom039224.yhtye.MonoFont
 import io.github.tom039224.yhtye.R
 import io.github.tom039224.yhtye.ThisApp
 import io.github.tom039224.yhtye.Yhtye
+import io.github.tom039224.yhtye.attachments.UriAttachments
 import io.github.tom039224.yhtye.shared.client.ConnectionState
 import io.github.tom039224.yhtye.shared.sync.AppState
 import io.github.tom039224.yhtye.shared.sync.AppStore
 import io.github.tom039224.yhtye.shared.sync.Place
+import io.github.tom039224.yhtye.shared.sync.of
 import io.github.tom039224.yhtye.shared.version.AppVersion
 import io.github.tom039224.yhtye.shared.version.Compatibility
 import io.github.tom039224.yhtye.shared.version.compatibility
@@ -75,6 +81,7 @@ private const val MILLIS_PER_SECOND = 1_000L
  * @param onOpenLeft ☰ (左パネル)。[showPanelButtons] が false (左右のパネルを常時表示) のときは出さない。
  * @param onOpenRight グループ (右パネル) の入口と、待機バナーのタップ。
  * @param appVersion このアプリの版 (PC の版と合わなければ接続のバナーと同じ場所に知らせる)。
+ * @param onOpenDashboard プロジェクトが開いていないときの「ダッシュボードで開く」(PC と同じ)。
  */
 @Composable
 fun ConversationScreen(
@@ -87,9 +94,13 @@ fun ConversationScreen(
     onReconnect: () -> Unit,
     modifier: Modifier = Modifier,
     appVersion: AppVersion = ThisApp.version,
+    onOpenDashboard: () -> Unit = {},
 ) {
     val model = conversationModel(app)
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val uriAttachments = remember(context) { UriAttachments(context.contentResolver) }
+    val drafts by sync.attachments.state.collectAsStateWithLifecycle()
     val chat = model.chat
     val project = model.project
     Column(modifier.fillMaxSize().background(Yhtye.colors.bgCenter)) {
@@ -101,18 +112,24 @@ fun ConversationScreen(
                     if (app.busy.opening) {
                         EmptyState(YIcons.Loader, "読み込み中…", Modifier.align(Alignment.Center))
                     } else {
-                        EmptyState(YIcons.Folder, NO_PROJECT_HINT, Modifier.align(Alignment.Center), testTag = "no-project")
+                        NoProject(onOpenDashboard, Modifier.align(Alignment.Center))
                     }
                 chat == null -> EmptyState(YIcons.MessagePlus, NO_CHAT_HINT, Modifier.align(Alignment.Center), testTag = "no-chat")
                 model.isEmpty -> EmptyState(YIcons.Message, EMPTY_CONVERSATION, Modifier.align(Alignment.Center))
                 else -> key(project.info.id, chat.id) {
-                    TranscriptList(model, onLoadOlder = { scope.launch { sync.loadOlderHistory() } }, Modifier.fillMaxSize())
+                    TranscriptList(
+                        model,
+                        onLoadOlder = { scope.launch { sync.loadOlderHistory() } },
+                        Modifier.fillMaxSize(),
+                        loadAttachment = rememberLoadAttachment(sync, project.info.id, chat.id),
+                    )
                 }
             }
         }
         model.wait?.let { WaitBannerView(it, onClick = onOpenRight) }
         if (project != null && chat != null) {
-            key(project.info.id, chat.id) {
+            val projectId = project.info.id
+            key(projectId, chat.id) {
                 Composer(
                     initialText = sync.drafts.get(project.info.id, chat.id),
                     onTextChange = { sync.drafts.set(project.info.id, chat.id, it) },
@@ -129,6 +146,10 @@ fun ConversationScreen(
                     },
                     onCancel = { scope.launch { sync.cancelTurn() } },
                     modifier = Modifier.windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)),
+                    attachments = drafts.of(projectId, chat.id),
+                    loadAttachment = rememberLoadAttachment(sync, projectId, chat.id),
+                    onAddFiles = { uris -> scope.launch { uriAttachments.addTo(sync.attachments, projectId, chat.id, uris) } },
+                    onRemoveAttachment = { sync.attachments.remove(projectId, chat.id, it) },
                 )
             }
         } else {
@@ -136,6 +157,11 @@ fun ConversationScreen(
         }
     }
 }
+
+/** [chat] の添付の中身を同期層のキャッシュから取る (会話の画像・コンポーザのサムネイル)。 */
+@Composable
+private fun rememberLoadAttachment(sync: AppStore, project: String, chat: String): LoadAttachment =
+    remember(sync, project, chat) { LoadAttachment { sync.attachmentPreviews.load(project, chat, it) } }
 
 @Composable
 private fun TopBar(
@@ -337,5 +363,18 @@ private fun Alert(icon: androidx.compose.ui.graphics.vector.ImageVector, text: S
         YIcon(icon, c.handBar, 14.dp)
         Text(text, color = c.tx, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 6.dp))
         action()
+    }
+}
+
+/** プロジェクトが開いていない: 案内と、その下の「ダッシュボードで開く」(PC の `.main-empty`)。 */
+@Composable
+private fun NoProject(onOpenDashboard: () -> Unit, modifier: Modifier) {
+    val c = Yhtye.colors
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        EmptyState(YIcons.Folder, NO_PROJECT_HINT, testTag = "no-project")
+        TextButton(onClick = onOpenDashboard, modifier = Modifier.testTag("open-dashboard")) {
+            YIcon(YIcons.Dashboard, c.accent, 16.dp)
+            Text("ダッシュボードで開く", color = c.accent, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp))
+        }
     }
 }

@@ -15,19 +15,19 @@ impl Sim {
         .expect("orchestrator_turn_ended never fails")
     }
 
-    /// G-1 with one task that is done; the `group_settled` item is delivered.
+    /// g1 with one task that is done; the `group_settled` item is delivered.
     fn settled() -> Self {
         let mut sim = Sim::new();
         sim.group();
         sim.task(json!({}));
-        sim.report("T-1", Role::Implementer, None);
+        sim.report("t1", Role::Implementer, None);
         assert_eq!(sim.inbox_kinds(), vec![InboxKind::GroupSettled]);
         sim.deliver_inbox();
         sim
     }
 
     fn group_status(&self) -> GroupStatus {
-        self.state.group("G-1").expect("G-1").status
+        self.state.group("g1").expect("g1").status
     }
 }
 
@@ -37,18 +37,20 @@ fn a_settled_group_left_open_gets_a_reminder_then_yhtye_finishes_it() {
 
     // The orchestrator only talked to the user (the reported bug).
     let chain = sim.orch_turn_ended(TurnOutcome::EndTurn);
-    assert!(chain.events.contains(&DomainEvent::GroupFinishReminded {
-        group: "G-1".into()
-    }));
+    assert!(
+        chain
+            .events
+            .contains(&DomainEvent::GroupFinishReminded { group: "g1".into() })
+    );
     assert_eq!(sim.group_status(), GroupStatus::Active);
-    assert_eq!(sim.state.group("G-1").expect("G-1").finish_nudges, 1);
+    assert_eq!(sim.state.group("g1").expect("g1").finish_nudges, 1);
     assert!(has_effect(&chain, |e| matches!(
         e,
         Effect::WakeOrchestrator { .. }
     )));
     let text = sim.state.inbox[0].item.render();
     assert!(
-        text.starts_with("[yhtye:group_settled] group=G-1 reminder=1\nReminder:"),
+        text.starts_with("[yhtye:group_settled] group=g1 reminder=1\nReminder:"),
         "{text}"
     );
     assert!(text.contains("finish_group"), "{text}");
@@ -64,7 +66,7 @@ fn a_settled_group_left_open_gets_a_reminder_then_yhtye_finishes_it() {
         })
     )));
     assert_eq!(sim.group_status(), GroupStatus::Done);
-    let g = sim.state.group("G-1").expect("G-1");
+    let g = sim.state.group("g1").expect("g1");
     assert_eq!(
         g.finish_summary.as_deref(),
         Some(crate::prompts::AUTO_FINISH_SUMMARY)
@@ -72,7 +74,7 @@ fn a_settled_group_left_open_gets_a_reminder_then_yhtye_finishes_it() {
     assert_eq!(sim.inbox_kinds(), vec![InboxKind::MergeResult]);
     let text = sim.state.inbox[0].item.render();
     assert!(
-        text.starts_with("[yhtye:merge_result] group=G-1 ok=true\nYhtye finished the group"),
+        text.starts_with("[yhtye:merge_result] group=g1 ok=true\nYhtye finished the group"),
         "{text}"
     );
 
@@ -89,15 +91,11 @@ fn finishing_after_the_reminder_is_the_normal_path() {
     sim.deliver_inbox();
     let (reply, _) = sim.orch_ok(
         ToolName::FinishGroup,
-        json!({"group_id": "G-1", "summary": "ok"}),
+        json!({"group_id": "g1", "summary": "ok"}),
     );
     assert_eq!(reply["status"], json!("done"));
     assert_eq!(
-        sim.state
-            .group("G-1")
-            .expect("G-1")
-            .finish_summary
-            .as_deref(),
+        sim.state.group("g1").expect("g1").finish_summary.as_deref(),
         Some("ok")
     );
     let chain = sim.orch_turn_ended(TurnOutcome::EndTurn);
@@ -120,7 +118,7 @@ fn no_reminder_while_work_is_open_or_the_orchestrator_has_more_to_read() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    sim.report("T-1", Role::Implementer, None);
+    sim.report("t1", Role::Implementer, None);
     assert!(sim.orch_turn_ended(TurnOutcome::EndTurn).events.is_empty());
 
     // A cancelled turn, or one with another prompt queued.
@@ -150,21 +148,23 @@ fn tasks_that_cannot_start_get_a_reminder_but_no_automatic_finish() {
     let mut sim = Sim::new();
     sim.group();
     sim.task(json!({}));
-    sim.task(json!({"depends_on": ["T-1"]}));
+    sim.task(json!({"depends_on": ["t1"]}));
     sim.orch_ok(
         ToolName::CancelTask,
-        json!({"task_id": "T-1", "reason": "x"}),
+        json!({"task_id": "t1", "reason": "x"}),
     );
     sim.deliver_inbox();
     let chain = sim.orch_turn_ended(TurnOutcome::EndTurn);
-    assert!(chain.events.contains(&DomainEvent::GroupFinishReminded {
-        group: "G-1".into()
-    }));
+    assert!(
+        chain
+            .events
+            .contains(&DomainEvent::GroupFinishReminded { group: "g1".into() })
+    );
     sim.deliver_inbox();
     let chain = sim.orch_turn_ended(TurnOutcome::EndTurn);
     assert!(
         chain.events.is_empty(),
-        "finish_group would refuse: T-2 is pending"
+        "finish_group would refuse: t2 is pending"
     );
     assert_eq!(sim.group_status(), GroupStatus::Active);
 }
@@ -184,7 +184,7 @@ fn a_blocked_automatic_merge_is_reported_as_merge_result() {
     assert_eq!(sim.group_status(), GroupStatus::MergeBlocked);
     let text = sim.state.inbox[0].item.render();
     assert!(
-        text.starts_with("[yhtye:merge_result] group=G-1 ok=false"),
+        text.starts_with("[yhtye:merge_result] group=g1 ok=false"),
         "{text}"
     );
     assert!(text.contains("a.txt"), "{text}");
@@ -193,10 +193,10 @@ fn a_blocked_automatic_merge_is_reported_as_merge_result() {
 #[test]
 fn groups_logged_before_the_counter_existed_start_at_zero() {
     let old = json!({"type": "group_created", "group": {
-        "id": "G-1", "chat": "C-1", "title": "g", "summary": null, "base_branch": "main",
-        "group_branch": "yhtye/G-1", "status": "active", "finish_summary": null, "detail": null}});
+        "id": "g1", "chat": "C-1", "title": "g", "summary": null, "base_branch": "main",
+        "group_branch": "yhtye/g1", "status": "active", "finish_summary": null, "detail": null}});
     let event: DomainEvent = serde_json::from_value(old).expect("old event parses");
     let mut state = State::new("P-1", DomainConfig::default());
     state.apply(&event);
-    assert_eq!(state.group("G-1").expect("G-1").finish_nudges, 0);
+    assert_eq!(state.group("g1").expect("g1").finish_nudges, 0);
 }

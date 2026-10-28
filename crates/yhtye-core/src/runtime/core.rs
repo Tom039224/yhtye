@@ -4,7 +4,9 @@
 //! stream. The Tauri command and the WebSocket bridge (Stage 5) only forward
 //! `command` / `subscribe` to it.
 
+mod attachments;
 mod harnesses;
+mod order;
 mod settings;
 
 pub use harnesses::DetectionConfig;
@@ -29,11 +31,18 @@ use crate::api::{
     ApiCommand, ApiError, ApiEvent, ApiEventBody, ApiResponse, DEFAULT_EVENT_PAGE,
     DEFAULT_GRAPH_COMMITS, LoggedEvent, MAX_EVENT_PAGE, ProjectInfo, Snapshot,
 };
+use crate::attachments::AttachmentStore;
 use crate::clock::now_ms;
+use crate::directory::{home_dir, list_directory};
 use crate::domain::DomainConfig;
-use crate::git::{self, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
+use crate::git::{self, BranchStatuses, GitCli, GitOverview, MAX_GRAPH_COMMITS, worktree_root};
 use crate::remote::{RemoteService, Tailscale, TailscaleCli};
+use crate::remote_client::{RemoteHosts, TokenVault};
 use crate::secrets::{KeyringBackend, SecretBackend, Secrets};
+use crate::stats::{
+    DEFAULT_PERIOD_DAYS, MAX_PERIOD_DAYS, MAX_TZ_OFFSET_MIN, ProjectRoots, StatsService,
+    StatsSources,
+};
 use crate::store::{ProjectRecord, Store, db_path};
 use crate::usage::UsageService;
 
@@ -46,8 +55,12 @@ const USAGE_PROBE_DIR: &str = "usage-probe";
 /// Working directory of the model-listing sessions, under the data directory.
 const MODEL_PROBE_DIR: &str = "model-probe";
 
-/// How long a project may take to tell whether work is on in it (see `is_running`).
+/// How long a project may take to tell whether work is on in it (see `activity`).
 const RUNNING_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long [`Core::branch_statuses`] remembers one `gh` listing per project
+/// (`gh` uses the network; the UI re-reads it with the git overview).
+const BRANCH_STATUS_TTL: Duration = Duration::from_secs(60);
 
 /// Reason recorded when the user cancels without giving one.
 const USER_CANCEL_REASON: &str = "cancelled by the user";
@@ -77,6 +90,15 @@ pub struct CoreConfig {
     /// This PC on Tailscale, for remote access (the `tailscale` command; tests
     /// use a fake).
     pub tailscale: Arc<dyn Tailscale>,
+    /// The host runs without a GUI (`yhtye --headless`); `Ping` tells the
+    /// clients, which show another icon for it.
+    pub headless: bool,
+    /// Where the agents' session logs are read for `GetUsageStats` (tests
+    /// point it at temporary directories).
+    pub stats_sources: StatsSources,
+    /// Read those logs in the background when the core starts, so the first
+    /// `GetUsageStats` is quick (the app does; tests do not).
+    pub stats_warm_up: bool,
 }
 
 impl CoreConfig {
@@ -95,6 +117,9 @@ impl CoreConfig {
             usage: Some(HarnessConfig::claude_code_usage_probe()),
             secret_backend: Arc::new(KeyringBackend::new()),
             tailscale: Arc::new(TailscaleCli),
+            headless: false,
+            stats_sources: StatsSources::from_env(),
+            stats_warm_up: false,
         }
     }
 
@@ -106,6 +131,7 @@ impl CoreConfig {
     pub fn installed(data_dir: impl Into<PathBuf>, model: &str) -> Self {
         let mut cfg = Self::claude_code(data_dir, model);
         cfg.detection = Some(DetectionConfig::from_process(model));
+        cfg.stats_warm_up = true;
         cfg
     }
 }
@@ -124,6 +150,8 @@ struct Inner {
     opening: tokio::sync::Mutex<()>,
     /// Serializes the detections of the installed harnesses.
     detecting: tokio::sync::Mutex<()>,
+    /// Serializes the changes of the project and branch orders (`order.rs`).
+    order_lock: tokio::sync::Mutex<()>,
     /// Serializes the changes of the agent settings and the secrets, each from
     /// its validation to its last step (several clients may change them at once).
     settings_lock: tokio::sync::Mutex<()>,
@@ -131,10 +159,19 @@ struct Inner {
     settings_revision: AtomicU64,
     events: broadcast::Sender<ApiEvent>,
     usage: UsageService,
+    /// Token statistics of the agents on this machine (`GetUsageStats`).
+    stats: StatsService,
     agents: Arc<AgentCatalog>,
     models: ModelService,
     secrets: Arc<Secrets>,
     remote: RemoteService,
+    /// The files attached to user messages.
+    attachments: AttachmentStore,
+    /// The PR / merge statuses by project id with when they were read (see
+    /// [`Core::branch_statuses`]).
+    status_cache: tokio::sync::Mutex<HashMap<String, (std::time::Instant, BranchStatuses)>>,
+    /// The other Yhtye hosts this one is a client of (`core-design.md` §18.9).
+    remote_hosts: RemoteHosts,
     /// Set by `shutdown`: no project may be opened any more.
     closed: AtomicBool,
 }
@@ -143,6 +180,7 @@ impl Core {
     /// Opens the database. Projects are started by [`ApiCommand::OpenProject`].
     pub async fn start(cfg: CoreConfig) -> Result<Self, ApiError> {
         let store = Store::open(&db_path(&cfg.data_dir)).await?;
+        let cfg_data_dir = cfg.data_dir.clone();
         // Before any agent of this run exists: kill those a previous run left behind.
         crate::acp::start_process_registry(&cfg.data_dir).await;
         let (events, _) = broadcast::channel(EVENT_BUFFER);
@@ -172,24 +210,46 @@ impl Core {
         let models = ModelService::new(cfg.data_dir.join(MODEL_PROBE_DIR), secrets.clone());
         let remote =
             RemoteService::new(store.clone(), cfg.tailscale.clone(), events.clone()).await?;
-        Ok(Self {
+        // The device tokens of the hosts go where the secret environment variables do.
+        let remote_hosts =
+            RemoteHosts::new(store.clone(), TokenVault::new(cfg.secret_backend.clone()));
+        let stats = StatsService::new(cfg.stats_sources.clone());
+        let warm_up = cfg.stats_warm_up;
+        let core = Self {
             inner: Arc::new(Inner {
                 cfg,
                 store,
                 open: Mutex::new(HashMap::new()),
                 opening: tokio::sync::Mutex::new(()),
                 detecting: tokio::sync::Mutex::new(()),
+                order_lock: tokio::sync::Mutex::new(()),
                 settings_lock: tokio::sync::Mutex::new(()),
                 settings_revision: AtomicU64::new(settings::initial_revision()),
                 events,
                 usage,
+                stats,
                 agents,
                 models,
                 secrets,
                 remote,
+                attachments: AttachmentStore::for_data_dir(&cfg_data_dir),
+                status_cache: tokio::sync::Mutex::new(HashMap::new()),
+                remote_hosts,
                 closed: AtomicBool::new(false),
             }),
-        })
+        };
+        if warm_up {
+            let warming = core.clone();
+            tokio::spawn(async move { warming.inner.stats.warm_up().await });
+        }
+        Ok(core)
+    }
+
+    /// The Yhtye hosts this one uses as a client (`core-design.md` §18.9): pair,
+    /// connect, run commands there. Its connections are closed by [`Core::shutdown`].
+    #[must_use]
+    pub fn remote_hosts(&self) -> RemoteHosts {
+        self.inner.remote_hosts.clone()
     }
 
     /// Every project's events (durable and live), in order per project.
@@ -203,12 +263,22 @@ impl Core {
             ApiCommand::Ping => Ok(ApiResponse::Pong {
                 host: host_name(),
                 version: APP_VERSION.to_string(),
+                headless: self.inner.cfg.headless,
             }),
             ApiCommand::ListProjects => Ok(ApiResponse::Projects {
                 projects: self.list_projects().await?,
             }),
             ApiCommand::OpenProject { path } => Ok(ApiResponse::Project {
-                project: self.open_project(&path).await?,
+                project: self.open_project(&path, true).await?,
+            }),
+            ApiCommand::ReorderProjects { ids } => Ok(ApiResponse::Projects {
+                projects: self.reorder_projects(ids).await?,
+            }),
+            ApiCommand::GetBranchOrder { project } => Ok(ApiResponse::BranchOrder {
+                keys: self.branch_order(&project).await?,
+            }),
+            ApiCommand::ReorderBranches { project, keys } => Ok(ApiResponse::BranchOrder {
+                keys: self.reorder_branches(&project, keys).await?,
             }),
             ApiCommand::GetSnapshot { project } => Ok(ApiResponse::Snapshot {
                 snapshot: self.snapshot(&project).await?,
@@ -222,22 +292,49 @@ impl Core {
                 project,
                 chat,
                 text,
+                attachments,
             } => {
-                if text.trim().is_empty() {
+                if text.trim().is_empty() && attachments.is_empty() {
                     return Err(ApiError::invalid_argument("the message is empty"));
                 }
-                self.orchestration(&project)?
-                    .send_user_message(chat, text)
+                let orch = self.orchestration(&project)?;
+                let taken = self.take_attachments(&project, &chat, &attachments).await?;
+                let sent = orch
+                    .send_user_message_with(chat.clone(), text, taken.clone())
                     .await
-                    .map_err(user_action_error)?;
+                    .map_err(user_action_error);
+                if sent.is_err() {
+                    self.release_attachments(&project, &chat, &taken).await;
+                }
+                sent?;
+                self.touch_chat(&project, &chat).await;
                 Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::StageAttachment {
+                project,
+                chat,
+                name,
+                mime,
+                data_base64,
+            } => Ok(ApiResponse::AttachmentStaged {
+                attachment: self
+                    .stage_attachment(&project, &chat, name, mime, data_base64)
+                    .await?,
+            }),
+            ApiCommand::DiscardAttachment { project, chat, id } => {
+                self.discard_attachment(&project, &chat, &id).await?;
+                Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::GetAttachment { project, chat, id } => {
+                self.get_attachment(&project, &chat, &id).await
             }
             ApiCommand::OpenChat { project, chat } => {
                 let starting = self
                     .orchestration(&project)?
-                    .open_chat(chat)
+                    .open_chat(chat.clone())
                     .await
                     .map_err(user_action_error)?;
+                self.touch_chat(&project, &chat).await;
                 Ok(ApiResponse::ChatOpened { starting })
             }
             ApiCommand::CancelOrchestratorTurn { project, chat } => {
@@ -252,6 +349,22 @@ impl Core {
                     .compact_chat(chat)
                     .await
                     .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::SleepChat { project, chat } => {
+                self.orchestration(&project)?
+                    .sleep_chat(chat)
+                    .await
+                    .map_err(user_action_error)?;
+                Ok(ApiResponse::Accepted)
+            }
+            ApiCommand::SleepProject { project } => {
+                self.known_project(&project).await?;
+                // A project that is not open has no session up: already asleep.
+                let open = self.lock_open().get(&project).cloned();
+                if let Some(orch) = open {
+                    orch.sleep_project().await.map_err(user_action_error)?;
+                }
                 Ok(ApiResponse::Accepted)
             }
             ApiCommand::ListChats { project } => {
@@ -272,6 +385,7 @@ impl Core {
                     .create_chat_for(target)
                     .await
                     .map_err(user_action_error)?;
+                self.touch_new_chat(&project, &chat).await;
                 Ok(ApiResponse::Chat { chat })
             }
             ApiCommand::RenameChat {
@@ -304,6 +418,7 @@ impl Core {
                     .create_branch(name, from)
                     .await
                     .map_err(user_action_error)?;
+                self.touch_new_chat(&project, &chat).await;
                 Ok(ApiResponse::Chat { chat })
             }
             ApiCommand::CancelTask {
@@ -338,6 +453,9 @@ impl Core {
             ApiCommand::GetGitOverview { project, limit } => Ok(ApiResponse::GitOverview {
                 git: self.git_overview(&project, limit).await?,
             }),
+            ApiCommand::GetBranchStatuses { project } => Ok(ApiResponse::BranchStatuses {
+                statuses: self.branch_statuses(&project).await?,
+            }),
             ApiCommand::GetUsage { refresh } => {
                 let usage = self
                     .inner
@@ -346,6 +464,40 @@ impl Core {
                     .await
                     .map_err(|e| ApiError::unavailable(format!("usage: {e}")))?;
                 Ok(ApiResponse::Usage { usage })
+            }
+            ApiCommand::GetUsageStats {
+                days,
+                tz_offset_min,
+                refresh,
+            } => {
+                let days = days.unwrap_or(DEFAULT_PERIOD_DAYS);
+                if !(1..=MAX_PERIOD_DAYS).contains(&days) {
+                    return Err(ApiError::invalid_argument(format!(
+                        "days must be between 1 and {MAX_PERIOD_DAYS}"
+                    )));
+                }
+                let tz_offset_min = tz_offset_min.unwrap_or(0);
+                if tz_offset_min.abs() > MAX_TZ_OFFSET_MIN {
+                    return Err(ApiError::invalid_argument(
+                        "tz_offset_min must be within 24 hours of UTC",
+                    ));
+                }
+                let projects = self.stats_projects().await?;
+                let stats = self
+                    .inner
+                    .stats
+                    .get(days, tz_offset_min, refresh.unwrap_or(false), projects)
+                    .await;
+                Ok(ApiResponse::UsageStats { stats })
+            }
+            ApiCommand::ListDirectory { path, show_hidden } => {
+                let show_hidden = show_hidden.unwrap_or(false);
+                let directory = tokio::task::spawn_blocking(move || {
+                    list_directory(path.as_deref(), show_hidden, home_dir().as_deref())
+                })
+                .await
+                .map_err(|e| ApiError::internal(format!("could not list the folder: {e}")))??;
+                Ok(ApiResponse::Directory { directory })
             }
             ApiCommand::GetAgentSettings { project } => Ok(ApiResponse::AgentSettings {
                 settings: Box::new(self.agent_settings(project).await?),
@@ -453,6 +605,24 @@ impl Core {
         }
     }
 
+    /// The registered projects with the directories whose sessions belong to
+    /// them: the repository and its Yhtye worktrees.
+    async fn stats_projects(&self) -> Result<Vec<ProjectRoots>, ApiError> {
+        let data_dir = &self.inner.cfg.data_dir;
+        Ok(self
+            .inner
+            .store
+            .projects()
+            .await?
+            .into_iter()
+            .map(|r| ProjectRoots {
+                name: dir_name(&r.path),
+                roots: vec![r.path, worktree_root(data_dir, &r.id)],
+                id: r.id,
+            })
+            .collect())
+    }
+
     async fn known_project(&self, project: &str) -> Result<ProjectRecord, ApiError> {
         self.inner
             .store
@@ -484,7 +654,7 @@ impl Core {
                 continue;
             }
             let path = r.path.display().to_string();
-            let result = self.open_project(&path).await;
+            let result = self.open_project(&path, false).await;
             match &result {
                 Ok(_) => tracing::info!("resumed project {} ({path})", r.id),
                 Err(e) => tracing::error!("could not resume project {} ({path}): {e}", r.id),
@@ -524,6 +694,7 @@ impl Core {
         self.inner.closed.store(true, Ordering::SeqCst);
         // First: remote clients must not start work while the projects stop.
         self.inner.remote.shutdown().await;
+        self.inner.remote_hosts.shutdown().await;
         self.inner.usage.close().await;
         self.inner.models.close().await;
         let _opening = self.inner.opening.lock().await;
@@ -534,15 +705,17 @@ impl Core {
     }
 
     async fn list_projects(&self) -> Result<Vec<ProjectInfo>, ApiError> {
-        let records = self.inner.store.projects().await?;
+        let records = self.ordered_projects().await?;
         let open: HashMap<String, Arc<Orchestration>> = self.lock_open().clone();
         Ok(project_infos(&records, |r| {
-            open.get(&r.id).map(|orch| is_running(&r.id, orch))
+            open.get(&r.id).map(|orch| activity(&r.id, orch))
         })
         .await)
     }
 
-    async fn open_project(&self, path: &str) -> Result<ProjectInfo, ApiError> {
+    /// `used`: the user opened it (it moves to the front of the project order);
+    /// not when the app resumes unfinished work on its own.
+    async fn open_project(&self, path: &str, used: bool) -> Result<ProjectInfo, ApiError> {
         let dir = repository_root(path).await?;
         let _guard = self.inner.opening.lock().await;
         if self.inner.closed.load(Ordering::SeqCst) {
@@ -559,8 +732,11 @@ impl Core {
         };
         let already = self.lock_open().get(&record.id).cloned();
         if let Some(orch) = already {
-            let running = is_running(&record.id, &orch).await;
-            return Ok(project_info(&record, true, running));
+            if used {
+                self.touch_project(&record.id, true).await;
+            }
+            let (running, awake) = activity(&record.id, &orch).await;
+            return Ok(project_info(&record, true, running, awake));
         }
         let (orch, mut rx) = Orchestration::start(self.orchestration_config(&record))
             .await
@@ -576,6 +752,9 @@ impl Core {
         self.lock_open()
             .insert(record.id.clone(), Arc::clone(&orch));
         // Registered, or open now: every client's project list changed.
+        if used {
+            self.touch_project(&record.id, false).await;
+        }
         let _ = self
             .inner
             .events
@@ -583,8 +762,8 @@ impl Core {
                 project: record.id.clone(),
             }));
         // Work that was interrupted may already be resuming.
-        let running = is_running(&record.id, &orch).await;
-        Ok(project_info(&record, true, running))
+        let (running, awake) = activity(&record.id, &orch).await;
+        Ok(project_info(&record, true, running, awake))
     }
 
     async fn list_events(
@@ -627,6 +806,32 @@ impl Core {
             .map_err(|e| ApiError::unavailable(format!("could not read the repository: {e}")))
     }
 
+    /// The PR / merge status of every local branch of `project`. Cached for
+    /// [`BRANCH_STATUS_TTL`]: `gh` uses the network and the UI re-reads it
+    /// with the git overview. Never fails for a known project (a `gh` failure
+    /// reads `unknown` for every branch).
+    async fn branch_statuses(&self, project: &str) -> Result<BranchStatuses, ApiError> {
+        let known = self.inner.store.projects().await?;
+        let record = known
+            .iter()
+            .find(|r| r.id == project)
+            .ok_or_else(|| ApiError::not_found(format!("unknown project {project}")))?;
+        {
+            let cache = self.inner.status_cache.lock().await;
+            if let Some((at, statuses)) = cache.get(project)
+                && at.elapsed() < BRANCH_STATUS_TTL
+            {
+                return Ok(statuses.clone());
+            }
+        }
+        let statuses = git::branch_statuses(&record.path).await;
+        self.inner.status_cache.lock().await.insert(
+            project.to_string(),
+            (std::time::Instant::now(), statuses.clone()),
+        );
+        Ok(statuses)
+    }
+
     /// Like [`Core::orchestration`], but a known project that is not open is
     /// `unavailable` (creating chats and branches needs the running project).
     async fn open_orchestration(&self, project: &str) -> Result<Arc<Orchestration>, ApiError> {
@@ -667,37 +872,39 @@ impl Core {
     }
 }
 
-fn project_info(r: &ProjectRecord, open: bool, running: bool) -> ProjectInfo {
+fn project_info(r: &ProjectRecord, open: bool, running: bool, awake: bool) -> ProjectInfo {
     ProjectInfo {
         id: r.id.clone(),
         name: dir_name(&r.path),
         path: r.path.display().to_string(),
         open,
         running,
+        awake,
     }
 }
 
-/// Whether work is on in an open project. A project busy handling a request
-/// for longer than `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as
-/// running, so a listing never waits for it; one that cannot tell (it is
-/// shutting down, or its store failed) counts as idle, and the failure is logged.
-async fn is_running(project: &str, orch: &Orchestration) -> bool {
-    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.is_running()).await {
-        Ok(Ok(running)) => running,
+/// Whether work is on in an open project and whether one of its chats has an
+/// orchestrator session up. A project busy handling a request for longer than
+/// `RUNNING_QUERY_TIMEOUT` (a merge, a restart) counts as running and awake, so
+/// a listing never waits for it; one that cannot tell (it is shutting down, or
+/// its store failed) counts as idle and asleep, and the failure is logged.
+async fn activity(project: &str, orch: &Orchestration) -> (bool, bool) {
+    match tokio::time::timeout(RUNNING_QUERY_TIMEOUT, orch.activity()).await {
+        Ok(Ok(activity)) => activity,
         Ok(Err(e)) => {
             tracing::warn!("could not tell whether {project} is running: {e}");
-            false
+            (false, false)
         }
-        Err(_) => true,
+        Err(_) => (true, true),
     }
 }
 
-/// The listing of `records`, in order. `running` asks whether work is on in a
-/// project that is open (`None`: it is not open). The projects are asked all at
-/// once: a busy one costs up to `RUNNING_QUERY_TIMEOUT`, and N busy ones must
-/// not cost N times that (the UI waits for the listing before it reopens the
-/// last project).
-async fn project_infos<'a, Q: Future<Output = bool>>(
+/// The listing of `records`, in order. `activity` asks whether work is on in a
+/// project that is open and whether one of its chats is awake (`None`: it is
+/// not open). The projects are asked all at once: a busy one costs up to
+/// `RUNNING_QUERY_TIMEOUT`, and N busy ones must not cost N times that (the UI
+/// waits for the listing before it reopens the last project).
+async fn project_infos<'a, Q: Future<Output = (bool, bool)>>(
     records: &'a [ProjectRecord],
     running: impl Fn(&'a ProjectRecord) -> Option<Q>,
 ) -> Vec<ProjectInfo> {
@@ -705,8 +912,11 @@ async fn project_infos<'a, Q: Future<Output = bool>>(
         let query = running(r);
         async move {
             match query {
-                Some(query) => project_info(r, true, query.await),
-                None => project_info(r, false, false),
+                Some(query) => {
+                    let (running, awake) = query.await;
+                    project_info(r, true, running, awake)
+                }
+                None => project_info(r, false, false, false),
             }
         }
     }))
@@ -817,16 +1027,16 @@ mod tests {
     async fn busy_projects_cost_one_timeout_together_not_one_each() {
         let records: Vec<ProjectRecord> = (0..5).map(|i| record(&format!("p{i}"))).collect();
         let started = tokio::time::Instant::now();
-        // Every open project is busy until the timeout (which then counts it as running).
+        // Every open project is busy until the timeout (which then counts it as running and awake).
         let infos = project_infos(&records, |_| {
             Some(async {
                 tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
-                true
+                (true, true)
             })
         })
         .await;
         assert_eq!(started.elapsed(), RUNNING_QUERY_TIMEOUT);
-        assert!(infos.iter().all(|p| p.open && p.running));
+        assert!(infos.iter().all(|p| p.open && p.running && p.awake));
     }
 
     #[tokio::test(start_paused = true)]
@@ -836,10 +1046,10 @@ mod tests {
             // `a` answers late, `b` at once: the order is still the records'.
             "a" => Some(Box::pin(async {
                 tokio::time::sleep(RUNNING_QUERY_TIMEOUT).await;
-                true
+                (true, true)
             })
-                as std::pin::Pin<Box<dyn Future<Output = bool>>>),
-            "b" => Some(Box::pin(async { false })),
+                as std::pin::Pin<Box<dyn Future<Output = (bool, bool)>>>),
+            "b" => Some(Box::pin(async { (false, false) })),
             _ => None,
         })
         .await;

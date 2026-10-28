@@ -1,0 +1,213 @@
+/* The dashboard (loaded with ui/Dashboard.tsx, design §10): welcome, projects, usage statistics.
+   Colors are tokens only. Charts are SVG / CSS grids; `series-N` colors a harness (--chart-series-N),
+   `heat-N` a heatmap level (--heat-N). The page never scrolls: .dashboard-scroll does, and the
+   project list and the folder list scroll inside it. */
+
+.dashboard { flex: 1; min-width: 0; min-height: 0; display: flex; background: var(--surface-base); }
+/* The content is one column, at most 1200px wide, centered in a wide window. */
+.dashboard-scroll {
+  flex: 1; min-width: 0; overflow-y: auto; padding: 28px 36px 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 32px;
+}
+.dashboard-scroll > * { width: 100%; max-width: 1200px; flex: none; }
+
+.dashboard-welcome { display: flex; flex-direction: column; gap: 6px; }
+.dashboard-title { margin: 0; font: 600 24px/1.25 var(--font-text); letter-spacing: 0.02em; color: var(--text-primary); }
+.dashboard-lead { margin: 0; font: 400 13px/1.7 var(--font-text); color: var(--text-muted); }
+
+/* ---- sections: an icon + heading row, the controls on its right ----------------- */
+
+.dash-section { position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.dash-section-head { display: flex; align-items: center; gap: 10px; min-height: 28px; }
+.dash-heading { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 500 14px/1.2 var(--font-text); color: var(--text-primary); }
+.dash-heading .icon { color: var(--text-faint); }
+.dash-sub {
+  min-width: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1.5px 7px; border-radius: 4px; background: var(--surface-chip-dim); font: 500 10.5px/1.5 var(--font-mono); color: var(--text-dim);
+}
+.dash-note { margin: 0; font: 400 11.5px/1.7 var(--font-text); color: var(--text-dim); text-align: center; }
+
+.dash-button {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--border-card); border-radius: 6px;
+  background: var(--surface-inset); color: var(--text-secondary); font: 400 12px/1 var(--font-text); white-space: nowrap;
+}
+.dash-button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-hover); color: var(--text-primary); }
+.dash-button:disabled { opacity: 0.5; }
+.dash-button.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-card)); background: var(--accent-soft); color: var(--accent-hover); font-weight: 500; }
+.dash-button.primary:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-hover); }
+.form-error {
+  margin: 0; padding: 6px 10px; border: 1px solid var(--status-handling-card-border); border-radius: 6px; background: var(--status-handling-card-bg);
+  font: 400 11px/1.5 var(--font-mono); color: var(--status-handling-fg); overflow-wrap: anywhere;
+}
+
+/* ---- projects ------------------------------------------------------------------ */
+
+/* "プロジェクトを追加" sits on the right of the section's heading; the error and the folder
+   browser it opens come between the heading and the list. */
+.add-project { display: contents; }
+.add-project-bar { position: absolute; top: 0; right: 0; height: 28px; display: flex; flex-direction: row-reverse; align-items: center; gap: 10px; }
+.add-project-target { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 11px/1 var(--font-mono); color: var(--text-dim); }
+
+/* At most four and a half rows of cards: more scroll inside, the cut row says so. */
+.dash-project-list {
+  position: relative; margin: 0; padding: 0; list-style: none; max-height: 290px; overflow-y: auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px;
+}
+.dash-project {
+  position: relative; width: 100%; min-width: 0; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 12px 0 14px; text-align: left;
+  border: 1px solid var(--border-card); border-radius: 7px; background: var(--surface-card); color: var(--text-secondary);
+}
+.dash-project:hover:not([aria-disabled="true"]) { background: var(--surface-hover); border-color: var(--border-hover); }
+/* The project on screen: the selected row, with the rail's amber marker on its left edge. */
+.dash-project.current { background: var(--surface-selected); border-color: color-mix(in srgb, var(--accent) 40%, var(--border-card)); }
+.dash-project.current::before { content: ""; position: absolute; left: -1px; top: 14px; bottom: 14px; width: 2px; border-radius: 1px; background: var(--accent); }
+.dash-project[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.dash-project:focus-visible { outline-offset: -2px; }
+.dash-project-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dash-project-name { display: flex; align-items: center; gap: 6px; min-width: 0; font: 500 13px/1.3 var(--font-text); color: var(--text-primary); }
+.dash-project-name .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-project-name .host-tag { flex: 0 1 auto; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); font: 400 10.5px/1.3 var(--font-mono); }
+.dash-project-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 10.5px/1.4 var(--font-mono); color: var(--text-dim); }
+.dash-project-state { flex: none; padding: 1.5px 6px; border-radius: 4px; font: 500 10px/1.5 var(--font-mono); color: var(--text-faint); }
+.dash-project:has(.project-dot-running) .dash-project-state { background: var(--status-done-bg); color: var(--status-done-fg); }
+
+/* ---- the host's folder browser (a panel under the heading) ---------------------- */
+
+.folder-browser {
+  display: flex; flex-direction: column; gap: 10px; max-width: 720px; padding: 14px;
+  border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-panel); box-shadow: var(--overlay-shadow);
+}
+.folder-browser-title { display: flex; align-items: center; gap: 7px; margin: 0; font: 500 12.5px/1.2 var(--font-text); color: var(--text-primary); }
+.folder-browser-title .icon { color: var(--accent); }
+.folder-path-form { display: flex; gap: 6px; }
+.folder-path-form input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 9px; border: 1px solid var(--border-card); border-radius: 6px;
+  background: var(--surface-inset); color: var(--text-body); font: 400 11.5px/1 var(--font-mono); outline: none;
+}
+.folder-path-form input:focus { border-color: color-mix(in srgb, var(--accent) 60%, var(--border-card)); }
+.folder-current { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 2px; }
+.folder-current-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 11.5px/1.4 var(--font-mono); color: var(--text-secondary); }
+.git-chip {
+  display: inline-flex; flex: none; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 4px;
+  background: var(--status-done-bg); color: var(--status-done-fg); font: 500 10px/1.5 var(--font-mono);
+}
+.folder-list {
+  position: relative; margin: 0; padding: 3px; list-style: none; display: flex; flex-direction: column; gap: 1px; max-height: 248px; overflow-y: auto;
+  border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface-inset);
+}
+.folder-list[aria-busy="true"] { opacity: 0.6; }
+.folder-entry {
+  width: 100%; height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 0; border-radius: 5px; background: none;
+  color: var(--text-tertiary); font: 400 12.5px/1 var(--font-text); text-align: left;
+}
+.folder-entry .icon { color: var(--text-faint); }
+.folder-entry:hover { background: var(--surface-hover); color: var(--text-primary); }
+.folder-entry:has(.git-chip) .icon:first-child { color: var(--status-done-bar); }
+.folder-entry .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-parent { color: var(--text-dim); font-family: var(--font-mono); }
+.folder-empty { padding: 8px; font: 400 11px/1.5 var(--font-text); color: var(--text-dim); }
+.folder-actions { display: flex; flex-direction: row-reverse; gap: 8px; }
+
+/* ---- usage statistics ------------------------------------------------------------ */
+
+.period-select { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border-card); border-radius: 6px; background: var(--surface-inset); }
+.period-option { height: 22px; padding: 0 10px; border: 0; border-radius: 4px; background: none; color: var(--text-dim); font: 500 11px/1 var(--font-mono); }
+.period-option:hover { background: var(--surface-hover); color: var(--text-tertiary); }
+.period-option.active { background: var(--surface-chip); color: var(--accent); }
+
+/* Waiting, nothing to show, failed: one quiet dashed box where the report (or the project list) goes. */
+.dash-projects > .empty-state, .usage-loading, .usage-empty, .usage-error, .usage-stats > [data-testid="usage-none"] {
+  margin: 0; min-height: 200px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px;
+  border: 1px dashed var(--border-dashed); border-radius: 8px;
+}
+.dash-projects > .empty-state { min-height: 120px; }
+.usage-empty .empty-state, .usage-error .empty-state { padding: 0; }
+.usage-loading { font: 400 12px/1.5 var(--font-text); color: var(--text-dim); }
+.usage-loading::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  border: 1.5px solid var(--ring-stopped); border-top-color: var(--accent); animation: yspin 0.9s linear infinite;
+}
+.usage-error-detail { margin: 0; max-width: 640px; text-align: center; font: 400 11px/1.5 var(--font-mono); overflow-wrap: anywhere; }
+.usage-report { display: flex; flex-direction: column; gap: 12px; transition: opacity 0.15s; }
+.usage-report.is-loading { opacity: 0.55; }
+
+.stat-cards { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.stat-card {
+  min-width: 0; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px;
+  border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-card);
+}
+.stat-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 11px/1.3 var(--font-text); color: var(--text-dim); }
+.stat-value { font: 600 22px/1.15 var(--font-mono); letter-spacing: -0.01em; color: var(--text-primary); }
+.stat-card[data-stat="total"] .stat-value { color: var(--accent-hover); }
+
+.usage-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.dash-panel, .breakdown {
+  min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px;
+  border: 1px solid var(--border-card); border-radius: 8px; background: var(--surface-card);
+}
+.dash-panel-title, .breakdown-title { margin: 0; font: 500 12px/1.2 var(--font-text); color: var(--text-tertiary); }
+
+/* Harness colors (the same index in every chart). */
+.series-0 { --series: var(--chart-series-0); }
+.series-1 { --series: var(--chart-series-1); }
+.series-2 { --series: var(--chart-series-2); }
+.series-3 { --series: var(--chart-series-3); }
+.series-4 { --series: var(--chart-series-4); }
+.series-5 { --series: var(--chart-series-5); }
+.chart-bar { fill: var(--series); transition: opacity 0.12s; }
+.swatch { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 2px; background: var(--series); }
+
+/* The daily chart: a value axis on the left (36px), the dates under it, the legend at the foot. */
+.daily-chart { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.chart-body { height: 160px; display: flex; gap: 6px; }
+.chart-axis { width: 36px; flex: none; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-end; margin: -5px 0; font: 400 10px/1 var(--font-mono); color: var(--text-faint); }
+.chart-svg { flex: 1; min-width: 0; height: 100%; overflow: visible; }
+.chart-grid { stroke: var(--border-subtle); stroke-width: 1; stroke-dasharray: 2 3; }
+.chart-base { stroke: var(--border-hover); stroke-dasharray: none; }
+.chart-hit { fill: transparent; }
+.chart-day:hover .chart-hit { fill: var(--surface-hover-strong); fill-opacity: 0.5; }
+/* Hovering a day dims the others (its numbers are in the day's tooltip). */
+.chart-svg:hover .chart-day:not(:hover) .chart-bar { opacity: 0.45; }
+.chart-xlabels { display: flex; justify-content: space-between; padding-left: 42px; font: 400 10px/1 var(--font-mono); color: var(--text-faint); }
+.chart-legend { padding-top: 4px; }
+.chart-legend ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; font: 400 11px/1.4 var(--font-mono); color: var(--text-muted); }
+.chart-legend li { display: inline-flex; align-items: center; gap: 6px; }
+
+/* The heatmap: square cells, at most 18px, centered in its panel; the legend under its right edge. */
+.heatmap-figure { --heat-track: minmax(9px, 18px); margin: auto; width: max-content; max-width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.heatmap { display: grid; gap: 3px; align-items: center; }
+.heat-weekday { padding-right: 6px; font: 400 10px/1 var(--font-text); color: var(--text-faint); }
+.heat-cell { display: block; width: 100%; aspect-ratio: 1; border-radius: 3px; background: var(--heat-0); }
+.heat-cell[title]:hover { outline: 1px solid var(--text-muted); outline-offset: 0; }
+.heat-1 { background: var(--heat-1); }
+.heat-2 { background: var(--heat-2); }
+.heat-3 { background: var(--heat-3); }
+.heat-4 { background: var(--heat-4); }
+.heat-legend { display: flex; align-items: center; justify-content: flex-end; gap: 3px; font: 400 10px/1 var(--font-text); color: var(--text-faint); }
+.heat-legend .heat-cell { width: 10px; height: 10px; }
+.heat-legend .heat-cell:first-of-type { margin-left: 4px; }
+.heat-legend .heat-cell:last-of-type { margin-right: 4px; }
+
+/* Breakdowns: name, tokens and share on a line, the share's bar under it, the sessions under that. */
+.usage-breakdowns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.breakdown-empty { margin: 0; font: 400 11px/1.5 var(--font-text); color: var(--text-dim); }
+.breakdown-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.breakdown-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "name value share" "bar bar bar" "sessions sessions sessions";
+  gap: 4px 8px; align-items: center;
+}
+.breakdown-name { grid-area: name; display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 11.5px/1.3 var(--font-mono); color: var(--text-secondary); }
+.breakdown-name .swatch { margin-right: 6px; vertical-align: 0; }
+.breakdown-bar { grid-area: bar; display: block; height: 5px; border-radius: 3px; background: var(--surface-chip-dim); overflow: hidden; }
+.breakdown-fill { display: block; height: 100%; border-radius: 3px; background: var(--series, var(--accent)); }
+.breakdown-row.other .breakdown-name { color: var(--text-dim); }
+.breakdown-row.other .breakdown-fill { background: var(--text-faint); }
+.breakdown-value { grid-area: value; font: 500 11.5px/1.3 var(--font-mono); color: var(--text-primary); }
+.breakdown-share { grid-area: share; min-width: 4ch; text-align: right; font: 400 11px/1.3 var(--font-mono); color: var(--text-dim); }
+.breakdown-sessions { grid-area: sessions; font: 400 10px/1.3 var(--font-mono); color: var(--text-faint); }
+
+/* ---- the credit ------------------------------------------------------------------ */
+
+.dashboard-credit { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border-subtle); font: 400 11px/1.6 var(--font-text); color: var(--text-faint); }
+.dashboard-credit a { color: var(--text-muted); text-decoration: underline; text-decoration-color: var(--border-hover); text-underline-offset: 2px; }
+.dashboard-credit a:hover { color: var(--accent-hover); text-decoration-color: currentColor; }

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -19,6 +19,7 @@ use super::port::{LoopPort, ToolRequest};
 use super::sessions::{Sessions, StoredSession};
 use crate::agents::AgentCatalog;
 use crate::api::{ApiEvent, ApiEventBody, Snapshot};
+use crate::attachments::{AttachmentMeta, AttachmentStore};
 use crate::domain::{DomainConfig, State, ToolError, chat_of_session};
 use crate::git::GitService;
 use crate::mcp::tools::{CancelGroupArgs, CancelTaskArgs};
@@ -45,6 +46,16 @@ pub struct OrchestrationConfig {
     /// SQLite database (created if missing). The app uses
     /// [`crate::store::db_path`] of its data directory.
     pub db_path: PathBuf,
+}
+
+impl OrchestrationConfig {
+    /// Where attachments are saved: in the data directory, which is the
+    /// database's directory.
+    #[must_use]
+    pub fn attachment_store(&self) -> AttachmentStore {
+        let data_dir = self.db_path.parent().unwrap_or_else(|| Path::new("."));
+        AttachmentStore::for_data_dir(data_dir)
+    }
 }
 
 impl fmt::Debug for OrchestrationConfig {
@@ -239,8 +250,19 @@ impl Orchestration {
         chat: impl Into<String>,
         text: impl Into<String>,
     ) -> Result<(), UserActionError> {
+        self.send_user_message_with(chat, text, Vec::new()).await
+    }
+
+    /// [`Orchestration::send_user_message`] with staged attachments (see
+    /// [`crate::attachments`]): their files are read when the prompt is sent.
+    pub async fn send_user_message_with(
+        &self,
+        chat: impl Into<String>,
+        text: impl Into<String>,
+        attachments: Vec<AttachmentMeta>,
+    ) -> Result<(), UserActionError> {
         let (tx, rx) = oneshot::channel();
-        self.send(Cmd::UserMessage(chat.into(), text.into(), tx))?;
+        self.send(Cmd::UserMessage(chat.into(), text.into(), attachments, tx))?;
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
@@ -271,6 +293,24 @@ impl Orchestration {
     pub async fn compact_chat(&self, chat: impl Into<String>) -> Result<(), UserActionError> {
         let (tx, rx) = oneshot::channel();
         self.send(Cmd::CompactChat(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// Stops the chat's orchestrator session (see
+    /// [`crate::api::ApiCommand::SleepChat`]): `not_found` for an unknown chat,
+    /// `invalid_state` while its orchestrator is starting or in a turn.
+    pub async fn sleep_chat(&self, chat: impl Into<String>) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::SleepChat(chat.into(), tx))?;
+        Ok(rx.await.map_err(|_| OrchError::Closed)??)
+    }
+
+    /// Stops every chat's orchestrator session (see
+    /// [`crate::api::ApiCommand::SleepProject`]): `invalid_state`, with nothing
+    /// stopped, while any of them is starting or in a turn.
+    pub async fn sleep_project(&self) -> Result<(), UserActionError> {
+        let (tx, rx) = oneshot::channel();
+        self.send(Cmd::SleepProject(tx))?;
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
@@ -346,11 +386,12 @@ impl Orchestration {
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 
-    /// Whether work is on: a live session is in a turn, or a task is running or
-    /// merging (the sidebar's ring).
-    pub async fn is_running(&self) -> Result<bool, OrchError> {
+    /// Whether work is on (a live session is in a turn, or a task is running
+    /// or merging) and whether one of the chats has an orchestrator session up
+    /// (the sidebar's ring).
+    pub async fn activity(&self) -> Result<(bool, bool), OrchError> {
         let (tx, rx) = oneshot::channel();
-        self.send(Cmd::Running(tx))?;
+        self.send(Cmd::Activity(tx))?;
         Ok(rx.await.map_err(|_| OrchError::Closed)??)
     }
 

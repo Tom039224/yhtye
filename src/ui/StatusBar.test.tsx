@@ -37,7 +37,7 @@ function setup(usage: UsageReport | null) {
   store.start();
   render(
     <StoreContext.Provider value={store}>
-      <App />
+      <App initialView="work" />
     </StoreContext.Provider>,
   );
   return { transport, core, store };
