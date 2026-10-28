@@ -284,6 +284,41 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
   二重に行うこともなかった (README の行は 1 つ)。
 - 履歴の再生 (`Ready` より前の `Output`) は Yhtye 側で捨てている (core-design §4.1)。
 
+### 5.4 課金の切り替え: `claude-code` (サブスク) と `claude-code-api` (API)
+
+同じアダプタ・同じ起動設定のまま、**何に課金されるか**だけが違う 2 つのハーネスとして出す。モデル選択画面
+(設定の候補表と、オーケストレータが `create_task` で選ぶ harness) では並んで見える。
+
+| 項目 | `claude-code` (`Claude Code (Claude Max)` など) | `claude-code-api` (`Claude Code (API)`) |
+|---|---|---|
+| 課金 | claude.ai のサブスク (`~/.claude` のログイン)。既存の id なので、保存済みの設定・候補はそのままこちら | Anthropic の API キー |
+| `env_remove` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` |
+| 秘密の変数 | どの秘密も `ANTHROPIC_API_KEY` として渡さない | 秘密 **`YHTYE_ANTHROPIC_API_KEY`** を `ANTHROPIC_API_KEY` として渡す (`HarnessConfig::secret_bindings`) |
+| 未登録のとき | — | 起動前に `AgentError::Setup`「Claude Code (API) には秘密の環境変数 YHTYE_ANTHROPIC_API_KEY の登録が必要です」で失敗 (モデル一覧の取得も同じ理由で失敗するだけ) |
+| 組み込みの既定 | こちら (`default_choice`) | 既定にはならない |
+
+- **API キーは全エージェントには渡さない。** `YHTYE_ANTHROPIC_API_KEY` は `HARNESS_ONLY_SECRETS` に入っていて `Secrets::env` (全エージェントへの
+  一般の注入) から外れる。`spawn_agent_with_secrets` が `HarnessConfig::secret_bindings` (秘密名 → 渡す環境変数名) を解決し、
+  結びつけたハーネスにだけ渡す (同じ名前の一般の秘密があっても結びつけた方が勝つ)。モデル一覧のプローブにも同じ設定で渡る。
+  Yhtye 自身が**継承した環境** (シェル、別の Yhtye のエージェントから起動したときなど) に `YHTYE_ANTHROPIC_API_KEY` があっても、
+  `acp/process.rs` が `HARNESS_ONLY_SECRETS` を**全ハーネスの子プロセスから**取り除く (個々のプリセットの `env_remove` には書かない)。
+  結びつけたハーネスは `ANTHROPIC_API_KEY` の名前でだけ受け取る。
+- **サブスク版が API 課金にならないように、`ANTHROPIC_API_KEY` を取り除く。** シェルに `ANTHROPIC_API_KEY` を持っていても、
+  一般の秘密として登録していても、サブスク版には届かない (`env_remove` は秘密より優先される。`/usage` プローブも同じ設定)。
+  `ANTHROPIC_AUTH_TOKEN` (ゲートウェイ用) も同様。サブスク版でこれらを使っていた人は、API 版に移る。
+- **ラベル**: 検出時に `$CLAUDE_CONFIG_DIR` (無ければ `~/.claude`) の `.credentials.json` の `claudeAiOauth.subscriptionType`
+  (`max` / `pro` / `team` / `enterprise`) と `rateLimitTier` (`default_claude_max_20x` → `20x`) から
+  `Claude Code (Claude Max 20x)` のように作る (`agents/claude_subscription.rs`)。トークンは読み捨て、ログに出さない。
+  ファイルが無い (macOS はキーチェーン)・壊れている・知らない値なら `Claude Code (サブスク)`。
+- **検出とパス**: `npx` が見つかれば両方を登録する (`presets_from`)。主実行ファイルは同じ `npx` なので、`SetHarnessPath` の
+  対象は `claude-code` で、API 版もそれに従う (`claude-code-api` を指定すると `not_found`)。再検出で登録簿が変わったか
+  (`changed_harnesses`) と、検出ボタンでモデルを忘れる対象 (`PRESET_IDS`) には API 版も入る。`YHTYE_ANTHROPIC_API_KEY` を登録・削除
+  すると API 版のモデル一覧のキャッシュを捨てる (`Core::secret_changed`)。
+- **実機 (2026-10-28、アダプタ 0.84.0、Haiku、`tests/acp_claude_real.rs`)**: サブスク版は、一般の秘密に無効な `ANTHROPIC_API_KEY` を
+  登録しても 1 ターン応答した (キーは届いていない)。API 版は登録済みのキーで 1 ターン応答し、モデル一覧も読めた。
+  無効なキーでは `Invalid API key · Fix external API key` と `session/prompt` の `Authentication required` で失敗し、
+  サブスクのログインには**フォールバックしない** (= 本当にキーで動いている)。
+
 ## 6. フォールバック: Claude Code が ACP から脱退した場合
 
 Claude Code は Yhtye にとって最重要ハーネスであるため、Claude Code が将来 ACP サポートを

@@ -102,6 +102,48 @@ async fn a_registered_name_without_a_value_is_skipped() {
     assert_eq!(env.names().collect::<Vec<_>>(), ["HAS"]);
 }
 
+#[tokio::test]
+async fn a_harness_only_secret_is_not_in_the_general_environment_but_can_be_read() {
+    let (s, _backend) = secrets();
+    s.set("YHTYE_ANTHROPIC_API_KEY", SecretValue::new("sk-ant-fake"))
+        .await
+        .expect("set");
+    s.set("OTHER_KEY", SecretValue::new("o"))
+        .await
+        .expect("set");
+    assert_eq!(
+        s.names(),
+        ["OTHER_KEY", "YHTYE_ANTHROPIC_API_KEY"],
+        "it is listed like any secret"
+    );
+    let env = s.env().await.expect("env");
+    assert_eq!(env.names().collect::<Vec<_>>(), ["OTHER_KEY"]);
+    let value = s.get("YHTYE_ANTHROPIC_API_KEY").await.expect("get");
+    assert_eq!(value.as_ref().map(SecretValue::expose), Some("sk-ant-fake"));
+}
+
+#[tokio::test]
+async fn get_is_none_for_a_name_that_is_not_registered_or_has_no_value() {
+    let backend = Arc::new(MemoryBackend::default());
+    backend.set("UNREGISTERED", "v").expect("set");
+    let s = Secrets::new(backend, ["GONE".to_string()]);
+    assert_eq!(s.get("UNREGISTERED").await, Ok(None));
+    assert_eq!(s.get("GONE").await, Ok(None));
+    assert_eq!(s.get("NEVER").await, Ok(None));
+}
+
+#[test]
+fn with_replaces_a_variable_of_the_same_name() {
+    let env = SecretEnv::new(vec![
+        ("A".into(), SecretValue::new("1")),
+        ("B".into(), SecretValue::new("2")),
+    ])
+    .with("A", SecretValue::new("3"))
+    .with("C", SecretValue::new("4"));
+    let vars: Vec<(&str, &str)> = env.iter().collect();
+    assert_eq!(vars, [("B", "2"), ("A", "3"), ("C", "4")]);
+}
+
 #[test]
 fn debug_output_never_shows_a_value() {
     let v = SecretValue::new("hunter2");

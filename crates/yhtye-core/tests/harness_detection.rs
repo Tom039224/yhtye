@@ -232,6 +232,7 @@ async fn every_known_harness_is_reported_with_what_was_found() {
         offered(&core).await,
         [
             "claude-code",
+            "claude-code-api",
             "opencode",
             "devin",
             "minimax-code",
@@ -336,7 +337,10 @@ async fn the_harnesses_are_found_again_when_asked() {
 
     bin.install("npx");
     detect(&core).await;
-    assert_eq!(offered(&core).await, ["claude-code", "devin"]);
+    assert_eq!(
+        offered(&core).await,
+        ["claude-code", "claude-code-api", "devin"]
+    );
     assert_eq!(
         settings_view(&core).await.builtin,
         AgentChoice::new("claude-code", Some("haiku"))
@@ -368,7 +372,7 @@ async fn a_path_set_by_hand_is_checked_stored_and_kept_across_a_restart() {
     assert_eq!(devin.override_error, None);
     assert_eq!(
         offered(&core).await,
-        ["claude-code", "devin"],
+        ["claude-code", "claude-code-api", "devin"],
         "registered right away"
     );
 
@@ -408,7 +412,10 @@ async fn a_path_set_by_hand_is_checked_stored_and_kept_across_a_restart() {
 
     // After a restart the path is in effect from the start.
     let core = Core::start(config(&r, &bin)).await.expect("restarted");
-    assert_eq!(offered(&core).await, ["claude-code", "devin"]);
+    assert_eq!(
+        offered(&core).await,
+        ["claude-code", "claude-code-api", "devin"]
+    );
     let all = get(&core).await;
     assert_eq!(by_id(&all, "devin").path_source, PathSource::Override);
 
@@ -420,10 +427,10 @@ async fn a_path_set_by_hand_is_checked_stored_and_kept_across_a_restart() {
         (devin.override_path.as_deref(), devin.path_source),
         (None, PathSource::None)
     );
-    assert_eq!(offered(&core).await, ["claude-code"]);
+    assert_eq!(offered(&core).await, ["claude-code", "claude-code-api"]);
     core.shutdown().await;
     let core = Core::start(config(&r, &bin)).await.expect("restarted");
-    assert_eq!(offered(&core).await, ["claude-code"]);
+    assert_eq!(offered(&core).await, ["claude-code", "claude-code-api"]);
     core.shutdown().await;
 }
 
@@ -452,6 +459,80 @@ async fn a_path_that_broke_later_makes_the_harness_unavailable_with_the_reason()
 }
 
 #[tokio::test]
+async fn claude_code_is_offered_for_the_subscription_and_for_an_api_key_on_one_npx() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir(home.path().join(".claude")).expect("mkdir");
+    std::fs::write(
+        home.path().join(".claude/.credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"x","subscriptionType":"pro"}}"#,
+    )
+    .expect("write");
+    let (path, home_dir) = (OsString::from(bin.dir()), OsString::from(home.path()));
+    let mut cfg = config(&r, &bin);
+    cfg.detection = Some(
+        DetectionConfig::new("haiku", move |k| match k {
+            "PATH" => Some(path.clone()),
+            "HOME" => Some(home_dir.clone()),
+            _ => None,
+        })
+        .with_known_dirs(Vec::new()),
+    );
+    let core = Core::start(cfg).await.expect("core");
+    let view = settings_view(&core).await;
+    let labels: Vec<(&str, &str)> = view
+        .harnesses
+        .iter()
+        .map(|h| (h.id.as_str(), h.label.as_str()))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            ("claude-code", "Claude Code (Claude Pro)"),
+            ("claude-code-api", "Claude Code (API)")
+        ]
+    );
+    assert!(
+        view.harnesses.iter().all(|h| !h.requires_model),
+        "neither needs a model chosen"
+    );
+    assert_eq!(
+        view.builtin,
+        AgentChoice::new("claude-code", Some("haiku")),
+        "the subscription stays the default"
+    );
+
+    // Both run the one npx: it is detected once, and its path is set once.
+    let all = get(&core).await;
+    assert!(all.iter().all(|d| d.id != "claude-code-api"));
+    let tools = tempfile::tempdir().expect("tools");
+    let mine = write_executable(tools.path(), "my-npx", "#!/bin/sh\n");
+    let all = set_path(&core, "claude-code", Some(text(&mine))).await;
+    assert_eq!(
+        by_id(&all, "claude-code").resolved_path.as_deref(),
+        Some(text(&mine))
+    );
+    assert_eq!(offered(&core).await, ["claude-code", "claude-code-api"]);
+    let cmd = ApiCommand::SetHarnessPath {
+        harness: "claude-code-api".into(),
+        path: Some(text(&mine).into()),
+    };
+    assert_eq!(
+        core.command(cmd).await.expect_err("shares the path").code,
+        ApiErrorCode::NotFound
+    );
+
+    // Without npx neither is offered.
+    set_path(&core, "claude-code", None).await;
+    bin.uninstall("npx");
+    detect(&core).await;
+    assert!(offered(&core).await.is_empty());
+    core.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_path_for_codex_does_not_replace_its_npx() {
     let r = TempRepo::new();
     let bin = Bin::new();
@@ -464,7 +545,10 @@ async fn a_path_for_codex_does_not_replace_its_npx() {
     assert_eq!(d.resolved_path.as_deref(), Some(text(&codex)));
     bin.install("npx");
     assert!(by_id(&detect(&core).await, "codex").installed);
-    assert_eq!(offered(&core).await, ["claude-code", "codex"]);
+    assert_eq!(
+        offered(&core).await,
+        ["claude-code", "claude-code-api", "codex"]
+    );
     core.shutdown().await;
 }
 

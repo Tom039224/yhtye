@@ -1135,13 +1135,13 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
   共通の既知の場所 → `~/.local/share/agy-acp-server` → `~/.gemini/antigravity-acp/bin`。拡張子付きの名前でも「実行可能な通常ファイル」かだけを見る。
 - **`HarnessDetection { id, label, installed, resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }`**
   (ts-rs で `src/api/generated/`)。`installed` = 必要なコマンドがすべて見つかった (手動パスがあるならそれが使える)。`resolved_path` は主実行ファイル (`HarnessSpec::main`)。
-- **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code / codex は npx のパス、
+- **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code (同じ `npx` で `claude-code-api` も登録する、[`acp-harnesses.md`](acp-harnesses.md) §5.4) / codex は npx のパス、
   opencode / devin / minimax-code / antigravity / grok-build は本体、pi も `npx` (`HarnessPreset::pi().with_command(<見つけた npx>)`、`npx` が見つからなければ登録しない)。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
   (`Detected::with_found_npx`。使用量のプローブは起動時に 1 回だけ作り、再検出では作り直さない)。
-- **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx) **だけ**を置き換える (codex の `npx` は自動検出のみ)。
+- **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx。`claude-code-api` はこれに従い、指定すると `not_found`) **だけ**を置き換える (codex と pi の `npx` は自動検出のみ)。
   保存時に「絶対パスかつ実行可能な通常ファイル」を検査する (`check_executable_path`、`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは
   未インストール扱い (`override_error` に理由。検索にはフォールバックしない)。
-- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > minimax-code > antigravity > grok-build > pi > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
+- **組み込みの既定** (`default_choice`): claude-code (サブスク版。`claude-code-api` は既定にならない) > opencode > devin > minimax-code > antigravity > grok-build > pi > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
   minimax-code = `MINIMAX_CODE_DEFAULT_MODEL` (最も安い Flash Preview thinking)、antigravity = `ANTIGRAVITY_DEFAULT_MODEL` (Flash の `low`)、
   pi と codex は**モデルの指定が要る**ので最後で、他に無いときだけ既定になり、起動時に「設定でモデルを選んで」と案内して失敗する。pi は codex の前)。1 つも無くても Core は起動し、エージェント開始時に
   「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`、`NO_HARNESS_MESSAGE`)。
@@ -1283,7 +1283,13 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   メッセージにキーリングのエラー)。キーが黙って抜けたエージェントが後から分かりにくい失敗をするより明確なため。登録があるのに値が無い名前は警告ログだけで飛ばす。
 - **整合**: `set_secret_env` は名前を DB に登録してから値をキーリングに保存し、後者が失敗したら前者を取り消す (もともと登録済みの名前は残す)。
   `delete_secret_env` は DB から消してからキーリングを消し、失敗したら名前を戻す。DB とメモリ / キーリングが食い違わない。
-- **既知の限界 (レビューで確認、今回は対応しない)**: すべての秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
+- **ハーネス専用の秘密**: `HARNESS_ONLY_SECRETS` (`YHTYE_ANTHROPIC_API_KEY`) は上の一般の注入から**外す** (`Secrets::env` が飛ばす)。代わりに
+  `HarnessConfig::secret_bindings` (`SecretBinding { secret, env, needed_by }`) を持つハーネスだけが、`spawn_agent_with_secrets` で
+  その秘密を `env` の名前 (`ANTHROPIC_API_KEY`) で受け取る (`Secrets::get`、同名の一般の秘密より優先)。Yhtye が継承した環境にある
+  `HARNESS_ONLY_SECRETS` の変数も、`acp/process.rs` の `spawn_process` が全ハーネスの子プロセスから取り除く (`PRIVATE_ENV` と同じ段)。未登録・値なしなら起動前に
+  `AgentError::Setup` で「`needed_by` には秘密の環境変数 … の登録が必要です」と失敗する。`claude-code-api` だけがこれを使う
+  ([`acp-harnesses.md`](acp-harnesses.md) §5.4)。
+- **既知の限界 (レビューで確認、今回は対応しない)**: 上のハーネス専用のもの以外の秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
   自分の環境を stderr に出すと、その行が Yhtye のログ・エラーに載りうる (値の伏せ字化はしていない)。メモリ上の値の zeroize はしない。
   キーリングが使えないと、登録が 1 つでもあれば**全エージェントの起動が失敗する** (フェイルクローズ、ユーザー決定の範囲内)。
 - **API**: `list_secret_env` → `secret_env{names}` (ソート済み)。`set_secret_env{name, value}` (キーリングに保存してから名前を DB に登録。上書き可) と
