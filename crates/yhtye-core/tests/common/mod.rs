@@ -12,6 +12,7 @@ pub mod grok_build;
 pub mod minimax_code;
 pub mod opencode;
 pub mod orch;
+pub mod pi;
 pub mod real;
 pub mod repo;
 

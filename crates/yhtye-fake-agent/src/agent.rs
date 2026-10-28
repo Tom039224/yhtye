@@ -9,9 +9,10 @@ use agent_client_protocol::schema::v1::{
     McpCapabilities, McpServer, NewSessionRequest, NewSessionResponse, PermissionOption,
     PermissionOptionKind, PromptCapabilities, PromptRequest, PromptResponse,
     RequestPermissionOutcome, RequestPermissionRequest, SessionConfigOption,
-    SessionConfigOptionCategory, SessionConfigSelectOption, SessionMode, SessionModeState,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SetSessionModeRequest,
-    SetSessionModeResponse, StopReason, ToolCallUpdate, ToolCallUpdateFields,
+    SessionConfigOptionCategory, SessionConfigSelectGroup, SessionConfigSelectOption,
+    SessionConfigSelectOptions, SessionMode, SessionModeState, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, SetSessionModeRequest, SetSessionModeResponse, StopReason,
+    ToolCallUpdate, ToolCallUpdateFields,
 };
 use agent_client_protocol::{Agent, Client, ConnectionTo, Error, Stdio, UntypedMessage};
 use serde::{Deserialize, Serialize};
@@ -157,6 +158,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             async move |req: NewSessionRequest, responder, cx| {
                 gate(&f2, "session/new").await?;
                 enter_session_dir(&req.cwd)?;
+                f2.start_from_env()?;
                 let id = format!("fake-{}", std::process::id());
                 f2.remember_session(&id, req.meta.as_ref());
                 f2.remember_mcp(&req.mcp_servers);
@@ -173,6 +175,7 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
             async move |req: LoadSessionRequest, responder, cx| {
                 gate(&f3, "session/load").await?;
                 enter_session_dir(&req.cwd)?;
+                f3.start_from_env()?;
                 f3.remember_session(&req.session_id.0, req.meta.as_ref());
                 f3.remember_mcp(&req.mcp_servers);
                 send_vendor_notifications(&f3, &cx)?;
@@ -228,9 +231,9 @@ pub async fn serve(scenario: Scenario) -> Result<(), Error> {
                 {
                     let mut st = f5.lock();
                     if &*req.config_id.0 == "model" {
-                        st.model = value;
                         // The efforts depend on the model: back to the default.
-                        st.effort = "default".into();
+                        st.effort = f5.default_effort(&value);
+                        st.model = value;
                     } else if &*req.config_id.0 == PERMISSION_MODE_ID {
                         st.permission_mode = value;
                     } else {
@@ -472,6 +475,12 @@ impl Fake {
                 .category(SessionConfigOptionCategory::ThoughtLevel),
             );
         }
+        for b in &self.scenario.boolean_options {
+            options.push(
+                SessionConfigOption::boolean(b.id.clone(), b.id.clone(), true)
+                    .category(SessionConfigOptionCategory::Other(b.category.clone())),
+            );
+        }
         options
     }
 
@@ -522,25 +531,109 @@ impl Fake {
             .unwrap_or(DEFAULT_EFFORT_ID)
     }
 
-    /// `default` and the efforts of the current model (empty: no effort option).
+    /// `default` (unless the scenario has `efforts_without_default`) and the
+    /// efforts of the current model (empty: no effort option).
     fn effort_values(&self) -> Vec<String> {
         let model = self.lock().model.clone();
         match self.scenario.efforts.get(&model) {
-            Some(values) => std::iter::once("default".to_string())
+            Some(values) => (!self.scenario.efforts_without_default)
+                .then(|| "default".to_string())
+                .into_iter()
                 .chain(values.iter().cloned())
                 .collect(),
             None => Vec::new(),
         }
     }
 
+    /// The effort a session starts on after `model` is selected: `default`, or
+    /// the first of the model's efforts when the scenario lists them without one.
+    fn default_effort(&self, model: &str) -> String {
+        match self.scenario.efforts.get(model) {
+            Some(values) if self.scenario.efforts_without_default => {
+                values.first().cloned().unwrap_or_default()
+            }
+            _ => "default".into(),
+        }
+    }
+
+    /// Starts the session on the model named by the scenario's `model_env`
+    /// variable (`<model>[:<effort>]`). A model the agent does not list is taken
+    /// as it is, with no efforts, as pi's adapter does (it builds a model out of
+    /// any id of a known provider). No variable, no change.
+    fn start_from_env(&self) -> Result<(), Error> {
+        let Some(var) = &self.scenario.model_env else {
+            return Ok(());
+        };
+        let Some(wanted) = std::env::var(var).ok().filter(|v| !v.is_empty()) else {
+            return Ok(());
+        };
+        let models = &self.scenario.models;
+        let (model, effort) = match wanted.rsplit_once(':') {
+            Some((model, effort))
+                if !models.contains(&wanted) && models.iter().any(|m| m == model) =>
+            {
+                (model.to_string(), Some(effort.to_string()))
+            }
+            _ => (wanted, None),
+        };
+        let mut st = self.lock();
+        let mut start_effort = self.default_effort(&model);
+        if let Some(effort) = effort
+            && self
+                .scenario
+                .efforts
+                .get(&model)
+                .is_some_and(|values| values.contains(&effort))
+        {
+            start_effort = effort;
+        }
+        st.effort = start_effort;
+        st.model = model;
+        Ok(())
+    }
+
     fn model_option(&self) -> SessionConfigOption {
-        let options: Vec<_> = self
-            .scenario
-            .models
-            .iter()
-            .map(|m| SessionConfigSelectOption::new(m.clone(), m.clone()))
+        let rows = |models: Vec<&String>| -> Vec<SessionConfigSelectOption> {
+            models
+                .into_iter()
+                .map(|m| SessionConfigSelectOption::new(m.clone(), m.clone()))
+                .collect()
+        };
+        let current = self.lock().model.clone();
+        if !self.scenario.model_groups {
+            let options = rows(self.scenario.models.iter().collect());
+            return SessionConfigOption::select("model", "Model", current, options);
+        }
+        let mut providers: Vec<&str> = Vec::new();
+        for m in &self.scenario.models {
+            let provider = m.split('/').next().unwrap_or(m);
+            if !providers.contains(&provider) {
+                providers.push(provider);
+            }
+        }
+        let groups: Vec<_> = providers
+            .into_iter()
+            .map(|provider| {
+                let members = self
+                    .scenario
+                    .models
+                    .iter()
+                    .filter(|m| m.split('/').next() == Some(provider))
+                    .collect();
+                SessionConfigSelectGroup::new(
+                    provider.to_string(),
+                    provider.to_string(),
+                    rows(members),
+                )
+            })
             .collect();
-        SessionConfigOption::select("model", "Model", self.lock().model.clone(), options)
+        SessionConfigOption::select(
+            "model",
+            "Model",
+            current,
+            SessionConfigSelectOptions::Grouped(groups),
+        )
+        .category(SessionConfigOptionCategory::Model)
     }
 }
 
@@ -808,6 +901,17 @@ async fn run_action(
                     st.set_options.join(",")
                 )
             };
+            update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
+        }
+        Action::ReportEnv(names) => {
+            let values: Vec<String> = names
+                .iter()
+                .map(|n| {
+                    let value = std::env::var(n).unwrap_or_else(|_| "<unset>".into());
+                    format!("{n}={value}")
+                })
+                .collect();
+            let report = format!("env:{}", values.join(";"));
             update(json!({"sessionUpdate": "agent_message_chunk", "content": text(&report)}))?;
         }
         Action::ReportClientInfo => {

@@ -149,6 +149,7 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let mcode = bin.install("mcode");
     let agy = bin.install("agy_acp_server.par");
     let grok = bin.install("grok");
+    let pi = bin.install("pi");
     bin.install("opencode");
     let core = Core::start(config(&r, &bin)).await.expect("core");
 
@@ -163,7 +164,8 @@ async fn every_known_harness_is_reported_with_what_was_found() {
             "devin",
             "minimax-code",
             "antigravity",
-            "grok-build"
+            "grok-build",
+            "pi"
         ]
     );
     assert_eq!(
@@ -174,7 +176,8 @@ async fn every_known_harness_is_reported_with_what_was_found() {
             "devin",
             "minimax-code",
             "antigravity",
-            "grok-build"
+            "grok-build",
+            "pi"
         ]
     );
 
@@ -217,6 +220,14 @@ async fn every_known_harness_is_reported_with_what_was_found() {
     let grok_build = by_id(&all, "grok-build");
     assert_eq!(grok_build.label, "Grok Build");
     assert_eq!(grok_build.resolved_path.as_deref(), Some(text(&grok)));
+    let pi_found = by_id(&all, "pi");
+    assert_eq!(pi_found.label, "pi");
+    assert_eq!(pi_found.resolved_path.as_deref(), Some(text(&pi)));
+    assert_eq!(
+        pi_found.found("npx"),
+        Some(text(&npx)),
+        "the adapter that runs pi's SDK is started through npx"
+    );
     assert_eq!(
         offered(&core).await,
         [
@@ -226,7 +237,8 @@ async fn every_known_harness_is_reported_with_what_was_found() {
             "devin",
             "minimax-code",
             "antigravity",
-            "grok-build"
+            "grok-build",
+            "pi"
         ],
         "a harness that is not installed is not offered"
     );

@@ -62,8 +62,9 @@ cargo run -p yhtye -- --headless --data-dir /tmp/yhtye-headless   # GUI 無し (
 ```
 
 - 既定のエージェントは Claude Code (ACP、`npx @agentclientprotocol/claude-agent-acp`) をローカルログインで使う。
-  モデルは `YHTYE_MODEL` (既定 `haiku`)。ハーネス (Claude Code / OpenCode / Codex / Devin / MiniMax Code / Google Antigravity / Grok Build) は、必要なコマンド (`npx` / `opencode` / `codex` + `npx` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) が
-  `PATH` か既知の場所 (`~/.local/bin` など。`mcode` は `~/.minimax-code/bin` と `$MCODE_INSTALL_ROOT/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` と `$GROK_HOME/bin` も) にあるときだけ選べる。設定を開いたときと「再検出」で見つけ直し、パスは手動でも指定できる
+  モデルは `YHTYE_MODEL` (既定 `haiku`)。ハーネス (Claude Code / OpenCode / Codex / Devin / MiniMax Code / Google Antigravity / Grok Build / pi) は、必要なコマンド (`npx` / `opencode` / `codex` + `npx` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` + `npx`) が
+  `PATH` か既知の場所 (`~/.local/bin` など。`mcode` は `~/.minimax-code/bin` と `$MCODE_INSTALL_ROOT/bin`、`agy_acp_server.par` は `$AGY_ACP_SERVER_HOME`・`~/.local/share/agy-acp-server`・`~/.gemini/antigravity-acp/bin`、`grok` は `~/.grok/bin` と `$GROK_HOME/bin` も、`pi` は `~/.pi/agent/bin` と `$PI_CODING_AGENT_DIR/bin` も) にあるときだけ選べる。pi は Node 22.19 以上の `npx` でアダプタ (`@openma/pi-acp`) を動かし、
+  実機を呼ぶテストは置いていない (pi のユーザー設定に書き込まれるため。偽エージェントの `tests/acp_fake_pi.rs` だけ。[`acp-harnesses.md`](architecture/acp-harnesses.md) §14.10)。設定を開いたときと「再検出」で見つけ直し、パスは手動でも指定できる
   ([`core-design.md`](architecture/core-design.md) §15.2)。
 - アプリのデータ (SQLite と worktree) は `--data-dir` / `YHTYE_DATA_DIR`、無ければ `~/.local/share/io.github.tom039224.yhtye`
   (`src-tauri/src/data_dir.rs`。GUI とヘッドレスで共通)。

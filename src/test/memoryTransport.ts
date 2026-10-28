@@ -542,6 +542,7 @@ const HARNESS_SPECS = [
   { id: "minimax-code", label: "MiniMax Code", main: "mcode", also: [] },
   { id: "antigravity", label: "Google Antigravity", main: "agy_acp_server.par", also: [] },
   { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
+  { id: "pi", label: "pi", main: "pi", also: ["npx"] },
 ];
 
 /** The core's harness detection in miniature: a search result per command, and manual paths. */
