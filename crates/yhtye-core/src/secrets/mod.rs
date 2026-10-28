@@ -6,7 +6,8 @@
 //! - [`SecretBackend`]: where values live ([`KeyringBackend`] = the OS store,
 //!   [`MemoryBackend`] = tests).
 //! - [`Secrets`]: the registered names plus the backend; [`Secrets::env`] reads
-//!   every value for a spawn.
+//!   every value for a spawn, except the secrets only one harness gets
+//!   ([`HARNESS_ONLY_SECRETS`], handed over by [`HarnessConfig::secret_bindings`]).
 
 mod backend;
 mod name;
@@ -18,7 +19,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use tokio::sync::mpsc;
 
-use crate::acp::{AgentError, AgentEvent, AgentHandle, HarnessConfig, SpawnOptions, spawn_agent};
+use crate::acp::{
+    AgentError, AgentEvent, AgentHandle, HARNESS_ONLY_SECRETS, HarnessConfig, SpawnOptions,
+    spawn_agent,
+};
 
 pub use backend::{KeyringBackend, MemoryBackend, SECRET_SERVICE, SecretBackend};
 pub use name::{MAX_SECRET_VALUE_BYTES, validate_secret_name, validate_secret_value};
@@ -73,6 +77,15 @@ impl SecretEnv {
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.0.iter().map(|(k, v)| (k.as_str(), v.expose()))
+    }
+
+    /// These variables plus `name` = `value`, which replaces a variable of the
+    /// same name.
+    #[must_use]
+    pub fn with(mut self, name: &str, value: SecretValue) -> Self {
+        self.0.retain(|(k, _)| k != name);
+        self.0.push((name.to_string(), value));
+        self
     }
 
     #[must_use]
@@ -161,10 +174,15 @@ impl Secrets {
         Ok(())
     }
 
-    /// Every registered variable with its value, for a spawn. A name whose
-    /// value is missing from the store is skipped (with a warning).
+    /// Every registered variable with its value, for a spawn: those every
+    /// agent gets (not [`HARNESS_ONLY_SECRETS`]). A name whose value is
+    /// missing from the store is skipped (with a warning).
     pub async fn env(&self) -> Result<SecretEnv, SecretError> {
-        let names = self.names();
+        let names: Vec<String> = self
+            .names()
+            .into_iter()
+            .filter(|n| !HARNESS_ONLY_SECRETS.contains(&n.as_str()))
+            .collect();
         if names.is_empty() {
             return Ok(SecretEnv::default());
         }
@@ -187,15 +205,30 @@ impl Secrets {
         .await
     }
 
+    /// The value of the registered secret `name`; `None` when the name is not
+    /// registered or the store has no value for it.
+    pub async fn get(&self, name: &str) -> Result<Option<SecretValue>, SecretError> {
+        if !self.read().contains(name) {
+            return Ok(None);
+        }
+        let backend = self.backend.clone();
+        let key = name.to_string();
+        Ok(blocking(move || backend.get(&key))
+            .await?
+            .map(SecretValue::new))
+    }
+
     fn read(&self) -> std::sync::RwLockReadGuard<'_, BTreeSet<String>> {
         self.names.read().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 /// [`spawn_agent`] with every registered secret environment variable added to
-/// the agent's environment. Fails (without starting anything) when a value
-/// cannot be read: an agent silently missing its API key would only fail later
-/// with a confusing message.
+/// the agent's environment, and the secrets `harness` binds
+/// ([`HarnessConfig::secret_bindings`]) under the names it reads. Fails
+/// (without starting anything) when a value cannot be read or a bound secret
+/// is not registered: an agent silently missing its API key would only fail
+/// later with a confusing message.
 pub async fn spawn_agent_with_secrets(
     secrets: &Secrets,
     harness: &HarnessConfig,
@@ -203,11 +236,32 @@ pub async fn spawn_agent_with_secrets(
     mut options: SpawnOptions,
     events: mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<AgentHandle, AgentError> {
-    options.secret_env = secrets.env().await.map_err(|e| AgentError::Startup {
+    options.secret_env = secret_env_for(secrets, harness).await?;
+    spawn_agent(harness, cwd, options, events).await
+}
+
+/// The secret environment of one agent process: the general variables, then
+/// the bound ones (which win over a general variable of the same name).
+async fn secret_env_for(
+    secrets: &Secrets,
+    harness: &HarnessConfig,
+) -> Result<SecretEnv, AgentError> {
+    let unreadable = |e: SecretError| AgentError::Startup {
         step: "secret environment variables".into(),
         message: e.to_string(),
-    })?;
-    spawn_agent(harness, cwd, options, events).await
+    };
+    let mut env = secrets.env().await.map_err(unreadable)?;
+    for binding in &harness.secret_bindings {
+        let value = secrets
+            .get(&binding.secret)
+            .await
+            .map_err(unreadable)?
+            .ok_or_else(|| AgentError::Setup {
+                message: binding.missing_message(),
+            })?;
+        env = env.with(&binding.env, value);
+    }
+    Ok(env)
 }
 
 /// Runs a credential-store call on a blocking thread (Secret Service talks D-Bus).

@@ -83,7 +83,11 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 - Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity and Grok Build usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
-  keeps only the names. A registered variable is passed to **every** agent.
+  keeps only the names. A registered variable is passed to **every** agent (exception: `YHTYE_ANTHROPIC_API_KEY`).
+- Claude Code is offered as two harnesses: `Claude Code (Claude Max)` etc. (`claude-code`), which uses the claude.ai subscription you are logged in to,
+  and `Claude Code (API)` (`claude-code-api`), which is billed to an Anthropic API key. To use the API one, register the key as the secret environment
+  variable **`YHTYE_ANTHROPIC_API_KEY`**: it is passed only to the API harness, as `ANTHROPIC_API_KEY`, and the subscription harness starts with
+  `ANTHROPIC_API_KEY` removed from its environment, so it never bills the API. See [SETUP.md](SETUP.md) (Japanese).
 
 ## Getting started
 

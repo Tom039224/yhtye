@@ -65,10 +65,64 @@ pub struct HarnessConfig {
     /// to do from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_hint: Option<String>,
+    /// Secret environment variables that go to this harness only, each under
+    /// the name the harness reads (see [`SecretBinding`]). The secret is not
+    /// part of the variables every agent gets, and the harness does not start
+    /// without it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_bindings: Vec<SecretBinding>,
+}
+
+/// A secret environment variable handed to one harness under another name:
+/// the value registered as `secret` (Settings › Secret environment variables)
+/// reaches only the harnesses that bind it, as `env`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretBinding {
+    /// The registered secret's name.
+    pub secret: String,
+    /// The environment variable the agent process gets it as.
+    pub env: String,
+    /// What the user sees when the secret is not registered: who needs it
+    /// (`Claude Code (API)`).
+    pub needed_by: String,
+}
+
+impl SecretBinding {
+    /// What to tell the user when `secret` is not registered or has no value.
+    #[must_use]
+    pub fn missing_message(&self) -> String {
+        format!(
+            "{} には秘密の環境変数 {} の登録が必要です (設定 › 秘密の環境変数)",
+            self.needed_by, self.secret
+        )
+    }
 }
 
 /// The Claude Code ACP adapter run through `npx` (an exact version).
 pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.84.0";
+
+/// The secret that holds the Anthropic API key of `Claude Code (API)`. Only
+/// that harness receives it, as `ANTHROPIC_API_KEY`
+/// ([`HarnessConfig::claude_code_api`]); no other agent process gets it.
+pub const CLAUDE_API_KEY_SECRET: &str = "YHTYE_ANTHROPIC_API_KEY";
+
+/// The variable Claude Code reads an Anthropic API key from.
+pub const ANTHROPIC_API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+
+/// Secrets that only the harness binding them gets, never the agents in
+/// general ([`SecretBinding`]).
+pub const HARNESS_ONLY_SECRETS: [&str; 1] = [CLAUDE_API_KEY_SECRET];
+
+/// Variables removed from the subscription Claude Code: either of them
+/// would bill the API (or another account) instead of the user's claude.ai
+/// subscription, even when it only comes from the shell Yhtye was started in.
+pub const CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE: [&str; 2] =
+    [ANTHROPIC_API_KEY_ENV, "ANTHROPIC_AUTH_TOKEN"];
+
+/// Variables removed from Claude Code (API): they are used before an API key,
+/// so the key would not be what bills.
+pub const CLAUDE_CODE_API_ENV_REMOVE: [&str; 2] =
+    ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
 
 /// OpenCode's built-in primary agent ("mode") with every tool allowed except
 /// asking for paths outside the session directory (answered by Yhtye).
@@ -215,6 +269,9 @@ impl HarnessConfig {
     /// Claude Code through `@agentclientprotocol/claude-agent-acp` with the given model
     /// alias (see `docs/architecture/acp-harnesses.md` §5). The model is set both through
     /// `ANTHROPIC_MODEL` (initial value) and `set_config_option` (verifiable).
+    /// This is the subscription Claude Code (the user's claude.ai login): an API key
+    /// or token in the inherited environment is removed
+    /// ([`CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE`]) so it never bills the API.
     #[must_use]
     pub fn claude_code(model: &str) -> Self {
         Self {
@@ -236,7 +293,9 @@ impl HarnessConfig {
                 // the session up again), which Yhtye counts as a silent turn.
                 ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), "1".into()),
             ]),
-            env_remove: Vec::new(),
+            env_remove: CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE
+                .map(String::from)
+                .to_vec(),
             mode_after_new: Some("bypassPermissions".into()),
             model: Some(ModelSelect {
                 config_id: "model".into(),
@@ -254,7 +313,25 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
+    }
+
+    /// Claude Code billed to an Anthropic API key (`Claude Code (API)`): the
+    /// subscription config, except that the secret [`CLAUDE_API_KEY_SECRET`]
+    /// is the agent's `ANTHROPIC_API_KEY` (nothing starts without it), and the
+    /// variables that would be used before the key are removed
+    /// ([`CLAUDE_CODE_API_ENV_REMOVE`]).
+    #[must_use]
+    pub fn claude_code_api(model: &str) -> Self {
+        let mut h = Self::claude_code(model);
+        h.env_remove = CLAUDE_CODE_API_ENV_REMOVE.map(String::from).to_vec();
+        h.secret_bindings = vec![SecretBinding {
+            secret: CLAUDE_API_KEY_SECRET.into(),
+            env: ANTHROPIC_API_KEY_ENV.into(),
+            needed_by: "Claude Code (API)".into(),
+        }];
+        h
     }
 
     /// [`HarnessConfig::claude_code`] for reading subscription usage with the
@@ -264,10 +341,21 @@ impl HarnessConfig {
     /// `TZ=UTC` so the adapter prints reset times in UTC.
     #[must_use]
     pub fn claude_code_usage_probe() -> Self {
-        let mut h = Self::claude_code("haiku");
-        h.env.insert("TZ".into(), "UTC".into());
-        h.mode_after_new = None;
-        h.model = None;
+        Self::claude_code("haiku").into_listing_session()
+    }
+
+    /// [`HarnessConfig::claude_code_api`] as a listing session (the models
+    /// and efforts), which [`HarnessConfig::claude_code_usage_probe`] is for
+    /// the subscription: no tools, nothing saved, no mode / model switching.
+    #[must_use]
+    pub fn claude_code_api_probe() -> Self {
+        Self::claude_code_api("haiku").into_listing_session()
+    }
+
+    fn into_listing_session(mut self) -> Self {
+        self.env.insert("TZ".into(), "UTC".into());
+        self.mode_after_new = None;
+        self.model = None;
         let meta = serde_json::json!({
             "claudeCode": { "options": {
                 "strictMcpConfig": true,
@@ -275,8 +363,8 @@ impl HarnessConfig {
                 "persistSession": false,
             } }
         });
-        h.session_meta = meta.as_object().cloned();
-        h
+        self.session_meta = meta.as_object().cloned();
+        self
     }
 
     /// OpenCode's built-in ACP server (`opencode acp`, verified with 2.0.12) with the
@@ -306,6 +394,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -340,6 +429,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -370,6 +460,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -404,6 +495,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -439,6 +531,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: Some(ANTIGRAVITY_LOGIN_HINT.into()),
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -472,6 +565,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -493,6 +587,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 }
@@ -542,6 +637,80 @@ mod tests {
         assert_eq!(
             h.env.get("ENABLE_TOOL_SEARCH").map(String::as_str),
             Some("false")
+        );
+    }
+
+    #[test]
+    fn the_subscription_claude_code_never_inherits_an_api_credential() {
+        for h in [
+            HarnessConfig::claude_code("haiku"),
+            HarnessConfig::claude_code_usage_probe(),
+        ] {
+            assert_eq!(h.env_remove, ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
+            assert!(
+                h.secret_bindings.is_empty(),
+                "it is never given the API key"
+            );
+            assert!(!h.env.contains_key("ANTHROPIC_API_KEY"));
+        }
+    }
+
+    #[test]
+    fn claude_code_api_gets_the_key_from_its_secret_and_loses_the_other_credentials() {
+        for h in [
+            HarnessConfig::claude_code_api("haiku"),
+            HarnessConfig::claude_code_api_probe(),
+        ] {
+            assert_eq!(
+                h.secret_bindings,
+                [SecretBinding {
+                    secret: "YHTYE_ANTHROPIC_API_KEY".into(),
+                    env: "ANTHROPIC_API_KEY".into(),
+                    needed_by: "Claude Code (API)".into(),
+                }]
+            );
+            assert_eq!(
+                h.env_remove,
+                ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]
+            );
+            assert!(
+                !h.env.contains_key("ANTHROPIC_API_KEY"),
+                "the key is never part of the config"
+            );
+            let plain = HarnessConfig::claude_code("haiku");
+            assert_eq!(h.args, plain.args);
+            assert_eq!(
+                h.env.get("ENABLE_TOOL_SEARCH"),
+                plain.env.get("ENABLE_TOOL_SEARCH")
+            );
+        }
+        let api = HarnessConfig::claude_code_api("haiku");
+        assert_eq!(api.mode_after_new.as_deref(), Some("bypassPermissions"));
+        assert_eq!(api.model.map(|m| m.value), Some("haiku".to_string()));
+    }
+
+    #[test]
+    fn the_claude_code_listing_sessions_switch_nothing_and_save_nothing() {
+        for h in [
+            HarnessConfig::claude_code_usage_probe(),
+            HarnessConfig::claude_code_api_probe(),
+        ] {
+            assert_eq!((h.mode_after_new, h.model), (None, None));
+            assert_eq!(h.env.get("TZ").map(String::as_str), Some("UTC"));
+            let meta = serde_json::Value::Object(h.session_meta.expect("meta"));
+            assert_eq!(
+                meta.pointer("/claudeCode/options/persistSession"),
+                Some(&serde_json::json!(false))
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_secret_is_reported_with_who_needs_it_and_never_a_value() {
+        let message = HarnessConfig::claude_code_api("haiku").secret_bindings[0].missing_message();
+        assert_eq!(
+            message,
+            "Claude Code (API) には秘密の環境変数 YHTYE_ANTHROPIC_API_KEY の登録が必要です (設定 › 秘密の環境変数)"
         );
     }
 

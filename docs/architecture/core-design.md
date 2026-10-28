@@ -1270,7 +1270,13 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   メッセージにキーリングのエラー)。キーが黙って抜けたエージェントが後から分かりにくい失敗をするより明確なため。登録があるのに値が無い名前は警告ログだけで飛ばす。
 - **整合**: `set_secret_env` は名前を DB に登録してから値をキーリングに保存し、後者が失敗したら前者を取り消す (もともと登録済みの名前は残す)。
   `delete_secret_env` は DB から消してからキーリングを消し、失敗したら名前を戻す。DB とメモリ / キーリングが食い違わない。
-- **既知の限界 (レビューで確認、今回は対応しない)**: すべての秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
+- **ハーネス専用の秘密**: `HARNESS_ONLY_SECRETS` (`YHTYE_ANTHROPIC_API_KEY`) は上の一般の注入から**外す** (`Secrets::env` が飛ばす)。代わりに
+  `HarnessConfig::secret_bindings` (`SecretBinding { secret, env, needed_by }`) を持つハーネスだけが、`spawn_agent_with_secrets` で
+  その秘密を `env` の名前 (`ANTHROPIC_API_KEY`) で受け取る (`Secrets::get`、同名の一般の秘密より優先)。Yhtye が継承した環境にある
+  `HARNESS_ONLY_SECRETS` の変数も、`acp/process.rs` の `spawn_process` が全ハーネスの子プロセスから取り除く (`PRIVATE_ENV` と同じ段)。未登録・値なしなら起動前に
+  `AgentError::Setup` で「`needed_by` には秘密の環境変数 … の登録が必要です」と失敗する。`claude-code-api` だけがこれを使う
+  ([`acp-harnesses.md`](acp-harnesses.md) §5.4)。
+- **既知の限界 (レビューで確認、今回は対応しない)**: 上のハーネス専用のもの以外の秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
   自分の環境を stderr に出すと、その行が Yhtye のログ・エラーに載りうる (値の伏せ字化はしていない)。メモリ上の値の zeroize はしない。
   キーリングが使えないと、登録が 1 つでもあれば**全エージェントの起動が失敗する** (フェイルクローズ、ユーザー決定の範囲内)。
 - **API**: `list_secret_env` → `secret_env{names}` (ソート済み)。`set_secret_env{name, value}` (キーリングに保存してから名前を DB に登録。上書き可) と
