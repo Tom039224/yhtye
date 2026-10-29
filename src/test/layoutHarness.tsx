@@ -18,6 +18,7 @@ import { LOCAL_HOST } from "../store/hosts";
 import { HostsProvider } from "../store/useHosts";
 import { StoreContext } from "../store/useStore";
 import type { View } from "../ui/IconRail";
+import { benchApi, type BenchApi, exchangesFrom, mixFrom, realLog } from "./benchChat";
 import { agentText, delivered, ev, turnEnded, userMessage } from "./events";
 import { durable, FULL_RUN, PROJECT } from "./fixtures";
 import { cannedUsageStats, FakeCore, MemoryTransport } from "./memoryTransport";
@@ -51,6 +52,8 @@ declare global {
       failCommand: (type: string, message: string) => void;
       /** The hosts scenario: the registry and the shell's fake (to push a pairing link, ...). */
       hosts?: TestHosts;
+      /** The long scenarios: what scripts/bench-long-chat.mjs injects with (see benchChat.ts). */
+      bench?: BenchApi;
     };
   }
 }
@@ -60,7 +63,8 @@ const NO_SPACES = "super-long-name-without-any-break-opportunity-".repeat(6);
 const PARAGRAPH =
   "これは長い返答の段落です。ウィンドウの高さを何倍も超える会話でも、ページ全体ではなく会話パネルの中だけがスクロールします。".repeat(3);
 const CHAT_ID = "C-1";
-const EXCHANGES = 160;
+/** Round trips of the long scenarios: `?exchanges=` (scripts/bench-long-chat.mjs asks for more), 160 unless asked. */
+const EXCHANGES = exchangesFrom(window.location.search);
 const TASKS = 14;
 const WORKTREES = 12;
 const COMMITS = 80;
@@ -316,7 +320,7 @@ function build(scenario: Scenario): { core: FakeCore; open: boolean } {
     const state: State = { ...emptyState("repo", { max_review_rounds: 2 }), chats: chatStates, groups: [group], tasks, helps };
     const snapshot: Snapshot = { seq: 0, state, sessions: longSessions(tasks), chats, starting: [] };
     const core = new FakeCore(PROJECT, snapshot);
-    core.log = longLog(group, ids);
+    core.log = mixFrom(window.location.search) === "real" ? realLog({ exchanges: EXCHANGES, chat: CHAT_ID, orchestrator: orchestratorKey(CHAT_ID), group, taskIds: tasks.map((t) => t.id), task: FULL_RUN.end.state.tasks[0], attachments: LONG_ATTACHMENTS }) : longLog(group, ids);
     const picture = pictureBase64();
     for (const meta of LONG_ATTACHMENTS) core.attachments.set(meta.id, { meta, data: meta.kind === "image" ? picture : "" });
     core.git = git;
@@ -405,6 +409,8 @@ async function main(): Promise<void> {
     core.failures.set(type as Parameters<typeof core.failures.set>[0], new CommandError("unavailable", message));
   window.__yhtye = { store, core, transport, failCommand };
   if (scenario === "long" || scenario === "names") {
+    const taskIds = core.snapshot.state.tasks.map((t) => t.id);
+    window.__yhtye.bench = benchApi(store, core, transport, orchestratorKey(CHAT_ID), taskIds);
     // The long scenarios read 90 days like 7: a report of the period asked, with a lot in it.
     const serve = transport.handler;
     transport.handler = (cmd) => (cmd.type === "get_usage_stats" && !core.usageStats && !core.failures.has(cmd.type) ? { type: "usage_stats", stats: richStats(cmd.days ?? 30) } : serve(cmd));

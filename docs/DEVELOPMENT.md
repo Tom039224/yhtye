@@ -186,6 +186,7 @@ WEBKIT_DISABLE_DMABUF_RENDERER=1 ./target/debug/yhtye
 pnpm build                                         # tsc + vite build
 pnpm test                                          # Vitest
 pnpm check:layout                                  # 実ブラウザで「ページ全体がスクロールしない」ことを検査
+pnpm bench:long-chat                               # 長いチャットの入力遅延・固まりの計測 (WebKit)。下の「長いチャットの計測」
 cargo test --workspace                             # Rust (偽エージェント・一時 git リポジトリ)
 cargo test -p yhtye-core -- --ignored --test-threads=1   # 実エージェント (Claude Code は Haiku)
 cargo clippy --workspace --all-targets && cargo fmt --check
@@ -228,6 +229,54 @@ YHTYE_LAYOUT_ONLY="task tabs" pnpm check:layout           # 名前に文字列�
 
 失敗すると、どの状態で何がはみ出したか (例: `span.sr-only (absolute, in the page) down to y=113505`) を出す。
 新しい状態を足すには、`scripts/check-layout.mjs` の `STATES` に 1 行足す (はみ出し以外の検査は `verify` に書く)。
+
+### 長いチャットの計測 (`pnpm bench:long-chat`)
+
+長いチャットで「入力欄が遅い・矢印キーが暴走する・描画で UI が固まる」ことを、製品コードを変えずに数値にする。
+修正の前後比較用で、結果は表で標準出力に出し、JSON を `bench-results/` (gitignore 済み) に保存する。
+`layout-harness.html?scenario=long&exchanges=<n>&mix=real` (本物の `App` をメモリ上のコアで動かす。
+`exchanges` は往復数 (既定 160)、`mix=real` は Markdown の見出し・リスト・コードブロック・表、ツール呼び出し、グループ/タスクのカード、
+help などの通知、長い回答を混ぜる。`src/test/benchChat.ts`) を playwright-core で開いて測る。
+既定は **WebKit** (Playwright 版。実機の WebKitGTK に最も近い。必須) の **本番ビルド** (React の dev ビルドは数倍遅く StrictMode で二重に描くため。
+`--mode dev` で Vite の dev サーバ) で、Chromium は比較用 (`--browsers webkit,chromium`)。
+
+```sh
+pnpm exec playwright-core install webkit                # 初回だけ。ブラウザを ~/.cache/ms-playwright に取得
+pnpm bench:long-chat                                    # n = 160 / 1000 / 3000 (n=3000 まで含めて 30 分近くかかる)
+pnpm bench:long-chat --n 160,1000 --browsers webkit,chromium
+pnpm bench:long-chat --n 3000 --sections idle,commit    # 一部だけ。他に input, stream (= stream-shown + stream-other)
+pnpm bench:long-chat --anim both                        # 入力・ストリーム・確定も、アニメーションを止めた状態でも測る (所要時間は倍)
+pnpm bench:long-chat --n 3000 --sections stream-shown --chars 10 --repeats 30   # 1 キー数秒かかる n では打鍵数を減らす
+```
+
+他の引数: `--idle-ms`、`--stream-ms`、`--reps` (確定イベントの繰り返し)、`--out`、`--url` (起動中の dev サーバ)。
+`YHTYE_CHROMIUM=/path/to/chromium` で Chromium の場所を指定する (check:layout と同じ)。
+
+**Arch Linux など Ubuntu 以外**: Playwright の WebKit は Ubuntu 24.04 向けのビルドで、`playwright install-deps` が使えない。
+`pnpm exec playwright-core install webkit` で取得した後、起動時に `libicu*.so.74` と `libflite*.so.1` が足りないと言われたら、
+Ubuntu の `libicu74`・`libflite1` の deb を展開して `.so` を `~/.cache/ms-playwright/webkit-*/minibrowser-wpe/sys/lib/` に置く
+(`libjxl` と `libbacktrace` は同梱済み。deb は `bsdtar -xOf x.deb 'data.tar*' | bsdtar -xf - -C dir` で展開できる)。
+その上で `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 pnpm bench:long-chat` で、ホストの依存検査を飛ばす。
+
+測るもの (n ごと。アニメーション = CSS の実行中アニメーションが動いている状態 / `*{animation:none!important;transition:none!important}` を注入した状態):
+
+| 表 | 指標 | 意味 |
+| --- | --- | --- |
+| IDLE | `fps`、`rAF p50/p95/max` | 何もしない 5 秒の描画フレームの間隔 (ms)。60fps なら 16.7 |
+| | `frames>50` / `blocks>50` | 50ms 以上空いたフレーム / メインスレッドのブロック (`setTimeout(0)` を回し続けて、返ってくるまでの空きを見る。WebKit には Long Tasks API が無い) の数 |
+| | `cpu main/all %` | Web プロセスのメインスレッド / プロセス全体の CPU 使用率 (Linux のみ。`/proc`)。実機の「WebKitWebProcess が常時 82〜99%」に当たる |
+| | `running` | `document.getAnimations()` の数 |
+| INPUT | `typing->rAF` | 30 文字を 20ms 間隔で送り、各キーを送ってから次のフレームまでの ms (p50/p95/max)。送るときに処理を待たない (OS のキーリピートと同じ) ので、遅いと待ち行列が伸びる |
+| | `ms/char`、`ms/arrow` | 1 キーがメインスレッドを占める時間 (ペースに依らない) |
+| | `arrows->page`、`arrows->rAF` | ArrowLeft / ArrowRight を各 50 回 (keydown のリピート、20ms 間隔) のうち、ページに届くまで / 次のフレームまでの ms |
+| | `runaway` | 最後の keyup を送ってから、カーソルが動き終わるまでの ms (暴走時間) |
+| | `chunks/s`、`stream cpu` | ストリーミング中 (`message_chunk` を 20ms 間隔で、表示中のチャット / 別タスクのセッションに注入。描画が追いつかないと間隔が延びる) の注入できた数と CPU |
+| | `control` | 同じキー送信を素の textarea に行った値。この計測方法の下限 (`ms/char` ≒ 20 は待ちなし) |
+| COMMIT | `long answer` / `help` / `task result` | 確定イベント 1 件 (長い Markdown の回答 / `help_raised` + 通知 / `step_completed` + 通知) を注入してから描画が終わるまでの、メインスレッドの最長ブロック ms / 次のフレームまでの ms (繰り返しの中央値) |
+
+マシンが混んでいると全部の数字が悪くなるので、表の `load` 列 (計測時の loadavg) と JSON の `meta.loadavgStart/End` を見ること。
+ハーネスのスナップショットは `seq: 0` から始まるので、ログ全体が開いた時点でトランスクリプトに入る
+(本物の Yhtye は新しい 400 イベントだけを読み、古い分はスクロールで足す)。つまり n は「スクロールして全部読み込んだ長いチャット」に当たる。
 
 CI は [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) (フロントエンドのビルドとテスト、
 `pnpm check:layout` (`layout` ジョブ)、Rust の fmt / clippy / テスト。実エージェントを使う `#[ignore]` のテストは含まない)、
