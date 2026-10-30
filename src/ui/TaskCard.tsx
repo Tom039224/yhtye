@@ -2,7 +2,7 @@ import { Fragment } from "react";
 
 import type { State, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
-import { useStore } from "../store/useStore";
+import { useAppState, useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
 import { HELP_LABEL, isTerminal, TONE_LABEL, taskTone } from "./labels";
 import {
@@ -18,7 +18,9 @@ import {
 import {
   formatElapsed,
   isActiveTone,
+  latestSession,
   openHelps,
+  streamedLine,
   taskAgent,
   taskElapsedMs,
   taskLog,
@@ -50,7 +52,10 @@ export function TaskCard({ task, state, view, now, selected, onSelect, onMention
   const tone = taskTone(task);
   const helps = openHelps(state, task.id);
   const agent = taskAgent(view, task);
-  const log = taskLog(view, task.id);
+  // Only the first line of the streamed text is shown: the card renders again when it changes, not with every chunk.
+  const session = latestSession(view, task.id);
+  const streamed = useAppState((s) => streamedLine(s.live.streaming, session));
+  const log = taskLog(view, task.id, streamed);
   const elapsed = taskElapsedMs(view, task, now);
   const meta = taskMeta(state, task);
   const active = isActiveTone(tone);

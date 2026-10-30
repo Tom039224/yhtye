@@ -29,6 +29,12 @@ function view() {
   return v;
 }
 
+/** The text streamed per session, as the screen shows it (live events are shown once per frame; this is that frame). */
+function streaming() {
+  store.flushLive();
+  return store.getState().live.streaming;
+}
+
 /** Every durable seq that produced a transcript item, per session (to spot duplicates). */
 function itemSeqs(): number[] {
   return Object.values(view().transcripts)
@@ -98,21 +104,21 @@ describe("AppStore sync", () => {
     await openAndSettle();
     transport.emit(chunk(0, ORCHESTRATOR, "Hi "));
     transport.emit(chunk(0, ORCHESTRATOR, "there"));
-    expect(view().streaming[ORCHESTRATOR].message).toBe("Hi there");
+    expect(streaming()[ORCHESTRATOR].message).toBe("Hi there");
     transport.emit(agentText(1, ORCHESTRATOR, "Hi there"));
-    expect(view().streaming[ORCHESTRATOR].message).toBe("");
+    expect(streaming()[ORCHESTRATOR].message).toBe("");
     transport.emit(chunk(0, ORCHESTRATOR, "stale"));
-    expect(view().streaming[ORCHESTRATOR].message).toBe("");
+    expect(streaming()[ORCHESTRATOR].message).toBe("");
   });
 
   it("re-opens and catches up after a reconnect, dropping partial streams", async () => {
     core.log = LOG.filter((e) => e.seq <= 10);
     await openAndSettle();
     transport.emit(chunk(10, ORCHESTRATOR, "partial"));
-    expect(view().streaming[ORCHESTRATOR]?.message).toBe("partial");
+    expect(streaming()[ORCHESTRATOR]?.message).toBe("partial");
     transport.setStatus({ state: "closed", reason: "bridge restarted", retryInMs: 500 });
     expect(store.getState().connection).toMatchObject({ state: "closed", reason: "bridge restarted" });
-    expect(view().streaming[ORCHESTRATOR]).toBeUndefined();
+    expect(streaming()[ORCHESTRATOR]).toBeUndefined();
     core.log = LOG;
     const opens = transport.callsOf("open_project").length;
     transport.setStatus({ state: "open" });

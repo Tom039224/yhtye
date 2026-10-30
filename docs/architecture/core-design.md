@@ -1855,6 +1855,18 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
   再接続でも設定画面に `kind: null` を知らせる。設定画面向けのコマンドは `store/settingsCommands.ts` (`AppStore` の基底クラス) に分けた。
 - 起動中: `applySnapshot` が `Snapshot.starting` のオーケストレータを `resuming` に、`applyLive` が `session_starting` で
   `resuming` を立てる (終わりは従来の `settleResuming`)。
+- ライブイベント (ストリーミングのチャンク・`usage_update`・`session_starting`) は 1 件ごとに画面を描き直さない。
+  `onEvent` は `cursor` との比較 (古いものは捨てる / 新しいものは `requestCatchUp`) を届いたときに済ませ、残りを
+  `LiveBatch` (`store/liveBatch.ts`) に溜めて、次の `requestAnimationFrame` (来なければ `LIVE_FLUSH_MAX_MS` = 50 ms 後) に
+  1 回の `set()` でまとめて反映する (`AppStoreOptions.liveScheduler` で差し替え、`flushLive()` で即時)。
+  順序は保つ: `updateProject` (永続イベントの適用、再読み込み、切断) は、先に溜まったライブ分を flush してから動く。
+  プロジェクトを開き直すと溜まった分は捨てる。
+- ライブで変わる部分 (`streaming` と `contextUsage`) は `ProjectView` から出して `AppState.live` (`LiveView`) に置いた。
+  純粋な畳み込み (`project.ts`) は両方を持つ `ProjectModel` に対して動き、ストア (`splitModel`) が公開するときに分ける
+  (`viewOf` / `liveOf`: 変わらなかった側は前と同じオブジェクト)。チャンクだけの更新では `AppState.project` の参照が変わらないので、
+  `useAppState((s) => s.project)` の購読者は描き直されない。会話・出力パネルは自分のセッションの `live.streaming[key]` だけを購読し、
+  タスクカードは最新セッションのストリーミング先頭行 (文字列) だけを購読する。`TranscriptView` は項目の列 (`Items`) と各 `Item`、
+  git の `GraphRows`、`ChatRow` を `memo` にし、`useAutoScroll` は `content` の要素が変わったときだけ動く。
 - チャットの増減 (`updateChats`): 削除されたチャットの下書きを消し、表示中のチャットが変わった (他のクライアントが消した、
   チャットの無いプロジェクトに作られた) ときは、新しく表示するチャットを記憶 (`prefs`) して `open_chat` する (ユーザーが選んだのと同じ)。
   チャットの無いプロジェクトに作られたチャットは `applyDurable` が選ぶ。

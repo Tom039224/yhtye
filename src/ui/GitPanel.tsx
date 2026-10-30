@@ -1,4 +1,4 @@
-import { type ReactNode, useMemo } from "react";
+import { memo, type ReactNode, useMemo } from "react";
 
 import type { GitCommit, GitOverview, Group, State } from "../api/generated";
 import { scopeState } from "../store/chats";
@@ -150,7 +150,11 @@ function RangeMeta({ group, branch }: { group: Group | null; branch: string | nu
   ) : null;
 }
 
-function GraphRows({ graph, overview, state, base }: { graph: Graph; overview: GitOverview; state: State | null; base: string | null }) {
+/**
+ * The graph's rows, the costliest part of the panel (a row per commit, drawn as SVG): memoized, so
+ * it is drawn again only when the commits, the tasks' states (the branch colours) or the base change.
+ */
+const GraphRows = memo(function GraphRows({ graph, overview, state, base }: { graph: Graph; overview: GitOverview; state: State | null; base: string | null }) {
   // A lane's colour comes from the branch at its tip (its newest commit here).
   // The base branch wins: its line keeps the neutral colour even when task
   // branches point at the same commit (they have not moved yet).
@@ -213,7 +217,7 @@ function GraphRows({ graph, overview, state, base }: { graph: Graph; overview: G
       ) : null}
     </div>
   );
-}
+});
 
 function Badges({ commit, isHead, state, base, head }: { commit: GitCommit; isHead: boolean; state: State | null; base: string | null; head: string | null }) {
   if (commit.branches.length === 0 && !isHead) return null;
