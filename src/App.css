@@ -263,6 +263,13 @@ button:disabled { cursor: default; }
 }
 .transcript { padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 16px; }
 .agent-output .transcript { padding: 10px 14px; gap: 10px; }
+/* Every item is a layout root of its own, so a chunk that grows the item at the tail lays out that
+   item and not all the (thousands of) items above it: ~270 ms -> ~25 ms per chunk at 1000 round trips.
+   Layout and style only. Paint containment would clip what overflows an item, and content-visibility
+   makes the scroll height a guess (WebKit has no scroll anchoring: the view jumps by screens while
+   scrolling up through items that were never drawn). An item is also the containing block of what is
+   `position: fixed` inside it, so such a box (the attachment viewer) is rendered outside the transcript. */
+.transcript > * { contain: layout style; }
 .msg { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 10px; align-items: start; }
 .msg-mark {
   width: 22px; height: 22px; margin-top: 1px; border-radius: 6px; flex: none;
