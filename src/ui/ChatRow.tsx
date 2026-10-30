@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type MouseEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, memo, useEffect, useId, useRef, useState } from "react";
 
 import type { ChatInfo } from "../api/generated";
 import { toCommandError } from "../api/transport";
@@ -23,11 +23,15 @@ interface ChatRowProps {
 /**
  * One chat of the tree: a button that shows it, and (on hover or focus, where
  * its age is) a "⋯" button whose menu renames it in place or deletes it after
- * a confirmation.
+ * a confirmation. It reads from the project only what its own row shows (as
+ * values, not the whole view), so a row renders again only when that changes.
  */
-export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
+export const ChatRow = memo(function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
   const store = useStore();
-  const view = useAppState((s) => s.project);
+  const hasProject = useAppState((s) => s.project !== null);
+  const selected = useAppState((s) => s.project?.selectedChat === chat.id);
+  const ring = useAppState((s) => (s.project ? chatRing(s.project, chat.id) : "stopped"));
+  const unread = useAppState((s) => s.project?.unread[chat.id] === true);
   const [mode, setMode] = useState<Mode>("view");
   const [menuOpen, setMenuOpen] = useState(false);
   const rowRef = useRef<HTMLButtonElement>(null);
@@ -41,7 +45,7 @@ export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
     returnTo.current = null;
   }, [mode]);
 
-  if (!view) return null;
+  if (!hasProject) return null;
   const title = chat.title ?? NEW_CHAT_TITLE;
   const back = (to: Return) => {
     returnTo.current = to;
@@ -62,8 +66,6 @@ export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
     );
   }
 
-  const selected = view.selectedChat === chat.id;
-  const ring = chatRing(view, chat.id);
   const openMenu = (e: MouseEvent) => {
     e.preventDefault();
     setMenuOpen(true);
@@ -81,7 +83,7 @@ export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
         >
           <span className={`ring ring-${ring}`} data-testid={`chat-ring-${chat.id}`} />
           <span className="name">{title}</span>
-          {view.unread[chat.id] ? <span className="unread-dot" role="img" aria-label="未読の通知" /> : null}
+          {unread ? <span className="unread-dot" role="img" aria-label="未読の通知" /> : null}
           <span className="age">{shortAge(now, chat.last_used_ms)}</span>
         </button>
         <IconButton
@@ -131,7 +133,7 @@ export function ChatRow({ chat, now, showPlace = false }: ChatRowProps) {
       ) : null}
     </li>
   );
-}
+});
 
 /** True while an IME is composing (an Enter then confirms the composition, not the form). */
 function isComposing(e: KeyboardEvent): boolean {

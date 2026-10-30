@@ -27,17 +27,24 @@ import { Attachments, stagedIds } from "./attachments";
 import { upsertChat } from "./chats";
 import { type Drafts, memoryDrafts } from "./drafts";
 import { changesGit, endsOrchestratorTurn, EVERYTHING, isAppWide, withTimeout } from "./eventRules";
+import { frameScheduler, LiveBatch, type LiveScheduler } from "./liveBatch";
 import { memoryPrefs, type Prefs } from "./prefs";
 import {
   applyDurable,
   applyLive,
   applySnapshot,
   clearStreaming,
+  liveOf,
+  type LiveView,
   markResuming,
+  modelOf,
   newProjectView,
+  NO_LIVE,
   prependHistory,
+  type ProjectModel,
   type ProjectView,
   removeChatNow,
+  viewOf,
 } from "./project";
 import { SettingsCommands } from "./settingsCommands";
 
@@ -148,6 +155,12 @@ export interface AppStoreOptions {
   reopenLast?: boolean;
   historyWindow?: number;
   historyPage?: number;
+  /**
+   * When the live events collected so far (streamed text, usage) are shown:
+   * the next animation frame, or after `LIVE_FLUSH_MAX_MS` (default). Tests
+   * pass their own, or call `flushLive`.
+   */
+  liveScheduler?: LiveScheduler;
 }
 
 export interface AppError {
@@ -160,6 +173,11 @@ export interface AppState {
   transport: { kind: Transport["kind"]; target: string };
   projects: ProjectInfo[];
   project: ProjectView | null;
+  /**
+   * The open project's live part (`LiveView`), apart from `project`: it changes
+   * with every chunk, so a component reads only the session it shows.
+   */
+  live: LiveView;
   errors: AppError[];
   busy: { opening: boolean; sending: boolean; compacting: boolean };
   git: GitView | null;
@@ -178,6 +196,8 @@ export class AppStore extends SettingsCommands {
   private readonly listeners = new Set<() => void>();
   private readonly unsubscribe: (() => void)[] = [];
   private buffer: ApiEvent[] = [];
+  /** Live events of the open project, shown once per frame (see `liveBatch.ts`). */
+  private readonly liveBatch: LiveBatch;
   private syncing = false;
   private everOpen = false;
   private loadToken = 0;
@@ -217,12 +237,16 @@ export class AppStore extends SettingsCommands {
     this.reopenOnConnect = options.reopenLast ?? true;
     this.historyWindow = options.historyWindow ?? HISTORY_WINDOW;
     this.historyPage = options.historyPage ?? HISTORY_PAGE;
+    this.liveBatch = new LiveBatch(options.liveScheduler ?? frameScheduler, (events) =>
+      this.commit((v) => events.reduce(applyLive, v)),
+    );
     this.attachments = new Attachments(transport, this.drafts, (message) => this.pushError(message));
     this.state = {
       connection: { state: "connecting" },
       transport: { kind: transport.kind, target: transport.target },
       projects: [],
       project: null,
+      live: NO_LIVE,
       errors: [],
       busy: { opening: false, sending: false, compacting: false },
       git: null,
@@ -241,6 +265,7 @@ export class AppStore extends SettingsCommands {
 
   stop(): void {
     for (const un of this.unsubscribe.splice(0)) un();
+    this.liveBatch.clear();
     if (this.gitTimer) clearTimeout(this.gitTimer);
     this.gitTimer = null;
     if (this.activityTimer) clearTimeout(this.activityTimer);
@@ -250,6 +275,15 @@ export class AppStore extends SettingsCommands {
   }
 
   getState = (): AppState => this.state;
+
+  /**
+   * Shows the live events that arrived since the last frame now, instead of at
+   * the next one (the stored events do so by themselves: they come after what
+   * is waiting). For tests and for code that reads the streamed text.
+   */
+  flushLive(): void {
+    this.liveBatch.flush();
+  }
 
   /** A key for something of project `id` (a React key, ...) that is not the same one on another host. */
   scopedKey(id: string): string {
@@ -681,7 +715,8 @@ export class AppStore extends SettingsCommands {
     const keepGit = this.state.git?.project === info.id ? this.state.git : null;
     // The project left is judged by its flag from now on: keep what its view said.
     const left = this.state.project?.info.id === info.id ? null : this.state.project;
-    this.set({ project: newProjectView(info), projects: rememberRunning(this.state.projects, left), git: keepGit });
+    this.liveBatch.clear(); // for the view that is replaced
+    this.set({ ...splitModel(newProjectView(info), null, NO_LIVE), projects: rememberRunning(this.state.projects, left), git: keepGit });
     if (left) this.scheduleActivityRefresh();
     this.prefs.set(this.keyScope + LAST_PROJECT_KEY, info.path);
     void this.refreshGit();
@@ -767,7 +802,7 @@ export class AppStore extends SettingsCommands {
       // from the buffer after a catch-up); showing it again would duplicate text.
       if (ev.seq < view.cursor) return;
       if (ev.seq > view.cursor) this.requestCatchUp();
-      this.updateProject((v) => applyLive(v, ev));
+      this.liveBatch.push(ev);
       return;
     }
     if (ev.seq <= view.cursor) return; // already applied (from the log or a replay)
@@ -1015,7 +1050,7 @@ export class AppStore extends SettingsCommands {
    * changed (it was deleted, or the project had none and got one), the one
    * shown now is remembered and opened like a chat the user picked.
    */
-  private updateChats(f: (v: ProjectView) => ProjectView): void {
+  private updateChats(f: (v: ProjectModel) => ProjectModel): void {
     const before = this.state.project;
     this.updateProject(f);
     const after = this.state.project;
@@ -1030,11 +1065,24 @@ export class AppStore extends SettingsCommands {
     if (next && after.phase === "ready") void this.openChat(project, next);
   }
 
-  private updateProject(f: (v: ProjectView) => ProjectView): void {
+  /**
+   * Changes the open project's view. The live events that are waiting come
+   * first, so that they never swap places with what `f` does.
+   */
+  private updateProject(f: (v: ProjectModel) => ProjectModel): void {
+    this.liveBatch.flush();
+    this.commit(f);
+  }
+
+  /** `updateProject` without the flush (the flush itself, which `f` is part of). */
+  private commit(f: (v: ProjectModel) => ProjectModel): void {
     const view = this.state.project;
     if (!view) return;
-    const next = f(view);
-    if (next !== view) this.set({ project: next });
+    const model = modelOf(view, this.state.live);
+    const next = f(model);
+    if (next === model) return;
+    const patch = splitModel(next, view, this.state.live);
+    if (patch.project !== view || patch.live !== this.state.live) this.set(patch);
   }
 
   private set(patch: Partial<AppState>): void {
@@ -1045,6 +1093,11 @@ export class AppStore extends SettingsCommands {
   private notify(): void {
     for (const l of [...this.listeners]) l();
   }
+}
+
+/** `model` as the two parts of the state; a part that did not change is the object it was. */
+function splitModel(model: ProjectModel, view: ProjectView | null, live: LiveView): { project: ProjectView; live: LiveView } {
+  return { project: viewOf(model, view), live: liveOf(model, live) };
 }
 
 /** This client's UTC offset in minutes, east positive (what `get_usage_stats` cuts the days with). */

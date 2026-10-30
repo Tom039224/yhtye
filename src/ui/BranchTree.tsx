@@ -1,6 +1,6 @@
 import { type FormEvent, type KeyboardEvent, useId, useRef, useState } from "react";
 
-import type { BranchState, BranchStatuses, GitOverview } from "../api/generated";
+import type { BranchState, BranchStatuses, ChatInfo, GitOverview } from "../api/generated";
 import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
@@ -22,6 +22,7 @@ function selectStatuses(s: AppState): BranchStatuses | null {
 }
 
 const NONE: string[] = [];
+const NO_CHATS: ChatInfo[] = [];
 
 /** The branch order of the open project (`BranchOrderView`). */
 function selectOrder(s: AppState): string[] {
@@ -41,7 +42,10 @@ function selectAwaiting(s: AppState): string[] {
  */
 export function BranchTree() {
   const store = useStore();
-  const view = useAppState((s) => s.project);
+  // What the tree needs of the project, not the whole view: it renders again for these only.
+  const hasProject = useAppState((s) => s.project !== null);
+  const chats = useAppState((s) => s.project?.chats ?? NO_CHATS);
+  const ready = useAppState((s) => s.project?.phase === "ready" || s.project?.state != null);
   const overview = useAppState(selectOverview);
   const awaiting = useAppState(selectAwaiting);
   const order = useAppState(selectOrder);
@@ -51,8 +55,7 @@ export function BranchTree() {
   // is the main clone" (so its chats are visible in an empty project).
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const now = useNow(30_000);
-  const ready = view?.phase === "ready" || view?.state != null;
-  const tree = buildTree(view?.chats ?? [], overview, awaiting, order);
+  const tree = buildTree(chats, overview, awaiting, order);
   const worktreeKeys = tree.worktrees.map(nodeKey);
   const moveWorktrees = (next: string[]) => void store.reorderBranches(next);
   const sortable = useSortable(worktreeKeys, moveWorktrees);
@@ -72,15 +75,15 @@ export function BranchTree() {
           size={14}
           label="新しいブランチ"
           aria-expanded={formOpen}
-          disabled={!view || !ready}
+          disabled={!hasProject || !ready}
           onClick={() => setFormOpen((o) => !o)}
         />
       </div>
-      {formOpen && view ? <NewBranchForm overview={overview} onClose={() => setFormOpen(false)} /> : null}
-      {!view ? <p className="side-note">プロジェクトを開くと表示します。</p> : null}
-      {view && !overview && gitError ? <p className="side-note error-text">{gitError}</p> : null}
-      {view && empty ? <p className="side-note">作業ツリーはまだありません。</p> : null}
-      {view ? (
+      {formOpen && hasProject ? <NewBranchForm overview={overview} onClose={() => setFormOpen(false)} /> : null}
+      {!hasProject ? <p className="side-note">プロジェクトを開くと表示します。</p> : null}
+      {hasProject && !overview && gitError ? <p className="side-note error-text">{gitError}</p> : null}
+      {hasProject && empty ? <p className="side-note">作業ツリーはまだありません。</p> : null}
+      {hasProject ? (
         <ul className="side-list branch-tree" aria-label="branches">
           {tree.worktrees.map((w) => (
             <WorktreeRow

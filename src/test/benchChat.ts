@@ -246,7 +246,8 @@ export function benchApi(store: AppStore, core: FakeCore, transport: MemoryTrans
       return { emitted: last?.sent ?? 0, chars: last?.text.length ?? 0, elapsedMs: last ? performance.now() - last.startedAt : 0 };
     },
     settleStream(session) {
-      const text = store.getState().project?.streaming[session]?.message ?? "";
+      store.flushLive();
+      const text = store.getState().live.streaming[session]?.message ?? "";
       durable({ type: "agent_text", session, kind: "message", text: text || STREAM_TEXT.slice(0, 200) });
       if (session === orchestrator) durable({ type: "agent", session, event: { type: "turn_ended", data: { Ok: "end_turn" } } });
     },

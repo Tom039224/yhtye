@@ -31,6 +31,24 @@ import {
   type Transcripts,
 } from "./transcript";
 
+/**
+ * What changes while an agent talks, many times a second: the text being
+ * streamed and the context usage readings. Kept out of `ProjectView` so that a
+ * chunk of one session does not make the whole screen render again: each
+ * component subscribes to the session it shows (`AppState.live`).
+ */
+export interface LiveView {
+  /** Text streamed per session since its last stored `agent_text`. */
+  streaming: Streaming;
+  /**
+   * The latest context usage each session reported (live `usage_update`s,
+   * never stored: empty after a reload until the agent reports again).
+   */
+  contextUsage: Record<string, ContextUsage>;
+}
+
+export const NO_LIVE: LiveView = { streaming: {}, contextUsage: {} };
+
 export interface ProjectView {
   info: ProjectInfo;
   phase: "loading" | "ready" | "error";
@@ -64,17 +82,36 @@ export interface ProjectView {
   resuming: Record<string, true>;
   sessions: SessionRecord[];
   transcripts: Transcripts;
-  streaming: Streaming;
-  /**
-   * The latest context usage each session reported (live `usage_update`s,
-   * never stored: empty after a reload until the agent reports again).
-   */
-  contextUsage: Record<string, ContextUsage>;
   /** Sessions running a `/compact` turn the user asked for (folded from the log). */
   compacting: Record<string, true>;
 }
 
-export function newProjectView(info: ProjectInfo): ProjectView {
+/**
+ * A project's view together with its live part: what the functions below fold
+ * events into. The store keeps the two apart (`splitModel`) and hands each to
+ * the components on its own.
+ */
+export type ProjectModel = ProjectView & LiveView;
+
+/** The view of `model` without its live part: `prev` itself when no field of it changed. */
+export function viewOf(model: ProjectModel, prev: ProjectView | null): ProjectView {
+  const { streaming: _streaming, contextUsage: _contextUsage, ...view } = model;
+  const same = prev !== null && (Object.keys(view) as (keyof ProjectView)[]).every((k) => prev[k] === view[k]);
+  return same ? prev : view;
+}
+
+/** The live part of `model`: `prev` itself when neither field changed. */
+export function liveOf(model: ProjectModel, prev: LiveView): LiveView {
+  const { streaming, contextUsage } = model;
+  return streaming === prev.streaming && contextUsage === prev.contextUsage ? prev : { streaming, contextUsage };
+}
+
+/** The whole model of a view and its live part. */
+export function modelOf(view: ProjectView, live: LiveView): ProjectModel {
+  return { ...view, ...live };
+}
+
+export function newProjectView(info: ProjectInfo): ProjectModel {
   return {
     info,
     phase: "loading",
@@ -91,8 +128,7 @@ export function newProjectView(info: ProjectInfo): ProjectView {
     resuming: {},
     sessions: [],
     transcripts: {},
-    streaming: {},
-    contextUsage: {},
+    ...NO_LIVE,
     compacting: {},
   };
 }
@@ -104,11 +140,11 @@ export function newProjectView(info: ProjectInfo): ProjectView {
  * `remembered` if it exists, else the last used one.
  */
 export function applySnapshot(
-  view: ProjectView,
+  view: ProjectModel,
   snap: Snapshot,
   window = Number.MAX_SAFE_INTEGER,
   remembered: string | null = null,
-): ProjectView {
+): ProjectModel {
   const historyStart = Math.max(1, snap.seq - window + 1);
   return {
     ...view,
@@ -131,15 +167,15 @@ function startingChats(sessions: string[]): ProjectView["resuming"] {
 }
 
 /** Prepends stored events `[from, historyStart)` (oldest first) to the transcripts. */
-export function prependHistory(view: ProjectView, events: ApiEvent[], from: number): ProjectView {
+export function prependHistory(view: ProjectModel, events: ApiEvent[], from: number): ProjectModel {
   const page = events.filter((e) => e.seq >= from && e.seq < view.historyStart);
   const older = page.reduce<Transcripts>((t, e) => applyTranscriptEvent(t, e, view.state), {});
   return { ...view, transcripts: prependTranscripts(older, view.transcripts), historyStart: from };
 }
 
 /** Applies the next durable event (the caller guarantees `seq === cursor + 1`). */
-export function applyDurable(view: ProjectView, ev: ApiEvent): ProjectView {
-  const next: ProjectView = {
+export function applyDurable(view: ProjectModel, ev: ApiEvent): ProjectModel {
+  const next: ProjectModel = {
     ...view,
     cursor: ev.seq,
     transcripts: applyTranscriptEvent(view.transcripts, ev, view.state),
@@ -190,7 +226,7 @@ function settleResuming(resuming: ProjectView["resuming"], body: ApiEventBody): 
  * `open_chat`). A session that is already up (its event came before the answer)
  * is not "starting".
  */
-export function markResuming(view: ProjectView, chat: string, starting: boolean): ProjectView {
+export function markResuming(view: ProjectModel, chat: string, starting: boolean): ProjectModel {
   const on = starting && orchestratorSession(view, chat)?.status !== "live";
   if (Boolean(view.resuming[chat]) === on) return view;
   const { [chat]: _was, ...rest } = view.resuming;
@@ -222,7 +258,7 @@ function applyCompacting(compacting: ProjectView["compacting"], body: ApiEventBo
 }
 
 /** A new (not restored) session starts with an empty context: the old reading is stale. */
-function forgetUsage(usage: ProjectView["contextUsage"], body: ApiEventBody): ProjectView["contextUsage"] {
+function forgetUsage(usage: LiveView["contextUsage"], body: ApiEventBody): LiveView["contextUsage"] {
   return body.type === "session_started" && !body.resumed ? without(usage, body.session) : usage;
 }
 
@@ -232,7 +268,7 @@ function forgetUsage(usage: ProjectView["contextUsage"], body: ApiEventBody): Pr
  * on screen. `before` is the state that still has its groups and tasks.
  * Idempotent (the core's answer and its event both come).
  */
-export function forgetChat(view: ProjectView, before: State | null, chat: string): ProjectView {
+export function forgetChat(view: ProjectModel, before: State | null, chat: string): ProjectModel {
   const groups = new Set(before?.groups.filter((g) => g.chat === chat).map((g) => g.id));
   const tasks = new Set(before?.tasks.filter((t) => groups.has(t.group)).map((t) => t.id));
   const key = orchestratorKey(chat);
@@ -253,7 +289,7 @@ export function forgetChat(view: ProjectView, before: State | null, chat: string
 }
 
 /** A chat the core has deleted, before its event arrives: off the list and off the screen. */
-export function removeChatNow(view: ProjectView, chat: string): ProjectView {
+export function removeChatNow(view: ProjectModel, chat: string): ProjectModel {
   return forgetChat({ ...view, chats: view.chats.filter((c) => c.id !== chat) }, view.state, chat);
 }
 
@@ -270,7 +306,7 @@ function markUnread(view: ProjectView, event: DomainEvent): ProjectView["unread"
  * anything else live was not stored (the core falls back to live when saving
  * fails), so it is shown but not folded.
  */
-export function applyLive(view: ProjectView, ev: ApiEvent): ProjectView {
+export function applyLive(view: ProjectModel, ev: ApiEvent): ProjectModel {
   const streaming = applyChunk(view.streaming, ev);
   if (streaming) return streaming === view.streaming ? view : { ...view, streaming };
   const body = ev.body;
@@ -286,7 +322,7 @@ export function applyLive(view: ProjectView, ev: ApiEvent): ProjectView {
 }
 
 /** Drops partially streamed text (after a disconnect the chunks are lost). */
-export function clearStreaming(view: ProjectView): ProjectView {
+export function clearStreaming(view: ProjectModel): ProjectModel {
   return Object.keys(view.streaming).length === 0 ? view : { ...view, streaming: {} };
 }
 

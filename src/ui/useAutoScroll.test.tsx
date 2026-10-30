@@ -46,6 +46,31 @@ describe("useAutoScroll", () => {
     expect(el.scrollTop).toBe(100);
   });
 
+  it("does not scroll again when it renders with the same content (a new list of the same things)", () => {
+    const el = scroller(1000, 900);
+    const ref = { current: el };
+    const items = ["a"];
+    const streaming = { message: "x", thought: "" };
+    const { rerender } = renderHook(({ n }) => useAutoScroll(ref, [items, streaming], 1, n), { initialProps: { n: "chat" } });
+    el.dispatchEvent(new Event("scroll"));
+    // Something else moved the view (a layout read would reset it): same items, same text, rendered again.
+    el.scrollTop = 880;
+    rerender({ n: "chat" });
+    rerender({ n: "chat" });
+    expect(el.scrollTop).toBe(880);
+  });
+
+  it("follows the bottom when only the streamed text changes", () => {
+    const el = scroller(1000, 900);
+    const ref = { current: el };
+    const items = ["a"];
+    const { rerender } = renderHook(({ streaming }) => useAutoScroll(ref, [items, streaming], 1), { initialProps: { streaming: { message: "x" } } });
+    el.dispatchEvent(new Event("scroll"));
+    el.setHeight(1100);
+    rerender({ streaming: { message: "xy" } });
+    expect(el.scrollTop).toBe(1100);
+  });
+
   it("keeps the reader's place when older content is prepended", () => {
     const el = scroller(1000, 0);
     const ref = { current: el };
