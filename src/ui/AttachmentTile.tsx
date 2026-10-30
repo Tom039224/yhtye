@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 import type { AttachmentDelivery, AttachmentKind } from "../api/generated";
 import { Icon, IconButton, type IconName } from "./Icon";
@@ -99,7 +100,11 @@ function DeliveryBadge({ delivery, predicted }: { delivery: AttachmentDelivery; 
   );
 }
 
-/** An image shown large over the app; Esc, the × or a click outside it closes it. */
+/**
+ * An image shown large over the app; Esc, the × or a click outside it closes it. It is
+ * `position: fixed`, so it is rendered into `document.body`: inside a transcript item (layout
+ * containment) it would be placed in that item instead of over the window.
+ */
 export function AttachmentViewer({ name, src, onClose }: { name: string; src: string; onClose: () => void }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -114,7 +119,7 @@ export function AttachmentViewer({ name, src, onClose }: { name: string; src: st
       opener?.focus?.();
     };
   }, [onClose]);
-  return (
+  return createPortal(
     <div
       className="modal-backdrop attachment-viewer"
       role="dialog"
@@ -129,6 +134,7 @@ export function AttachmentViewer({ name, src, onClose }: { name: string; src: st
         <figcaption>{name}</figcaption>
       </figure>
       <IconButton ref={close} icon="x" className="attachment-viewer-close" label="閉じる" onClick={onClose} />
-    </div>
+    </div>,
+    document.body,
   );
 }

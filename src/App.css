@@ -263,6 +263,13 @@ button:disabled { cursor: default; }
 }
 .transcript { padding: 16px 16px 8px; display: flex; flex-direction: column; gap: 16px; }
 .agent-output .transcript { padding: 10px 14px; gap: 10px; }
+/* Every item is a layout root of its own, so a chunk that grows the item at the tail lays out that
+   item and not all the (thousands of) items above it: ~270 ms -> ~25 ms per chunk at 1000 round trips.
+   Layout and style only. Paint containment would clip what overflows an item, and content-visibility
+   makes the scroll height a guess (WebKit has no scroll anchoring: the view jumps by screens while
+   scrolling up through items that were never drawn). An item is also the containing block of what is
+   `position: fixed` inside it, so such a box (the attachment viewer) is rendered outside the transcript. */
+.transcript > * { contain: layout style; }
 .msg { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 10px; align-items: start; }
 .msg-mark {
   width: 22px; height: 22px; margin-top: 1px; border-radius: 6px; flex: none;
@@ -373,13 +380,27 @@ details.tool { display: block; }
 .composer {
   border: 1px solid var(--border-card); border-radius: 7px; background: var(--surface-inset);
   padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;
+  /* Its own layer, so a key or the caret repaints only the composer, not the transcript behind it (~15 ms per key at 1000 exchanges). `opacity`: `transform` would make this the containing block of fixed descendants. */
+  will-change: opacity;
 }
 /* The text and the buttons side by side, buttons at the bottom: the text is not pushed down by them. The margin centres one row on the 28px send button. */
 .composer-body { display: flex; align-items: flex-end; gap: 8px; }
-.composer textarea {
-  flex: 1; min-width: 0; resize: none; border: 0; outline: 0; padding: 0; margin: 3.6px 0; background: transparent;
-  font-size: 13px; line-height: 1.6; color: var(--text-body);
+/*
+ * The textarea has a width and a pixel height (useFieldHeight writes it when the text needs another height), so an edit
+ * inside it lays out nothing outside it. A textarea whose size depends on its content (the old `height: auto` fit on every key)
+ * made WebKit relayout the whole conversation, ~0.65 s per key in a 1000-exchange chat. The mirror is a hidden copy of the
+ * text that says how tall the textarea must be (`height: 0`, out of flow: measuring it lays out nothing else). The margin
+ * centres one row on the 28px send button.
+ */
+.composer-field { position: relative; flex: 1; min-width: 0; margin: 3.6px 0; font-size: 13px; line-height: 1.6; }
+.composer-field > textarea, .composer-field-mirror {
+  display: block; width: 100%; margin: 0; padding: 0; border: 0; white-space: pre-wrap; overflow-wrap: break-word;
 }
+.composer textarea {
+  resize: none; outline: 0; background: transparent; color: var(--text-body);
+  max-height: calc(var(--composer-max-rows) * 1.6em);
+}
+.composer-field-mirror { position: absolute; top: 0; left: 0; height: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
 .composer-actions { flex: none; display: flex; align-items: center; gap: 6px; }
 .composer textarea::placeholder { color: var(--text-dim); }
 .composer-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
