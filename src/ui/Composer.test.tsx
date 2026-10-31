@@ -3,7 +3,7 @@
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Composer } from "./Composer";
 
@@ -52,22 +52,70 @@ describe("Composer", () => {
     setup();
     const textarea = screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
     const send = screen.getByRole("button", { name: "送信" });
-    const body = textarea.parentElement;
+    const body = textarea.closest(".composer-body");
     expect(body).toHaveClass("composer-body");
     expect(body).toContainElement(send);
     // Nothing (no chips, no hint) needs a second row, so the composer is just the one line.
     expect(document.querySelector(".composer-row")).toBeNull();
   });
 
-  it("starts at one row and grows with newlines up to eleven rows", async () => {
-    const { user } = setup();
-    const textarea = screen.getByRole("textbox", { name: "オーケストレータへのメッセージ" });
-    expect(textarea).toHaveAttribute("rows", "1");
-    await user.type(textarea, "a{Shift>}{Enter}{/Shift}b{Shift>}{Enter}{/Shift}c");
-    expect(textarea).toHaveAttribute("rows", "3");
-    await user.clear(textarea);
-    await user.type(textarea, "x".concat("{Shift>}{Enter}{/Shift}x".repeat(14)));
-    expect(textarea).toHaveAttribute("rows", "11");
+  describe("height", () => {
+    const BOX = { name: "オーケストレータへのメッセージ" };
+    const ROW = 21;
+    const lines = (el: HTMLElement) => (el.textContent ?? "").split("\n").length;
+    const scrollHeight = vi.spyOn(Element.prototype, "scrollHeight", "get");
+
+    // jsdom lays nothing out: the mirror is as tall as its lines, and the textarea must never be measured.
+    function mockLayout() {
+      scrollHeight.mockImplementation(function (this: HTMLElement) {
+        if (this instanceof HTMLTextAreaElement) throw new Error("the textarea itself must not be measured");
+        return this.classList.contains("composer-field-mirror") ? lines(this) * ROW : 0;
+      });
+    }
+    afterEach(() => scrollHeight.mockReset());
+
+    it("starts at one row and follows the text, newlines or wrapped lines alike", async () => {
+      mockLayout();
+      const { user } = setup();
+      const textarea = screen.getByRole("textbox", BOX);
+      expect(textarea.style.height).toBe(`${ROW}px`);
+      await user.type(textarea, "a{Shift>}{Enter}{/Shift}b{Shift>}{Enter}{/Shift}c");
+      expect(textarea.style.height).toBe(`${3 * ROW}px`);
+      await user.type(textarea, "{Backspace}{Backspace}");
+      expect(textarea.style.height).toBe(`${2 * ROW}px`);
+    });
+
+    it("gives a trailing newline its row (the mirror has a space on it)", async () => {
+      mockLayout();
+      const { user } = setup();
+      await user.type(screen.getByRole("textbox", BOX), "a{Shift>}{Enter}{/Shift}");
+      expect(document.querySelector(".composer-field-mirror")?.textContent).toBe("a\n ");
+    });
+
+    it("goes back to one row once the message is sent", async () => {
+      mockLayout();
+      const { user } = setup();
+      const textarea = screen.getByRole("textbox", BOX);
+      await user.type(textarea, "a{Shift>}{Enter}{/Shift}b{Shift>}{Enter}{/Shift}c");
+      expect(textarea.style.height).toBe(`${3 * ROW}px`);
+      await user.click(screen.getByRole("button", { name: "送信" }));
+      expect(textarea).toHaveValue("");
+      expect(textarea.style.height).toBe(`${ROW}px`);
+    });
+
+    it("keeps the mirror out of the accessibility tree", () => {
+      setup();
+      const mirror = document.querySelector(".composer-field-mirror");
+      expect(mirror).toHaveAttribute("aria-hidden", "true");
+      expect(screen.queryAllByRole("textbox", BOX)).toHaveLength(1);
+    });
+
+    it("leaves the height alone while nothing is laid out", async () => {
+      const { user } = setup();
+      const textarea = screen.getByRole("textbox", BOX);
+      await user.type(textarea, "a{Shift>}{Enter}{/Shift}b");
+      expect(textarea.style.height).toBe("");
+    });
   });
 
   it("puts mention chips on their own row below the text and removes one on click", async () => {
