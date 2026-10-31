@@ -178,8 +178,16 @@ export interface BenchApi {
    * Streams Markdown into `session` as live chunks, `intervalMs` after the last one was handled
    * (a busy page gets fewer, not a backlog), until `stopStream` or `maxMs`. Resolves when over.
    */
-  startStream(session: string, intervalMs: number, maxMs: number): void;
+  startStream(session: string, intervalMs: number, maxMs: number, prefillChars?: number): void;
   stopStream(): { emitted: number; chars: number; elapsedMs: number };
+  /** Makes the streamed reply of `session` `chars` long at once, as a reply that has been going for a while is. */
+  prefillStream(session: string, chars: number): Promise<void>;
+  /**
+   * With a reply of `chars` characters on screen, streams `samples` chunks of `chunkChars`, one per frame,
+   * and times each: the update (`renderMs`: the store's flush and React's render of it) and the rest of
+   * its frame (`frameMs`: from the frame's first callback to the task after it: style, layout, paint).
+   */
+  streamCost(session: string, chunkChars: number, samples: number): Promise<{ renderMs: number[]; frameMs: number[] }>;
   /** Ends what was streamed to `session` as the core does: the whole text, durable. */
   settleStream(session: string): void;
   /** One durable event (or the pair of events a single occurrence is) of the shown chat. */
@@ -189,6 +197,16 @@ export interface BenchApi {
 export type InjectKind = "long-answer" | "help" | "task-result";
 
 const STREAM_TEXT = markdownOf(7, 12_000);
+
+/** The next animation frame: when its callbacks started, and when the task after the frame (its style, layout and paint done) ran. */
+function nextFrame(): Promise<{ startedAt: number; doneAt: number }> {
+  return new Promise((resolve) =>
+    requestAnimationFrame(() => {
+      const startedAt = performance.now();
+      setTimeout(() => resolve({ startedAt, doneAt: performance.now() }), 0);
+    }),
+  );
+}
 const CHUNK_CHARS = 9;
 
 /** Builds the page-side API over the store and the in-memory core of the harness. */
@@ -223,14 +241,15 @@ export function benchApi(store: AppStore, core: FakeCore, transport: MemoryTrans
       }
       return pages;
     },
-    startStream(session, intervalMs, maxMs) {
+    startStream(session, intervalMs, maxMs, prefillChars = 0) {
       stopTimer();
       const state = { session, sent: 0, startedAt: performance.now(), timer: null as ReturnType<typeof setTimeout> | null, text: "" };
       stream = state;
+      if (prefillChars > 0) transport.emit(chunk(cursor(), session, STREAM_TEXT.slice(0, prefillChars)));
       const next = () => {
         if (stream !== state) return;
         if (performance.now() - state.startedAt >= maxMs) return;
-        const from = (state.sent * CHUNK_CHARS) % STREAM_TEXT.length;
+        const from = (prefillChars + state.sent * CHUNK_CHARS) % STREAM_TEXT.length;
         const piece = STREAM_TEXT.slice(from, from + CHUNK_CHARS);
         state.text += piece;
         state.sent++;
@@ -244,6 +263,28 @@ export function benchApi(store: AppStore, core: FakeCore, transport: MemoryTrans
       const last = stream;
       stream = null;
       return { emitted: last?.sent ?? 0, chars: last?.text.length ?? 0, elapsedMs: last ? performance.now() - last.startedAt : 0 };
+    },
+    async prefillStream(session, chars) {
+      transport.emit(chunk(cursor(), session, STREAM_TEXT.slice(0, chars)));
+      store.flushLive();
+      await nextFrame();
+    },
+    async streamCost(session, chunkChars, samples) {
+      const start = store.getState().live.streaming[session]?.message.length ?? 0;
+      const renderMs: number[] = [];
+      const frameMs: number[] = [];
+      for (let i = 0; i < samples; i++) {
+        const from = (start + i * chunkChars) % STREAM_TEXT.length;
+        const t0 = performance.now();
+        transport.emit(chunk(cursor(), session, STREAM_TEXT.slice(from, from + chunkChars)));
+        store.flushLive();
+        // React renders an external store's update in a microtask queued by the flush.
+        await Promise.resolve();
+        renderMs.push(performance.now() - t0);
+        const frame = await nextFrame();
+        frameMs.push(frame.doneAt - frame.startedAt);
+      }
+      return { renderMs, frameMs };
     },
     settleStream(session) {
       store.flushLive();
