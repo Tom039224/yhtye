@@ -4,7 +4,7 @@ import type { State } from "../api/generated";
 import type { TranscriptItem } from "../store/transcript";
 import { Icon, type IconName } from "./Icon";
 import { formatTime, taskTone } from "./labels";
-import { Markdown } from "./Markdown";
+import { Markdown, StreamingMarkdown } from "./Markdown";
 import { type LoadAttachment, SentAttachments } from "./SentAttachments";
 import { ToolStatus, toneIcon } from "./statusIcons";
 
@@ -71,7 +71,7 @@ function Streamed({ streaming, agentLabel }: { streaming: Props["streaming"]; ag
         <div className="msg msg-agent" data-testid="streaming">
           <Mark icon="bot" label={agentLabel} streaming />
           <div className="msg-body msg-md">
-            <Markdown text={streaming.message} />
+            <StreamingMarkdown text={streaming.message} />
           </div>
         </div>
       ) : null}

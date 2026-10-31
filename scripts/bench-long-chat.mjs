@@ -14,7 +14,9 @@
 //   --browsers webkit[,chromium]   (chromium: YHTYE_CHROMIUM=/path or a system one, as in check-layout)
 //   --mode prod|dev          production build of the harness (default; what the app ships) or Vite dev
 //   --anim on|off|both       idle is always measured both ways; the rest with the animations running (default), stopped, or both (twice the time)
-//   --sections idle,input,stream,commit   (stream = stream-shown + stream-other, which can be run apart)
+//   --sections idle,input,stream,commit,stream-cost   (stream = stream-shown + stream-other, which can be run apart)
+//   --prefill 6000           the streamed reply (stream-shown / stream-other) starts this long, as a reply that has gone on for a while
+//   --lengths 1000,6000,12000  --samples 60  --piece 12   stream-cost: reply lengths, chunks timed per length, characters per chunk
 //   --chars 30  --repeats 50   keys typed / arrow keydowns per burst (fewer when one key takes seconds: n = 3000)
 //   --idle-ms 5000  --stream-ms 15000  --reps 3  --out bench-results  --url http://host:port (a running dev server)
 
@@ -46,7 +48,7 @@ async function settleStyle(page) {
 }
 
 function parseArgs(argv) {
-  const opts = { n: [160, 1000, 3000], browsers: ["webkit"], mode: "prod", anim: "on", sections: ["idle", "input", "stream", "commit"], idleMs: 5000, streamMs: 15000, reps: 3, out: path.join(root, "bench-results"), url: null };
+  const opts = { n: [160, 1000, 3000], browsers: ["webkit"], mode: "prod", anim: "on", sections: ["idle", "input", "stream", "commit", "stream-cost"], prefill: 0, lengths: [1000, 6000, 12000], samples: 60, piece: 12, idleMs: 5000, streamMs: 15000, reps: 3, out: path.join(root, "bench-results"), url: null };
   const list = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
   for (let i = 0; i < argv.length; i++) {
     const [flag, inline] = argv[i].split("=");
@@ -57,6 +59,10 @@ function parseArgs(argv) {
       case "--mode": opts.mode = value(); break;
       case "--anim": opts.anim = value(); break;
       case "--sections": opts.sections = list(value()); break;
+      case "--prefill": opts.prefill = Number(value()); break;
+      case "--lengths": opts.lengths = list(value()).map(Number); break;
+      case "--samples": opts.samples = Number(value()); break;
+      case "--piece": opts.piece = Number(value()); break;
       case "--idle-ms": opts.idleMs = Number(value()); break;
       case "--stream-ms": opts.streamMs = Number(value()); break;
       case "--reps": opts.reps = Number(value()); break;
@@ -198,6 +204,18 @@ function installBench() {
     window.addEventListener("keyup", (e) => B.keyups.push({ key: e.key, handledAt: epoch(), caret: field()?.selectionStart ?? null }), true);
   };
   B.keyState = () => ({ downs: B.keys.length, done: B.keys.filter((k) => k.after).length, ups: B.keyups.length });
+  // A streamed reply being stored (the core's `agent_text` for it): the same two numbers.
+  B.measureSettle = async (session) => {
+    await new Promise((r) => setTimeout(r, 400));
+    const from = B.blocks.length;
+    const t0 = performance.now();
+    window.__yhtye.bench.settleStream(session);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 0))));
+    const paintMs = performance.now() - t0;
+    await new Promise((r) => setTimeout(r, 600));
+    const gaps = B.blocks.slice(from).map((b) => b[1]);
+    return { paintMs, maxBlockMs: gaps.length ? Math.max(...gaps) : 0 };
+  };
   // One durable event: the longest block it causes, and how long until the frame after it.
   B.measureInject = async (kind) => {
     await new Promise((r) => setTimeout(r, 400));
@@ -349,7 +367,7 @@ async function measureWindow(page, proc, ms) {
 }
 
 async function measureStream(page, proc, offset, session, o) {
-  await page.evaluate(([s, max]) => window.__yhtye.bench.startStream(s, 20, max), [session, o.streamMs + 60_000]);
+  await page.evaluate(([s, max, prefill]) => window.__yhtye.bench.startStream(s, 20, max, prefill), [session, o.streamMs + 60_000, o.prefill]);
   await sleep(500);
   await page.evaluate(() => window.__bench.begin());
   const a = cpuSample(proc);
@@ -374,6 +392,33 @@ async function measureCommits(page, reps) {
   return out;
 }
 
+/**
+ * What one chunk costs the main thread when the streamed reply is already `length` characters long
+ * (the update's render and the rest of its frame, ms per chunk), and what storing that reply costs.
+ */
+async function measureStreamCost(page, proc, session, o) {
+  const rows = [];
+  for (const length of o.lengths) {
+    await page.evaluate(([s, chars]) => window.__yhtye.bench.prefillStream(s, chars), [session, length]);
+    await sleep(500);
+    const a = cpuSample(proc);
+    const { renderMs, frameMs } = await page.evaluate(([s, piece, samples]) => window.__yhtye.bench.streamCost(s, piece, samples), [session, o.piece, o.samples]);
+    const b = cpuSample(proc);
+    // The CPU time of the page's main thread per chunk (10 ms ticks over all the chunks; includes what an idle page does).
+    const cpuMsPerChunk = a && b && a.main !== null && b.main !== null ? round(((b.main - a.main) * (1000 / CLK_TCK)) / o.samples) : null;
+    const total = renderMs.map((r, i) => r + frameMs[i]);
+    // Storing the reply, `reps` times (the first one ends the reply that was just timed; the others stream it again to the same length).
+    const settles = [await page.evaluate((s) => window.__bench.measureSettle(s), session)];
+    for (let i = 1; i < o.reps; i++) {
+      await page.evaluate(([s, chars]) => window.__yhtye.bench.prefillStream(s, chars), [session, length]);
+      settles.push(await page.evaluate((s) => window.__bench.measureSettle(s), session));
+    }
+    const settle = { maxBlockMs: round(percentile(settles.map((x) => x.maxBlockMs), 50)), paintMs: round(percentile(settles.map((x) => x.paintMs), 50)), runs: settles.map((x) => round(x.maxBlockMs)) };
+    rows.push({ length, cpuMsPerChunk, renderMs: spread(renderMs), frameMs: spread(frameMs), chunkMs: spread(total), settle });
+  }
+  return rows;
+}
+
 /** All the measurements for one conversation length, with the animations running (`on`) or stopped (`off`). */
 async function measureLength(page, proc, offset, o, anim) {
   const result = {};
@@ -390,6 +435,9 @@ async function measureLength(page, proc, offset, o, anim) {
     result.streamOther = { load1: round(load(), 2), ...(await measureStream(page, proc, offset, await page.evaluate(() => window.__yhtye.bench.otherSession), o)) };
   }
   if (o.sections.includes("commit")) result.commit = { load1: round(load(), 2), ...(await measureCommits(page, o.reps)) };
+  if (o.sections.includes("stream-cost")) {
+    result.streamCost = { load1: round(load(), 2), rows: await measureStreamCost(page, proc, await page.evaluate(() => window.__yhtye.bench.orchestrator), o) };
+  }
   if (style) await style.evaluate((el) => el.remove());
   return result;
 }
@@ -475,6 +523,11 @@ function printTables(all) {
       ...(res.streamVisible ? [inputRow(r, anim, "stream: shown chat", res.streamVisible.input, [res.streamVisible.chunks.perSecond, res.streamVisible.window.mainPct, res.streamVisible.load1])] : []),
       ...(res.streamOther ? [inputRow(r, anim, "stream: other task", res.streamOther.input, [res.streamOther.chunks.perSecond, res.streamOther.window.mainPct, res.streamOther.load1])] : []),
     ]),
+  );
+  table(
+    "STREAM COST  one chunk of the streamed reply (ms, p50/p95/max over the chunks): update = flush + React render; frame = the rest of its frame (waits for the display, ~16.7 at 60 Hz); cpu = main-thread CPU ms per chunk; settle = the reply being stored (median of --reps): longest block / ms until the frame after",
+    ["browser", "n", "anim", "reply chars", "update", "frame", "cpu ms/chunk", "settle", "load"],
+    each((r, anim, res) => (res.streamCost ? res.streamCost.rows.map((x) => [r.browser, r.n, anim, x.length, triple(x.renderMs), triple(x.frameMs), x.cpuMsPerChunk, `${fmt(x.settle.maxBlockMs)} / ${fmt(x.settle.paintMs)}`, res.streamCost.load1]) : [])),
   );
   table(
     "COMMIT  longest block of the main thread (ms, median of the repetitions) / ms until the frame after, for one durable event",

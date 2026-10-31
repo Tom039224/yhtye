@@ -247,6 +247,8 @@ pnpm bench:long-chat --n 160,1000 --browsers webkit,chromium
 pnpm bench:long-chat --n 3000 --sections idle,commit    # 一部だけ。他に input, stream (= stream-shown + stream-other)
 pnpm bench:long-chat --anim both                        # 入力・ストリーム・確定も、アニメーションを止めた状態でも測る (所要時間は倍)
 pnpm bench:long-chat --n 3000 --sections stream-shown --chars 10 --repeats 30   # 1 キー数秒かかる n では打鍵数を減らす
+pnpm bench:long-chat --n 160,1000 --sections stream-shown --prefill 12000        # ストリーミングする回答が最初から 12000 文字ある状態 (長い回答の途中) で測る
+pnpm bench:long-chat --n 160 --sections stream-cost --lengths 1000,6000,12000    # 回答の長さ別に、1 チャンクの描画時間と、回答が確定する (保存される) ときのブロックを測る
 ```
 
 他の引数: `--idle-ms`、`--stream-ms`、`--reps` (確定イベントの繰り返し)、`--out`、`--url` (起動中の dev サーバ)。
@@ -272,6 +274,7 @@ Ubuntu の `libicu74`・`libflite1` の deb を展開して `.so` を `~/.cache/
 | | `runaway` | 最後の keyup を送ってから、カーソルが動き終わるまでの ms (暴走時間) |
 | | `chunks/s`、`stream cpu` | ストリーミング中 (`message_chunk` を 20ms 間隔で、表示中のチャット / 別タスクのセッションに注入。描画が追いつかないと間隔が延びる) の注入できた数と CPU |
 | | `control` | 同じキー送信を素の textarea に行った値。この計測方法の下限 (`ms/char` ≒ 20 は待ちなし) |
+| STREAM COST | `update`、`frame`、`cpu ms/chunk`、`settle` | 回答が `--lengths` の長さ (既定 1000 / 6000 / 12000 文字) になったところで、12 文字 (`--piece`) のチャンクを 1 フレームに 1 つ、`--samples` 個流して測る。`update` = ストアの反映と React の描画 (ms、p50/p95/max)、`frame` = そのフレームの残り (表示待ちを含むので 60Hz で ~16.7 が下限)、`cpu ms/chunk` = メインスレッドの CPU 時間 (ページが何もしなくても使う分を含む)。`settle` = 回答が保存されて通常のアイテムに置き換わるときの、メインスレッドの最長ブロック ms / 次のフレームまでの ms (`--reps` 回の中央値)。Markdown の全文再解析が回答の長さに比例して効くかを見る |
 | COMMIT | `long answer` / `help` / `task result` | 確定イベント 1 件 (長い Markdown の回答 / `help_raised` + 通知 / `step_completed` + 通知) を注入してから描画が終わるまでの、メインスレッドの最長ブロック ms / 次のフレームまでの ms (繰り返しの中央値) |
 
 マシンが混んでいると全部の数字が悪くなるので、表の `load` 列 (計測時の loadavg) と JSON の `meta.loadavgStart/End` を見ること。
