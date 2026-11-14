@@ -12,6 +12,8 @@ pub const MAX_SECRET_VALUE_BYTES: usize = 64 * 1024;
 const LOADER_NAMES: &[&str] = &[
     "PATH",
     "HOME",
+    "USERPROFILE",
+    "PATHEXT",
     "NODE_OPTIONS",
     "PYTHONPATH",
     "PYTHONSTARTUP",

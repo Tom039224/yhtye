@@ -3,6 +3,9 @@
 //! configure the launcher, e.g. `npx` reading its `.npmrc`), and without the
 //! dev bridge's token or the harness's `env_remove`. One test per binary: it changes the process environment.
 
+// Unix only: `sh` stands in for the agent.
+#![cfg(unix)]
+
 use std::time::Duration;
 
 use tokio::sync::mpsc;

@@ -7,6 +7,7 @@
 //! - [`order`]: the recently-used order of projects and branches
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
+//! - [`home`]: the user's home directory, per platform, from an injected environment
 //! - [`api`]: the UI-facing event stream and snapshot
 //! - [`prompts`]: role system prompts
 //! - [`store`]: SQLite persistence (event log + current-state tables)
@@ -27,6 +28,7 @@ mod clock;
 pub mod directory;
 pub mod domain;
 pub mod git;
+pub mod home;
 pub mod mcp;
 pub mod order;
 pub mod prompts;

@@ -5,6 +5,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::home::home_dir_in;
+
 /// The log locations. A location that does not exist is not an error: that
 /// harness just contributes nothing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,7 +37,7 @@ impl StatsSources {
 
     pub(super) fn from_vars(env: &dyn Fn(&str) -> Option<OsString>) -> Self {
         let non_empty = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let home = non_empty("HOME").or_else(|| non_empty("USERPROFILE"));
+        let home = home_dir_in(env);
         let under_home = |rel: &str| home.as_ref().map(|h| h.join(rel));
 
         let claude_projects = non_empty("CLAUDE_PROJECTS_DIR")

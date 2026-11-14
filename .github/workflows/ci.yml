@@ -133,3 +133,52 @@ jobs:
       # Includes the generated-types check (api::typegen); #[ignore]d tests
       # that need real agents stay excluded.
       - run: cargo test --workspace
+
+  # Windows (x86_64 on windows-latest, aarch64 on windows-11-arm): the Unix-only parts (headless mode,
+  # process groups, the orphan sweep) are compiled out, so this builds the desktop app's Rust side and
+  # runs the tests that do not need a Unix. Steps use bash (Git Bash on the runner) so the commands match
+  # the Linux job. No fmt/clippy here: Linux already checks them, and the Windows-only code is small.
+  rust-windows:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      # tauri::generate_context! needs frontendDist (../dist) to exist.
+      - run: mkdir -p dist
+      - run: cargo build --workspace --all-targets
+      # Includes the generated-types check (api::typegen); #[ignore]d tests that need real agents stay excluded.
+      - run: cargo test --workspace
+
+  # The same checks as `frontend` on Windows (paths, line endings and the like).
+  frontend-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test

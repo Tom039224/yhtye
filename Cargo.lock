@@ -6780,6 +6780,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "yhtye-core",
 ]
 
@@ -6814,6 +6815,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

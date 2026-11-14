@@ -35,7 +35,8 @@ pub fn fake_agent_bin() -> PathBuf {
     assert!(status.success(), "building yhtye-fake-agent failed");
     std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root().join("target"), PathBuf::from)
-        .join("debug/yhtye-fake-agent")
+        .join("debug")
+        .join(format!("yhtye-fake-agent{}", std::env::consts::EXE_SUFFIX))
 }
 
 pub fn fake_harness(bin: &Path, script: Value) -> HarnessConfig {
