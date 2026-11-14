@@ -31,14 +31,17 @@ use yhtye_core::runtime::{Core, CoreConfig};
 use cli::Options;
 use data_dir::DataDir;
 
-/// Without the Unix socket and the signals of Unix there is no headless mode.
+/// Without the Unix socket and the signals of Unix there is no headless mode
+/// (Windows has neither). The desktop app, including its connection to a Yhtye
+/// on another host, is not affected.
 #[cfg(not(unix))]
 pub mod headless {
     use std::process::ExitCode;
 
     use crate::cli::{Options, RemoteAction};
 
-    const UNSUPPORTED: &str = "Yhtye: headless mode is only supported on Unix";
+    const UNSUPPORTED: &str = "Yhtye: --headless and `yhtye remote` are not supported on Windows; \
+        run them on Linux or macOS (the desktop app can connect to such a Yhtye).";
 
     pub fn run(_: Options) -> ExitCode {
         eprintln!("{UNSUPPORTED}");

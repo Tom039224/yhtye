@@ -46,7 +46,9 @@ pub fn fake_agent_crate_bin(name: &str) -> PathBuf {
     });
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root().join("target"), PathBuf::from);
-    target.join("debug").join(name)
+    target
+        .join("debug")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// Path of the fake agent binary.

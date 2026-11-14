@@ -39,8 +39,14 @@ dirs = "6"
 qrcode = { version = "0.14", default-features = false }
 # The control socket's fallback path hash (`yhtye-<hash>.sock`).
 sha2.workspace = true
-# The control socket accepts only this user (and root).
+
+# The control socket of the headless mode (`headless`, Unix only) accepts only this user (and root).
+[target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["net"] }
+
+# `main` attaches the parent's console to a release build for the command line mode.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 
 # A second `yhtye` (a click on a `yhtye://pair?…` link starts one) hands its arguments to the running app
 # instead of dying on the data directory lock; `deep-link` passes those links on to the deep-link plugin.
