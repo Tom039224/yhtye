@@ -289,6 +289,13 @@ impl AgentHandle {
      まだ生きている (別インスタンス・終了処理中) 記録は触らない。判定は純関数 `orphan::judge`。
   グループを抜けて `setsid` した孫はグループ kill では落ちない (従来どおり)。Linux 以外では 1〜3 は
   何もしない (従来どおり stdin の EOF に頼る)。
+- **Windows** (`acp/process/windows.rs`): エージェントは `CREATE_SUSPENDED` で起動し、
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 付きの Job Object に入れてから再開する (入れる前に子孫が増えない)。
+  Job のハンドルは Yhtye だけが持ち、Yhtye がどう死んでも OS がハンドルを閉じて子孫ごと終了する
+  (上の 1〜3 に当たるもので、起動時の孤児掃除も要らない)。停止は stdin の EOF → 猶予 →
+  `TerminateJobObject` (SIGTERM 相当の穏当な段は無い。`CTRL_BREAK_EVENT` は同じコンソールを共有する
+  プロセスにしか届かず、エージェントは `CREATE_NO_WINDOW` で自前の隠しコンソールを持つため)。
+  クラッシュ (`NTSTATUS` エラー値) の終了コードは `Exited.signal` に載せる。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
   `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
   グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
@@ -968,7 +975,7 @@ Stage 4 の構成 (`src/`):
   `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `wait_file(path)` (そのファイルができるまで
   ターンを止める。テストが進めるタイミングを決める。`sleep` でテストの操作を待たない) /
   `end(stop_reason)` / `crash(code)` /
-  `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
+  `spawn_child` (同じプロセスツリーに、自分自身を `--sleep` で起動した 10 分眠る子を起こす。後始末の検証用) /
   `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
   (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /
   `mcp_call{tool, args}` (Stage 2: rmcp クライアントで `session/new` に渡された最初の HTTP

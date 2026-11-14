@@ -1,7 +1,8 @@
 //! Agent subprocess management: launch in its own process group, forward stderr,
 //! and terminate the whole group so wrapper launchers (`npx` → `node`) leave no orphans.
 //! If Yhtye itself dies first, `parent_death` ends the group and `orphan` sweeps
-//! what is left at the next start (Unix; see `unix.rs`. `windows.rs` is provisional).
+//! what is left at the next start (Unix; see `unix.rs`). On Windows the tree is a
+//! Job Object that dies with Yhtye's handle to it (see `windows.rs`).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -145,7 +146,8 @@ pub(crate) fn spawn_process(
             cwd.display()
         ))
     })?;
-    let group = GroupKillGuard::new(child.id(), &harness.command);
+    let group = GroupKillGuard::new(&child, &harness.command)
+        .map_err(|e| spawn_error(format!("could not set up the agent's process tree: {e}")))?;
     let (Some(stdin), Some(stdout), Some(stderr)) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())
     else {

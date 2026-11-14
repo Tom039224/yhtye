@@ -34,8 +34,9 @@ pub use permission::{choose_permission, outcome_for};
 pub(crate) use process::PRIVATE_ENV;
 pub use steering::SteerOutcome;
 
-/// Agent groups are not recorded on disk where there are no process groups
-/// (Windows), so there is nothing to sweep at start.
+/// Nothing to sweep at start on Windows: an agent's tree is a Job Object that the
+/// OS ends when Yhtye's handle to it closes, however Yhtye dies, so no agent
+/// survives it and there is no on-disk record of groups either.
 #[cfg(not(unix))]
 pub(crate) async fn start_process_registry(_data_dir: &std::path::Path) {}
 

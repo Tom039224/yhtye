@@ -119,7 +119,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](design/)。
 - 残課題 / Stage 2 への申し送り:
   - `session/load` の履歴再生は `Ready` より前の `Output` として届く (実機ではユーザーと
     エージェント両方のチャンク)。runtime / UI はこれを「履歴」として扱う必要がある。
-  - プロセス管理は Unix 専用 (`process_group`, killpg)。Windows 対応は未着手。
+  - プロセス管理は Unix は `process_group` + killpg、Windows は Job Object (`KILL_ON_JOB_CLOSE`、`acp/process/windows.rs`)。
   - 偽エージェントの `mcp_call` は Stage 2 で追加する。`fake_agent_bin()` はテスト中に
     `cargo build -p yhtye-fake-agent` を呼ぶ (Stage 2 以降の結合テストも同じヘルパを使う)。
   - `yhtye-fake-agent` の `serve()` はビルダー連鎖で約 90 行 (関数 50 行目安を超過)。

@@ -37,6 +37,16 @@ reqwest = { workspace = true, features = ["rustls"] }
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
 
+# Job Objects: the agent's process tree on Windows (`crate::acp`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 # The OS credential store of each platform (`crate::secrets`).
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] }
@@ -46,6 +56,9 @@ keyring = { workspace = true, features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }

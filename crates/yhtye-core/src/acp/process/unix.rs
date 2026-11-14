@@ -3,11 +3,12 @@
 //! `node`) leave no orphans. If Yhtye itself dies first, `parent_death` ends the
 //! group and `orphan` sweeps what is left at the next start.
 
+use std::io;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 
 use rustix::process::{Pid, Signal};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 use crate::acp::orphan::{self, Registration};
 use crate::acp::parent_death::{self, Watchdog};
@@ -32,17 +33,19 @@ pub(crate) struct GroupKillGuard {
 }
 
 impl GroupKillGuard {
-    /// Guards the group led by the freshly spawned agent `pid` (`None` when the
-    /// process is already gone).
-    pub(crate) fn new(pid: Option<u32>, command: &str) -> Self {
-        let pgid = pid
+    /// Guards the group led by the freshly spawned agent `child` (nothing to guard
+    /// when the process is already gone). Never fails; the `Result` is the shape
+    /// the Windows side needs.
+    pub(crate) fn new(child: &Child, command: &str) -> io::Result<Self> {
+        let pgid = child
+            .id()
             .and_then(|id| i32::try_from(id).ok())
             .and_then(Pid::from_raw);
-        Self {
+        Ok(Self {
             pgid,
             registration: pgid.and_then(|pgid| orphan::register(pgid, command)),
             watchdog: pgid.and_then(Watchdog::start),
-        }
+        })
     }
 
     fn signal(&self, signal: Signal) {

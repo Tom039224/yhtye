@@ -763,8 +763,13 @@ async fn run_action(
             std::process::exit(code);
         }
         Action::SpawnChild => {
-            let child = std::process::Command::new("sleep")
-                .arg("600")
+            // Itself, not `sleep`: the same on every platform (Windows has none).
+            let exe = std::env::current_exe().map_err(Error::into_internal_error)?;
+            let child = std::process::Command::new(exe)
+                .arg(crate::SLEEP_ARG)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .map_err(Error::into_internal_error)?;
             update(
