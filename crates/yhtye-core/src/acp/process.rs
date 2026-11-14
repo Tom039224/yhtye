@@ -16,6 +16,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::config::HarnessConfig;
 use super::events::{AgentError, AgentEvent};
+use crate::home::home_dir_in;
 use crate::secrets::SecretEnv;
 
 // The parts that differ per platform: how the agent's process tree is set up,
@@ -93,15 +94,10 @@ pub(crate) const PRIVATE_ENV: &[&str] = &["YHTYE_BRIDGE_TOKEN", "VITE_YHTYE_BRID
 /// (`core-design.md` §3.4, Stage 6b security review).
 fn launch_dir() -> PathBuf {
     #[cfg(unix)]
-    const HOME_VAR: &str = "HOME";
-    #[cfg(unix)]
     const ROOT: &str = "/";
     #[cfg(windows)]
-    const HOME_VAR: &str = "USERPROFILE";
-    #[cfg(windows)]
     const ROOT: &str = "C:\\";
-    std::env::var_os(HOME_VAR)
-        .map(PathBuf::from)
+    home_dir_in(&|k| std::env::var_os(k))
         .filter(|p| p.is_absolute() && p.is_dir())
         .unwrap_or_else(|| PathBuf::from(ROOT))
 }
@@ -141,7 +137,8 @@ pub(crate) fn spawn_process(
     };
     let mut child = cmd.spawn().map_err(|e| {
         spawn_error(format!(
-            "{e} (started in {} for a session in {})",
+            "{}{e} (started in {} for a session in {})",
+            invalid_input_hint(&e),
             launch.display(),
             cwd.display()
         ))
@@ -163,6 +160,17 @@ pub(crate) fn spawn_process(
         stderr_tail,
         stderr_task,
     })
+}
+
+/// On Windows `Command` starts a `.cmd` / `.bat` launcher (an npm shim such as
+/// `npx.cmd`) through `cmd.exe` and refuses, with `InvalidInput`, an argument
+/// that cmd.exe could not take literally. Says so instead of the bare error.
+fn invalid_input_hint(e: &std::io::Error) -> &'static str {
+    if cfg!(windows) && e.kind() == std::io::ErrorKind::InvalidInput {
+        "the command or one of its arguments cannot be passed safely to a .cmd / .bat launcher through cmd.exe: "
+    } else {
+        ""
+    }
 }
 
 async fn forward_stderr(

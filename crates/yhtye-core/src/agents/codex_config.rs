@@ -5,14 +5,17 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::home::home_dir_in;
+
 /// File name of Codex's configuration inside `CODEX_HOME`.
 const CONFIG_FILE: &str = "config.toml";
 
-/// Codex's home: `CODEX_HOME` when set and non-empty, else `~/.codex`.
+/// Codex's home: `CODEX_HOME` when set and non-empty, else `.codex` in the
+/// user's home directory ([`home_dir_in`]).
 pub fn codex_home(env: &(impl Fn(&str) -> Option<OsString> + ?Sized)) -> Option<PathBuf> {
     let non_empty = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     non_empty("CODEX_HOME")
-        .or_else(|| non_empty("HOME").map(|home| home.join(".codex")))
+        .or_else(|| home_dir_in(env).map(|home| home.join(".codex")))
         .filter(|p| p.is_absolute())
 }
 

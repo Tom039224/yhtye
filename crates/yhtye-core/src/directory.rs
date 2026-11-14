@@ -10,6 +10,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::api::{ApiError, ApiErrorCode};
+use crate::home::home_dir_in;
 
 /// A folder inside the listed one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
@@ -36,14 +37,10 @@ pub struct DirectoryListing {
     pub entries: Vec<DirectoryEntry>,
 }
 
-/// The home directory of the user the core runs as (`HOME`, or `USERPROFILE`).
+/// The home directory of the user the core runs as ([`home_dir_in`]).
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
-    ["HOME", "USERPROFILE"]
-        .into_iter()
-        .filter_map(std::env::var_os)
-        .map(PathBuf::from)
-        .find(|p| p.is_absolute())
+    home_dir_in(&|k| std::env::var_os(k)).filter(|p| p.is_absolute())
 }
 
 fn io_error(path: &Path, e: &std::io::Error) -> ApiError {
