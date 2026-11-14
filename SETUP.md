@@ -243,7 +243,7 @@ pnpm tauri build
   `target\release\bundle\msi\` (MSI。日本語)。ARM64 のインストーラは ARM64 のマシンでビルドする (リリースの CI もそうしている。MSI は x64 のみ)。実行ファイルだけなら `pnpm tauri build --no-bundle`。
 - インストーラは署名していないので、初回の起動で SmartScreen が警告を出す (「詳細情報」→「実行」)。
 - 秘密の環境変数は Windows の資格情報マネージャーに保存される (service `yhtye`)。Secret Service の設定は要らない。
-- 動作確認は CI でのビルドとインストーラの無人インストール・アンインストールまで。実機でのエージェントの実行は未確認。
+- リリース時に CI でビルドとインストーラの無人インストール・アンインストールを確かめる (まだ一度も回していない)。実機でのエージェントの実行は未確認。
 - データディレクトリは `%APPDATA%\io.github.tom039224.yhtye` (`YHTYE_DATA_DIR` / `--data-dir` で変えられる)。
 
 ## 初回の使い方

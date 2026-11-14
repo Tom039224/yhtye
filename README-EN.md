@@ -67,7 +67,7 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
 - **Linux.** Tested on Arch / CachyOS (Wayland) only; other distributions are untested.
 - **Windows 10 / 11 (x64 and ARM64).** An installer (NSIS; x64 and ARM64) and an MSI (x64 only) will be published on GitHub Releases under `windows-v…` tags
-  (none yet; until then, build from source). CI builds them and runs the installer silently (install, then uninstall), but **running agents on a real Windows
+  (none yet; until then, build from source). On release, CI builds them and runs the installer silently (install, then uninstall; this has not run yet), and **running agents on a real Windows
   machine is untested**. The installers are not signed, so SmartScreen warns on the first run. On a Windows 10 without WebView2 the
   installer fetches it (an internet connection is needed).
   **Headless mode (`--headless`, `yhtye remote …`) is not supported on Windows** (it relies on Unix domain sockets and process groups);
