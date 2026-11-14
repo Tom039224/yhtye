@@ -525,3 +525,20 @@ pnpm tauri build --bundles deb    # target/release/bundle/deb/Yhtye_<版>_amd64.
 
 ただし配る物は CI で作る (手元のディストリビューションの glibc に縛られるため)。CI と同じ Ubuntu 22.04 の環境は、`ubuntu:22.04` のコンテナにワークフローの `Install system dependencies` の依存と
 Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれば再現できる。
+
+## Windows デスクトップ版のリリース
+
+タグ `windows-v<major>.<minor>.<patch>` (例 `windows-v0.1.0`) を push すると、`.github/workflows/windows-release.yml` が Windows 10 / 11 用にビルドし、GitHub Releases に
+**NSIS インストーラ (x64・ARM64) と MSI (x64 のみ)** と `SHA256SUMS` を添付する。版番号の規則・3 か所の版の一致検査・プレリリースの扱い・Android との互換の書き方は Linux 版と同じ
+(上の「Linux デスクトップ版のリリース」)。Linux 版のタグ (`linux-v…`) とは別に、独立して出す。署名はしない (SmartScreen が警告する)。
+
+- ワークフローは `tag` (タグの検査) → `build` (x64 は `windows-latest`、ARM64 は `windows-11-arm`。どちらもネイティブビルド、`pnpm tauri build --target <triple> --bundles …`) → `release` (両方が成功したときだけ公開)。
+  ARM64 を x64 からのクロスビルドにしなかったのは、C の依存 (aws-lc-sys / ring) が ARM64 の MSVC ツールを要るのと、`ci.yml` が `windows-11-arm` で既にワークスペースをビルドしているため。
+  MSI を x64 だけにしたのは、Tauri が使う WiX 3 の ARM64 対応が頼れないため (NSIS が全員向けの主な形式)。
+- `build` は、各インストーラが 1 つずつあって版を持つこと、アプリの実行ファイルの PE ヘッダのマシン種別がそのアーキテクチャであること、NSIS インストーラが無人で
+  インストール・アンインストールできること (`/S`) を確かめる。ヘッドレスは Windows では未対応なので、`--help` の起動確認はしない (GUI アプリの標準出力は端末に出ない)。
+- ファイル名: `yhtye-windows-<版>-x64-setup.exe` / `-arm64-setup.exe` / `-x64.msi`。
+- 署名を始めるときは、ワークフロー冒頭のコメント (`certificateThumbprint` / `signCommand`) を参照。
+- WebView2 は、インストーラが無ければ取得する (`tauri.conf.json` の `bundle.windows.webviewInstallMode` = `embedBootstrapper`。Windows 10 の一部に WebView2 が無いため。
+  ブートストラッパーを同梱 (+約 1.8 MB) するので、別にダウンロードする段が減る。それでも WebView2 本体の取得にはインターネット接続が要る)。
+- 最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「Windows のインストーラはまだ出していない」という記述を直す。

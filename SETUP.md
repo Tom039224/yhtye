@@ -1,11 +1,11 @@
 # セットアップ
 
 Yhtye を動かしたい人向け。開発する人は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
-プレビルドのバイナリはまだ無いので、ソースからビルドする。
+プレビルドのバイナリはまだ無いので、ソースからビルドする (Windows 用のインストーラは `windows-v…` のタグで出す仕組みはあるが、まだ出していない)。
 
 ## 必要なもの
 
-対応 OS は Linux のみ ([README](README.md#対応環境))。
+対応 OS は Linux と Windows 10 / 11 (x64 / ARM64) ([README](README.md#対応環境))。以降の表と手順は Linux のもの。Windows は[下記](#windows-10--11)。
 
 | 必要なもの | 用途 | 確認 |
 |---|---|---|
@@ -219,6 +219,33 @@ cd packaging/arch
 makepkg -si
 ```
 
+### Windows 10 / 11
+
+x64 と ARM64 (Snapdragon など。ARM64 のマシンでは ARM64 のツールチェーンでビルドする)。ヘッドレスモード (`--headless`、`yhtye remote …`) は Windows では未対応 (後述の「ヘッドレス」は Linux のみ)。
+
+| 必要なもの | 用途 | 確認 |
+|---|---|---|
+| Visual Studio Build Tools 2022 の「C++ によるデスクトップ開発」 (ARM64 のマシンでは ARM64 のビルドツールも) | Rust (MSVC) のビルド | `cl` (Developer Command Prompt で) |
+| WebView2 ランタイム | アプリのウィンドウ。Windows 11 には最初から入っている。Windows 10 で無ければ、インストーラが取得する (インターネット接続が要る)。ソースからビルドして動かすときは [Microsoft から入れる](https://developer.microsoft.com/microsoft-edge/webview2/) | |
+| git | worktree とマージ | `git --version` |
+| Node 22+ (`npx` 含む) | Claude Code と Codex の ACP アダプタ | `node --version` |
+| Rust 1.98+ (`stable-x86_64-pc-windows-msvc` / `stable-aarch64-pc-windows-msvc`) | ビルド | `rustc --version` |
+| pnpm 11+ | ビルド | `pnpm --version` |
+
+```powershell
+git clone https://github.com/Tom039224/yhtye.git
+cd yhtye
+pnpm install
+pnpm tauri build
+```
+
+- 実行ファイルは `target\release\yhtye.exe`。インストーラは `target\release\bundle\nsis\` (NSIS。ユーザーごとにインストールされ、管理者権限は要らない。表示言語は OS に合わせて日本語 / 英語) と
+  `target\release\bundle\msi\` (MSI。日本語)。ARM64 のインストーラは ARM64 のマシンでビルドする (リリースの CI もそうしている。MSI は x64 のみ)。実行ファイルだけなら `pnpm tauri build --no-bundle`。
+- インストーラは署名していないので、初回の起動で SmartScreen が警告を出す (「詳細情報」→「実行」)。
+- 秘密の環境変数は Windows の資格情報マネージャーに保存される (service `yhtye`)。Secret Service の設定は要らない。
+- 動作確認は CI でのビルドとインストーラの無人インストール・アンインストールまで。実機でのエージェントの実行は未確認。
+- データディレクトリは `%APPDATA%\io.github.tom039224.yhtye` (`YHTYE_DATA_DIR` / `--data-dir` で変えられる)。
+
 ## 初回の使い方
 
 1. 起動する。左の欄でプロジェクトのディレクトリ (git リポジトリ) を入力して「開く」。
@@ -254,6 +281,8 @@ makepkg -si
 Yhtye はあなたのリポジトリにはマージ以外では何も書かない。
 
 ## GUI の無いマシンで動かす (ヘッドレス)
+
+**Linux のみ。Windows では未対応** (Unix ドメインソケットとプロセスグループに依存している)。
 
 ウィンドウを開かず、コアとリモート接続 (Android クライアント) だけを動かすモード。ディスプレイの無いサーバーに Yhtye を置き、
 Android 端末から使うときのためのもの。ビルドは同じ (`pnpm tauri build --no-bundle` のバイナリがそのまま動く) で、`yhtye --headless` と起動する。
