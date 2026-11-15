@@ -6,8 +6,10 @@
 use std::ffi::OsString;
 
 use super::catalog::{
-    ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, HarnessPreset, MINIMAX_CODE, OPENCODE,
+    ANTIGRAVITY, CLAUDE_CODE, CLAUDE_CODE_API, CODEX, DEVIN, GROK_BUILD, HarnessPreset,
+    MINIMAX_CODE, OPENCODE, PI,
 };
+use super::claude_subscription::claude_code_label;
 use super::detect::HarnessDetection;
 use super::settings::AgentChoice;
 use crate::acp::{ANTIGRAVITY_DEFAULT_MODEL, MINIMAX_CODE_DEFAULT_MODEL};
@@ -17,17 +19,34 @@ use crate::acp::{ANTIGRAVITY_DEFAULT_MODEL, MINIMAX_CODE_DEFAULT_MODEL};
 /// (possibly paid) model.
 pub const OPENCODE_FALLBACK_MODEL: &str = "opencode/muse-spark-1.3-contributor-free";
 
-/// The harnesses the built-in default prefers, first installed first. Codex is
-/// last: it cannot run without a chosen model, so it is the default only when
-/// nothing else is there.
-const DEFAULT_ORDER: [&str; 7] = [
+/// The harnesses the built-in default prefers, first installed first. pi and
+/// Codex are last: they cannot run without a chosen model (pi's list is the
+/// user's own providers', so it has no default model of its own either), so one
+/// of them is the default only when nothing else is there.
+const DEFAULT_ORDER: [&str; 8] = [
     CLAUDE_CODE,
     OPENCODE,
     DEVIN,
     MINIMAX_CODE,
     ANTIGRAVITY,
     GROK_BUILD,
+    PI,
     CODEX,
+];
+
+/// The id of every preset [`presets_from`] can register: one per known harness
+/// ([`super::HARNESS_SPECS`]), and `claude-code-api` beside `claude-code`
+/// (Claude Code is installed once and offered with two kinds of billing).
+pub const PRESET_IDS: [&str; 9] = [
+    CLAUDE_CODE,
+    CLAUDE_CODE_API,
+    OPENCODE,
+    CODEX,
+    DEVIN,
+    MINIMAX_CODE,
+    ANTIGRAVITY,
+    GROK_BUILD,
+    PI,
 ];
 
 /// Inherited variables to drop from OpenCode's environment. The user's OpenCode
@@ -46,12 +65,14 @@ pub fn inherited_opencode_env_remove(env: impl Fn(&str) -> Option<OsString>) -> 
     }
 }
 
-/// One preset per installed harness in `detections`, in their order: Claude
-/// Code with `claude_model`, OpenCode, Codex, Devin, MiniMax Code, Google
-/// Antigravity and Grok Build, each launched through the absolute path that was
-/// found (Claude Code and Codex run `npx`; Codex also gets the user's `codex` as
-/// the adapter's `CODEX_PATH`). A harness that is not installed is not
-/// registered.
+/// The presets of the installed harnesses in `detections`, in their order:
+/// Claude Code with `claude_model` (twice: billed to the subscription, labelled
+/// with its name read through `env` as `Claude Code (Claude Max)`, and billed
+/// to an API key as `Claude Code (API)`), OpenCode, Codex, Devin, MiniMax Code,
+/// Google Antigravity, Grok Build and pi, each launched through the absolute
+/// path that was found (Claude Code, Codex and pi run `npx`; Codex also gets the
+/// user's `codex` as the adapter's `CODEX_PATH`; pi's own executable is not run,
+/// the adapter embeds pi). A harness that is not installed is not registered.
 pub fn presets_from(
     detections: &[HarnessDetection],
     claude_model: &str,
@@ -60,45 +81,62 @@ pub fn presets_from(
     detections
         .iter()
         .filter(|d| d.installed)
-        .filter_map(|d| {
-            let preset = preset_of(d, claude_model, &env);
-            if preset.is_none() {
+        .flat_map(|d| {
+            let presets = presets_of(d, claude_model, &env);
+            if presets.is_empty() {
                 tracing::warn!("harness {} has no launch recipe; not offered", d.id);
             }
-            preset
+            presets
         })
         .collect()
 }
 
-fn preset_of(
+fn presets_of(
     d: &HarnessDetection,
     claude_model: &str,
     env: &impl Fn(&str) -> Option<OsString>,
-) -> Option<HarnessPreset> {
-    let main = d.resolved_path.as_deref()?;
-    match d.id.as_str() {
-        CLAUDE_CODE => Some(HarnessPreset::claude_code(claude_model).with_command(main)),
-        OPENCODE => Some(
+) -> Vec<HarnessPreset> {
+    let Some(main) = d.resolved_path.as_deref() else {
+        return Vec::new();
+    };
+    let one = match d.id.as_str() {
+        CLAUDE_CODE => {
+            return vec![
+                HarnessPreset::claude_code(claude_model)
+                    .with_command(main)
+                    .with_label(claude_code_label(env)),
+                HarnessPreset::claude_code_api(claude_model).with_command(main),
+            ];
+        }
+        OPENCODE => {
             HarnessPreset::opencode(OPENCODE_FALLBACK_MODEL, inherited_opencode_env_remove(env))
-                .with_command(main),
-        ),
-        CODEX => Some(HarnessPreset::codex(Some(main)).with_command(d.found("npx")?)),
-        DEVIN => Some(HarnessPreset::devin(main)),
-        MINIMAX_CODE => Some(HarnessPreset::minimax_code(main)),
-        ANTIGRAVITY => Some(HarnessPreset::antigravity(main)),
-        GROK_BUILD => Some(HarnessPreset::grok_build(main)),
-        _ => None,
-    }
+                .with_command(main)
+        }
+        CODEX => match d.found("npx") {
+            Some(npx) => HarnessPreset::codex(Some(main)).with_command(npx),
+            None => return Vec::new(),
+        },
+        DEVIN => HarnessPreset::devin(main),
+        MINIMAX_CODE => HarnessPreset::minimax_code(main),
+        ANTIGRAVITY => HarnessPreset::antigravity(main),
+        GROK_BUILD => HarnessPreset::grok_build(main),
+        PI => match d.found("npx") {
+            Some(npx) => HarnessPreset::pi().with_command(npx),
+            None => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+    vec![one]
 }
 
 /// What a role runs when its settings do not say: the first of Claude Code,
-/// OpenCode, Devin, MiniMax Code, Google Antigravity, Grok Build and Codex that
-/// is in `presets`, with Claude Code's `claude_model`, OpenCode's
+/// OpenCode, Devin, MiniMax Code, Google Antigravity, Grok Build, pi and Codex
+/// that is in `presets`, with Claude Code's `claude_model`, OpenCode's
 /// [`OPENCODE_FALLBACK_MODEL`], MiniMax Code's [`MINIMAX_CODE_DEFAULT_MODEL`],
 /// Antigravity's [`ANTIGRAVITY_DEFAULT_MODEL`] and no model for the others
-/// (Codex has no usable default: choosing its model is asked for in the
-/// settings when it is started). With none installed the choice names Claude
-/// Code, which starting an agent reports as unavailable.
+/// (pi and Codex have no usable default: choosing their model is asked for in
+/// the settings when they are started). With none installed the choice names
+/// Claude Code, which starting an agent reports as unavailable.
 #[must_use]
 pub fn default_choice(presets: &[HarnessPreset], claude_model: &str) -> AgentChoice {
     let claude = AgentChoice::new(CLAUDE_CODE, Some(claude_model));
@@ -169,6 +207,7 @@ mod tests {
             detection("minimax-code", true, Some("/m/mcode"), None),
             detection("antigravity", true, Some("/a/agy_acp_server.par"), None),
             detection("grok-build", true, Some("/g/grok"), None),
+            detection("pi", true, Some("/p/pi"), Some("/n/npx")),
         ]
     }
 
@@ -188,12 +227,14 @@ mod tests {
             ids(&presets),
             [
                 "claude-code",
+                "claude-code-api",
                 "opencode",
                 "codex",
                 "devin",
                 "minimax-code",
                 "antigravity",
-                "grok-build"
+                "grok-build",
+                "pi"
             ]
         );
         let commands: Vec<String> = presets.iter().map(command).collect();
@@ -201,16 +242,18 @@ mod tests {
             commands,
             [
                 "/n/npx",
+                "/n/npx",
                 "/o/opencode",
                 "/n/npx",
                 "/d/devin",
                 "/m/mcode",
                 "/a/agy_acp_server.par",
-                "/g/grok"
+                "/g/grok",
+                "/n/npx"
             ],
-            "claude-code and codex run npx; the others their own executable"
+            "both Claude Code presets, codex and pi run npx; the others their own executable"
         );
-        let codex = &presets[2];
+        let codex = &presets[3];
         for role in [
             super::super::AgentRole::Orchestrator,
             super::super::AgentRole::Implementer,
@@ -221,7 +264,7 @@ mod tests {
                 assert_eq!(
                     p.config(role, None, None).command,
                     match p.id.as_str() {
-                        "claude-code" | "codex" => "/n/npx",
+                        "claude-code" | "claude-code-api" | "codex" | "pi" => "/n/npx",
                         "opencode" => "/o/opencode",
                         "minimax-code" => "/m/mcode",
                         "antigravity" => "/a/agy_acp_server.par",
@@ -252,11 +295,93 @@ mod tests {
         some[4].installed = false;
         some[5].installed = false;
         some[6].installed = false;
+        some[7].installed = false;
         assert_eq!(
             ids(&presets_from(&some, "haiku", env(&[]))),
-            ["claude-code", "codex"]
+            ["claude-code", "claude-code-api", "codex"]
         );
         assert!(presets_from(&[], "haiku", env(&[])).is_empty());
+    }
+
+    fn label_of<'a>(presets: &'a [HarnessPreset], id: &str) -> &'a str {
+        &presets
+            .iter()
+            .find(|p| p.id == id)
+            .expect("registered")
+            .label
+    }
+
+    #[test]
+    fn claude_code_is_offered_twice_one_per_billing_and_the_subscription_is_named() {
+        let home = tempfile::tempdir().expect("home");
+        let dir = home.path().join(".claude");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join(".credentials.json"),
+            r#"{"claudeAiOauth":{"accessToken":"x","subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
+        )
+        .expect("write");
+        let home_str = home.path().to_str().expect("utf-8");
+        let presets = presets_from(&all_installed()[..1], "haiku", env(&[("HOME", home_str)]));
+        assert_eq!(ids(&presets), ["claude-code", "claude-code-api"]);
+        assert_eq!(
+            label_of(&presets, "claude-code"),
+            "Claude Code (Claude Max 20x)"
+        );
+        assert_eq!(label_of(&presets, "claude-code-api"), "Claude Code (API)");
+
+        // The login cannot be read: the subscription is not named.
+        let presets = presets_from(&all_installed()[..1], "haiku", env(&[]));
+        assert_eq!(label_of(&presets, "claude-code"), "Claude Code (サブスク)");
+        assert_eq!(label_of(&presets, "claude-code-api"), "Claude Code (API)");
+    }
+
+    #[test]
+    fn the_two_claude_code_presets_differ_in_billing_only() {
+        use super::super::AgentRole;
+        let presets = presets_from(&all_installed()[..1], "sonnet", env(&[]));
+        let (sub, api) = (&presets[0], &presets[1]);
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            let (s, a) = (
+                sub.config(role, Some("opus"), Some("high")),
+                api.config(role, Some("opus"), Some("high")),
+            );
+            assert_eq!(s.command, "/n/npx");
+            assert_eq!(a.command, "/n/npx");
+            assert_eq!(
+                HarnessConfig {
+                    env_remove: Vec::new(),
+                    secret_bindings: Vec::new(),
+                    ..a
+                },
+                HarnessConfig {
+                    env_remove: Vec::new(),
+                    ..s
+                }
+            );
+        }
+        assert_eq!(api.probe_config().command, "/n/npx");
+        assert!(!api.probe_config().secret_bindings.is_empty());
+        assert!(sub.probe_config().secret_bindings.is_empty());
+        assert_eq!(
+            default_choice(&presets, "haiku"),
+            AgentChoice::new("claude-code", Some("haiku")),
+            "the subscription stays the built-in default"
+        );
+    }
+
+    #[test]
+    fn preset_ids_cover_every_registered_preset() {
+        let presets = presets_from(&all_installed(), "haiku", env(&[]));
+        assert_eq!(ids(&presets), PRESET_IDS);
+        for spec in &super::super::HARNESS_SPECS {
+            assert!(PRESET_IDS.contains(&spec.id), "{}", spec.id);
+        }
     }
 
     #[test]
@@ -286,6 +411,12 @@ mod tests {
     }
 
     #[test]
+    fn a_pi_without_a_found_npx_is_not_registered() {
+        let d = detection("pi", true, Some("/p/pi"), None);
+        assert!(presets_from(&[d], "haiku", env(&[])).is_empty());
+    }
+
+    #[test]
     fn the_builtin_default_is_the_first_installed_harness_in_order() {
         let preset = |id: &str| match id {
             "claude-code" => HarnessPreset::claude_code("haiku"),
@@ -294,6 +425,7 @@ mod tests {
             "minimax-code" => HarnessPreset::minimax_code("mcode"),
             "antigravity" => HarnessPreset::antigravity("agy_acp_server.par"),
             "grok-build" => HarnessPreset::grok_build("grok"),
+            "pi" => HarnessPreset::pi(),
             _ => HarnessPreset::devin("devin"),
         };
         let choice = |installed: &[&str]| {
@@ -343,6 +475,16 @@ mod tests {
             choice(&["grok-build", "antigravity"]),
             AgentChoice::new("antigravity", Some("gemini-3.8-flash-low")),
             "before Grok Build"
+        );
+        assert_eq!(
+            choice(&["codex", "pi"]),
+            AgentChoice::new("pi", None),
+            "before Codex; like Codex it asks for the model when it starts"
+        );
+        assert_eq!(
+            choice(&["pi", "grok-build"]),
+            AgentChoice::new("grok-build", None),
+            "pi cannot run without a model, so what can run on its own comes first"
         );
         assert_eq!(
             choice(&["codex"]),

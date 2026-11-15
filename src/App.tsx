@@ -42,7 +42,9 @@ function useGitOnFocus(): void {
 function App({ initialView = "dashboard" }: { initialView?: View }) {
   const store = useStore();
   const hosts = useHostsRegistry();
-  const project = useAppState((s) => s.project);
+  // The id and the name, not the view: the app renders again when the project changes, not with its events.
+  const projectId = useAppState((s) => s.project?.info.id ?? null);
+  const projectName = useAppState((s) => s.project?.info.name ?? null);
   useGitOnFocus();
   const [view, setView] = useState<View>(initialView);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -81,8 +83,8 @@ function App({ initialView = "dashboard" }: { initialView?: View }) {
               onResize={(px) => setSizeVar(body.current, SIDEBAR_WIDTH, px)}
               onCommit={(px) => setSize("sidebar", px)}
             />
-            {project ? (
-              <Workspace key={store.scopedKey(project.info.id)} view={project} />
+            {projectId !== null ? (
+              <Workspace key={store.scopedKey(projectId)} />
             ) : (
               <div className="main-empty">
                 <EmptyState icon="folder" text="プロジェクト (git リポジトリ) を開いてください。" />
@@ -97,7 +99,7 @@ function App({ initialView = "dashboard" }: { initialView?: View }) {
       </div>
       <StatusBar />
       {settingsOpen ? (
-        <SettingsModal project={project ? { id: project.info.id, name: project.info.name } : null} pairLink={pairLink} onClose={closeSettings} />
+        <SettingsModal project={projectId !== null && projectName !== null ? { id: projectId, name: projectName } : null} pairLink={pairLink} onClose={closeSettings} />
       ) : null}
     </div>
   );

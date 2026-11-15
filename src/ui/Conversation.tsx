@@ -1,6 +1,7 @@
 import { useMemo, useRef, useSyncExternalStore } from "react";
 
 import type { ChatInfo, GitOverview, State } from "../api/generated";
+import type { AppState } from "../store/app";
 import { orchestratorKey, scopeState } from "../store/chats";
 import type { DraftAttachment } from "../store/drafts";
 import { orchestratorSession, type ProjectView, selectedChatInfo } from "../store/project";
@@ -33,6 +34,20 @@ function chatPlace(overview: GitOverview | null, chat: ChatInfo | null, awaiting
   return chat ? placeOf(chat, overview, awaiting.includes(chat.id)) : { kind: "unknown" };
 }
 
+/**
+ * Where the chat's worktree is now, as what the conversation shows of it (the
+ * kind and the label): a git read that changes neither does not render it again.
+ */
+function useChatPlace(project: string, chat: ChatInfo | null): { kind: Place["kind"]; text: string | null } {
+  const where = (s: AppState): Place => {
+    const git = s.git?.project === project ? s.git : null;
+    return chatPlace(git?.overview ?? null, chat, git?.awaiting ?? NONE);
+  };
+  const kind = useAppState((s) => where(s).kind);
+  const text = useAppState((s) => placeLabel(where(s)));
+  return { kind, text };
+}
+
 export function Conversation({ view, mentions, onRemoveMention, onClearMentions }: Props) {
   const store = useStore();
   const connection = useAppState((s) => s.connection);
@@ -40,16 +55,15 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
   const chat = selectedChatInfo(view) ?? null;
   const key = chat ? orchestratorKey(chat.id) : null;
   const items = key ? view.transcripts[key] : undefined;
-  const streaming = key ? view.streaming[key] : undefined;
+  // Only this chat's own text: a chunk of another session does not render this again.
+  const streaming = useAppState((s) => (key ? s.live.streaming[key] : undefined));
   const scoped = useMemo(() => (view.state ? scopeState(view.state, chat?.id ?? null) : null), [view.state, chat?.id]);
   const queued = useMemo(() => new Set((scoped?.inbox ?? []).map((e) => e.id)), [scoped]);
   const session = orchestratorSession(view, chat?.id ?? null);
   const resuming = chat ? Boolean(view.resuming[chat.id]) : false;
-  const overview = useAppState((s) => (s.git?.project === view.info.id ? s.git.overview : null));
-  const awaiting = useAppState((s) => (s.git?.project === view.info.id ? s.git.awaiting : NONE));
-  const place = chatPlace(overview, chat, awaiting);
-  const placeText = placeLabel(place);
   const project = view.info.id;
+  const place = useChatPlace(project, chat);
+  const placeText = place.text;
   const attachments = useSyncExternalStore(store.drafts.subscribe, () =>
     chat ? store.drafts.attachments(project, chat.id) : NO_ATTACHMENTS,
   );
@@ -59,7 +73,8 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
     [store, project, chatId],
   );
   const scroller = useRef<HTMLDivElement>(null);
-  useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, chat?.id);
+  // `scoped`: a group card grows with its tasks and a queued message loses its mark, with no change of the items.
+  useAutoScroll(scroller, [items, streaming, scoped], items?.[0]?.seq, chat?.id);
 
   const disabledReason =
     !chat
@@ -75,7 +90,7 @@ export function Conversation({ view, mentions, onRemoveMention, onClearMentions 
             : null;
 
   const compacting = useAppState((s) => s.busy.compacting);
-  const usage = key ? (view.contextUsage[key] ?? null) : null;
+  const usage = useAppState((s) => (key ? (s.live.contextUsage[key] ?? null) : null));
   const compact = compactState({
     disabledReason,
     status: session?.status,

@@ -19,6 +19,10 @@
 //!   "permission_options": [{"id": "allow", "kind": "allow_once"}],  // for "ask_permission"
 //!   "vendor_requests": false,   // true: every turn starts with `_cognition.ai/request_diagnostics`
 //!   "vendor_notifications": [{"method": "_x.ai/session/setup", "params": {}}],
+//!   "model_env": null,          // an env var the starting model is read from (`<model>[:<effort>]`)
+//!   "efforts_without_default": false,  // true: the efforts have no leading `default`
+//!   "model_groups": false,      // true: the model option is grouped by provider
+//!   "boolean_options": [],      // [{"id": "auto_compaction", "category": "model_config"}]
 //!   "prompt_capabilities": {"image": true, "embedded_context": true},  // advertised in `initialize` (default: none)
 //!   "steering": false,          // true: advertise and serve `_session/steering`
 //!   "steer_continues": false,   // true (with "steering"): a steered turn goes on
@@ -50,6 +54,17 @@
 //! responses (the agent has none), and `vendor_notifications` are sent with their
 //! own (unknown) methods before the `session/new` / `session/load` response and at
 //! the start of every turn, like `grok`'s `_x.ai/...` notifications.
+//!
+//! pi-like behaviour (`@openma/pi-acp`): `model_env` names the environment
+//! variable (`PI_ACP_MODEL`) that decides the model the session starts on, as
+//! `<model>[:<effort>]` (the part after the last `:` counts as the effort only
+//! when it is one of the model's efforts; a model the agent does not list is run
+//! as it is, with no efforts, as the adapter does). `efforts_without_default` lists a model's
+//! efforts as given (`thinking` has no `default`) and starts on the first one,
+//! `model_groups` groups the model option by provider (the part before the first
+//! `/`), `boolean_options` adds options that are no select (`auto_compaction`,
+//! category `model_config`), and `{"report_env": ["PI_ACP_MODEL"]}` reports the
+//! agent's own environment as `env:PI_ACP_MODEL=<value or <unset>>;...`.
 //!
 //! Steering (Claude Code / Codex adapters): `steering` adds the top-level
 //! `_meta.steering.supported: true` to the `initialize` result and serves
@@ -105,6 +120,20 @@ pub struct Scenario {
     /// client that looks the option up by category finds it under any id).
     #[serde(default)]
     pub effort_id: Option<String>,
+    /// The environment variable the session's starting model is read from, as
+    /// `<model>[:<effort>]` (see the pi-like behaviour above).
+    #[serde(default)]
+    pub model_env: Option<String>,
+    /// The efforts are listed without a leading `default`; the option starts on
+    /// the first.
+    #[serde(default)]
+    pub efforts_without_default: bool,
+    /// The model option is grouped by provider.
+    #[serde(default)]
+    pub model_groups: bool,
+    /// Options that are no select: booleans, all on.
+    #[serde(default)]
+    pub boolean_options: Vec<BooleanOption>,
     /// The values of a `permissionMode` select option (category `_permission`),
     /// the first being current; none: the agent has no such option.
     #[serde(default)]
@@ -231,6 +260,9 @@ pub enum Action {
     /// `session/set_config_option` requests received so far (comma-separated,
     /// in order).
     ReportWrites,
+    /// Reports `env:<name>=<value>;...` (`<unset>` for a variable the agent
+    /// does not have): the agent's own environment.
+    ReportEnv(Vec<String>),
     /// Reports `client_info:name=<n>;version=<v>` (the `clientInfo` of `initialize`,
     /// `<none>` when the client sent none).
     ReportClientInfo,
@@ -265,6 +297,15 @@ pub struct VendorNotification {
     pub method: String,
     #[serde(default)]
     pub params: serde_json::Value,
+}
+
+/// A boolean config option (see [`Scenario::boolean_options`]).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BooleanOption {
+    pub id: String,
+    /// Its category (`model_config`).
+    pub category: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

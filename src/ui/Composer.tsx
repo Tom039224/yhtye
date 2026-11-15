@@ -1,10 +1,10 @@
 import {
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
   useCallback,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -12,14 +12,13 @@ import {
 import { attachmentsReady } from "../store/attachments";
 import type { DraftAttachment } from "../store/drafts";
 import { AttachmentTile, AttachmentViewer } from "./AttachmentTile";
+import { mirrorText, useFieldHeight } from "./composerField";
 import { Icon, IconButton } from "./Icon";
 import type { Mention } from "./mentions";
 
-/** The textarea grows with its text from one row up to this many rows, then scrolls. */
-const MIN_ROWS = 1;
+/** The textarea grows with its text from one row up to this many rows, then scrolls (App.css `.composer-field`). */
 const MAX_ROWS = 11;
-/** The textarea's `line-height` (App.css), to turn `MAX_ROWS` into a `max-height`. */
-const LINE_HEIGHT_EM = 1.6;
+const FIELD_STYLE = { "--composer-max-rows": MAX_ROWS } as CSSProperties;
 const NO_ATTACHMENTS: readonly DraftAttachment[] = [];
 
 interface Props {
@@ -84,6 +83,7 @@ export function Composer({
   const [viewing, setViewing] = useState<{ name: string; src: string } | null>(null);
   const closeViewer = useCallback(() => setViewing(null), []);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const mirror = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const ready = attachmentsReady(attachments);
   const canSend = !disabled && !sending && ready && (text.trim().length > 0 || attachments.length > 0);
@@ -103,12 +103,7 @@ export function Composer({
   };
 
   // Wrapped lines do not add rows, so fit the height to the content (capped by CSS `max-height`).
-  useLayoutEffect(() => {
-    const el = textarea.current;
-    if (!el) return;
-    el.style.height = "auto";
-    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
-  }, [text]);
+  useFieldHeight(textarea, mirror, text);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -205,18 +200,22 @@ export function Composer({
               />
             </>
           ) : null}
-          <textarea
-            ref={textarea}
-            aria-label="オーケストレータへのメッセージ"
-            placeholder="オーケストレータに指示する…"
-            value={text}
-            disabled={disabled}
-            rows={Math.min(MAX_ROWS, Math.max(MIN_ROWS, text.split("\n").length))}
-            style={{ maxHeight: `${MAX_ROWS * LINE_HEIGHT_EM}em` }}
-            onChange={(e) => edit(e.target.value)}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-          />
+          <div className="composer-field" style={FIELD_STYLE}>
+            <textarea
+              ref={textarea}
+              aria-label="オーケストレータへのメッセージ"
+              placeholder="オーケストレータに指示する…"
+              value={text}
+              disabled={disabled}
+              rows={1}
+              onChange={(e) => edit(e.target.value)}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+            />
+            <div className="composer-field-mirror" ref={mirror} aria-hidden="true">
+              {mirrorText(text)}
+            </div>
+          </div>
           <div className="composer-actions">
             {turnRunning ? (
               <IconButton icon="stop" tone="danger" label="ターンを中止" onClick={onCancel} disabled={disabled} />

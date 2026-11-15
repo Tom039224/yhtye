@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::config::HarnessConfig;
+use super::config::{HARNESS_ONLY_SECRETS, HarnessConfig};
 use super::events::{AgentError, AgentEvent};
 use crate::home::home_dir_in;
 use crate::secrets::SecretEnv;
@@ -114,10 +114,15 @@ pub(crate) fn spawn_process(
     let mut cmd = Command::new(&harness.command);
     // Order matters: the user's secrets first, then the removals (Yhtye's own
     // variables and the harness's `env_remove` also win over a secret of the
-    // same name), then the harness's own variables.
+    // same name), then the harness's own variables. The secrets only one
+    // harness gets are removed for every harness: one that Yhtye inherited
+    // from where it was started (a shell, an agent of another Yhtye) reaches
+    // no process under its own name, and a harness that binds it gets it from
+    // `secret_env` under the name it reads.
     cmd.envs(secret_env.iter());
     for name in PRIVATE_ENV
         .iter()
+        .chain(HARNESS_ONLY_SECRETS.iter())
         .copied()
         .chain(harness.env_remove.iter().map(String::as_str))
     {

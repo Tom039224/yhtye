@@ -17,7 +17,8 @@ use super::settings::{
 use super::start_slots::StartSlots;
 use crate::acp::{
     AgentError, CODEX_CONFIG_ENV, EFFORT_CONFIG_ID, GROK_BUILD_EFFORT_CONFIG_ID, HarnessConfig,
-    MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect,
+    MINIMAX_CODE_EFFORT_CONFIG_ID, MINIMAX_CODE_UNUSABLE_MODELS, ModelSelect, PI_ACP_MODEL_ENV,
+    PI_EFFORT_CONFIG_ID,
 };
 use crate::attachments::PromptCaps;
 use crate::secrets::Secrets;
@@ -30,8 +31,11 @@ pub const MODEL_CONFIG_ID: &str = "model";
 
 /// Id of the OpenCode preset.
 pub const OPENCODE: &str = "opencode";
-/// Id of the Claude Code preset.
+/// Id of the Claude Code preset (billed to the user's claude.ai subscription).
 pub const CLAUDE_CODE: &str = "claude-code";
+/// Id of the Claude Code preset billed to an Anthropic API key
+/// ([`HarnessConfig::claude_code_api`]).
+pub const CLAUDE_CODE_API: &str = "claude-code-api";
 /// Id of the Codex preset.
 pub const CODEX: &str = "codex";
 /// Id of the Devin preset.
@@ -42,6 +46,8 @@ pub const MINIMAX_CODE: &str = "minimax-code";
 pub const ANTIGRAVITY: &str = "antigravity";
 /// Id of the Grok Build preset (`grok`).
 pub const GROK_BUILD: &str = "grok-build";
+/// Id of the pi preset (`@openma/pi-acp`).
+pub const PI: &str = "pi";
 
 /// Where the models of a harness come from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +83,14 @@ pub struct HarnessPreset {
     /// model is still verified through its config option; the effort is then
     /// not sent as an option.
     pub model_config_env: Option<String>,
+    /// Environment variable that carries the chosen model and effort as
+    /// `<model>[:<effort>]` and is the only way they reach the harness (pi:
+    /// `PI_ACP_MODEL`): the harness saves every `session/set_config_option` to
+    /// the user's own settings, so none is sent, neither for the model nor for
+    /// the effort. The efforts of a model are then read by starting the listing
+    /// session on that model ([`HarnessPreset::probe_config_for`]), never by
+    /// selecting it, and not for every model of the list at once.
+    pub model_effort_env: Option<String>,
     /// The config id of the effort option (`effort`; Codex: `reasoning_effort`);
     /// `None`: the harness has no effort option (Google Antigravity, whose
     /// thinking levels are separate models), so no model has an effort.
@@ -106,25 +120,66 @@ pub struct HarnessInfo {
 
 impl HarnessPreset {
     /// Claude Code (`HarnessConfig::claude_code*`) with `model` as the config's
-    /// own model (used when a choice names none).
+    /// own model (used when a choice names none), billed to the user's claude.ai
+    /// subscription. The label is `Claude Code`; [`HarnessPreset::with_label`]
+    /// puts the subscription's name in it.
     #[must_use]
     pub fn claude_code(model: &str) -> Self {
+        Self::claude(
+            CLAUDE_CODE,
+            "Claude Code",
+            model,
+            HarnessConfig::claude_code,
+            HarnessConfig::claude_code_usage_probe(),
+        )
+    }
+
+    /// Claude Code billed to an Anthropic API key (`Claude Code (API)`,
+    /// `HarnessConfig::claude_code_api`): the same launch as
+    /// [`HarnessPreset::claude_code`], with the key from the secret
+    /// `YHTYE_ANTHROPIC_API_KEY` (also for listing the models).
+    #[must_use]
+    pub fn claude_code_api(model: &str) -> Self {
+        Self::claude(
+            CLAUDE_CODE_API,
+            "Claude Code (API)",
+            model,
+            HarnessConfig::claude_code_api,
+            HarnessConfig::claude_code_api_probe(),
+        )
+    }
+
+    fn claude(
+        id: &str,
+        label: &str,
+        model: &str,
+        config: fn(&str) -> HarnessConfig,
+        probe: HarnessConfig,
+    ) -> Self {
         Self {
-            id: CLAUDE_CODE.into(),
-            label: "Claude Code".into(),
-            orchestrator: HarnessConfig::claude_code(model),
-            implementer: HarnessConfig::claude_code(model),
-            investigator: HarnessConfig::claude_code(model),
-            reviewer: HarnessConfig::claude_code(model),
-            probe: Some(HarnessConfig::claude_code_usage_probe()),
+            id: id.into(),
+            label: label.into(),
+            orchestrator: config(model),
+            implementer: config(model),
+            investigator: config(model),
+            reviewer: config(model),
+            probe: Some(probe),
             model_env: Some("ANTHROPIC_MODEL".into()),
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
             unusable_models: Vec::new(),
             prompt_caps: PromptCaps::ALL,
         }
+    }
+
+    /// The same preset shown as `label`.
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
     }
 
     /// OpenCode (`opencode acp`, `HarnessConfig::opencode`) for every role
@@ -151,6 +206,7 @@ impl HarnessPreset {
             probe: Some(probe),
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: true,
@@ -180,6 +236,7 @@ impl HarnessPreset {
             }),
             model_env: None,
             model_config_env: Some(CODEX_CONFIG_ENV.into()),
+            model_effort_env: None,
             effort_config_id: Some("reasoning_effort".into()),
             model_source: ModelSource::Codex,
             requires_model: true,
@@ -209,6 +266,7 @@ impl HarnessPreset {
             }),
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
@@ -238,6 +296,7 @@ impl HarnessPreset {
             probe: Some(HarnessConfig { model: None, ..h }),
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(MINIMAX_CODE_EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: true,
@@ -269,6 +328,7 @@ impl HarnessPreset {
             probe: Some(HarnessConfig { model: None, ..h }),
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: None,
             model_source: ModelSource::Acp,
             requires_model: false,
@@ -296,9 +356,40 @@ impl HarnessPreset {
             probe: Some(HarnessConfig { model: None, ..h }),
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(GROK_BUILD_EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
+            unusable_models: Vec::new(),
+            prompt_caps: PromptCaps::default(),
+        }
+    }
+
+    /// pi (`@openma/pi-acp` through `npx`, `HarnessConfig::pi`) for every role
+    /// (`acp-harnesses.md` §14); run the `npx` that was found with
+    /// [`HarnessPreset::with_command`]. A choice must name a model: without one
+    /// pi starts on the first model of its list, usually the most expensive, and
+    /// no built-in default is possible (the list is the user's own providers').
+    /// The model and the effort (`thinking`) reach pi only through
+    /// `PI_ACP_MODEL` ([`HarnessPreset::model_effort_env`]); no config option is
+    /// ever set. The model listing session sets nothing either.
+    #[must_use]
+    pub fn pi() -> Self {
+        let h = HarnessConfig::pi();
+        Self {
+            id: PI.into(),
+            label: "pi".into(),
+            orchestrator: h.clone(),
+            implementer: h.clone(),
+            investigator: h.clone(),
+            reviewer: h.clone(),
+            probe: Some(h),
+            model_env: None,
+            model_config_env: None,
+            model_effort_env: Some(PI_ACP_MODEL_ENV.into()),
+            effort_config_id: Some(PI_EFFORT_CONFIG_ID.into()),
+            model_source: ModelSource::Acp,
+            requires_model: true,
             unusable_models: Vec::new(),
             prompt_caps: PromptCaps::default(),
         }
@@ -323,6 +414,7 @@ impl HarnessPreset {
             probe: None,
             model_env: None,
             model_config_env: None,
+            model_effort_env: None,
             effort_config_id: Some(EFFORT_CONFIG_ID.into()),
             model_source: ModelSource::Acp,
             requires_model: false,
@@ -386,6 +478,14 @@ impl HarnessPreset {
         effort: Option<&str>,
     ) -> HarnessConfig {
         let mut h = self.role_config(role).clone();
+        if let Some(var) = &self.model_effort_env {
+            // Nothing is set as an option here (see `model_effort_env`); an
+            // effort without a model has nothing to be a suffix of.
+            if let Some(model) = model {
+                h.env.insert(var.clone(), model_with_effort(model, effort));
+            }
+            return h;
+        }
         // With a config env var the effort travels in it (and is not verified
         // as an option: the adapter shows none for models it has no metadata of).
         h.effort = effort
@@ -426,6 +526,29 @@ impl HarnessPreset {
             h.model = None;
             h
         })
+    }
+
+    /// [`HarnessPreset::probe_config`] started on `model`, for a harness that
+    /// takes its model from an environment variable
+    /// ([`HarnessPreset::model_effort_env`]): the session's config options then
+    /// are the ones of that model, read without selecting it. Any other harness
+    /// gets the plain listing config (it selects the model over ACP).
+    #[must_use]
+    pub fn probe_config_for(&self, model: &str) -> HarnessConfig {
+        let mut h = self.probe_config();
+        if let Some(var) = &self.model_effort_env {
+            h.env.insert(var.clone(), model.to_string());
+        }
+        h
+    }
+}
+
+/// The value of [`HarnessPreset::model_effort_env`]: `model`, with `:effort`
+/// after it when one is chosen.
+fn model_with_effort(model: &str, effort: Option<&str>) -> String {
+    match effort {
+        Some(effort) => format!("{model}:{effort}"),
+        None => model.to_string(),
     }
 }
 
@@ -1032,6 +1155,7 @@ mod tests {
             HarnessPreset::claude_code("haiku"),
             HarnessPreset::devin("devin"),
             HarnessPreset::minimax_code("mcode"),
+            HarnessPreset::pi(),
         ] {
             assert!(other.effort_config_id.is_some(), "{} has efforts", other.id);
         }
@@ -1085,6 +1209,91 @@ mod tests {
             (command, &expected.args[..])
         );
         assert!(probe.mode_after_new.is_none() && probe.model.is_none());
+    }
+
+    #[test]
+    fn pi_preset_passes_model_and_effort_in_the_environment_and_sets_no_option() {
+        use super::super::AgentRole;
+        let p = HarnessPreset::pi().with_command("/usr/bin/npx");
+        assert_eq!((p.id.as_str(), p.label.as_str()), ("pi", "pi"));
+        assert!(
+            p.requires_model,
+            "without a model pi runs on the first (priciest) one of its list"
+        );
+        assert_eq!(p.model_source, ModelSource::Acp);
+        assert_eq!(p.model_config_id(), "model");
+        assert_eq!(p.effort_config_id.as_deref(), Some("thinking"));
+        assert_eq!(
+            (p.model_env.as_ref(), p.model_config_env.as_ref()),
+            (None, None)
+        );
+        assert_eq!(p.model_effort_env.as_deref(), Some("PI_ACP_MODEL"));
+        let expected = HarnessConfig {
+            command: "/usr/bin/npx".into(),
+            ..HarnessConfig::pi()
+        };
+        for role in [
+            AgentRole::Orchestrator,
+            AgentRole::Implementer,
+            AgentRole::Investigator,
+            AgentRole::Reviewer,
+        ] {
+            assert_eq!(p.config(role, None, None), expected);
+            assert_eq!(
+                p.config(role, None, Some("low")),
+                expected,
+                "an effort without a model has nothing to follow"
+            );
+
+            // The model id has slashes (and maybe a colon of its own); the effort is a suffix.
+            let h = p.config(
+                role,
+                Some("orcarouter/anthropic/claude-haiku-4.5"),
+                Some("low"),
+            );
+            assert_eq!(
+                h.env.get("PI_ACP_MODEL").map(String::as_str),
+                Some("orcarouter/anthropic/claude-haiku-4.5:low")
+            );
+            assert_eq!(
+                h.env.get("PI_ACP_QUIET_STARTUP").map(String::as_str),
+                Some("1")
+            );
+            assert!(
+                h.model.is_none() && h.effort.is_none() && h.mode_after_new.is_none(),
+                "set_config_option would be saved to the user's settings.json"
+            );
+            assert_eq!(
+                (h.command.as_str(), h.args.as_slice()),
+                ("/usr/bin/npx", &expected.args[..])
+            );
+        }
+        let h = p.config(
+            AgentRole::Implementer,
+            Some("orcarouter/nvidia/nemotron:free"),
+            None,
+        );
+        assert_eq!(
+            h.env.get("PI_ACP_MODEL").map(String::as_str),
+            Some("orcarouter/nvidia/nemotron:free"),
+            "no effort, no suffix"
+        );
+
+        // The listing session sets nothing; started on a model it carries it in the
+        // environment (and the plain one carries none).
+        let probe = p.probe_config();
+        assert_eq!(probe, expected);
+        assert!(!probe.env.contains_key("PI_ACP_MODEL"));
+        let on_model = p.probe_config_for("orcarouter/deepseek/deepseek-chat");
+        assert_eq!(
+            on_model.env.get("PI_ACP_MODEL").map(String::as_str),
+            Some("orcarouter/deepseek/deepseek-chat")
+        );
+        assert!(on_model.model.is_none() && on_model.effort.is_none());
+        // Other harnesses select the model over ACP: the listing config is unchanged.
+        let devin = HarnessPreset::devin("devin");
+        assert_eq!(devin.probe_config_for("m"), devin.probe_config());
+        assert!(devin.model_effort_env.is_none() && p.unusable_models.is_empty());
     }
 
     #[test]
@@ -1214,6 +1423,42 @@ mod tests {
             .resolve("P", AgentRole::Orchestrator, None)
             .expect("named");
         assert_eq!(r.choice.model.as_deref(), Some("gpt-x"));
+    }
+
+    #[test]
+    fn pi_without_a_model_asks_for_one_and_runs_once_the_settings_name_it() {
+        let c = AgentCatalog::new(
+            vec![HarnessPreset::pi().with_command("/n/npx")],
+            AgentChoice::new("pi", None),
+        );
+        let e = c
+            .resolve("P", AgentRole::Implementer, None)
+            .expect_err("pi has no default model");
+        let AgentError::Setup { message } = e else {
+            panic!("{e:?}");
+        };
+        assert!(
+            message.contains("pi") && message.contains("設定"),
+            "{message}"
+        );
+        let no_model = RoleSettings::only(AgentChoice::new("pi", None));
+        assert_eq!(
+            c.validate(&no_model, &no_model),
+            Err("pi: a model is required".into())
+        );
+        let chosen = AgentChoice::new("pi", Some("orcarouter/x/y")).with_effort("low");
+        c.set(
+            None,
+            AgentRole::Implementer,
+            Some(RoleSettings::only(chosen.clone())),
+        );
+        let r = c.resolve("P", AgentRole::Implementer, None).expect("named");
+        assert_eq!(r.choice, chosen);
+        assert_eq!(r.harness.command, "/n/npx");
+        assert_eq!(
+            r.harness.env.get("PI_ACP_MODEL").map(String::as_str),
+            Some("orcarouter/x/y:low")
+        );
     }
 
     #[test]

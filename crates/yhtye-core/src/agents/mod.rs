@@ -5,6 +5,7 @@
 //! the limit on agent starts at the same time ([`start_slots`]).
 
 mod catalog;
+mod claude_subscription;
 mod codex_config;
 mod detect;
 mod installed;
@@ -14,21 +15,23 @@ mod settings;
 mod start_slots;
 
 pub use catalog::{
-    ANTIGRAVITY, AgentCatalog, CLAUDE_CODE, CODEX, DEFAULT_RESUME_RETRIES,
+    ANTIGRAVITY, AgentCatalog, CLAUDE_CODE, CLAUDE_CODE_API, CODEX, DEFAULT_RESUME_RETRIES,
     DEFAULT_RESUME_RETRY_DELAY, DEVIN, GROK_BUILD, HarnessInfo, HarnessPreset, MINIMAX_CODE,
-    MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE, OPENCODE, Resolved, ResumeRetry,
+    MODEL_CONFIG_ID, ModelSource, NO_HARNESS_MESSAGE, OPENCODE, PI, Resolved, ResumeRetry,
 };
+pub use claude_subscription::{claude_code_label, subscription_name, subscription_of};
 pub use codex_config::{codex_home, configured_provider, model_provider};
 pub use detect::{
     ANTIGRAVITY_COMMAND, ANTIGRAVITY_COMMAND_ALIAS, ANTIGRAVITY_INSTALL_DIRS, ANTIGRAVITY_ROOT_ENV,
     CODEX_COMMAND, DEVIN_COMMAND, GROK_BUILD_COMMAND, GROK_BUILD_INSTALL_DIR, GROK_BUILD_ROOT_ENV,
     HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec, KNOWN_DIRS,
     MINIMAX_CODE_COMMAND, MINIMAX_CODE_INSTALL_DIR, MINIMAX_CODE_ROOT_ENV, NPX_COMMAND,
-    OPENCODE_COMMAND, PathSource, WINDOWS_KNOWN_DIRS, check_executable_path, detect_harnesses,
-    find_command, find_in_path, harness_spec, known_dirs,
+    OPENCODE_COMMAND, PI_COMMAND, PI_INSTALL_DIR, PI_ROOT_ENV, PathSource, WINDOWS_KNOWN_DIRS,
+    check_executable_path, detect_harnesses, find_command, find_in_path, harness_spec, known_dirs,
 };
 pub use installed::{
-    OPENCODE_FALLBACK_MODEL, default_choice, inherited_opencode_env_remove, presets_from,
+    OPENCODE_FALLBACK_MODEL, PRESET_IDS, default_choice, inherited_opencode_env_remove,
+    presets_from,
 };
 pub use models::{
     EffortOption, HarnessModels, ModelEfforts, ModelOption, ModelService, efforts_from_options,

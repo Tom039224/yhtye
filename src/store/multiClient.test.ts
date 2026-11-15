@@ -170,6 +170,7 @@ describe("a chat starting", () => {
     await open(s);
     expect(view(s).resuming).toEqual({});
     transport.emit(ev(CHAT_LOG.length, { type: "session_starting", session: orchestratorKey("C-1") }, true));
+    s.flushLive(); // live events are shown once per frame; this is that frame
     expect(view(s).resuming).toEqual({ "C-1": true });
     // Its start ends it.
     const started = ev(CHAT_LOG.length + 1, {

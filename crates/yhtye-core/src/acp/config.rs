@@ -65,10 +65,64 @@ pub struct HarnessConfig {
     /// to do from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_hint: Option<String>,
+    /// Secret environment variables that go to this harness only, each under
+    /// the name the harness reads (see [`SecretBinding`]). The secret is not
+    /// part of the variables every agent gets, and the harness does not start
+    /// without it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_bindings: Vec<SecretBinding>,
+}
+
+/// A secret environment variable handed to one harness under another name:
+/// the value registered as `secret` (Settings › Secret environment variables)
+/// reaches only the harnesses that bind it, as `env`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretBinding {
+    /// The registered secret's name.
+    pub secret: String,
+    /// The environment variable the agent process gets it as.
+    pub env: String,
+    /// What the user sees when the secret is not registered: who needs it
+    /// (`Claude Code (API)`).
+    pub needed_by: String,
+}
+
+impl SecretBinding {
+    /// What to tell the user when `secret` is not registered or has no value.
+    #[must_use]
+    pub fn missing_message(&self) -> String {
+        format!(
+            "{} には秘密の環境変数 {} の登録が必要です (設定 › 秘密の環境変数)",
+            self.needed_by, self.secret
+        )
+    }
 }
 
 /// The Claude Code ACP adapter run through `npx` (an exact version).
 pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.84.0";
+
+/// The secret that holds the Anthropic API key of `Claude Code (API)`. Only
+/// that harness receives it, as `ANTHROPIC_API_KEY`
+/// ([`HarnessConfig::claude_code_api`]); no other agent process gets it.
+pub const CLAUDE_API_KEY_SECRET: &str = "YHTYE_ANTHROPIC_API_KEY";
+
+/// The variable Claude Code reads an Anthropic API key from.
+pub const ANTHROPIC_API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+
+/// Secrets that only the harness binding them gets, never the agents in
+/// general ([`SecretBinding`]).
+pub const HARNESS_ONLY_SECRETS: [&str; 1] = [CLAUDE_API_KEY_SECRET];
+
+/// Variables removed from the subscription Claude Code: either of them
+/// would bill the API (or another account) instead of the user's claude.ai
+/// subscription, even when it only comes from the shell Yhtye was started in.
+pub const CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE: [&str; 2] =
+    [ANTHROPIC_API_KEY_ENV, "ANTHROPIC_AUTH_TOKEN"];
+
+/// Variables removed from Claude Code (API): they are used before an API key,
+/// so the key would not be what bills.
+pub const CLAUDE_CODE_API_ENV_REMOVE: [&str; 2] =
+    ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
 
 /// OpenCode's built-in primary agent ("mode") with every tool allowed except
 /// asking for paths outside the session directory (answered by Yhtye).
@@ -166,6 +220,47 @@ Google Antigravity にログインしていません (Yhtye は代わりにロ�
 (Zed など別の ACP クライアントで一度ログインしてもよい。API キーを使うなら type を \
 `gemini-api-key` にして環境変数 GEMINI_API_KEY を渡す)。詳しくは SETUP.md の「Google Antigravity」。";
 
+/// The pi ACP adapter run through `npx` (an exact version, like
+/// [`CLAUDE_AGENT_ACP`]; `docs/architecture/acp-harnesses.md` §14). pi has no ACP
+/// of its own: the adapter embeds the pi SDK and uses the user's `~/.pi/agent`
+/// (settings, credentials, extensions, sessions) as `pi` does.
+pub const PI_ACP: &str = "@openma/pi-acp@0.1.8";
+
+/// The adapter's environment variable with the model of new sessions,
+/// `<provider>/<id>` with an optional `:<thinking level>` (`orcarouter/x/y:low`).
+/// pi's model and thinking level are set only through it: the adapter saves
+/// every `session/set_config_option` (model, thinking) to the user's own
+/// `~/.pi/agent/settings.json` as pi's defaults.
+pub const PI_ACP_MODEL_ENV: &str = "PI_ACP_MODEL";
+
+/// The adapter's environment variable that skips its startup banner (a
+/// `agent_message_chunk` with the pi version and loaded resources).
+pub const PI_ACP_QUIET_STARTUP_ENV: &str = "PI_ACP_QUIET_STARTUP";
+
+/// The id of pi's effort option (category `thought_level`). It exists only
+/// while the model reasons, and its values depend on the model (`off`, `low`,
+/// ... `xhigh`).
+pub const PI_EFFORT_CONFIG_ID: &str = "thinking";
+
+/// Appended to every role prompt of pi ([`HarnessConfig::system_prompt_note`]):
+/// pi declares MCP tools only as `tool_search` first, so the tool names of the
+/// role prompts (`mcp__yhtye__report_step_done`) are not tools until they are
+/// loaded (`docs/architecture/acp-harnesses.md` §14).
+pub const PI_MCP_NOTE: &str = "\
+Note for pi: Yhtye's tools (`report_step_done`, `help`, `create_group`, ...) \
+are on the MCP server named `yhtye` and are deferred: they are not among your \
+tools until you load them. First load them with `tool_search` (for example \
+`report_step_done`); once loaded, call a tool as `mcp__yhtye__<name>` \
+(`mcp__yhtye__report_step_done`).";
+
+/// Appended to the startup error of pi when it answers that authentication is
+/// required ([`HarnessConfig::login_hint`]): the adapter uses the user's own
+/// pi credentials and Yhtye never calls its `authenticate`.
+pub const PI_LOGIN_HINT: &str = "\
+pi にログインしていません (Yhtye は代わりにログインしません)。ターミナルで `pi` を起動して \
+`/login` するか、使うプロバイダの API キー (例: `ANTHROPIC_API_KEY`) を環境変数で設定して \
+もう一度始めてください。";
+
 /// Selects a value (the model, the effort) via `session/set_config_option`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelSelect {
@@ -215,6 +310,9 @@ impl HarnessConfig {
     /// Claude Code through `@agentclientprotocol/claude-agent-acp` with the given model
     /// alias (see `docs/architecture/acp-harnesses.md` §5). The model is set both through
     /// `ANTHROPIC_MODEL` (initial value) and `set_config_option` (verifiable).
+    /// This is the subscription Claude Code (the user's claude.ai login): an API key
+    /// or token in the inherited environment is removed
+    /// ([`CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE`]) so it never bills the API.
     #[must_use]
     pub fn claude_code(model: &str) -> Self {
         Self {
@@ -236,7 +334,9 @@ impl HarnessConfig {
                 // the session up again), which Yhtye counts as a silent turn.
                 ("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), "1".into()),
             ]),
-            env_remove: Vec::new(),
+            env_remove: CLAUDE_CODE_SUBSCRIPTION_ENV_REMOVE
+                .map(String::from)
+                .to_vec(),
             mode_after_new: Some("bypassPermissions".into()),
             model: Some(ModelSelect {
                 config_id: "model".into(),
@@ -254,7 +354,25 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
+    }
+
+    /// Claude Code billed to an Anthropic API key (`Claude Code (API)`): the
+    /// subscription config, except that the secret [`CLAUDE_API_KEY_SECRET`]
+    /// is the agent's `ANTHROPIC_API_KEY` (nothing starts without it), and the
+    /// variables that would be used before the key are removed
+    /// ([`CLAUDE_CODE_API_ENV_REMOVE`]).
+    #[must_use]
+    pub fn claude_code_api(model: &str) -> Self {
+        let mut h = Self::claude_code(model);
+        h.env_remove = CLAUDE_CODE_API_ENV_REMOVE.map(String::from).to_vec();
+        h.secret_bindings = vec![SecretBinding {
+            secret: CLAUDE_API_KEY_SECRET.into(),
+            env: ANTHROPIC_API_KEY_ENV.into(),
+            needed_by: "Claude Code (API)".into(),
+        }];
+        h
     }
 
     /// [`HarnessConfig::claude_code`] for reading subscription usage with the
@@ -264,10 +382,21 @@ impl HarnessConfig {
     /// `TZ=UTC` so the adapter prints reset times in UTC.
     #[must_use]
     pub fn claude_code_usage_probe() -> Self {
-        let mut h = Self::claude_code("haiku");
-        h.env.insert("TZ".into(), "UTC".into());
-        h.mode_after_new = None;
-        h.model = None;
+        Self::claude_code("haiku").into_listing_session()
+    }
+
+    /// [`HarnessConfig::claude_code_api`] as a listing session (the models
+    /// and efforts), which [`HarnessConfig::claude_code_usage_probe`] is for
+    /// the subscription: no tools, nothing saved, no mode / model switching.
+    #[must_use]
+    pub fn claude_code_api_probe() -> Self {
+        Self::claude_code_api("haiku").into_listing_session()
+    }
+
+    fn into_listing_session(mut self) -> Self {
+        self.env.insert("TZ".into(), "UTC".into());
+        self.mode_after_new = None;
+        self.model = None;
         let meta = serde_json::json!({
             "claudeCode": { "options": {
                 "strictMcpConfig": true,
@@ -275,8 +404,8 @@ impl HarnessConfig {
                 "persistSession": false,
             } }
         });
-        h.session_meta = meta.as_object().cloned();
-        h
+        self.session_meta = meta.as_object().cloned();
+        self
     }
 
     /// OpenCode's built-in ACP server (`opencode acp`, verified with 2.0.12) with the
@@ -306,6 +435,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -340,6 +470,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -370,6 +501,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -404,6 +536,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -439,6 +572,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: Some(ANTIGRAVITY_LOGIN_HINT.into()),
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -472,6 +606,41 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
+        }
+    }
+
+    /// pi through `@openma/pi-acp` (`npx`, [`PI_ACP`]), see
+    /// `docs/architecture/acp-harnesses.md` §14. pi has no modes, so none is set,
+    /// and the model and thinking level are not set as config options either:
+    /// the adapter would save them to the user's own `settings.json`
+    /// ([`crate::agents::HarnessPreset::config`] passes the chosen ones in
+    /// [`PI_ACP_MODEL_ENV`]; nothing is chosen here, so pi's own default applies
+    /// otherwise). The startup banner is switched off ([`PI_ACP_QUIET_STARTUP_ENV`]);
+    /// the rest of the user's environment (`PI_CODING_AGENT_DIR`, ...) is
+    /// inherited as it is. The role prompt is prepended to the first prompt
+    /// (`_meta.systemPrompt` is ignored), with [`PI_MCP_NOTE`] appended. pi asks
+    /// no tool approvals itself; the extension dialogs that arrive as permission
+    /// requests are answered [`PermissionPolicy::OnceOnly`], and an authentication
+    /// error is followed by [`PI_LOGIN_HINT`].
+    #[must_use]
+    pub fn pi() -> Self {
+        Self {
+            command: "npx".into(),
+            args: vec!["-y".into(), PI_ACP.into()],
+            env: BTreeMap::from([(PI_ACP_QUIET_STARTUP_ENV.into(), "1".into())]),
+            env_remove: Vec::new(),
+            mode_after_new: None,
+            model: None,
+            effort: None,
+            system_prompt: SystemPromptStyle::FirstPrompt,
+            session_meta: None,
+            startup_timeout: DEFAULT_STARTUP_TIMEOUT,
+            client_info: None,
+            permission_policy: PermissionPolicy::OnceOnly,
+            system_prompt_note: Some(PI_MCP_NOTE.into()),
+            login_hint: Some(PI_LOGIN_HINT.into()),
+            secret_bindings: Vec::new(),
         }
     }
 
@@ -493,6 +662,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            secret_bindings: Vec::new(),
         }
     }
 }
@@ -542,6 +712,80 @@ mod tests {
         assert_eq!(
             h.env.get("ENABLE_TOOL_SEARCH").map(String::as_str),
             Some("false")
+        );
+    }
+
+    #[test]
+    fn the_subscription_claude_code_never_inherits_an_api_credential() {
+        for h in [
+            HarnessConfig::claude_code("haiku"),
+            HarnessConfig::claude_code_usage_probe(),
+        ] {
+            assert_eq!(h.env_remove, ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]);
+            assert!(
+                h.secret_bindings.is_empty(),
+                "it is never given the API key"
+            );
+            assert!(!h.env.contains_key("ANTHROPIC_API_KEY"));
+        }
+    }
+
+    #[test]
+    fn claude_code_api_gets_the_key_from_its_secret_and_loses_the_other_credentials() {
+        for h in [
+            HarnessConfig::claude_code_api("haiku"),
+            HarnessConfig::claude_code_api_probe(),
+        ] {
+            assert_eq!(
+                h.secret_bindings,
+                [SecretBinding {
+                    secret: "YHTYE_ANTHROPIC_API_KEY".into(),
+                    env: "ANTHROPIC_API_KEY".into(),
+                    needed_by: "Claude Code (API)".into(),
+                }]
+            );
+            assert_eq!(
+                h.env_remove,
+                ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]
+            );
+            assert!(
+                !h.env.contains_key("ANTHROPIC_API_KEY"),
+                "the key is never part of the config"
+            );
+            let plain = HarnessConfig::claude_code("haiku");
+            assert_eq!(h.args, plain.args);
+            assert_eq!(
+                h.env.get("ENABLE_TOOL_SEARCH"),
+                plain.env.get("ENABLE_TOOL_SEARCH")
+            );
+        }
+        let api = HarnessConfig::claude_code_api("haiku");
+        assert_eq!(api.mode_after_new.as_deref(), Some("bypassPermissions"));
+        assert_eq!(api.model.map(|m| m.value), Some("haiku".to_string()));
+    }
+
+    #[test]
+    fn the_claude_code_listing_sessions_switch_nothing_and_save_nothing() {
+        for h in [
+            HarnessConfig::claude_code_usage_probe(),
+            HarnessConfig::claude_code_api_probe(),
+        ] {
+            assert_eq!((h.mode_after_new, h.model), (None, None));
+            assert_eq!(h.env.get("TZ").map(String::as_str), Some("UTC"));
+            let meta = serde_json::Value::Object(h.session_meta.expect("meta"));
+            assert_eq!(
+                meta.pointer("/claudeCode/options/persistSession"),
+                Some(&serde_json::json!(false))
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_secret_is_reported_with_who_needs_it_and_never_a_value() {
+        let message = HarnessConfig::claude_code_api("haiku").secret_bindings[0].missing_message();
+        assert_eq!(
+            message,
+            "Claude Code (API) には秘密の環境変数 YHTYE_ANTHROPIC_API_KEY の登録が必要です (設定 › 秘密の環境変数)"
         );
     }
 
@@ -654,6 +898,44 @@ mod tests {
     }
 
     #[test]
+    fn pi_runs_the_pinned_adapter_and_sets_neither_mode_model_nor_effort() {
+        let h = HarnessConfig::pi();
+        assert_eq!(
+            (h.command.as_str(), h.args.as_slice()),
+            (
+                "npx",
+                &["-y".to_string(), "@openma/pi-acp@0.1.8".to_string()][..]
+            ),
+            "the adapter version is pinned exactly"
+        );
+        assert_eq!(
+            h.env,
+            BTreeMap::from([("PI_ACP_QUIET_STARTUP".to_string(), "1".to_string())]),
+            "only the banner is switched off: the user's pi environment is inherited"
+        );
+        assert!(h.env_remove.is_empty());
+        assert_eq!(h.mode_after_new, None, "pi has no modes");
+        assert!(
+            h.model.is_none() && h.effort.is_none(),
+            "set_config_option would save them to ~/.pi/agent/settings.json"
+        );
+        assert_eq!(h.system_prompt, SystemPromptStyle::FirstPrompt);
+        assert_eq!(h.permission_policy, PermissionPolicy::OnceOnly);
+        assert!(h.session_meta.is_none());
+        assert_eq!(h.client_info, None, "no other product's name is claimed");
+        let note = h.system_prompt_note.expect("the MCP note");
+        assert!(
+            note.contains("tool_search") && note.contains("mcp__yhtye__<name>"),
+            "{note}"
+        );
+        let hint = h.login_hint.expect("how to log in");
+        assert!(
+            hint.contains("`/login`") && hint.contains("API キー"),
+            "{hint}"
+        );
+    }
+
+    #[test]
     fn other_harnesses_keep_the_default_client_info_permission_policy_and_prompt() {
         for h in [
             HarnessConfig::claude_code("haiku"),
@@ -662,11 +944,14 @@ mod tests {
             HarnessConfig::plain("x", vec![]),
         ] {
             assert_eq!(h.client_info, None);
-            assert_eq!(h.login_hint, None, "only Antigravity points to a login");
+            assert_eq!(
+                h.login_hint, None,
+                "only Antigravity and pi point to a login"
+            );
             assert_eq!(h.permission_policy, PermissionPolicy::Default);
             assert_eq!(
                 h.system_prompt_note, None,
-                "only Devin adds to the role prompt"
+                "only Devin and pi add to the role prompt"
             );
             assert!(!h.env_remove.iter().any(|v| v == "RUST_LOG"));
         }

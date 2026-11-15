@@ -375,3 +375,226 @@ async fn real_effort_is_applied_after_the_model() {
     drop(rx);
     assert_group_gone(pid, Duration::from_secs(5)).await;
 }
+
+// ---------------------------------------------------------------------------
+// Claude Code billed to the subscription or to an API key
+// (`claude-code` / `claude-code-api`). The API tests read the key the user
+// registered as `YHTYE_ANTHROPIC_API_KEY` from the OS credential store and skip
+// when there is none. A key value is never printed.
+// ---------------------------------------------------------------------------
+
+/// The name the API key is registered under, with the user's real credential
+/// store behind it; `None` (the test is skipped) when no key is registered or
+/// the store cannot be read.
+fn registered_api_key() -> Option<yhtye_core::secrets::Secrets> {
+    use std::sync::Arc;
+    use yhtye_core::acp::CLAUDE_API_KEY_SECRET;
+    use yhtye_core::secrets::{KeyringBackend, SecretBackend, Secrets};
+    let backend = Arc::new(KeyringBackend::new());
+    match backend.get(CLAUDE_API_KEY_SECRET) {
+        Ok(Some(_)) => Some(Secrets::new(backend, [CLAUDE_API_KEY_SECRET.to_string()])),
+        Ok(None) => {
+            eprintln!("skipped: {CLAUDE_API_KEY_SECRET} is not registered");
+            None
+        }
+        Err(e) => {
+            eprintln!("skipped: the credential store cannot be read: {e}");
+            None
+        }
+    }
+}
+
+/// Secrets in memory (never the user's): the names and values given.
+async fn memory_secrets(vars: &[(&str, &str)]) -> yhtye_core::secrets::Secrets {
+    use std::sync::Arc;
+    use yhtye_core::secrets::{MemoryBackend, SecretValue, Secrets};
+    let secrets = Secrets::new(Arc::new(MemoryBackend::default()), []);
+    for (name, value) in vars {
+        secrets
+            .set(name, SecretValue::new(*value))
+            .await
+            .expect("set");
+    }
+    secrets
+}
+
+/// What one prompt to Claude Code on Haiku came to.
+#[derive(Debug)]
+enum Answer {
+    /// The agent did not start (`spawn_agent_with_secrets` failed): the error.
+    NotStarted(String),
+    /// The turn ended: the message text and how it ended.
+    Turn(String, Result<StopReason, String>),
+}
+
+impl Answer {
+    /// The message of a start that failed (never an answer).
+    fn not_started(&self) -> Option<&str> {
+        match self {
+            Self::NotStarted(e) => Some(e),
+            Self::Turn(..) => None,
+        }
+    }
+}
+
+/// Starts `harness` with `secrets`, sends `prompt` and reports what came back
+/// (a start that fails is an answer too). The agent is stopped afterwards.
+async fn ask(
+    harness: &HarnessConfig,
+    secrets: &yhtye_core::secrets::Secrets,
+    prompt: &str,
+) -> Answer {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (tx, rx) = mpsc::unbounded_channel();
+    let started = yhtye_core::secrets::spawn_agent_with_secrets(
+        secrets,
+        harness,
+        dir.path(),
+        SpawnOptions::default(),
+        tx,
+    )
+    .await;
+    let handle = match started {
+        Ok(h) => h,
+        Err(e) => return Answer::NotStarted(e.to_string()),
+    };
+    let mut s = Session {
+        handle,
+        events: rx,
+        timeout: REAL_TIMEOUT,
+    };
+    s.handle.prompt_text(prompt).expect("prompt");
+    let (events, stop_reason) = s.turn().await;
+    let text = message_text(&events);
+    stop(s).await;
+    Answer::Turn(text, stop_reason.map_err(|e| e.to_string()))
+}
+
+/// The subscription Claude Code answers a turn, and an `ANTHROPIC_API_KEY`
+/// among the user's secrets (here an invalid one: it would fail the turn if it
+/// reached the agent) is not what it uses.
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku, subscription)"]
+async fn real_subscription_claude_code_answers_and_ignores_an_api_key_secret() {
+    let secrets = memory_secrets(&[
+        ("ANTHROPIC_API_KEY", "sk-ant-api03-invalid-key-for-the-test"),
+        (
+            "YHTYE_ANTHROPIC_API_KEY",
+            "sk-ant-api03-invalid-key-for-the-test",
+        ),
+    ])
+    .await;
+    let answer = ask(
+        &HarnessConfig::claude_code(MODEL),
+        &secrets,
+        "Reply with exactly one word: pong",
+    )
+    .await;
+    eprintln!("answer: {answer:?}");
+    let Answer::Turn(text, stop) = answer else {
+        panic!(
+            "the subscription Claude Code did not start: {:?}",
+            answer.not_started()
+        );
+    };
+    assert_eq!(stop, Ok(StopReason::EndTurn));
+    assert!(text.to_lowercase().contains("pong"), "{text}");
+}
+
+/// `claude-code-api` answers a turn on Haiku with the registered key, which
+/// only it gets (as `ANTHROPIC_API_KEY`).
+#[tokio::test]
+#[ignore = "real Claude Code (Haiku, API key from the credential store)"]
+async fn real_api_claude_code_answers_with_the_registered_key() {
+    let Some(secrets) = registered_api_key() else {
+        return;
+    };
+    let answer = ask(
+        &HarnessConfig::claude_code_api(MODEL),
+        &secrets,
+        "Reply with exactly one word: pong",
+    )
+    .await;
+    eprintln!("answer: {answer:?}");
+    let Answer::Turn(text, stop) = answer else {
+        panic!("claude-code-api did not start: {:?}", answer.not_started());
+    };
+    assert_eq!(stop, Ok(StopReason::EndTurn));
+    assert!(text.to_lowercase().contains("pong"), "{text}");
+}
+
+/// That `claude-code-api` really runs on the key: with an invalid one it cannot
+/// answer, whereas the machine's subscription login (which `claude-code`
+/// uses) would have.
+#[tokio::test]
+#[ignore = "real Claude Code (invalid API key)"]
+async fn real_api_claude_code_with_an_invalid_key_cannot_answer() {
+    let secrets = memory_secrets(&[(
+        "YHTYE_ANTHROPIC_API_KEY",
+        "sk-ant-api03-invalid-key-for-the-test",
+    )])
+    .await;
+    let answer = ask(
+        &HarnessConfig::claude_code_api(MODEL),
+        &secrets,
+        "Reply with exactly one word: pong",
+    )
+    .await;
+    eprintln!("answer: {answer:?}");
+    let Answer::Turn(text, stop) = answer else {
+        panic!(
+            "it should start and fail the turn: {:?}",
+            answer.not_started()
+        );
+    };
+    assert!(text.contains("Invalid API key"), "{text}");
+    assert!(!text.to_lowercase().contains("pong"), "{text}");
+    let error = stop.expect_err("the turn fails on authentication");
+    assert!(error.contains("Authentication required"), "{error}");
+}
+
+/// The models and efforts of `claude-code-api` are read with the key too.
+#[tokio::test]
+#[ignore = "real Claude Code (API key from the credential store, no prompt)"]
+async fn real_api_model_list_is_read_with_the_registered_key() {
+    use yhtye_core::agents::{HarnessPreset, probe_models};
+    let Some(secrets) = registered_api_key() else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("tempdir");
+    let preset = HarnessPreset::claude_code_api(MODEL);
+    let listed = probe_models(
+        &secrets,
+        &preset,
+        dir.path(),
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .expect("models");
+    eprintln!(
+        "models: current={:?} {:?}",
+        listed.current,
+        listed
+            .models
+            .iter()
+            .map(|m| m.value.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(listed.harness, "claude-code-api");
+    assert!(listed.models.iter().any(|m| m.value == MODEL), "{listed:?}");
+}
+
+/// The label of the subscription Claude Code names the plan of the login that
+/// is really on this machine (no model call, nothing is written or printed
+/// of the login but the plan name).
+#[test]
+#[ignore = "reads the real ~/.claude/.credentials.json"]
+fn real_subscription_label_names_the_plan_of_the_login() {
+    let label = yhtye_core::agents::claude_code_label(&|k: &str| std::env::var_os(k));
+    eprintln!("label: {label}");
+    assert!(
+        label.starts_with("Claude Code (") && label.ends_with(')'),
+        "{label}"
+    );
+    assert!(!label.contains("sk-ant"), "{label}");
+}

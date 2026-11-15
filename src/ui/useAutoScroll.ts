@@ -4,14 +4,18 @@ const NEAR_BOTTOM_PX = 48;
 
 /**
  * Keeps a scroll container pinned to the bottom when `content` changes, unless
- * the user has scrolled up to read (then it stays where it is). When `head`
- * (the first item's identity) changes, older content was prepended: the view
- * keeps its place instead of jumping. When `resetKey` changes (another chat is
- * shown) the new content starts at the bottom.
+ * the user has scrolled up to read (then it stays where it is). `content` is
+ * the list of what the container shows (the items, the text being streamed):
+ * it counts as changed when one of its elements is not the one of the render
+ * before, so a list made anew by every render does not make it scroll (a forced
+ * layout) each time; its length must stay the same. When `head` (the first
+ * item's identity) changes, older content was prepended: the view keeps its
+ * place instead of jumping. When `resetKey` changes (another chat is shown) the
+ * new content starts at the bottom.
  */
 export function useAutoScroll(
   ref: RefObject<HTMLElement | null>,
-  content: unknown,
+  content: readonly unknown[],
   head?: unknown,
   resetKey?: unknown,
 ): void {
@@ -45,5 +49,5 @@ export function useAutoScroll(
     }
     lastHead.current = head;
     lastHeight.current = el.scrollHeight;
-  }, [ref, content, head, resetKey]);
+  }, [ref, head, resetKey, ...content]);
 }
