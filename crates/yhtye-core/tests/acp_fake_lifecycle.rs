@@ -152,7 +152,11 @@ async fn missing_command_is_a_clear_spawn_error() {
         panic!("{err:?}")
     };
     assert_eq!(command, "/nonexistent/yhtye-agent");
-    assert!(message.contains("No such file"), "{message}");
+    // Unix says "No such file or directory"; Windows "The system cannot find the path specified".
+    assert!(
+        message.contains("No such file") || message.contains("cannot find"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

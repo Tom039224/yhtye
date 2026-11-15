@@ -322,7 +322,11 @@ mod tests {
         )
         .expect("write");
         let home_str = home.path().to_str().expect("utf-8");
-        let presets = presets_from(&all_installed()[..1], "haiku", env(&[("HOME", home_str)]));
+        let presets = presets_from(
+            &all_installed()[..1],
+            "haiku",
+            env(&[(crate::home::test_support::HOME, home_str)]),
+        );
         assert_eq!(ids(&presets), ["claude-code", "claude-code-api"]);
         assert_eq!(
             label_of(&presets, "claude-code"),

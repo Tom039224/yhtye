@@ -32,6 +32,9 @@ impl TempRepo {
         r.git(&["init", "-q", "-b", "main"]);
         r.git(&["config", "user.name", "Test"]);
         r.git(&["config", "user.email", "test@example.com"]);
+        // Windows runners (and Git for Windows installs) default to `core.autocrlf=true`, which
+        // would check out CRLF and fail every test comparing file contents with "x\n".
+        r.git(&["config", "core.autocrlf", "false"]);
         r.write("README.md", "# test\n");
         r.commit("initial");
         r
