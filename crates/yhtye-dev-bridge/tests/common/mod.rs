@@ -71,6 +71,8 @@ pub fn temp_repo(root: &Path) -> (PathBuf, PathBuf) {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["config", "user.name", "Test"]);
     git(&repo, &["config", "user.email", "test@example.com"]);
+    // Not CRLF on Windows (`core.autocrlf=true` there by default).
+    git(&repo, &["config", "core.autocrlf", "false"]);
     std::fs::write(repo.join("README.md"), "# test\n").expect("write");
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-qm", "initial"]);

@@ -248,8 +248,10 @@ mod tests {
     impl Job {
         /// Process ids currently in the job.
         fn process_ids(&self) -> Vec<u32> {
-            // The header (two counts) is followed by the ids; room for 64 of them.
-            let mut buffer = [0usize; 2 + 64];
+            // Two `u32` counts, then (at the next `usize` boundary) the ids; room for 64.
+            let ids_at = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
+                / size_of::<usize>();
+            let mut buffer = [0usize; 4 + 64];
             // SAFETY: the buffer is big enough for the size passed and aligned like
             // the struct (it is made of `usize`).
             let ok = unsafe {
@@ -265,7 +267,7 @@ mod tests {
             let list = buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
             // SAFETY: filled in by the call above.
             let count = unsafe { (*list).NumberOfProcessIdsInList } as usize;
-            buffer[2..2 + count.min(64)]
+            buffer[ids_at..ids_at + count.min(64)]
                 .iter()
                 .map(|&id| id as u32)
                 .collect()
@@ -357,7 +359,11 @@ mod tests {
         let status = terminate(&mut child, &mut guard).await;
 
         assert!(status.is_some(), "the launcher was reaped");
-        assert!(members.iter().all(|&p| process_gone(p)));
+        // The job's termination reaches the descendants a moment after the launcher.
+        wait_until("the tree to be gone", || {
+            members.iter().all(|&p| process_gone(p))
+        })
+        .await;
     }
 
     #[tokio::test]

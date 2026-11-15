@@ -258,10 +258,11 @@ async fn cancel_task_stops_the_agent_mid_turn() {
                 if session == "t1/implementer")),
         "the process exit is published before the session stops"
     );
-    until(&mut rx, &mut events, TIMEOUT, |e| {
-        is_message(e, ORCHESTRATOR_SESSION, "mcp:cancel_group:ok")
-    })
-    .await;
+    // The orchestrator's reply and the stop race (the reply may come first, e.g. on Windows).
+    let cancelled_group = |e: &ApiEvent| is_message(e, ORCHESTRATOR_SESSION, "mcp:cancel_group:ok");
+    if !events.iter().any(cancelled_group) {
+        until(&mut rx, &mut events, TIMEOUT, cancelled_group).await;
+    }
     let snapshot = orch.snapshot().await.expect("snapshot");
     assert_eq!(snapshot.state.tasks[0].status, TaskStatus::Cancelled);
     assert_eq!(

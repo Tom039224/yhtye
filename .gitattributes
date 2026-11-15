@@ -1,0 +1,8 @@
+# Check out text as LF on every OS. Windows runners and Git for Windows default to
+# core.autocrlf=true, which would turn the generated API types (src/api/generated, the Kotlin
+# ones in mobile/) and the agent prompts embedded with include_str! into CRLF, so the
+# "generated types are up to date" tests and the prompts differ from what the repository holds.
+* text=auto eol=lf
+# Stored with CRLF in the repository (mobile/gradlew.bat), kept byte for byte.
+*.bat -text
+*.cmd -text

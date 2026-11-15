@@ -1180,7 +1180,8 @@ async fn the_hosts_folders_can_be_listed_for_a_remote_client() {
         .await
         .expect("core");
     let dir = tempfile::tempdir().expect("dir");
-    let base = dir.path().canonicalize().expect("canonical");
+    // `dunce`: the core reports paths without the `\\?\` prefix `std` adds on Windows.
+    let base = dunce::canonicalize(dir.path()).expect("canonical");
     for d in ["Beta", "alpha", "proj/.git", ".hidden"] {
         std::fs::create_dir_all(base.join(d)).expect("mkdir");
     }
@@ -1219,14 +1220,14 @@ async fn the_hosts_folders_can_be_listed_for_a_remote_client() {
     assert_eq!(directory.entries[0].name, ".hidden");
 
     // No path: the home directory of the user the core runs as.
-    if let Some(home) = std::env::var_os("HOME").filter(|h| Path::new(h).is_dir()) {
+    if let Some(home) = yhtye_core::directory::home_dir().filter(|h| h.is_dir()) {
         let ApiResponse::Directory { directory } = run(&core, list(None, None)).await else {
             panic!("a directory");
         };
-        assert_eq!(Path::new(&directory.home), Path::new(&home));
+        assert_eq!(Path::new(&directory.home), home);
         assert_eq!(
             Path::new(&directory.path),
-            Path::new(&home).canonicalize().expect("home")
+            dunce::canonicalize(&home).expect("home")
         );
     }
 
