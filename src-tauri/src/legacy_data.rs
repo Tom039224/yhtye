@@ -175,11 +175,15 @@ mod tests {
 
         let new_wt = new.join("worktrees/proj/group/task");
         let list = git(&repo, &["worktree", "list", "--porcelain"]);
+        // git prints `/`-separated paths (`C:/…` on Windows) where Rust's canonical form has
+        // `\\?\` and `\`, so compare the canonicalized paths, not the text.
         let new_wt_real = fs::canonicalize(&new_wt).unwrap();
-        assert!(
-            list.contains(new_wt_real.to_str().unwrap()),
-            "worktree list: {list}"
-        );
+        let listed: Vec<PathBuf> = list
+            .lines()
+            .filter_map(|l| l.strip_prefix("worktree "))
+            .filter_map(|p| fs::canonicalize(p).ok())
+            .collect();
+        assert!(listed.contains(&new_wt_real), "worktree list: {list}");
         git(&new_wt, &["status"]);
     }
 }

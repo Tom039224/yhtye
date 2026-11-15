@@ -27,6 +27,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # Windows and macOS checkouts are case-insensitive: two paths that differ only in case (or in
+      # case and extension, which TypeScript resolves to the same module, e.g. Foo.tsx and foo.ts)
+      # collide there.
+      - name: Check for paths that differ only in case
+        run: |
+          dups=$(git ls-files | sed -E 's/\.(d\.ts|tsx|ts|jsx|js|mjs|cjs)$//' | sort -f | uniq -di)
+          if [ -n "$dups" ]; then
+            echo "These paths differ only in case (or extension):"
+            echo "$dups"
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm test
@@ -161,7 +172,9 @@ jobs:
       - run: mkdir -p dist
       - run: cargo build --workspace --all-targets
       # Includes the generated-types check (api::typegen); #[ignore]d tests that need real agents stay excluded.
-      - run: cargo test --workspace
+      # --no-fail-fast: cargo test stops at the first failing test binary, so without it one failure hides
+      # the other crates' results.
+      - run: cargo test --workspace --no-fail-fast
 
   # The same checks as `frontend` on Windows (paths, line endings and the like).
   frontend-windows:

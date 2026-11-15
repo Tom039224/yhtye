@@ -5,7 +5,7 @@ import { orchestratorKey } from "../store/chats";
 import { applySnapshot, newProjectView, type ProjectView } from "../store/project";
 import { CHAT_GIT, CHAT_INFOS, chatSnapshot, FEAT_WT, MAIN_WT } from "../test/chats";
 import { PROJECT } from "../test/fixtures";
-import { buildTree, chatRing, deleteBlocker, placeOf, shortAge } from "./branchTree";
+import { buildTree, chatRing, deleteBlocker, placeOf, shortAge } from "./branchTreeModel";
 
 const session = (chat: string, live: boolean, turn: boolean): SessionRecord => ({
   session_key: orchestratorKey(chat),

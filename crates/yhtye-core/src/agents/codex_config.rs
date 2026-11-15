@@ -43,31 +43,19 @@ pub async fn configured_provider(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-
-    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
-        let map: HashMap<String, OsString> = vars
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), OsString::from(v)))
-            .collect();
-        move |k| map.get(k).cloned()
-    }
+    use crate::home::test_support::{abs, env};
 
     #[test]
     fn the_home_is_codex_home_else_dot_codex() {
         assert_eq!(
             codex_home(&env(&[("CODEX_HOME", "/x/codex"), ("HOME", "/h")])),
-            Some(PathBuf::from("/x/codex"))
+            Some(abs("/x/codex"))
         );
-        assert_eq!(
-            codex_home(&env(&[("HOME", "/h")])),
-            Some(PathBuf::from("/h/.codex"))
-        );
+        assert_eq!(codex_home(&env(&[("HOME", "/h")])), Some(abs("/h/.codex")));
         assert_eq!(
             codex_home(&env(&[("CODEX_HOME", ""), ("HOME", "/h")])),
-            Some(PathBuf::from("/h/.codex")),
+            Some(abs("/h/.codex")),
             "an empty CODEX_HOME counts as unset"
         );
         assert_eq!(codex_home(&env(&[])), None);

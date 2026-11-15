@@ -1480,7 +1480,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - ターン終了時・配達前・`RetryGroupMerge` 前の追跡・取り直しは削除。
 - **API**: `create_chat { project, branch?, worktree? }` (どちらか 1 つ。両方・どちらも無しは `invalid_argument`)。`Snapshot.chats` / `list_chats` は `ChatInfo` (worktree)。
   イベント `domain { group_base_changed }` を追加、`chat_branch_changed` を削除。`pnpm gen:types`。
-- **フロントエンド**: ツリー (`ui/branchTree.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
+- **フロントエンド**: ツリー (`ui/branchTreeModel.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
   表示名 = ブランチ / `detached @<sha7>` / 見つからない。チャットの作業ツリーが一覧に無ければ「(見つからない作業ツリー)」の下 (送信不可)。
   作業ツリーの無いローカルブランチは末尾の折りたたみ「他のブランチ」(そこからの「+ 新しいチャット」で Yhtye の作業ツリーを作る)。
   会話ヘッダ・ピルも作業ツリーの今のブランチ。git の概要は従来の契機に加えて、ウィンドウのフォーカスとオーケストレータのターン終了で読み直す (外部の改名・オーケストレータ自身の改名が表示に出るように)。
@@ -1592,7 +1592,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   対象は、左のレールの開いているプロジェクトの行 (`RailProjects`。Alt+↑/↓ は行にフォーカスして。出ている行だけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
   (プロジェクトのプルダウンとバックグラウンドのチップは、ダッシュボード導入でレールに置き換わった。)
 - **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
-- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
+- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTreeModel.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 

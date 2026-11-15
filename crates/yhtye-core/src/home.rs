@@ -27,6 +27,39 @@ pub(crate) fn home_dir_for(
     })
 }
 
+/// What tests that feed an injected environment need to run on either OS.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    /// The variable [`home_dir_in`](super::home_dir_in) reads on this OS.
+    pub(crate) const HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+    /// `path` as an absolute path of this OS: a rooted Unix-style literal (`/h/x`) gets a drive
+    /// on Windows (`C:/h/x`), where it would otherwise be relative.
+    pub(crate) fn abs(path: &str) -> PathBuf {
+        if cfg!(windows) && path.starts_with('/') {
+            PathBuf::from(format!("C:{path}"))
+        } else {
+            PathBuf::from(path)
+        }
+    }
+
+    /// A lookup over `vars` in which the key `HOME` stands for [`HOME`] and values are made
+    /// absolute with [`abs`] (an empty value stays empty).
+    pub(crate) fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let map: std::collections::HashMap<String, OsString> = vars
+            .iter()
+            .map(|(k, v)| {
+                let key = if *k == "HOME" { HOME } else { k };
+                (key.to_string(), abs(v).into_os_string())
+            })
+            .collect();
+        move |k| map.get(k).cloned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

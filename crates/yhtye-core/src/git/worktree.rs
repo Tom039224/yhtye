@@ -145,7 +145,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// `path` with symlinks resolved as far as it exists (a deleted worktree
 /// directory is resolved through its parent).
 fn normalize(path: &Path) -> PathBuf {
-    if let Ok(p) = std::fs::canonicalize(path) {
+    if let Ok(p) = dunce::canonicalize(path) {
         return p;
     }
     match (path.parent(), path.file_name()) {
