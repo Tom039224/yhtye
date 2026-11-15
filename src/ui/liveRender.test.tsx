@@ -23,11 +23,11 @@ vi.mock("./taskInfo", async (original) => {
   const info = await original<typeof import("./taskInfo")>();
   return { ...info, taskElapsedMs: vi.fn(info.taskElapsedMs) };
 });
-vi.mock("./branchTree", async (original) => {
-  const tree = await original<typeof import("./branchTree")>();
+vi.mock("./branchTreeModel", async (original) => {
+  const tree = await original<typeof import("./branchTreeModel")>();
   return { ...tree, buildTree: vi.fn(tree.buildTree) };
 });
-import { buildTree } from "./branchTree";
+import { buildTree } from "./branchTreeModel";
 import { formatTime } from "./labels";
 import { taskElapsedMs } from "./taskInfo";
 

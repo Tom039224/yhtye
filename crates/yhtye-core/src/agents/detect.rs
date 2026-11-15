@@ -1340,10 +1340,19 @@ mod tests {
 mod portable_tests {
     use super::*;
 
+    /// `/w/...` made absolute on this OS (`C:/w/...` on Windows, where a rooted path without a
+    /// drive is not absolute).
+    fn w(path: &str) -> PathBuf {
+        match path.strip_prefix("/w") {
+            Some(rest) if cfg!(windows) => PathBuf::from(format!("C:/w{rest}")),
+            _ => PathBuf::from(path),
+        }
+    }
+
     fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let map: HashMap<String, OsString> = vars
             .iter()
-            .map(|(k, v)| ((*k).to_string(), OsString::from(v)))
+            .map(|(k, v)| ((*k).to_string(), w(v).into_os_string()))
             .collect();
         move |k| map.get(k).cloned()
     }
@@ -1428,7 +1437,7 @@ mod portable_tests {
                 "/w/Users/u/.bun/bin",
                 "/w/Users/u/.cargo/bin",
             ]
-            .map(PathBuf::from)
+            .map(w)
         );
     }
 
@@ -1440,14 +1449,14 @@ mod portable_tests {
             ["/w/Users/u/.local/bin", "/w/Users/u/scoop/shims"]
                 .iter()
                 .chain(&["/w/Users/u/.bun/bin", "/w/Users/u/.cargo/bin"])
-                .map(PathBuf::from)
+                .map(|p| w(p))
                 .collect::<Vec<_>>()
         );
         let relative = known_dirs_for(true, &env(&[("APPDATA", "relative")]));
         assert!(relative.is_empty(), "a relative variable is not trusted");
         // The profile may come from HOMEDRIVE + HOMEPATH, as on a bare service account.
         let drive = known_dirs_for(true, &env(&[("HOMEDRIVE", "/w"), ("HOMEPATH", "/h")]));
-        assert_eq!(drive[0], PathBuf::from("/w/h/.local/bin"));
+        assert_eq!(drive[0], w("/w/h/.local/bin"));
     }
 
     #[test]

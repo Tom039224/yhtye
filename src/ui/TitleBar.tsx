@@ -1,6 +1,6 @@
 import { selectedChatInfo } from "../store/project";
 import { useAppState } from "../store/useStore";
-import { placeLabel, placeOf } from "./branchTree";
+import { placeLabel, placeOf } from "./branchTreeModel";
 import { Icon } from "./Icon";
 
 /**

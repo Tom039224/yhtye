@@ -68,33 +68,26 @@ impl StatsSources {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::home::test_support::{abs, env};
 
     fn sources(vars: &[(&str, &str)]) -> StatsSources {
-        let vars: Vec<(String, String)> = vars
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-            .collect();
-        StatsSources::from_vars(&|k| {
-            vars.iter()
-                .find(|(name, _)| name == k)
-                .map(|(_, v)| OsString::from(v))
-        })
+        StatsSources::from_vars(&env(vars))
     }
 
     #[test]
     fn defaults_live_under_the_home_directory() {
         let s = sources(&[("HOME", "/h")]);
-        assert_eq!(s.claude_projects, Some("/h/.claude/projects".into()));
+        assert_eq!(s.claude_projects, Some(abs("/h/.claude/projects")));
         assert_eq!(
             s.codex_dirs,
             [
-                PathBuf::from("/h/.codex/sessions"),
-                PathBuf::from("/h/.codex/archived_sessions")
+                abs("/h/.codex/sessions"),
+                abs("/h/.codex/archived_sessions")
             ]
         );
         assert_eq!(
             s.opencode_db,
-            Some("/h/.local/share/opencode/opencode.db".into())
+            Some(abs("/h/.local/share/opencode/opencode.db"))
         );
     }
 
@@ -106,15 +99,12 @@ mod tests {
             ("CODEX_HOME", "/cx"),
             ("OPENCODE_DIR", "/oc"),
         ]);
-        assert_eq!(s.claude_projects, Some("/cfg/projects".into()));
+        assert_eq!(s.claude_projects, Some(abs("/cfg/projects")));
         assert_eq!(
             s.codex_dirs,
-            [
-                PathBuf::from("/cx/sessions"),
-                PathBuf::from("/cx/archived_sessions")
-            ]
+            [abs("/cx/sessions"), abs("/cx/archived_sessions")]
         );
-        assert_eq!(s.opencode_db, Some("/oc/opencode.db".into()));
+        assert_eq!(s.opencode_db, Some(abs("/oc/opencode.db")));
 
         let s = sources(&[
             ("HOME", "/h"),
@@ -122,8 +112,8 @@ mod tests {
             ("CLAUDE_CONFIG_DIR", "/cfg"),
             ("CODEX_SESSIONS_DIR", "/rollouts"),
         ]);
-        assert_eq!(s.claude_projects, Some("/p".into()));
-        assert_eq!(s.codex_dirs[0], PathBuf::from("/rollouts"));
+        assert_eq!(s.claude_projects, Some(abs("/p")));
+        assert_eq!(s.codex_dirs[0], abs("/rollouts"));
     }
 
     #[test]

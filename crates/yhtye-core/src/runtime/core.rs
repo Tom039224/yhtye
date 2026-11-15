@@ -959,7 +959,7 @@ async fn repository_root(path: &str) -> Result<PathBuf, ApiError> {
     if path.trim().is_empty() {
         return Err(ApiError::invalid_argument("the project path is empty"));
     }
-    let dir = std::fs::canonicalize(path)
+    let dir = dunce::canonicalize(path)
         .map_err(|e| ApiError::invalid_argument(format!("{path}: {e}")))?;
     if !dir.is_dir() {
         return Err(ApiError::invalid_argument(format!(
@@ -970,7 +970,7 @@ async fn repository_root(path: &str) -> Result<PathBuf, ApiError> {
     let top = git::show_toplevel(&dir)
         .await
         .map_err(|e| ApiError::internal(format!("could not run git: {e}")))?
-        .map(|top| std::fs::canonicalize(&top).unwrap_or(top));
+        .map(|top| dunce::canonicalize(&top).unwrap_or(top));
     if top.as_deref() != Some(dir.as_path()) {
         return Err(ApiError::invalid_argument(format!(
             "{} is not the top directory of a git repository",

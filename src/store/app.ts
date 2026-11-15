@@ -98,7 +98,7 @@ export interface GitView {
 /** The order of the open project's branches (the core's list, most recently used first). */
 export interface BranchOrderView {
   project: string;
-  /** Worktree paths and branch names; see `branchTree.ts`. */
+  /** Worktree paths and branch names; see `branchTreeModel.ts`. */
   keys: string[];
 }
 
