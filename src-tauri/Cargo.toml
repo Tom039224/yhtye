@@ -35,14 +35,15 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The data directory (the same rule as Tauri's app data dir), shared by the GUI and `--headless`.
 dirs = "6"
+
+# The headless mode (`headless`, `yhtye remote …`) is Unix only.
+[target.'cfg(unix)'.dependencies]
+# Its control socket accepts only this user (and root).
+rustix = { workspace = true, features = ["net"] }
 # `yhtye remote pair` draws the pairing URI as a QR code in the terminal.
 qrcode = { version = "0.14", default-features = false }
 # The control socket's fallback path hash (`yhtye-<hash>.sock`).
 sha2.workspace = true
-
-# The control socket of the headless mode (`headless`, Unix only) accepts only this user (and root).
-[target.'cfg(unix)'.dependencies]
-rustix = { workspace = true, features = ["net"] }
 
 # `main` attaches the parent's console to a release build for the command line mode.
 [target.'cfg(windows)'.dependencies]

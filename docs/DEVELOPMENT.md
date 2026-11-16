@@ -592,6 +592,15 @@ Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれ
   インストール・アンインストールできること (`/S`) を確かめる。ヘッドレスは Windows では未対応なので、`--help` の起動確認はしない (GUI アプリの標準出力は端末に出ない)。
 - ファイル名: `yhtye-windows-<版>-x64-setup.exe` / `-arm64-setup.exe` / `-x64.msi`。
 - 署名を始めるときは、ワークフロー冒頭のコメント (`certificateThumbprint` / `signCommand`) を参照。
+- 発行元は `tauri.conf.json` の `bundle.publisher` (`Tom039224`。作者の GitHub のユーザー名。著作権表示は `bundle.copyright`)。「インストールされているアプリ」の発行元と、
+  インストーラが使うレジストリキー (`HKCU\Software\Tom039224\Yhtye`) の名前になる (未設定だと識別子の 2 つ目の要素 `github` になる)。
+  コード署名を始めたら、証明書の Subject (の CN / O) と一致させる (SmartScreen やユーザーが見る発行元の名前がずれないように)。
+  変えるとレジストリキーも変わり、前の版のインストール先の記憶は引き継がれない。
+- インストール先の記憶: NSIS も MSI も `HKCU\Software\<発行元>\Yhtye` を読む。Tauri の NSIS のアンインストーラは「アプリのデータも削除」に
+  チェックしたときしかこれを消さず、残ると後から入れる全ユーザー向けの MSI が `%LOCALAPPDATA%\Yhtye` に入ってしまう。そこで
+  `src-tauri/windows/installer-hooks.nsh` (`bundle.windows.nsis.installerHooks`) がアンインストールの最後に消し (更新の `/UPDATE` では消さない)、
+  `src-tauri/windows/install-dir.wxs` (`bundle.windows.wix.fragmentPaths`) が、MSI の新規インストールで読んだ先が `%LOCALAPPDATA%` の下なら
+  `Program Files\Yhtye` に戻す。上書きインストールや新しい版への更新は、古い版のアンインストールの前にインストール先を読んで、後で書き直すので変わらない。
 - WebView2 は、インストーラが無ければ取得する (`tauri.conf.json` の `bundle.windows.webviewInstallMode` = `embedBootstrapper`。Windows 10 の一部に WebView2 が無いため。
   ブートストラッパーを同梱 (+約 1.8 MB) するので、別にダウンロードする段が減る。それでも WebView2 本体の取得にはインターネット接続が要る)。
 - 最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「Windows のインストーラはまだ出していない」という記述を直す。

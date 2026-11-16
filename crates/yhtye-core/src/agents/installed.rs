@@ -195,6 +195,7 @@ mod tests {
             override_path: None,
             override_error: None,
             requirements,
+            path_example: String::new(),
         }
     }
 

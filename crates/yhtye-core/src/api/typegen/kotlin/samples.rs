@@ -490,6 +490,7 @@ fn harness_detections() -> Vec<HarnessDetection> {
             command: id.into(),
             found: installed.then(|| format!("/usr/bin/{id}")),
         }],
+        path_example: format!("/opt/bin/{id}"),
     };
     let mut bad = detection("devin", PathSource::None, false);
     bad.override_error = Some("not an executable".into());

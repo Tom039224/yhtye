@@ -36,4 +36,11 @@ data class HarnessDetection(
     @SerialName("override_error")
     val overrideError: String? = null,
     val requirements: List<HarnessRequirement>,
+    /**
+     * What an absolute path of the main executable looks like on the host
+     * (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
+     * of the manual path. Empty from a core that predates it.
+     */
+    @SerialName("path_example")
+    val pathExample: String = "",
 )
