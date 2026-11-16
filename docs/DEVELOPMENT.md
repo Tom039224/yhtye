@@ -595,3 +595,20 @@ Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれ
 - WebView2 は、インストーラが無ければ取得する (`tauri.conf.json` の `bundle.windows.webviewInstallMode` = `embedBootstrapper`。Windows 10 の一部に WebView2 が無いため。
   ブートストラッパーを同梱 (+約 1.8 MB) するので、別にダウンロードする段が減る。それでも WebView2 本体の取得にはインターネット接続が要る)。
 - 最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「Windows のインストーラはまだ出していない」という記述を直す。
+
+### Windows 11 VM での実機確認 (`scripts/windows-vm/`)
+
+Linux ホストの QEMU/KVM に Windows 11 Enterprise 評価版 (90 日、日本語版) を無人インストールし、SSH・スクリーンショット・VNC で
+Windows 版を確かめる。UEFI (OVMF) + swtpm の TPM 2.0、8 vCPU / 16 GB / qcow2 128 GB、SATA + e1000e (追加ドライバ不要)。
+ISO・ディスク・鍵・パスワードは `~/VMs/win11` に置き、リポジトリには入れない。
+
+```sh
+scripts/windows-vm/download-iso.sh && scripts/windows-vm/prepare.sh
+scripts/windows-vm/vm.sh install && scripts/windows-vm/vm.sh wait-ssh   # 無人インストール (20〜30 分)
+scripts/windows-vm/vm.sh ssh 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\yhtye-vm\install-tools.ps1'  # Git / Node 22 / pnpm
+scripts/windows-vm/vm.sh start | stop | ssh | screenshot FILE | vnc    # SSH 127.0.0.1:2222、VNC 127.0.0.1:5901
+```
+
+ユーザー (`yhtye` と `日本語ユーザー`)、VNC で GUI を触る方法、GUI アプリを対話セッションで起動する方法 (`run-gui.ps1`)、
+偽エージェントでのタスクの実行と WebView2 の DevTools 経由の画面操作 (`cdp.mjs`)、ホストの swtpm が `libcrypto.so.4` で動かないときの回避は
+`scripts/windows-vm/README.md`。
