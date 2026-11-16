@@ -42,10 +42,18 @@ pub const MINIMAX_CODE_ROOT_ENV: &str = "MCODE_INSTALL_ROOT";
 
 /// The Google Antigravity executable: the Python archive of its ACP server, as
 /// the distribution zip names it (`localharness_external` must sit next to it).
+#[cfg(not(windows))]
 pub const ANTIGRAVITY_COMMAND: &str = "agy_acp_server.par";
 
+/// The Google Antigravity executable on Windows: the zip holds
+/// `agy_acp_server.exe` (next to `localharness_external.exe`), found by this
+/// name with the `PATHEXT` extensions like every other command there.
+#[cfg(windows)]
+pub const ANTIGRAVITY_COMMAND: &str = "agy_acp_server";
+
 /// The other name Google Antigravity's server goes by (a link, or a file
-/// renamed without the extension).
+/// renamed without the extension). Not used on Windows, where it is
+/// [`ANTIGRAVITY_COMMAND`] itself.
 pub const ANTIGRAVITY_COMMAND_ALIAS: &str = "agy_acp_server";
 
 /// The environment variable naming the directory Google Antigravity's server was
@@ -211,7 +219,11 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         id: ANTIGRAVITY,
         label: "Google Antigravity",
         main: ANTIGRAVITY_COMMAND,
-        aliases: &[ANTIGRAVITY_COMMAND_ALIAS],
+        aliases: if cfg!(windows) {
+            &[]
+        } else {
+            &[ANTIGRAVITY_COMMAND_ALIAS]
+        },
         also: &[],
         root_env: Some(ANTIGRAVITY_ROOT_ENV),
         root_subdirs: &["", "bin"],
@@ -282,6 +294,11 @@ pub struct HarnessDetection {
     /// the search does not replace a manual path that is wrong.
     pub override_error: Option<String>,
     pub requirements: Vec<HarnessRequirement>,
+    /// What an absolute path of the main executable looks like on the host
+    /// (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
+    /// of the manual path. Empty from a core that predates it.
+    #[serde(default)]
+    pub path_example: String,
 }
 
 impl HarnessDetection {
@@ -603,6 +620,17 @@ fn detect(
         override_path: override_path.cloned(),
         override_error,
         requirements,
+        path_example: path_example(spec, cfg!(windows)),
+    }
+}
+
+/// An absolute path of the main executable of `spec` as it looks on Unix or on
+/// Windows (`npx` where Node's installer puts it).
+fn path_example(spec: &HarnessSpec, windows: bool) -> String {
+    match (windows, spec.main) {
+        (false, main) => format!("/opt/bin/{main}"),
+        (true, NPX_COMMAND) => r"C:\Program Files\nodejs\npx.cmd".to_string(),
+        (true, main) => format!(r"C:\Tools\{main}.exe"),
     }
 }
 
@@ -1362,6 +1390,18 @@ mod portable_tests {
     }
 
     #[test]
+    fn the_example_of_a_manual_path_looks_like_a_path_of_the_host() {
+        let spec = |id| harness_spec(id).expect("spec");
+        assert_eq!(path_example(spec(OPENCODE), false), "/opt/bin/opencode");
+        assert_eq!(path_example(spec(CLAUDE_CODE), false), "/opt/bin/npx");
+        assert_eq!(
+            path_example(spec(CLAUDE_CODE), true),
+            r"C:\Program Files\nodejs\npx.cmd"
+        );
+        assert_eq!(path_example(spec(OPENCODE), true), r"C:\Tools\opencode.exe");
+    }
+
+    #[test]
     fn pathext_defaults_when_unset_or_without_a_runnable_extension() {
         let default = [".com", ".exe", ".bat", ".cmd"];
         assert_eq!(exts(None), default);
@@ -1529,6 +1569,19 @@ mod windows_tests {
         let known = [dir.path().to_path_buf()];
         let found = find_command("codex", env(vec![("PATH", OsString::new())]), &known);
         assert_eq!(found, Some((shim, PathSource::KnownDir)));
+    }
+
+    #[test]
+    fn agy_acp_server_is_the_exe_of_the_windows_zip_and_goes_by_its_bare_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = write(dir.path(), "agy_acp_server.exe");
+        write(dir.path(), "localharness_external.exe");
+        let spec = harness_spec(ANTIGRAVITY).expect("spec");
+        let d = detect(spec, &env(vec![("PATH", dir.path().into())]), &[], None);
+        assert!(d.installed);
+        assert_eq!(d.resolved_path.as_deref(), exe.to_str());
+        assert_eq!(d.requirements[0].command, "agy_acp_server");
+        assert_eq!(d.found("agy_acp_server"), exe.to_str());
     }
 
     #[test]

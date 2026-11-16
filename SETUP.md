@@ -304,6 +304,9 @@ pnpm tauri build
 - 秘密の環境変数は Windows の資格情報マネージャーに保存される (service `yhtye`)。Secret Service の設定は要らない。
 - リリース時に CI でビルドとインストーラの無人インストール・アンインストールを確かめる (まだ一度も回していない)。Windows 11 (日本語版) の VM で、ビルド・インストール・偽エージェントによるタスクの実行・停止・Yhtye の強制終了時の後始末は確かめた (`scripts/windows-vm/`)。本物のエージェントでの実行は未確認。
 - データディレクトリは `%APPDATA%\io.github.tom039224.yhtye` (`YHTYE_DATA_DIR` / `--data-dir` で変えられる)。
+- Google Antigravity の Windows 用の zip (`agy-acp-server-<版>-windows-x86_64.zip` / `-windows-arm64.zip`) には `agy_acp_server.exe` と
+  `localharness_external.exe` が入っている (同じディレクトリに置く)。Windows では必要なコマンドは `agy_acp_server` と表示され、`agy_acp_server.exe` を探す
+  (手動パスもこの `.exe`)。Windows の本物の Antigravity での動作は未確認。
 
 ## 初回の使い方
 

@@ -75,7 +75,7 @@ pub struct CoreConfig {
   - `Core` は 1 つの DB を共有し、開いたプロジェクトごとに `Orchestration` (git は `GitCli`) を持つ。
     `OpenProject{path}` はパスを正規化し、**git リポジトリの最上位ディレクトリ**であることを検査
     (`git rev-parse --show-toplevel`) してから、`projects` テーブルでパスを引いて ID を再利用する。
-    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。起動時に自動では開かない。
+    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。名前に ASCII の英字が無ければ (`日本`、`テスト2`) `project-` と名前の SHA-256 の先頭 6 桁を付ける (`project-1a2b3c`、`project-2-1a2b3c`)。既存の ID は変えない。起動時に自動では開かない。
   - `ListEvents` は開いていないプロジェクトでも DB から読める (履歴の閲覧)。
   - ユーザーによる中止 `CancelTask` / `CancelGroup` は、オーケストレータの `cancel_task` /
     `cancel_group` と同じ規則で状態機械に通し (セッションキー `user` の `tool_called` として記録)、

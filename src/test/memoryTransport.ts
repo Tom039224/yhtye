@@ -555,6 +555,8 @@ export class FakeHarnesses {
   executables = new Set<string>(["/usr/bin/npx"]);
   /** Stored manual paths of the main executables, by harness. */
   overrides: Record<string, string> = {};
+  /** The host's example of a manual path of a main executable (empty: a core that predates it). */
+  pathExample: (main: string) => string = (main) => `/opt/bin/${main}`;
 
   setPath(harness: string, path: string | null): void {
     if (!HARNESS_SPECS.some((s) => s.id === harness)) throw new CommandError("not_found", `unknown harness ${harness}`);
@@ -590,6 +592,7 @@ export class FakeHarnesses {
         override_path: override,
         override_error: overrideError,
         requirements,
+        path_example: this.pathExample(spec.main),
       };
     });
   }

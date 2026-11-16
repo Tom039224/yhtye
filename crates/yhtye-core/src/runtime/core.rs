@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures::future::join_all;
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use super::chats::ChatTarget;
@@ -930,9 +931,13 @@ fn dir_name(path: &Path) -> String {
     )
 }
 
-/// A readable id from the directory name (`my-app`, `my-app-2`, ...).
+/// A readable id from the directory name (`my-app`, `my-app-2`, ...). A name
+/// with no ASCII letter (`日本`, `テスト2`) gets `project-` and a short hash of
+/// the name (`project-1a2b3c`, `project-2-1a2b3c`), so that such projects do
+/// not all become `project`, `project-2`, ... nor a bare number.
 fn new_project_id(dir: &Path, known: &[ProjectRecord]) -> String {
-    let slug: String = dir_name(dir)
+    let name = dir_name(dir);
+    let slug: String = name
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() {
@@ -943,15 +948,27 @@ fn new_project_id(dir: &Path, known: &[ProjectRecord]) -> String {
         })
         .collect();
     let slug = slug.trim_matches('-');
-    let base = if slug.is_empty() { "project" } else { slug };
+    let base = if slug.chars().any(|c| c.is_ascii_alphabetic()) {
+        slug.to_string()
+    } else {
+        let hash: String = Sha256::digest(name.as_bytes())[..3]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if slug.is_empty() {
+            format!("project-{hash}")
+        } else {
+            format!("project-{slug}-{hash}")
+        }
+    };
     let taken = |id: &str| known.iter().any(|r| r.id == id);
-    if !taken(base) {
-        return base.to_string();
+    if !taken(&base) {
+        return base;
     }
     (2..)
         .map(|n| format!("{base}-{n}"))
         .find(|id| !taken(id))
-        .unwrap_or_else(|| base.to_string())
+        .unwrap_or(base)
 }
 
 /// The top-level directory of the git repository at `path` (which must be it).
@@ -1066,7 +1083,24 @@ mod tests {
     #[test]
     fn project_ids_come_from_the_directory_name() {
         assert_eq!(new_project_id(Path::new("/a/My App"), &[]), "my-app");
-        assert_eq!(new_project_id(Path::new("/a/日本"), &[]), "project");
+        let japanese = new_project_id(Path::new("/a/日本"), &[]);
+        assert!(
+            japanese.len() == "project-".len() + 6 && japanese.starts_with("project-"),
+            "{japanese}"
+        );
+        assert_eq!(
+            new_project_id(Path::new("/b/日本"), &[]),
+            japanese,
+            "stable"
+        );
+        assert_ne!(new_project_id(Path::new("/a/中国"), &[]), japanese);
+        let numbered = new_project_id(Path::new("/a/テスト 2"), &[]);
+        assert!(numbered.starts_with("project-2-"), "{numbered}");
+        let known = [record(&japanese)];
+        assert_eq!(
+            new_project_id(Path::new("/c/日本"), &known),
+            format!("{japanese}-2")
+        );
         let known = [record("app"), record("app-2")];
         assert_eq!(new_project_id(Path::new("/b/app"), &known), "app-3");
     }
