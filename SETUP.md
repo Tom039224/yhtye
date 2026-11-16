@@ -283,6 +283,14 @@ x64 と ARM64 (Snapdragon など。ARM64 のマシンでは ARM64 のツール�
 | Rust 1.98+ (`stable-x86_64-pc-windows-msvc` / `stable-aarch64-pc-windows-msvc`) | ビルド | `rustc --version` |
 | pnpm 11+ | ビルド | `pnpm --version` |
 
+PowerShell の実行ポリシーは、Windows 11 の既定では Restricted で、`npm install -g pnpm` で入る `pnpm.ps1` (`npm.ps1` / `npx.ps1` も) が
+「このシステムではスクリプトの実行が無効になっているため…」で動かない。最初に一度、自分のユーザーだけ RemoteSigned にする
+(コマンドプロンプトで動かすなら要らない):
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
 ```powershell
 git clone https://github.com/Tom039224/yhtye.git
 cd yhtye
@@ -291,10 +299,10 @@ pnpm tauri build
 ```
 
 - 実行ファイルは `target\release\yhtye.exe`。インストーラは `target\release\bundle\nsis\` (NSIS。ユーザーごとにインストールされ、管理者権限は要らない。表示言語は OS に合わせて日本語 / 英語) と
-  `target\release\bundle\msi\` (MSI。日本語)。ARM64 のインストーラは ARM64 のマシンでビルドする (リリースの CI もそうしている。MSI は x64 のみ)。実行ファイルだけなら `pnpm tauri build --no-bundle`。
+  `target\release\bundle\msi\` (MSI。日本語。全ユーザー向けに `C:\Program Files\Yhtye` へ入るので管理者権限 (UAC) が要る)。ARM64 のインストーラは ARM64 のマシンでビルドする (リリースの CI もそうしている。MSI は x64 のみ)。実行ファイルだけなら `pnpm tauri build --no-bundle`。
 - インストーラは署名していないので、初回の起動で SmartScreen が警告を出す (「詳細情報」→「実行」)。
 - 秘密の環境変数は Windows の資格情報マネージャーに保存される (service `yhtye`)。Secret Service の設定は要らない。
-- リリース時に CI でビルドとインストーラの無人インストール・アンインストールを確かめる (まだ一度も回していない)。実機でのエージェントの実行は未確認。
+- リリース時に CI でビルドとインストーラの無人インストール・アンインストールを確かめる (まだ一度も回していない)。Windows 11 (日本語版) の VM で、ビルド・インストール・偽エージェントによるタスクの実行・停止・Yhtye の強制終了時の後始末は確かめた (`scripts/windows-vm/`)。本物のエージェントでの実行は未確認。
 - データディレクトリは `%APPDATA%\io.github.tom039224.yhtye` (`YHTYE_DATA_DIR` / `--data-dir` で変えられる)。
 
 ## 初回の使い方

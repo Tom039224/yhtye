@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use yhtye_core::console::NoConsoleWindow;
+
 /// Identifier (and so data directory name) used before the rename.
 pub const LEGACY_IDENTIFIER: &str = "com.tom039224.yhtye";
 
@@ -61,6 +63,7 @@ fn repair_worktrees(data_dir: &Path) {
         match Command::new("git")
             .args(["worktree", "repair"])
             .current_dir(&worktree)
+            .no_console_window()
             .output()
         {
             Ok(out) if out.status.success() => {}

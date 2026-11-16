@@ -2,6 +2,7 @@
 //!
 //! - [`acp`]: ACP client (agent processes and sessions)
 //! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
+//! - [`console`]: helper programs (git, gh, tailscale) started without a console window
 //! - [`attachments`]: files attached to a user message (saving, delivery to the agent)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
 //! - [`order`]: the recently-used order of projects and branches
@@ -25,6 +26,7 @@ pub mod agents;
 pub mod api;
 pub mod attachments;
 mod clock;
+pub mod console;
 pub mod directory;
 pub mod domain;
 pub mod git;
