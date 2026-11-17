@@ -66,8 +66,9 @@ English: [README-EN.md](README-EN.md)
 ## 対応環境
 
 - **Linux。** 動作確認は Arch / CachyOS (Wayland) だけ。他のディストリビューションは未確認。
-- **Windows 10 / 11 (x64 と ARM64)。** インストーラ (NSIS。x64 / ARM64) と MSI (x64 のみ) は `windows-v…` のタグで GitHub Releases に出す (まだ出していない。それまではソースからビルドする)。
-  リリース時に CI でビルドと、インストーラの無人のインストール・アンインストールを確かめる (まだ一度も回していない)。**実機でのエージェントの実行は未確認**。
+  AppImage / deb / rpm (x86_64) を `linux-v…` のタグで [GitHub Releases](https://github.com/Tom039224/yhtye/releases) に出している (0.x の間はプレリリース)。
+- **Windows 10 / 11 (x64 と ARM64)。** インストーラ (NSIS。x64 / ARM64) と MSI (x64 のみ) を `windows-v…` のタグで [GitHub Releases](https://github.com/Tom039224/yhtye/releases) に出している (0.x の間はプレリリース)。
+  リリース時に CI でビルドと、インストーラの無人のインストール・アンインストールを確かめる。実機での確認は Windows 11 (x64) の VM だけ (Windows 10 と ARM64 の実機は未確認)。
   署名していないので、初回の起動で SmartScreen の警告が出る。WebView2 が無い Windows 10 ではインストーラが取得する (インターネット接続が要る)。
   **ヘッドレスモード (`--headless`、`yhtye remote …`) は Windows では未対応** (Unix ドメインソケットとプロセスグループに依存している。
   別の PC のヘッドレスに接続するクライアントとしては使える)。インストール・ビルドの手順は [`SETUP.md`](SETUP.md)。
