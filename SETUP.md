@@ -1,7 +1,7 @@
 # セットアップ
 
 Yhtye を動かしたい人向け。開発する人は [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)。
-プレビルドのバイナリはまだ無いので、ソースからビルドする (Windows 用のインストーラは `windows-v…` のタグで出す仕組みはあるが、まだ出していない)。
+ビルド済みのもの (Linux: AppImage / deb / rpm、Windows: NSIS / MSI、Android: APK) は [GitHub Releases](https://github.com/Tom039224/yhtye/releases) にある。以下はソースからビルドする手順。
 
 ## 必要なもの
 
