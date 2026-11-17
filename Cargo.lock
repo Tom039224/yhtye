@@ -6760,7 +6760,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "dirs",
@@ -6786,7 +6786,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -6821,7 +6821,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye-dev-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "futures",
@@ -6839,7 +6839,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye-fake-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "rmcp",
