@@ -578,3 +578,46 @@ pnpm tauri build --bundles deb    # target/release/bundle/deb/Yhtye_<版>_amd64.
 
 ただし配る物は CI で作る (手元のディストリビューションの glibc に縛られるため)。CI と同じ Ubuntu 22.04 の環境は、`ubuntu:22.04` のコンテナにワークフローの `Install system dependencies` の依存と
 Node 22・pnpm 11・Rust stable を入れて、同じコマンドを実行すれば再現できる。
+
+## Windows デスクトップ版のリリース
+
+タグ `windows-v<major>.<minor>.<patch>` (例 `windows-v0.1.0`) を push すると、`.github/workflows/windows-release.yml` が Windows 10 / 11 用にビルドし、GitHub Releases に
+**NSIS インストーラ (x64・ARM64) と MSI (x64 のみ)** と `SHA256SUMS` を添付する。版番号の規則・3 か所の版の一致検査・プレリリースの扱い・Android との互換の書き方は Linux 版と同じ
+(上の「Linux デスクトップ版のリリース」)。Linux 版のタグ (`linux-v…`) とは別に、独立して出す。署名はしない (SmartScreen が警告する)。
+
+- ワークフローは `tag` (タグの検査) → `build` (x64 は `windows-latest`、ARM64 は `windows-11-arm`。どちらもネイティブビルド、`pnpm tauri build --target <triple> --bundles …`) → `release` (両方が成功したときだけ公開)。
+  ARM64 を x64 からのクロスビルドにしなかったのは、C の依存 (aws-lc-sys / ring) が ARM64 の MSVC ツールを要るのと、`ci.yml` が `windows-11-arm` で既にワークスペースをビルドしているため。
+  MSI を x64 だけにしたのは、Tauri が使う WiX 3 の ARM64 対応が頼れないため (NSIS が全員向けの主な形式)。
+- `build` は、各インストーラが 1 つずつあって版を持つこと、アプリの実行ファイルの PE ヘッダのマシン種別がそのアーキテクチャであること、NSIS インストーラが無人で
+  インストール・アンインストールできること (`/S`) を確かめる。ヘッドレスは Windows では未対応なので、`--help` の起動確認はしない (GUI アプリの標準出力は端末に出ない)。
+- ファイル名: `yhtye-windows-<版>-x64-setup.exe` / `-arm64-setup.exe` / `-x64.msi`。
+- 署名を始めるときは、ワークフロー冒頭のコメント (`certificateThumbprint` / `signCommand`) を参照。
+- 発行元は `tauri.conf.json` の `bundle.publisher` (`Tom039224`。作者の GitHub のユーザー名。著作権表示は `bundle.copyright`)。「インストールされているアプリ」の発行元と、
+  インストーラが使うレジストリキー (`HKCU\Software\Tom039224\Yhtye`) の名前になる (未設定だと識別子の 2 つ目の要素 `github` になる)。
+  コード署名を始めたら、証明書の Subject (の CN / O) と一致させる (SmartScreen やユーザーが見る発行元の名前がずれないように)。
+  変えるとレジストリキーも変わり、前の版のインストール先の記憶は引き継がれない。
+- インストール先の記憶: NSIS も MSI も `HKCU\Software\<発行元>\Yhtye` を読む。Tauri の NSIS のアンインストーラは「アプリのデータも削除」に
+  チェックしたときしかこれを消さず、残ると後から入れる全ユーザー向けの MSI が `%LOCALAPPDATA%\Yhtye` に入ってしまう。そこで
+  `src-tauri/windows/installer-hooks.nsh` (`bundle.windows.nsis.installerHooks`) がアンインストールの最後に消し (更新の `/UPDATE` では消さない)、
+  `src-tauri/windows/install-dir.wxs` (`bundle.windows.wix.fragmentPaths`) が、MSI の新規インストールで読んだ先が `%LOCALAPPDATA%` の下なら
+  `Program Files\Yhtye` に戻す。上書きインストールや新しい版への更新は、古い版のアンインストールの前にインストール先を読んで、後で書き直すので変わらない。
+- WebView2 は、インストーラが無ければ取得する (`tauri.conf.json` の `bundle.windows.webviewInstallMode` = `embedBootstrapper`。Windows 10 の一部に WebView2 が無いため。
+  ブートストラッパーを同梱 (+約 1.8 MB) するので、別にダウンロードする段が減る。それでも WebView2 本体の取得にはインターネット接続が要る)。
+- 最初のリリースを出したら、README.md・README-EN.md・`SETUP.md` の「Windows のインストーラはまだ出していない」という記述を直す。
+
+### Windows 11 VM での実機確認 (`scripts/windows-vm/`)
+
+Linux ホストの QEMU/KVM に Windows 11 Enterprise 評価版 (90 日、日本語版) を無人インストールし、SSH・スクリーンショット・VNC で
+Windows 版を確かめる。UEFI (OVMF) + swtpm の TPM 2.0、8 vCPU / 16 GB / qcow2 128 GB、SATA + e1000e (追加ドライバ不要)。
+ISO・ディスク・鍵・パスワードは `~/VMs/win11` に置き、リポジトリには入れない。
+
+```sh
+scripts/windows-vm/download-iso.sh && scripts/windows-vm/prepare.sh
+scripts/windows-vm/vm.sh install && scripts/windows-vm/vm.sh wait-ssh   # 無人インストール (20〜30 分)
+scripts/windows-vm/vm.sh ssh 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\yhtye-vm\install-tools.ps1'  # Git / Node 22 / pnpm
+scripts/windows-vm/vm.sh start | stop | ssh | screenshot FILE | vnc    # SSH 127.0.0.1:2222、VNC 127.0.0.1:5901
+```
+
+ユーザー (`yhtye` と `日本語ユーザー`)、VNC で GUI を触る方法、GUI アプリを対話セッションで起動する方法 (`run-gui.ps1`)、
+偽エージェントでのタスクの実行と WebView2 の DevTools 経由の画面操作 (`cdp.mjs`)、ホストの swtpm が `libcrypto.so.4` で動かないときの回避は
+`scripts/windows-vm/README.md`。

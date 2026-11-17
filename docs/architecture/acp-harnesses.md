@@ -1169,6 +1169,9 @@ mcode を `tee` で包んだ起動ラッパーを `command` にして、JSON-RPC
   `agy_acp_server.par` は自分が起動されたパスのディレクトリ (か `PATH`) から `localharness_external` を探し、リンクの実体のディレクトリは見ない。**`.par` だけを別のディレクトリへ
   シンボリックリンクすると `session/new` が `-32603 "Could not find default localharness binary…"` で失敗する [実測]**。リンクを使うなら、環境変数 `ANTIGRAVITY_HARNESS_PATH` に
   `localharness_external` の絶対パスを渡す (リンク経由でも `session/new` が通ることを確かめた)。Yhtye はこの環境変数に触らず、起動した環境のまま継承する。
+- **Windows**: ACP レジストリの `windows-x86_64` / `windows-aarch64` の zip (1.5.0) は **`agy_acp_server.exe`** と **`localharness_external.exe`** を持つ (`cmd` は
+  `./agy_acp_server.exe`) **[調査]**。そこで Windows では主実行ファイルを **`agy_acp_server`** とし (別名は無い)、ほかのコマンドと同じく `PATHEXT` の拡張子を付けて
+  `agy_acp_server.exe` を探す (設定 › ハーネス にもこの名前で出る)。Windows の本物のサーバーでの動作は未確認。
 - **検出** (`agents/detect.rs`): 実行ファイル名は **`agy_acp_server.par`** (設定 › ハーネス に出る名前、手動パスで置き換えるのもこれ)。`agy_acp_server` も別名として受け付ける
   (`HarnessSpec::aliases`: 同じディレクトリでは `.par` を先に見る)。探す順は `PATH` → **`$AGY_ACP_SERVER_HOME`** と **`$AGY_ACP_SERVER_HOME/bin`** (絶対パスのときだけ。zip を展開した
   ディレクトリそのものが入る) → 共通の既知の場所 (`~/.local/bin` など) → **`~/.local/share/agy-acp-server`** → **`~/.gemini/antigravity-acp/bin`**

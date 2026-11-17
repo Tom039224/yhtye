@@ -4,7 +4,7 @@ import type { ChatInfo } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { MAX_CHAT_TITLE_CHARS } from "../store/chats";
 import { useAppState, useStore } from "../store/useStore";
-import { chatRing, deleteBlocker, shortAge } from "./branchTree";
+import { chatRing, deleteBlocker, shortAge } from "./branchTreeModel";
 import { NEW_CHAT_TITLE } from "./Conversation";
 import { IconButton } from "./Icon";
 import { RowMenu } from "./RowMenu";

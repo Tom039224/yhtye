@@ -100,6 +100,9 @@ async fn dropping_the_handle_kills_the_process_group() {
     let text = s.until_message("child_pid:").await;
     let child_pid: u32 = text.trim_start_matches("child_pid:").parse().expect("pid");
 
+    // Only Unix has process groups to count; on Windows the job is checked by
+    // the child being gone below.
+    #[cfg(unix)]
     assert_eq!(
         common::group_members(agent_pid).len(),
         2,
@@ -115,6 +118,7 @@ async fn dropping_the_handle_kills_the_process_group() {
     wait_exited(&mut events, timeout).await;
     assert_process_gone(agent_pid, GONE_TIMEOUT).await;
     assert_process_gone(child_pid, GONE_TIMEOUT).await;
+    #[cfg(unix)]
     common::assert_group_gone(agent_pid, GONE_TIMEOUT).await;
 }
 
@@ -148,7 +152,11 @@ async fn missing_command_is_a_clear_spawn_error() {
         panic!("{err:?}")
     };
     assert_eq!(command, "/nonexistent/yhtye-agent");
-    assert!(message.contains("No such file"), "{message}");
+    // Unix says "No such file or directory"; Windows "The system cannot find the path specified".
+    assert!(
+        message.contains("No such file") || message.contains("cannot find"),
+        "{message}"
+    );
 }
 
 #[tokio::test]

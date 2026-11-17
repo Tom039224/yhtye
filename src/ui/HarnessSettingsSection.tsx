@@ -218,7 +218,7 @@ function HarnessRow({
         <input
           className="agent-search"
           aria-label={`${h.label} の ${main} のパス`}
-          placeholder={`${main} の絶対パス (例 /opt/bin/${main})`}
+          placeholder={`${main} の絶対パス (例 ${h.path_example || `/opt/bin/${main}`})`}
           value={draft}
           spellCheck={false}
           onChange={(e) => onDraft(e.target.value)}

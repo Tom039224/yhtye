@@ -119,7 +119,7 @@ ACP・ハーネス: `acp-harnesses.md`)。画面: [`docs/design/`](design/)。
 - 残課題 / Stage 2 への申し送り:
   - `session/load` の履歴再生は `Ready` より前の `Output` として届く (実機ではユーザーと
     エージェント両方のチャンク)。runtime / UI はこれを「履歴」として扱う必要がある。
-  - プロセス管理は Unix 専用 (`process_group`, killpg)。Windows 対応は未着手。
+  - プロセス管理は Unix は `process_group` + killpg、Windows は Job Object (`KILL_ON_JOB_CLOSE`、`acp/process/windows.rs`)。
   - 偽エージェントの `mcp_call` は Stage 2 で追加する。`fake_agent_bin()` はテスト中に
     `cargo build -p yhtye-fake-agent` を呼ぶ (Stage 2 以降の結合テストも同じヘルパを使う)。
   - `yhtye-fake-agent` の `serve()` はビルダー連鎖で約 90 行 (関数 50 行目安を超過)。
@@ -697,7 +697,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
     git/graph の単体 3)。10 周連続成功 + 上記の並列ストレス。
   - `cargo clippy --workspace --all-targets` 警告なし / `cargo fmt --check` 成功。
   - `cargo test -p yhtye-core -- --ignored --test-threads=1` → 10/10 成功 (実 Haiku、新テスト含む)。終了後 `claude-agent-acp` 0 個。
-  - `pnpm test` → 8 ファイル 54 件成功 (新規: `src/ui/Layout.test.tsx` 10 件 = git パネル・ブランチ・タイトルバー /
+  - `pnpm test` → 8 ファイル 54 件成功 (新規: `src/ui/AppLayout.test.tsx` 10 件 = git パネル・ブランチ・タイトルバー /
     カードの進捗・Step・フッタ・待機バナー / `@` メンションの送信 / runs ビュー / エージェント出力タブ /
     遅延読み込みが全読み込みと一致 / 前回プロジェクトの再オープン 3 件 / git の再読み込み、`gitGraph.test.ts` 3 件)。
   - `pnpm build` 成功。
@@ -1230,7 +1230,7 @@ Stage 7a で以下をユーザーが決定した (経緯は各 Stage の結果�
 - runtime: `follow.rs` を削除 (`follow_branch` / `realign_orchestrator` / `stale_cwd`)。`create_chat` は `ChatTarget::{Branch, Worktree}` (作成時にだけブランチ → 作業ツリーを解決)、送信・起動は作業ツリーが無ければ拒否、
   `create_group` は `checked_out_branch`、`finish_group{into}` は `check_into` (今のブランチと違えば `invalid_argument`)。API `create_chat { branch?, worktree? }`。
 - store: `0007_chat_worktrees.sql` (0006 と同じ範囲の破棄 + `chats.worktree`)。0001-0006 に行を入れた DB に当て、プロジェクトが残りチャット・カウンタが消えることを sqlite3 で確認。
-- フロント: ツリーは作業ツリー → チャット (`ui/branchTree.ts` の `buildTree` / `placeOf`)、表示名は今のブランチ / `detached @sha`、「(見つからない作業ツリー)」、折りたたみの「他のブランチ」、
+- フロント: ツリーは作業ツリー → チャット (`ui/branchTreeModel.ts` の `buildTree` / `placeOf`)、表示名は今のブランチ / `detached @sha`、「(見つからない作業ツリー)」、折りたたみの「他のブランチ」、
   会話ヘッダ・ピル・git パネルの見出しも作業ツリーの今のブランチ。git の読み直しにウィンドウのフォーカスとオーケストレータのターン終了を追加。`chat_branch_changed` の畳み込み・通知行を削除、`group_base_changed` を追加。
   `pnpm gen:types`・`pnpm record:fixtures` (チャットの `worktree` が録音時の一時パス。`FakeCore` はチャット `C-1` の作業ツリーをメインクローンとして扱う)。
 - プロンプト: 「Yhtye が改名に追従する」「checkout しない」を削除。マージ直前の確認・食い違いの返し方と対処 (直して `finish_group` / `into`) を追加。

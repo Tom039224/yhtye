@@ -33,7 +33,7 @@ English: [README-EN.md](README-EN.md)
 
 できていないもの・制約:
 
-- 対応 OS は Linux のみ (下記)。配布用パッケージ、自動更新は無い
+- 対応 OS は Linux と Windows 10 / 11 (下記)。自動更新は無い。Windows ではヘッドレスモードが使えない
 - Codex はオーケストレータとして使えない
   ([codex#13746](https://github.com/openai/codex/issues/13746))。実装・レビュー役では使える
 - Codex は OpenRouter 経由でのみ実機確認している
@@ -65,10 +65,13 @@ English: [README-EN.md](README-EN.md)
 
 ## 対応環境
 
-- **Linux のみ。** 動作確認は Arch / CachyOS (Wayland) だけ。他のディストリビューションは未確認。
+- **Linux。** 動作確認は Arch / CachyOS (Wayland) だけ。他のディストリビューションは未確認。
+- **Windows 10 / 11 (x64 と ARM64)。** インストーラ (NSIS。x64 / ARM64) と MSI (x64 のみ) は `windows-v…` のタグで GitHub Releases に出す (まだ出していない。それまではソースからビルドする)。
+  リリース時に CI でビルドと、インストーラの無人のインストール・アンインストールを確かめる (まだ一度も回していない)。**実機でのエージェントの実行は未確認**。
+  署名していないので、初回の起動で SmartScreen の警告が出る。WebView2 が無い Windows 10 ではインストーラが取得する (インターネット接続が要る)。
+  **ヘッドレスモード (`--headless`、`yhtye remote …`) は Windows では未対応** (Unix ドメインソケットとプロセスグループに依存している。
+  別の PC のヘッドレスに接続するクライアントとしては使える)。インストール・ビルドの手順は [`SETUP.md`](SETUP.md)。
 - macOS は未検証。
-- Windows は非対応。エージェントのプロセス管理が Unix のプロセスグループに依存している
-  ([`crates/yhtye-core/src/acp/process.rs`](crates/yhtye-core/src/acp/process.rs))。
 
 ## 注意
 
@@ -93,7 +96,7 @@ English: [README-EN.md](README-EN.md)
 
 ## ヘッドレス起動 (GUI なし)
 
-ディスプレイの無いサーバーでも、`yhtye --headless` でコアとリモート接続だけを動かせる (ウィンドウは開かない。同じバイナリの実行時オプション)。
+Linux のみ (Windows では未対応)。ディスプレイの無いサーバーでも、`yhtye --headless` でコアとリモート接続だけを動かせる (ウィンドウは開かない。同じバイナリの実行時オプション)。
 Android 端末からそのサーバーを操作する使い方のためのもの。
 
 ```sh

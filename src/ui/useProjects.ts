@@ -9,7 +9,7 @@ import { type HostEntry, type HostKey, type HostProject, LOCAL_HOST } from "../s
 import type { ProjectView } from "../store/project";
 import { useActiveHost, useAllProjects, useHostsRegistry, useHostsState } from "../store/useHosts";
 import { useAppState, useStore } from "../store/useStore";
-import type { Ring } from "./branchTree";
+import type { Ring } from "./branchTreeModel";
 import { projectRing } from "./projectActivity";
 
 /** Whether `row` is the project on screen (`view` is the active host's). */

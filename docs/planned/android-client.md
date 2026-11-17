@@ -148,7 +148,7 @@
 PC の GUI と同じ方式でコアの状態を写し取る同期層。画面 (3 パネル) は次のタスク。
 
 - **置き場所**: `shared/commonMain/.../shared/sync/` (Android 依存なし)。PC の `src/store/*.ts` と、表示用の導出のうちロジックだけのもの
-  (`src/ui/taskInfo.ts` / `branchTree.ts` / `projectActivity.ts` / `labels.ts`) をファイル単位で移した:
+  (`src/ui/taskInfo.ts` / `branchTreeModel.ts` / `projectActivity.ts` / `labels.ts`) をファイル単位で移した:
   `Domain.kt` (domain.ts)、`Sessions.kt` (sessions.ts)、`Chats.kt` (chats.ts)、`Transcript.kt` (transcript.ts)、`Acp.kt` (api/acp.ts)、
   `ProjectView.kt` (project.ts)、`EventRules.kt` (eventRules.ts + activity.ts + projectActivity.ts)、`AppStore.kt` (app.ts)、
   `SettingsCommands.kt` (settingsCommands.ts)、`ClientPrefs.kt` (prefs.ts + drafts.ts)、`TaskInfo.kt` / `BranchTree.kt` / `Labels.kt` (ui の同名)、
@@ -207,7 +207,7 @@ PC の GUI と同じ方式でコアの状態を写し取る同期層。画面 (3
 | `store/project.test.ts` | `ProjectViewTest` | 「印の無い古いログの `session_failed`」は Kotlin の型で `retrying` が必須なので無い |
 | `store/activity.test.ts` | `ActivityTest` (前半) | |
 | `ui/projectActivity.test.ts` | `ActivityTest` (後半) | |
-| `ui/branchTree.test.ts` | `BranchTreeTest` | `awaiting` のチャットを木のディレクトリ名の下に出すことを追加 |
+| `ui/branchTreeModel.test.ts` | `BranchTreeTest` | `awaiting` のチャットを木のディレクトリ名の下に出すことを追加 |
 | `store/app.test.ts` | `AppStoreTest` | 同期・遅延の履歴・バックグラウンドの動作中。途中の切断を見ずに番号が変わった再接続、最初の接続で最後のプロジェクトを開く、全部読んだ履歴が最初から読んだものと一致、を追加 |
 | `store/appChats.test.ts` | `AppStoreChatsTest` | チャットの選択と記憶・`open_chat`・送信・作成・改名・削除・下書き・ping。PC で reject するものは例外。前面の間だけ ping と使用量を読み、前面に戻ると git を読み直すことを追加 |
 | `store/multiClient.test.ts` | `MultiClientTest` | `projects_changed` / `settings_changed` / `resync` / 再接続のヒント / `session_starting` / `Snapshot.starting` / 他で削除・作成されたチャット / git の `awaiting`。`expected_revision` の保存と `conflict` (PC は `ui/SettingsSync.test.tsx` の画面で確かめていたもの) を追加 |

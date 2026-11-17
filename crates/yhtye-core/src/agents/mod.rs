@@ -26,8 +26,8 @@ pub use detect::{
     CODEX_COMMAND, DEVIN_COMMAND, GROK_BUILD_COMMAND, GROK_BUILD_INSTALL_DIR, GROK_BUILD_ROOT_ENV,
     HARNESS_SPECS, HarnessDetection, HarnessRequirement, HarnessSpec, KNOWN_DIRS,
     MINIMAX_CODE_COMMAND, MINIMAX_CODE_INSTALL_DIR, MINIMAX_CODE_ROOT_ENV, NPX_COMMAND,
-    OPENCODE_COMMAND, PI_COMMAND, PI_INSTALL_DIR, PI_ROOT_ENV, PathSource, check_executable_path,
-    detect_harnesses, find_command, find_in_path, harness_spec, known_dirs,
+    OPENCODE_COMMAND, PI_COMMAND, PI_INSTALL_DIR, PI_ROOT_ENV, PathSource, WINDOWS_KNOWN_DIRS,
+    check_executable_path, detect_harnesses, find_command, find_in_path, harness_spec, known_dirs,
 };
 pub use installed::{
     OPENCODE_FALLBACK_MODEL, PRESET_IDS, default_choice, inherited_opencode_env_remove,

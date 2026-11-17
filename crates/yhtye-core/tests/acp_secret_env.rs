@@ -3,6 +3,9 @@
 //! harness's own `env` wins on a clash, and a broken credential store fails
 //! the spawn without starting anything.
 
+// Unix only: `sh` stands in for the agent.
+#![cfg(unix)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

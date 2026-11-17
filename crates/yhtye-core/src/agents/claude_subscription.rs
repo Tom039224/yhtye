@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+use crate::home::home_dir_in;
+
 /// Claude Code's login file inside its config directory.
 const CREDENTIALS_FILE: &str = ".credentials.json";
 
@@ -22,11 +24,11 @@ const MAX_CREDENTIALS_BYTES: u64 = 256 * 1024;
 const UNKNOWN_SUBSCRIPTION: &str = "サブスク";
 
 /// Claude Code's config directory: `CLAUDE_CONFIG_DIR` when set and non-empty,
-/// else `~/.claude`.
+/// else `.claude` in the home directory ([`home_dir_in`]).
 fn claude_config_dir(env: &(impl Fn(&str) -> Option<OsString> + ?Sized)) -> Option<PathBuf> {
     let non_empty = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     non_empty("CLAUDE_CONFIG_DIR")
-        .or_else(|| non_empty("HOME").map(|home| home.join(".claude")))
+        .or_else(|| home_dir_in(env).map(|home| home.join(".claude")))
         .filter(|p| p.is_absolute())
 }
 
@@ -83,7 +85,7 @@ fn max_multiplier(tier: &str) -> Option<u32> {
 
 /// The name of the subscription Claude Code is logged in to, read from
 /// `.credentials.json` in the config directory `env` names (`CLAUDE_CONFIG_DIR`,
-/// else `HOME`/.claude). `Claude Code` is not part of it.
+/// else `~/.claude`). `Claude Code` is not part of it.
 #[must_use]
 pub fn subscription_of(env: &(impl Fn(&str) -> Option<OsString> + ?Sized)) -> Option<String> {
     let path = claude_config_dir(env)?.join(CREDENTIALS_FILE);
@@ -111,6 +113,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    /// The variable the home directory is read from on this OS (see `home_dir_in`).
+    const HOME: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
 
     fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
         let map: HashMap<String, OsString> = vars
@@ -183,7 +188,7 @@ mod tests {
         .expect("write");
         let home_str = home.path().to_str().expect("utf-8");
         assert_eq!(
-            claude_code_label(&env(&[("HOME", home_str)])),
+            claude_code_label(&env(&[(HOME, home_str)])),
             "Claude Code (Claude Max 20x)"
         );
     }
@@ -195,7 +200,7 @@ mod tests {
         std::fs::write(config.path().join(".credentials.json"), login("team", None))
             .expect("write");
         let vars = [
-            ("HOME", home.path().to_str().expect("utf-8")),
+            (HOME, home.path().to_str().expect("utf-8")),
             ("CLAUDE_CONFIG_DIR", config.path().to_str().expect("utf-8")),
         ];
         assert_eq!(claude_code_label(&env(&vars)), "Claude Code (Claude Team)");
@@ -206,23 +211,23 @@ mod tests {
         let fallback = "Claude Code (サブスク)";
         // No home, a relative home, no file.
         assert_eq!(claude_code_label(&env(&[])), fallback);
-        assert_eq!(claude_code_label(&env(&[("HOME", "relative")])), fallback);
+        assert_eq!(claude_code_label(&env(&[(HOME, "relative")])), fallback);
         let home = tempfile::tempdir().expect("home");
         let home_str = home.path().to_str().expect("utf-8");
-        assert_eq!(claude_code_label(&env(&[("HOME", home_str)])), fallback);
+        assert_eq!(claude_code_label(&env(&[(HOME, home_str)])), fallback);
 
         // A broken file, a directory in its place, an unknown plan.
         let dir = home.path().join(".claude");
         std::fs::create_dir(&dir).expect("mkdir");
         let file = dir.join(".credentials.json");
         std::fs::write(&file, "{ not json").expect("write");
-        assert_eq!(claude_code_label(&env(&[("HOME", home_str)])), fallback);
+        assert_eq!(claude_code_label(&env(&[(HOME, home_str)])), fallback);
         std::fs::remove_file(&file).expect("rm");
         std::fs::create_dir(&file).expect("mkdir");
-        assert_eq!(claude_code_label(&env(&[("HOME", home_str)])), fallback);
+        assert_eq!(claude_code_label(&env(&[(HOME, home_str)])), fallback);
         std::fs::remove_dir(&file).expect("rmdir");
         std::fs::write(&file, login("mystery", None)).expect("write");
-        assert_eq!(claude_code_label(&env(&[("HOME", home_str)])), fallback);
+        assert_eq!(claude_code_label(&env(&[(HOME, home_str)])), fallback);
     }
 
     #[test]
@@ -231,7 +236,7 @@ mod tests {
         let dir = home.path().join(".claude");
         std::fs::create_dir(&dir).expect("mkdir");
         std::fs::write(dir.join(".credentials.json"), login("pro", None)).expect("write");
-        let label = claude_code_label(&env(&[("HOME", home.path().to_str().expect("utf-8"))]));
+        let label = claude_code_label(&env(&[(HOME, home.path().to_str().expect("utf-8"))]));
         assert!(
             !label.contains("SECRET") && !label.contains("sk-ant"),
             "{label}"

@@ -75,7 +75,7 @@ pub struct CoreConfig {
   - `Core` は 1 つの DB を共有し、開いたプロジェクトごとに `Orchestration` (git は `GitCli`) を持つ。
     `OpenProject{path}` はパスを正規化し、**git リポジトリの最上位ディレクトリ**であることを検査
     (`git rev-parse --show-toplevel`) してから、`projects` テーブルでパスを引いて ID を再利用する。
-    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。起動時に自動では開かない。
+    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。名前に ASCII の英字が無ければ (`日本`、`テスト2`) `project-` と名前の SHA-256 の先頭 6 桁を付ける (`project-1a2b3c`、`project-2-1a2b3c`)。既存の ID は変えない。起動時に自動では開かない。
   - `ListEvents` は開いていないプロジェクトでも DB から読める (履歴の閲覧)。
   - ユーザーによる中止 `CancelTask` / `CancelGroup` は、オーケストレータの `cancel_task` /
     `cancel_group` と同じ規則で状態機械に通し (セッションキー `user` の `tool_called` として記録)、
@@ -289,6 +289,13 @@ impl AgentHandle {
      まだ生きている (別インスタンス・終了処理中) 記録は触らない。判定は純関数 `orphan::judge`。
   グループを抜けて `setsid` した孫はグループ kill では落ちない (従来どおり)。Linux 以外では 1〜3 は
   何もしない (従来どおり stdin の EOF に頼る)。
+- **Windows** (`acp/process/windows.rs`): エージェントは `CREATE_SUSPENDED` で起動し、
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 付きの Job Object に入れてから再開する (入れる前に子孫が増えない)。
+  Job のハンドルは Yhtye だけが持ち、Yhtye がどう死んでも OS がハンドルを閉じて子孫ごと終了する
+  (上の 1〜3 に当たるもので、起動時の孤児掃除も要らない)。停止は stdin の EOF → 猶予 →
+  `TerminateJobObject` (SIGTERM 相当の穏当な段は無い。`CTRL_BREAK_EVENT` は同じコンソールを共有する
+  プロセスにしか届かず、エージェントは `CREATE_NO_WINDOW` で自前の隠しコンソールを持つため)。
+  クラッシュ (`NTSTATUS` エラー値) の終了コードは `Exited.signal` に載せる。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
   `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
   グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
@@ -968,7 +975,7 @@ Stage 4 の構成 (`src/`):
   `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `wait_file(path)` (そのファイルができるまで
   ターンを止める。テストが進めるタイミングを決める。`sleep` でテストの操作を待たない) /
   `end(stop_reason)` / `crash(code)` /
-  `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
+  `spawn_child` (同じプロセスツリーに、自分自身を `--sleep` で起動した 10 分眠る子を起こす。後始末の検証用) /
   `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
   (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /
   `mcp_call{tool, args}` (Stage 2: rmcp クライアントで `session/new` に渡された最初の HTTP
@@ -1473,7 +1480,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - ターン終了時・配達前・`RetryGroupMerge` 前の追跡・取り直しは削除。
 - **API**: `create_chat { project, branch?, worktree? }` (どちらか 1 つ。両方・どちらも無しは `invalid_argument`)。`Snapshot.chats` / `list_chats` は `ChatInfo` (worktree)。
   イベント `domain { group_base_changed }` を追加、`chat_branch_changed` を削除。`pnpm gen:types`。
-- **フロントエンド**: ツリー (`ui/branchTree.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
+- **フロントエンド**: ツリー (`ui/branchTreeModel.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
   表示名 = ブランチ / `detached @<sha7>` / 見つからない。チャットの作業ツリーが一覧に無ければ「(見つからない作業ツリー)」の下 (送信不可)。
   作業ツリーの無いローカルブランチは末尾の折りたたみ「他のブランチ」(そこからの「+ 新しいチャット」で Yhtye の作業ツリーを作る)。
   会話ヘッダ・ピルも作業ツリーの今のブランチ。git の概要は従来の契機に加えて、ウィンドウのフォーカスとオーケストレータのターン終了で読み直す (外部の改名・オーケストレータ自身の改名が表示に出るように)。
@@ -1585,7 +1592,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   対象は、左のレールの開いているプロジェクトの行 (`RailProjects`。Alt+↑/↓ は行にフォーカスして。出ている行だけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
   (プロジェクトのプルダウンとバックグラウンドのチップは、ダッシュボード導入でレールに置き換わった。)
 - **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
-- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
+- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTreeModel.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 

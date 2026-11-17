@@ -36,12 +36,28 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Tom039224",
+    "copyright": "Copyright (c) 2026 Tom039224",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Japanese"],
+        "displayLanguageSelector": false,
+        "installerHooks": "windows/installer-hooks.nsh"
+      },
+      "wix": {
+        "language": "ja-JP",
+        "fragmentPaths": ["windows/install-dir.wxs"],
+        "componentGroupRefs": ["InstallDirNotInLocalAppData"]
+      }
+    }
   }
 }

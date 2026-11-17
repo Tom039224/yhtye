@@ -5,7 +5,7 @@ import { isInternalBranch } from "../store/chats";
 import type { AppState } from "../store/app";
 import { toCommandError } from "../api/transport";
 import { useAppState, useStore } from "../store/useStore";
-import { buildTree, nodeKey, type WorktreeNode } from "./branchTree";
+import { buildTree, nodeKey, type WorktreeNode } from "./branchTreeModel";
 import { ChatRow } from "./ChatRow";
 import { Icon, IconButton, type IconName } from "./Icon";
 import { RowMenu } from "./RowMenu";

@@ -47,7 +47,9 @@ pub fn fake_agent_crate_bin(name: &str) -> PathBuf {
     });
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root().join("target"), PathBuf::from);
-    target.join("debug").join(name)
+    target
+        .join("debug")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// Path of the fake agent binary.
@@ -173,12 +175,36 @@ pub fn message_text(events: &[AgentEvent]) -> String {
 }
 
 /// Whether process `pid` is gone (or a zombie awaiting its reaper).
+#[cfg(unix)]
 pub fn process_gone(pid: u32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Err(_) => true,
         Ok(stat) => stat
             .rsplit_once(')')
             .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z')),
+    }
+}
+
+/// Whether process `pid` is gone: it can not be opened, or has terminated.
+#[cfg(windows)]
+pub fn process_gone(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
+    };
+    // SAFETY: plain calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        );
+        if handle.is_null() {
+            return true;
+        }
+        let gone = WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+        CloseHandle(handle);
+        gone
     }
 }
 

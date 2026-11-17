@@ -10,7 +10,7 @@ import { CHAT_LOG, chatSnapshot, MAIN_WT } from "../test/chats";
 import { ev } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { placeOf } from "../ui/branchTree";
+import { placeOf } from "../ui/branchTreeModel";
 import { AppStore, chatPrefKey, type SettingsChange } from "./app";
 import { orchestratorKey } from "./chats";
 import { memoryPrefs, type Prefs } from "./prefs";

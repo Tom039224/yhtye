@@ -36,7 +36,7 @@ What works:
 
 What is not done, and limitations:
 
-- Linux only (see below). No installers, no auto-update.
+- Linux and Windows 10 / 11 (see below). No auto-update. Headless mode is not available on Windows.
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
@@ -72,10 +72,14 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
 ## Supported platforms
 
-- **Linux only.** Tested on Arch / CachyOS (Wayland) only; other distributions are untested.
+- **Linux.** Tested on Arch / CachyOS (Wayland) only; other distributions are untested.
+- **Windows 10 / 11 (x64 and ARM64).** An installer (NSIS; x64 and ARM64) and an MSI (x64 only) will be published on GitHub Releases under `windows-v…` tags
+  (none yet; until then, build from source). On release, CI builds them and runs the installer silently (install, then uninstall; this has not run yet), and **running agents on a real Windows
+  machine is untested**. The installers are not signed, so SmartScreen warns on the first run. On a Windows 10 without WebView2 the
+  installer fetches it (an internet connection is needed).
+  **Headless mode (`--headless`, `yhtye remote …`) is not supported on Windows** (it relies on Unix domain sockets and process groups);
+  the Windows app can still connect as a client to a headless Yhtye on another machine. Install and build steps are in [`SETUP.md`](SETUP.md) (Japanese).
 - macOS is untested.
-- Windows is not supported: agent process management relies on Unix process groups
-  ([`crates/yhtye-core/src/acp/process.rs`](crates/yhtye-core/src/acp/process.rs)).
 
 ## Warnings
 
@@ -102,6 +106,8 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
 
 1. Prerequisites (Linux): WebKitGTK 4.1, git, Node 22+ (with `npx`), Rust 1.98+, pnpm 11+.
+   On Windows 10 / 11 the prerequisites are git, Node 22+, Rust 1.98+ (MSVC toolchain), pnpm 11+ and the Visual Studio Build Tools ("Desktop development with
+   C++"; WebView2 comes with Windows 11, see `SETUP.md`); build with `pnpm tauri build`.
    - Arch: `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg`
    - Debian / Ubuntu (package names copied from CI, otherwise untested): `build-essential pkg-config libdbus-1-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev`
 2. Log in to the agents you want, before starting Yhtye:
@@ -141,7 +147,7 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
 
 ## Headless mode (no GUI)
 
-On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
+Linux only (not supported on Windows). On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
 option of the same binary). It is for working with that machine from the Android app.
 
 ```sh

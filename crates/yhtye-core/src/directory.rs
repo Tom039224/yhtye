@@ -10,6 +10,7 @@ use serde::Serialize;
 use ts_rs::TS;
 
 use crate::api::{ApiError, ApiErrorCode};
+use crate::home::home_dir_in;
 
 /// A folder inside the listed one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema, TS)]
@@ -36,14 +37,10 @@ pub struct DirectoryListing {
     pub entries: Vec<DirectoryEntry>,
 }
 
-/// The home directory of the user the core runs as (`HOME`, or `USERPROFILE`).
+/// The home directory of the user the core runs as ([`home_dir_in`]).
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {
-    ["HOME", "USERPROFILE"]
-        .into_iter()
-        .filter_map(std::env::var_os)
-        .map(PathBuf::from)
-        .find(|p| p.is_absolute())
+    home_dir_in(&|k| std::env::var_os(k)).filter(|p| p.is_absolute())
 }
 
 fn io_error(path: &Path, e: &std::io::Error) -> ApiError {
@@ -120,7 +117,7 @@ pub fn list_directory(
 ) -> Result<DirectoryListing, ApiError> {
     let home = home.ok_or_else(|| ApiError::unavailable("the home directory is not known"))?;
     let wanted = requested(path, home)?;
-    let dir = std::fs::canonicalize(&wanted).map_err(|e| io_error(&wanted, &e))?;
+    let dir = dunce::canonicalize(&wanted).map_err(|e| io_error(&wanted, &e))?;
     if !dir.is_dir() {
         return Err(ApiError::invalid_argument(format!(
             "{} is not a directory",
@@ -181,7 +178,7 @@ mod tests {
     fn only_folders_are_listed_sorted_ignoring_case_with_their_git_flag() {
         let tmp = tempfile::tempdir().unwrap();
         make(tmp.path());
-        let dir = tmp.path().canonicalize().unwrap();
+        let dir = dunce::canonicalize(tmp.path()).unwrap();
         let l = list_directory(Some(dir.to_str().unwrap()), false, Some(&dir)).unwrap();
         assert_eq!(
             names(&l),
@@ -211,7 +208,7 @@ mod tests {
     fn no_path_means_home_and_tilde_starts_there() {
         let tmp = tempfile::tempdir().unwrap();
         make(tmp.path());
-        let home = tmp.path().canonicalize().unwrap();
+        let home = dunce::canonicalize(tmp.path()).unwrap();
         for path in [None, Some(""), Some("  "), Some("~")] {
             let l = list_directory(path, false, Some(&home)).unwrap();
             assert_eq!(l.path, home.to_str().unwrap());
@@ -229,7 +226,7 @@ mod tests {
     fn links_to_folders_are_followed_and_paths_are_made_canonical() {
         let tmp = tempfile::tempdir().unwrap();
         make(tmp.path());
-        let dir = tmp.path().canonicalize().unwrap();
+        let dir = dunce::canonicalize(tmp.path()).unwrap();
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(dir.join("repo"), dir.join("link-to-repo")).unwrap();
@@ -257,16 +254,20 @@ mod tests {
 
     #[test]
     fn the_root_has_no_parent() {
-        let l = list_directory(Some("/"), false, Some(Path::new("/"))).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = dunce::canonicalize(tmp.path()).unwrap();
+        // `/` on Unix, the drive root (`C:\`) on Windows.
+        let root = dir.ancestors().last().unwrap();
+        let l = list_directory(root.to_str(), false, Some(root)).unwrap();
         assert_eq!(l.parent, None);
-        assert_eq!(l.path, "/");
+        assert_eq!(Some(l.path.as_str()), root.to_str());
     }
 
     #[test]
     fn failures_say_what_is_wrong() {
         let tmp = tempfile::tempdir().unwrap();
         make(tmp.path());
-        let dir = tmp.path().canonicalize().unwrap();
+        let dir = dunce::canonicalize(tmp.path()).unwrap();
         let missing = list_directory(Some(&format!("{}/nope", dir.display())), false, Some(&dir))
             .unwrap_err();
         assert_eq!(missing.code, ApiErrorCode::NotFound);
@@ -299,7 +300,7 @@ mod tests {
     fn a_folder_that_cannot_be_read_is_forbidden() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().canonicalize().unwrap();
+        let dir = dunce::canonicalize(tmp.path()).unwrap();
         let locked = dir.join("locked");
         std::fs::create_dir(&locked).unwrap();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();

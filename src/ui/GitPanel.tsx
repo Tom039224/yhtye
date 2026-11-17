@@ -5,7 +5,7 @@ import { scopeState } from "../store/chats";
 import { parseYhtyeBranch } from "../store/names";
 import { type ProjectView, selectedChatInfo } from "../store/project";
 import { useAppState, useStore } from "../store/useStore";
-import { placeOf } from "./branchTree";
+import { placeOf } from "./branchTreeModel";
 import { type Graph, layoutGraph } from "./gitGraph";
 import { EmptyState } from "./EmptyState";
 import { Icon, IconButton, type IconName } from "./Icon";

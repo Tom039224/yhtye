@@ -14,6 +14,7 @@ use ts_rs::TS;
 use super::catalog::{
     ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE, PI,
 };
+use crate::home::{home_dir_for, home_dir_in};
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -41,10 +42,18 @@ pub const MINIMAX_CODE_ROOT_ENV: &str = "MCODE_INSTALL_ROOT";
 
 /// The Google Antigravity executable: the Python archive of its ACP server, as
 /// the distribution zip names it (`localharness_external` must sit next to it).
+#[cfg(not(windows))]
 pub const ANTIGRAVITY_COMMAND: &str = "agy_acp_server.par";
 
+/// The Google Antigravity executable on Windows: the zip holds
+/// `agy_acp_server.exe` (next to `localharness_external.exe`), found by this
+/// name with the `PATHEXT` extensions like every other command there.
+#[cfg(windows)]
+pub const ANTIGRAVITY_COMMAND: &str = "agy_acp_server";
+
 /// The other name Google Antigravity's server goes by (a link, or a file
-/// renamed without the extension).
+/// renamed without the extension). Not used on Windows, where it is
+/// [`ANTIGRAVITY_COMMAND`] itself.
 pub const ANTIGRAVITY_COMMAND_ALIAS: &str = "agy_acp_server";
 
 /// The environment variable naming the directory Google Antigravity's server was
@@ -84,12 +93,31 @@ pub const PI_INSTALL_DIR: &str = "~/.pi/agent/bin";
 pub const PI_ROOT_ENV: &str = "PI_CODING_AGENT_DIR";
 
 /// Directories searched after `PATH` (a desktop app often starts with a shorter
-/// `PATH` than the user's shell has). `~` is the `HOME` of the environment.
+/// `PATH` than the user's shell has). `~` is the home directory of the
+/// environment ([`home_dir_in`]).
 pub const KNOWN_DIRS: [&str; 4] = [
     "~/.local/bin",
     "~/.cargo/bin",
     "~/.bun/bin",
     "/usr/local/bin",
+];
+
+/// [`KNOWN_DIRS`] on Windows. Besides `~`, `%NAME%/` stands for the (absolute)
+/// value of the environment variable `NAME`; `/` separates components. npm,
+/// pnpm, Yarn, Volta and Node itself put the `.cmd` shims of `npx`, `codex`,
+/// `opencode` there; `~/.local/bin` is where Claude Code's native installer
+/// puts `claude.exe`.
+pub const WINDOWS_KNOWN_DIRS: [&str; 10] = [
+    "%APPDATA%/npm",
+    "%ProgramFiles%/nodejs",
+    "~/.local/bin",
+    "%LOCALAPPDATA%/pnpm",
+    "%LOCALAPPDATA%/Yarn/bin",
+    "%LOCALAPPDATA%/Volta/bin",
+    "~/scoop/shims",
+    "%LOCALAPPDATA%/Microsoft/WinGet/Links",
+    "~/.bun/bin",
+    "~/.cargo/bin",
 ];
 
 /// What a harness needs to be offered.
@@ -115,6 +143,8 @@ pub struct HarnessSpec {
     /// Directories only this harness's installer uses (`~` is the `HOME` of the
     /// environment), searched after [`KNOWN_DIRS`].
     pub extra_dirs: &'static [&'static str],
+    /// More of those on Windows (written as [`WINDOWS_KNOWN_DIRS`] is).
+    pub windows_dirs: &'static [&'static str],
 }
 
 /// The known harnesses, in the order the built-in default prefers them
@@ -129,6 +159,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        windows_dirs: &[],
     },
     HarnessSpec {
         id: OPENCODE,
@@ -139,6 +170,11 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        windows_dirs: &[
+            "%LOCALAPPDATA%/Programs/opencode",
+            "%LOCALAPPDATA%/Programs/opencode/bin",
+            "~/.opencode/bin",
+        ],
     },
     HarnessSpec {
         id: CODEX,
@@ -149,6 +185,10 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        windows_dirs: &[
+            "%LOCALAPPDATA%/Programs/codex",
+            "%LOCALAPPDATA%/Programs/codex/bin",
+        ],
     },
     HarnessSpec {
         id: DEVIN,
@@ -159,6 +199,10 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        windows_dirs: &[
+            "%LOCALAPPDATA%/Programs/devin",
+            "%LOCALAPPDATA%/Programs/devin/bin",
+        ],
     },
     HarnessSpec {
         id: MINIMAX_CODE,
@@ -169,16 +213,22 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(MINIMAX_CODE_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[MINIMAX_CODE_INSTALL_DIR],
+        windows_dirs: &[],
     },
     HarnessSpec {
         id: ANTIGRAVITY,
         label: "Google Antigravity",
         main: ANTIGRAVITY_COMMAND,
-        aliases: &[ANTIGRAVITY_COMMAND_ALIAS],
+        aliases: if cfg!(windows) {
+            &[]
+        } else {
+            &[ANTIGRAVITY_COMMAND_ALIAS]
+        },
         also: &[],
         root_env: Some(ANTIGRAVITY_ROOT_ENV),
         root_subdirs: &["", "bin"],
         extra_dirs: &ANTIGRAVITY_INSTALL_DIRS,
+        windows_dirs: &[],
     },
     HarnessSpec {
         id: GROK_BUILD,
@@ -189,6 +239,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(GROK_BUILD_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[GROK_BUILD_INSTALL_DIR],
+        windows_dirs: &[],
     },
     HarnessSpec {
         id: PI,
@@ -199,6 +250,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(PI_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[PI_INSTALL_DIR],
+        windows_dirs: &[],
     },
 ];
 
@@ -242,6 +294,11 @@ pub struct HarnessDetection {
     /// the search does not replace a manual path that is wrong.
     pub override_error: Option<String>,
     pub requirements: Vec<HarnessRequirement>,
+    /// What an absolute path of the main executable looks like on the host
+    /// (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
+    /// of the manual path. Empty from a core that predates it.
+    #[serde(default)]
+    pub path_example: String,
 }
 
 impl HarnessDetection {
@@ -261,22 +318,50 @@ pub fn harness_spec(id: &str) -> Option<&'static HarnessSpec> {
     HARNESS_SPECS.iter().find(|s| s.id == id)
 }
 
-/// [`KNOWN_DIRS`] with `~` expanded to the `HOME` of `env` (those under `~`
-/// are left out without one).
+/// The well-known directories of this platform ([`KNOWN_DIRS`], or
+/// [`WINDOWS_KNOWN_DIRS`] on Windows) with `~` and `%NAME%` expanded from `env`
+/// (those that cannot be expanded are left out).
 pub fn known_dirs(env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    expand_home(&KNOWN_DIRS, env)
+    known_dirs_for(cfg!(windows), &env)
 }
 
-/// `dirs` with `~` expanded to the `HOME` of `env` (those under `~` are left
-/// out without one).
-fn expand_home(dirs: &[&str], env: impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    let home = env("HOME").map(PathBuf::from).filter(|h| h.is_absolute());
+/// [`known_dirs`] for either platform (so both are testable anywhere).
+fn known_dirs_for(windows: bool, env: &impl Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    let dirs: &[&str] = if windows {
+        &WINDOWS_KNOWN_DIRS
+    } else {
+        &KNOWN_DIRS
+    };
+    expand_dirs(dirs, env, home_dir_for(windows, env))
+}
+
+/// `dirs` with `~` expanded to `home` and `%NAME%` to the absolute path in the
+/// variable `NAME` of `env` (those that cannot be are left out).
+fn expand_dirs(
+    dirs: &[&str],
+    env: &impl Fn(&str) -> Option<OsString>,
+    home: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let home = home.filter(|h| h.is_absolute());
     dirs.iter()
-        .filter_map(|dir| match dir.strip_prefix("~/") {
-            Some(rest) => home.as_ref().map(|h| h.join(rest)),
-            None => Some(PathBuf::from(dir)),
-        })
+        .filter_map(|dir| expand_dir(dir, env, home.as_deref()))
         .collect()
+}
+
+fn expand_dir(
+    dir: &str,
+    env: &impl Fn(&str) -> Option<OsString>,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
+    let join = |base: &Path, rest: &str| rest.split('/').fold(base.to_path_buf(), |p, c| p.join(c));
+    if let Some(rest) = dir.strip_prefix("~/") {
+        return home.map(|h| join(h, rest));
+    }
+    if let Some((var, rest)) = dir.strip_prefix('%').and_then(|d| d.split_once("%/")) {
+        let base = env(var).map(PathBuf::from).filter(|b| b.is_absolute())?;
+        return Some(join(&base, rest));
+    }
+    Some(PathBuf::from(dir))
 }
 
 /// Where the main executable of `spec` is looked for after `PATH`: the
@@ -292,33 +377,110 @@ fn search_dirs(
         .and_then(env)
         .map(PathBuf::from)
         .filter(|root| root.is_absolute());
+    let windows_dirs: &[&str] = if cfg!(windows) {
+        spec.windows_dirs
+    } else {
+        &[]
+    };
+    let home = home_dir_in(env);
     root.into_iter()
         .flat_map(|root| spec.root_subdirs.iter().map(move |sub| root.join(sub)))
         .chain(known_dirs.iter().cloned())
-        .chain(expand_home(spec.extra_dirs, env))
+        .chain(expand_dirs(spec.extra_dirs, env, home.clone()))
+        .chain(expand_dirs(windows_dirs, env, home))
+        .collect()
+}
+
+/// The extensions of the programs Windows can start by name (what a `Command`
+/// accepts: no `.vbs` or `.js`), lowercase with the dot.
+const RUNNABLE_EXTENSIONS: [&str; 4] = [".exe", ".com", ".bat", ".cmd"];
+
+/// What `PATHEXT` is when it is not set (or lists nothing runnable).
+const DEFAULT_PATHEXT: &str = ".COM;.EXE;.BAT;.CMD";
+
+/// The extensions Windows tries for a bare command name, in order: those of
+/// `pathext` (a `PATHEXT` value) that [`RUNNABLE_EXTENSIONS`] holds, real
+/// programs (`.exe`, `.com`) before scripts (`.bat`, `.cmd`) so that an `.exe`
+/// wins over an npm `.cmd` shim whatever order `PATHEXT` lists them in.
+fn windows_extensions(pathext: Option<&OsStr>) -> Vec<String> {
+    fn parse(value: &str) -> Vec<String> {
+        let mut exts: Vec<String> = Vec::new();
+        for ext in value.split(';') {
+            let ext = ext.trim().to_ascii_lowercase();
+            let ext = if ext.starts_with('.') {
+                ext
+            } else {
+                format!(".{ext}")
+            };
+            if RUNNABLE_EXTENSIONS.contains(&ext.as_str()) && !exts.contains(&ext) {
+                exts.push(ext);
+            }
+        }
+        exts.sort_by_key(|ext| !matches!(ext.as_str(), ".exe" | ".com"));
+        exts
+    }
+    let exts = pathext
+        .and_then(OsStr::to_str)
+        .map(parse)
+        .unwrap_or_default();
+    if exts.is_empty() {
+        parse(DEFAULT_PATHEXT)
+    } else {
+        exts
+    }
+}
+
+/// The file names to look for in a directory to find a program that goes by
+/// `names`, best first: on Unix the names themselves; on Windows each name with
+/// every extension of `pathext` (see [`windows_extensions`]), and a name that
+/// already ends in one as it is. A file without extension is never a candidate
+/// there: npm leaves a shell script named `npx` next to `npx.cmd`, which
+/// Windows cannot start.
+fn file_names(names: &[&str], windows: bool, pathext: Option<&OsStr>) -> Vec<String> {
+    if !windows {
+        return names.iter().map(|n| (*n).to_string()).collect();
+    }
+    let exts = windows_extensions(pathext);
+    names
+        .iter()
+        .flat_map(|name| {
+            let lower = name.to_ascii_lowercase();
+            let as_is = exts.iter().any(|e| lower.ends_with(e.as_str()));
+            as_is
+                .then(|| (*name).to_string())
+                .into_iter()
+                .chain(exts.iter().map(move |ext| format!("{name}{ext}")))
+        })
         .collect()
 }
 
 /// The first usable executable named `command` in the directories of `path`
-/// (a `PATH` value): see [`is_usable`]. Relative entries are ignored.
+/// (a `PATH` value): see [`is_usable`]. Relative entries are ignored. On
+/// Windows `command` is completed with the `PATHEXT` extensions and the path
+/// found has one (`...\npx.cmd`).
 #[must_use]
 pub fn find_in_path(command: &str, path: Option<&OsStr>) -> Option<PathBuf> {
-    find_in_path_as(&[command], path)
+    let files = file_names(
+        &[command],
+        cfg!(windows),
+        std::env::var_os("PATHEXT").as_deref(),
+    );
+    find_in_path_files(&files, path)
 }
 
-/// [`find_in_path`] for an executable that goes by several `names`: the first
-/// directory holding any of them wins, and within it the earlier name.
-fn find_in_path_as(names: &[&str], path: Option<&OsStr>) -> Option<PathBuf> {
+/// [`find_in_path`] for the candidate file names `files`: the first directory
+/// holding any of them wins, and within it the earlier name.
+fn find_in_path_files(files: &[String], path: Option<&OsStr>) -> Option<PathBuf> {
     first_usable(
-        names,
+        files,
         std::env::split_paths(path?).filter(|dir| dir.is_absolute()),
     )
 }
 
-/// The first usable `names[i]` in `dirs`, by directory and then by name.
-fn first_usable(names: &[&str], dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+/// The first usable `files[i]` in `dirs`, by directory and then by name.
+fn first_usable(files: &[String], dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
     dirs.into_iter().find_map(|dir| {
-        names
+        files
             .iter()
             .map(|name| dir.join(name))
             .find(|p| is_usable(p))
@@ -341,10 +503,11 @@ fn find_command_as(
     env: impl Fn(&str) -> Option<OsString>,
     known_dirs: &[PathBuf],
 ) -> Option<(PathBuf, PathSource)> {
-    if let Some(path) = find_in_path_as(names, env("PATH").as_deref()) {
+    let files = file_names(names, cfg!(windows), env("PATHEXT").as_deref());
+    if let Some(path) = find_in_path_files(&files, env("PATH").as_deref()) {
         return Some((path, PathSource::Path));
     }
-    first_usable(names, known_dirs.iter().cloned()).map(|p| (p, PathSource::KnownDir))
+    first_usable(&files, known_dirs.iter().cloned()).map(|p| (p, PathSource::KnownDir))
 }
 
 /// An executable regular file whose path is valid UTF-8. A path that is not
@@ -361,13 +524,24 @@ fn is_executable(p: &Path) -> bool {
         && rustix::fs::access(p, rustix::fs::Access::EXEC_OK).is_ok()
 }
 
+/// A regular file Windows can start by itself (see [`has_runnable_extension`]).
 #[cfg(not(unix))]
 fn is_executable(p: &Path) -> bool {
-    p.is_file()
+    has_runnable_extension(p) && p.is_file()
+}
+
+/// `p` ends in `.exe`, `.com`, `.bat` or `.cmd` (any case): the programs a
+/// Windows `Command` can start. Whether the file is executable is not a
+/// permission there, it is what the name says.
+#[cfg_attr(unix, allow(dead_code))]
+fn has_runnable_extension(p: &Path) -> bool {
+    p.extension().and_then(OsStr::to_str).is_some_and(|ext| {
+        RUNNABLE_EXTENSIONS.contains(&format!(".{}", ext.to_ascii_lowercase()).as_str())
+    })
 }
 
 /// Why `path` cannot be a manual executable path: it must be absolute and an
-/// executable regular file.
+/// executable regular file (on Windows: `.exe`, `.cmd`, `.bat` or `.com`).
 pub fn check_executable_path(path: &str) -> Result<(), String> {
     let p = Path::new(path);
     if path.is_empty() {
@@ -381,10 +555,15 @@ pub fn check_executable_path(path: &str) -> Result<(), String> {
         return Err(format!("{path} is not a regular file"));
     }
     if !is_executable(p) {
-        return Err(format!("{path} is not executable"));
+        return Err(format!("{path} is not executable{NOT_EXECUTABLE_HINT}"));
     }
     Ok(())
 }
+
+#[cfg(unix)]
+const NOT_EXECUTABLE_HINT: &str = "";
+#[cfg(not(unix))]
+const NOT_EXECUTABLE_HINT: &str = " (expected .exe, .cmd, .bat or .com)";
 
 /// The state of every known harness, in [`HARNESS_SPECS`] order. `overrides`
 /// maps a harness id to the path the user gave for its main executable, which
@@ -441,6 +620,17 @@ fn detect(
         override_path: override_path.cloned(),
         override_error,
         requirements,
+        path_example: path_example(spec, cfg!(windows)),
+    }
+}
+
+/// An absolute path of the main executable of `spec` as it looks on Unix or on
+/// Windows (`npx` where Node's installer puts it).
+fn path_example(spec: &HarnessSpec, windows: bool) -> String {
+    match (windows, spec.main) {
+        (false, main) => format!("/opt/bin/{main}"),
+        (true, NPX_COMMAND) => r"C:\Program Files\nodejs\npx.cmd".to_string(),
+        (true, main) => format!(r"C:\Tools\{main}.exe"),
     }
 }
 
@@ -1170,5 +1360,243 @@ mod tests {
                 (preset.id.as_str(), preset.label.as_str())
             );
         }
+    }
+}
+
+/// The pure parts of the search, on either platform.
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+
+    /// `/w/...` made absolute on this OS (`C:/w/...` on Windows, where a rooted path without a
+    /// drive is not absolute).
+    fn w(path: &str) -> PathBuf {
+        match path.strip_prefix("/w") {
+            Some(rest) if cfg!(windows) => PathBuf::from(format!("C:/w{rest}")),
+            _ => PathBuf::from(path),
+        }
+    }
+
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
+        let map: HashMap<String, OsString> = vars
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), w(v).into_os_string()))
+            .collect();
+        move |k| map.get(k).cloned()
+    }
+
+    fn exts(pathext: Option<&str>) -> Vec<String> {
+        windows_extensions(pathext.map(OsStr::new))
+    }
+
+    #[test]
+    fn the_example_of_a_manual_path_looks_like_a_path_of_the_host() {
+        let spec = |id| harness_spec(id).expect("spec");
+        assert_eq!(path_example(spec(OPENCODE), false), "/opt/bin/opencode");
+        assert_eq!(path_example(spec(CLAUDE_CODE), false), "/opt/bin/npx");
+        assert_eq!(
+            path_example(spec(CLAUDE_CODE), true),
+            r"C:\Program Files\nodejs\npx.cmd"
+        );
+        assert_eq!(path_example(spec(OPENCODE), true), r"C:\Tools\opencode.exe");
+    }
+
+    #[test]
+    fn pathext_defaults_when_unset_or_without_a_runnable_extension() {
+        let default = [".com", ".exe", ".bat", ".cmd"];
+        assert_eq!(exts(None), default);
+        assert_eq!(exts(Some("")), default);
+        assert_eq!(exts(Some(".VBS;.JS;.MSC")), default);
+    }
+
+    #[test]
+    fn pathext_puts_programs_before_scripts_and_drops_what_cannot_be_started() {
+        assert_eq!(exts(Some(".CMD;.BAT;.EXE")), [".exe", ".cmd", ".bat"]);
+        assert_eq!(
+            exts(Some(".js; .Cmd ;.VBS;COM;.cmd;.exe")),
+            [".com", ".exe", ".cmd"],
+            "trimmed, lowercased, dot added, no duplicates"
+        );
+    }
+
+    #[test]
+    fn file_names_are_the_names_themselves_on_unix() {
+        let names = file_names(&["agy_acp_server.par", "agy_acp_server"], false, None);
+        assert_eq!(names, ["agy_acp_server.par", "agy_acp_server"]);
+    }
+
+    #[test]
+    fn file_names_on_windows_try_every_extension_and_never_the_bare_name() {
+        let pathext = OsStr::new(".COM;.EXE;.BAT;.CMD");
+        assert_eq!(
+            file_names(&["npx"], true, Some(pathext)),
+            ["npx.com", "npx.exe", "npx.bat", "npx.cmd"]
+        );
+        assert_eq!(
+            file_names(&["codex", "codex-x"], true, Some(OsStr::new(".EXE;.CMD"))),
+            ["codex.exe", "codex.cmd", "codex-x.exe", "codex-x.cmd"],
+            "the earlier name wins within a directory"
+        );
+        assert_eq!(
+            file_names(&["tool.CMD"], true, Some(OsStr::new(".EXE;.CMD"))),
+            ["tool.CMD", "tool.CMD.exe", "tool.CMD.cmd"],
+            "a name that already has an extension is tried as it is first"
+        );
+    }
+
+    #[test]
+    fn runnable_extensions_are_the_four_a_command_can_start() {
+        for name in ["a.exe", "a.CMD", "a.Bat", "dir.d/a.com"] {
+            assert!(has_runnable_extension(Path::new(name)), "{name}");
+        }
+        for name in ["a", "a.ps1", "a.sh", "a.exe.txt", "exe", ".cmd"] {
+            assert!(!has_runnable_extension(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn windows_known_directories_expand_the_profile_and_the_app_data_variables() {
+        let vars = [
+            ("USERPROFILE", "/w/Users/u"),
+            ("APPDATA", "/w/Users/u/AppData/Roaming"),
+            ("LOCALAPPDATA", "/w/Users/u/AppData/Local"),
+            ("ProgramFiles", "/w/Program Files"),
+        ];
+        let dirs = known_dirs_for(true, &env(&vars));
+        assert_eq!(
+            dirs,
+            [
+                "/w/Users/u/AppData/Roaming/npm",
+                "/w/Program Files/nodejs",
+                "/w/Users/u/.local/bin",
+                "/w/Users/u/AppData/Local/pnpm",
+                "/w/Users/u/AppData/Local/Yarn/bin",
+                "/w/Users/u/AppData/Local/Volta/bin",
+                "/w/Users/u/scoop/shims",
+                "/w/Users/u/AppData/Local/Microsoft/WinGet/Links",
+                "/w/Users/u/.bun/bin",
+                "/w/Users/u/.cargo/bin",
+            ]
+            .map(w)
+        );
+    }
+
+    #[test]
+    fn windows_known_directories_without_their_variable_are_left_out() {
+        let only_profile = known_dirs_for(true, &env(&[("USERPROFILE", "/w/Users/u")]));
+        assert_eq!(
+            only_profile,
+            ["/w/Users/u/.local/bin", "/w/Users/u/scoop/shims"]
+                .iter()
+                .chain(&["/w/Users/u/.bun/bin", "/w/Users/u/.cargo/bin"])
+                .map(|p| w(p))
+                .collect::<Vec<_>>()
+        );
+        let relative = known_dirs_for(true, &env(&[("APPDATA", "relative")]));
+        assert!(relative.is_empty(), "a relative variable is not trusted");
+        // The profile may come from HOMEDRIVE + HOMEPATH, as on a bare service account.
+        let drive = known_dirs_for(true, &env(&[("HOMEDRIVE", "/w"), ("HOMEPATH", "/h")]));
+        assert_eq!(drive[0], w("/w/h/.local/bin"));
+    }
+
+    #[test]
+    fn the_unix_list_is_not_used_on_windows_nor_the_windows_one_on_unix() {
+        let vars = [("HOME", "/home/u"), ("APPDATA", "/a")];
+        assert!(!known_dirs_for(true, &env(&vars)).contains(&PathBuf::from("/usr/local/bin")));
+        assert!(!known_dirs_for(false, &env(&vars)).contains(&PathBuf::from("/a/npm")));
+    }
+
+    #[test]
+    fn every_windows_template_is_expandable() {
+        for dir in WINDOWS_KNOWN_DIRS
+            .iter()
+            .chain(HARNESS_SPECS.iter().flat_map(|s| s.windows_dirs))
+        {
+            assert!(
+                dir.starts_with("~/") || dir.starts_with('%'),
+                "{dir} must be under the profile or a variable"
+            );
+            if let Some(rest) = dir.strip_prefix('%') {
+                assert!(rest.contains("%/"), "{dir}: %NAME%/ then the rest");
+            }
+        }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn env(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
+        move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone())
+    }
+
+    fn write(dir: &Path, name: &str) -> PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, "@echo off\r\n").expect("write");
+        p
+    }
+
+    #[test]
+    fn a_cmd_shim_is_found_with_its_extension_and_the_extensionless_script_is_not() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "npx"); // the sh script npm leaves next to the shim
+        let shim = write(dir.path(), "npx.cmd");
+        let found = find_command("npx", env(vec![("PATH", dir.path().into())]), &[]);
+        assert_eq!(found, Some((shim, PathSource::Path)));
+    }
+
+    #[test]
+    fn an_exe_wins_over_a_cmd_even_when_pathext_lists_cmd_first() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        write(dir.path(), "opencode.cmd");
+        let exe = write(dir.path(), "opencode.exe");
+        let found = find_command(
+            "opencode",
+            env(vec![
+                ("PATH", dir.path().into()),
+                ("PATHEXT", ".CMD;.EXE".into()),
+            ]),
+            &[],
+        );
+        assert_eq!(found, Some((exe, PathSource::Path)));
+    }
+
+    #[test]
+    fn a_shim_in_a_known_directory_is_found_after_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = write(dir.path(), "codex.cmd");
+        let known = [dir.path().to_path_buf()];
+        let found = find_command("codex", env(vec![("PATH", OsString::new())]), &known);
+        assert_eq!(found, Some((shim, PathSource::KnownDir)));
+    }
+
+    #[test]
+    fn agy_acp_server_is_the_exe_of_the_windows_zip_and_goes_by_its_bare_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = write(dir.path(), "agy_acp_server.exe");
+        write(dir.path(), "localharness_external.exe");
+        let spec = harness_spec(ANTIGRAVITY).expect("spec");
+        let d = detect(spec, &env(vec![("PATH", dir.path().into())]), &[], None);
+        assert!(d.installed);
+        assert_eq!(d.resolved_path.as_deref(), exe.to_str());
+        assert_eq!(d.requirements[0].command, "agy_acp_server");
+        assert_eq!(d.found("agy_acp_server"), exe.to_str());
+    }
+
+    #[test]
+    fn a_manual_path_must_be_an_exe_cmd_bat_or_com() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["a.exe", "b.CMD", "c.bat", "d.com"] {
+            let p = write(dir.path(), name);
+            assert_eq!(
+                check_executable_path(p.to_str().expect("utf-8")),
+                Ok(()),
+                "{name}"
+            );
+        }
+        let script = write(dir.path(), "e.ps1");
+        let err = check_executable_path(script.to_str().expect("utf-8")).expect_err("ps1");
+        assert!(err.contains("not executable"), "{err}");
     }
 }

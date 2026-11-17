@@ -6780,6 +6780,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "yhtye-core",
 ]
 
@@ -6791,6 +6792,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "dunce",
  "futures",
  "gethostname",
  "getrandom 0.3.4",
@@ -6814,6 +6816,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

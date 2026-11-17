@@ -251,7 +251,7 @@ pub enum Action {
     End(String),
     /// `exit(code)` immediately.
     Crash(i32),
-    /// Spawns `sleep 600` in the agent's process group; reports `child_pid:<pid>`.
+    /// Spawns a copy of this binary that only sleeps for ten minutes, in the agent's process tree; reports `child_pid:<pid>`.
     SpawnChild,
     /// Reports `state:mode=<m>;model=<v>;system_prompt=<s>;prompt=<text>`.
     ReportState,

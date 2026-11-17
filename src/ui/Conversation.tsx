@@ -12,7 +12,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { withMentions, type Mention } from "./mentions";
 import { OlderHistory } from "./OlderHistory";
-import { type Place, placeLabel, placeOf } from "./branchTree";
+import { type Place, placeLabel, placeOf } from "./branchTreeModel";
 import { awaitingFinish, focusGroup, groupProgress, isOpenGroup } from "./taskInfo";
 import { TranscriptView } from "./TranscriptView";
 import { useAutoScroll } from "./useAutoScroll";

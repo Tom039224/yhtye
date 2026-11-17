@@ -149,7 +149,7 @@ private fun HarnessCard(
                 SettingsField(
                     value = draft,
                     onChange = onDraft,
-                    placeholder = "$main の絶対パス (例 /opt/bin/$main)",
+                    placeholder = "$main の絶対パス (例 ${harness.pathExample.ifEmpty { "/opt/bin/$main" }})",
                     label = "${harness.label} の $main のパス",
                     tag = "path-${harness.id}",
                     modifier = Modifier.weight(1f),
