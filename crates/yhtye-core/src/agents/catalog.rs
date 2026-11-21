@@ -427,7 +427,46 @@ impl HarnessPreset {
     /// one the configs name, for every role and the model listing session.
     #[must_use]
     pub fn with_command(mut self, command: &str) -> Self {
-        for h in [
+        for h in self.configs_mut() {
+            h.command = command.to_string();
+        }
+        self
+    }
+
+    /// Runs `command args...` instead of the launch the configs name, for
+    /// every role and the model listing session (the adapter at the version
+    /// that was chosen, or a global install of it).
+    #[must_use]
+    pub fn with_launch(mut self, command: &str, args: &[String]) -> Self {
+        for h in self.configs_mut() {
+            h.command = command.to_string();
+            h.args = args.to_vec();
+        }
+        self
+    }
+
+    /// Sets the environment variable `name` for every role and the model
+    /// listing session.
+    #[must_use]
+    pub fn with_env(mut self, name: &str, value: &str) -> Self {
+        for h in self.configs_mut() {
+            h.env.insert(name.to_string(), value.to_string());
+        }
+        self
+    }
+
+    /// Sets the [`HarnessConfig::launch_note`] of every role and the model
+    /// listing session.
+    #[must_use]
+    pub fn with_launch_note(mut self, note: &str) -> Self {
+        for h in self.configs_mut() {
+            h.launch_note = Some(note.to_string());
+        }
+        self
+    }
+
+    fn configs_mut(&mut self) -> impl Iterator<Item = &mut HarnessConfig> {
+        [
             &mut self.orchestrator,
             &mut self.implementer,
             &mut self.investigator,
@@ -435,10 +474,6 @@ impl HarnessPreset {
         ]
         .into_iter()
         .chain(self.probe.as_mut())
-        {
-            h.command = command.to_string();
-        }
-        self
     }
 
     #[must_use]

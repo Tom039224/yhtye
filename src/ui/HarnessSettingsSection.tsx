@@ -1,6 +1,6 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import type { HarnessDetection, HarnessPathSource } from "../api/generated";
+import type { AdapterChannel, ClaudeSource, HarnessDetection, HarnessOptions, HarnessPathSource } from "../api/generated";
 import { toCommandError } from "../api/transport";
 import { useStore } from "../store/useStore";
 import { Icon, IconButton } from "./Icon";
@@ -14,6 +14,32 @@ export const PATH_SOURCE_LABELS: Record<HarnessPathSource, string> = {
   known_dir: "既知の場所",
   none: "—",
 };
+
+/** The adapter versions a harness can run, as shown. */
+const ADAPTER_CHANNEL_LABELS: Record<AdapterChannel, string> = {
+  verified: "検証済み (既定)",
+  latest: "最新",
+  pinned: "バージョン指定",
+  global: "グローバル導入",
+};
+
+/** The adapter's source as shown next to the version that runs. */
+const ADAPTER_SOURCE_LABELS = {
+  verified: "検証済み",
+  latest: "最新",
+  pinned: "指定",
+  global: "グローバル導入",
+} as const;
+
+const CLAUDE_SOURCE_LABELS: Record<ClaudeSource, string> = {
+  user: "自分の claude (既定)",
+  bundled: "同梱の Claude Code",
+};
+
+/** The pinned-version text boxes' contents: each harness's stored version, if any. */
+function versionDraftsOf(list: HarnessDetection[]): Record<string, string> {
+  return Object.fromEntries(list.map((h) => [h.id, h.options.adapter_version ?? ""]));
+}
 
 /** The manual-path text boxes' contents: each harness's stored override, if any. */
 function draftsOf(list: HarnessDetection[]): Record<string, string> {
@@ -35,6 +61,7 @@ export function HarnessSettingsSection() {
   const store = useStore();
   const [harnesses, setHarnesses] = useState<HarnessDetection[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [versionDrafts, setVersionDrafts] = useState<Record<string, string>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, string | undefined>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,6 +77,7 @@ export function HarnessSettingsSection() {
         if (read !== reads.current) return;
         setHarnesses(list);
         setDrafts(draftsOf(list));
+        setVersionDrafts(versionDraftsOf(list));
         setError(null);
       },
       (e) => read === reads.current && setError(toCommandError(e).message),
@@ -64,7 +92,12 @@ export function HarnessSettingsSection() {
   }, [reload]);
 
   // A typed path that is not saved is an edit in progress.
-  const unsaved = harnesses?.some((h) => (drafts[h.id] ?? "") !== (h.override_path ?? "")) ?? false;
+  const unsaved =
+    harnesses?.some(
+      (h) =>
+        (drafts[h.id] ?? "") !== (h.override_path ?? "") ||
+        (h.options.adapter === "pinned" && (versionDrafts[h.id] ?? "") !== (h.options.adapter_version ?? "")),
+    ) ?? false;
   const { stale, reloadNow } = useSettingsChanges(["harnesses"], {
     reload,
     busy,
@@ -80,7 +113,10 @@ export function HarnessSettingsSection() {
       reads.current += 1;
       const list = await store.detectHarnesses();
       // The first look failed: nothing filled the boxes yet. Otherwise keep what was typed.
-      if (harnesses === null) setDrafts(draftsOf(list));
+      if (harnesses === null) {
+        setDrafts(draftsOf(list));
+        setVersionDrafts(versionDraftsOf(list));
+      }
       setHarnesses(list);
     } catch (e) {
       setError(toCommandError(e).message);
@@ -99,6 +135,22 @@ export function HarnessSettingsSection() {
       const list = await store.setHarnessPath(harness, path);
       setHarnesses(list);
       setDrafts((d) => ({ ...d, [harness]: list.find((h) => h.id === harness)?.override_path ?? "" }));
+    } catch (e) {
+      setRowErrors((r) => ({ ...r, [harness]: toCommandError(e).message }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Saves the adapter version / `claude` choice of `harness`. */
+  const setOptions = async (harness: string, options: HarnessOptions) => {
+    setBusy(true);
+    setRowErrors((r) => ({ ...r, [harness]: undefined }));
+    try {
+      reads.current += 1;
+      const list = await store.setHarnessOptions(harness, options);
+      setHarnesses(list);
+      setVersionDrafts((d) => ({ ...d, [harness]: list.find((h) => h.id === harness)?.options.adapter_version ?? "" }));
     } catch (e) {
       setRowErrors((r) => ({ ...r, [harness]: toCommandError(e).message }));
     } finally {
@@ -145,6 +197,9 @@ export function HarnessSettingsSection() {
               onDraft={(value) => setDrafts((d) => ({ ...d, [h.id]: value }))}
               onError={(message) => setRowErrors((r) => ({ ...r, [h.id]: message }))}
               onSetPath={(path) => void setPath(h.id, path)}
+              versionDraft={versionDrafts[h.id] ?? ""}
+              onVersionDraft={(value) => setVersionDrafts((d) => ({ ...d, [h.id]: value }))}
+              onSetOptions={(options) => void setOptions(h.id, options)}
             />
           ))}
         </ul>
@@ -161,6 +216,9 @@ function HarnessRow({
   onDraft,
   onError,
   onSetPath,
+  versionDraft,
+  onVersionDraft,
+  onSetOptions,
 }: {
   harness: HarnessDetection;
   draft: string;
@@ -169,6 +227,9 @@ function HarnessRow({
   onDraft: (value: string) => void;
   onError: (message: string) => void;
   onSetPath: (path: string | null) => void;
+  versionDraft: string;
+  onVersionDraft: (value: string) => void;
+  onSetOptions: (options: HarnessOptions) => void;
 }) {
   const main = h.requirements[0]?.command ?? h.id;
   const submit = (e: FormEvent) => {
@@ -201,6 +262,16 @@ function HarnessRow({
           </li>
         ))}
       </ul>
+      {h.adapter ? (
+        <AdapterOptions
+          harness={h}
+          versionDraft={versionDraft}
+          busy={busy}
+          onVersionDraft={onVersionDraft}
+          onSetOptions={onSetOptions}
+          onError={onError}
+        />
+      ) : null}
       {h.override_error ? (
         <p className="agent-warning" role="alert">
           <Icon name="alert" size={14} />
@@ -235,5 +306,138 @@ function HarnessRow({
         />
       </form>
     </li>
+  );
+}
+
+/**
+ * The adapter Claude Code and Codex run through: which version (the tested
+ * one, the latest, one typed by hand, a global install), what runs now, and for
+ * Claude Code whose `claude` the adapter drives.
+ */
+function AdapterOptions({
+  harness: h,
+  versionDraft,
+  busy,
+  onVersionDraft,
+  onSetOptions,
+  onError,
+}: {
+  harness: HarnessDetection;
+  versionDraft: string;
+  busy: boolean;
+  onVersionDraft: (value: string) => void;
+  onSetOptions: (options: HarnessOptions) => void;
+  onError: (message: string) => void;
+}) {
+  const adapter = h.adapter;
+  if (!adapter) return null;
+  const { options, claude } = h;
+  const channels: AdapterChannel[] = ["verified", "latest", "pinned", "global"];
+  const running =
+    adapter.source === "global"
+      ? (adapter.global_path ?? adapter.package)
+      : (adapter.spec ?? adapter.package);
+
+  const choose = (adapterChannel: AdapterChannel) => {
+    if (adapterChannel === "pinned") {
+      // A pinned adapter needs a version: start from the typed one, else the one that runs.
+      const version = versionDraft.trim() || options.adapter_version || adapter.version || adapter.verified_version;
+      onSetOptions({ ...options, adapter: "pinned", adapter_version: version });
+      return;
+    }
+    onSetOptions({ ...options, adapter: adapterChannel, adapter_version: null });
+  };
+  const submitVersion = (e: FormEvent) => {
+    e.preventDefault();
+    const version = versionDraft.trim();
+    if (!version) {
+      onError("バージョンを入力してください (例 0.100.2)");
+      return;
+    }
+    onSetOptions({ ...options, adapter: "pinned", adapter_version: version });
+  };
+
+  return (
+    <div className="harness-adapter" role="group" aria-label={`${h.label} のアダプタ`}>
+      <div className="harness-adapter-row">
+        <span className="harness-command">アダプタ</span>
+        <select
+          className="agent-search"
+          aria-label={`${h.label} のアダプタの版`}
+          value={options.adapter}
+          disabled={busy}
+          onChange={(e) => choose(e.target.value as AdapterChannel)}
+        >
+          {channels.map((c) => (
+            <option key={c} value={c} disabled={c === "global" && !adapter.global_path && options.adapter !== "global"}>
+              {ADAPTER_CHANNEL_LABELS[c]}
+              {c === "global" && !adapter.global_path ? " (見つかりません)" : ""}
+            </option>
+          ))}
+        </select>
+        <span className="harness-note" title={`検証済みの版: ${adapter.verified_version}`}>
+          検証済み {adapter.verified_version}
+        </span>
+      </div>
+      {options.adapter === "pinned" ? (
+        <form className="secret-form" aria-label={`${h.label} のアダプタの版の指定`} onSubmit={submitVersion} autoComplete="off">
+          <input
+            className="agent-search"
+            aria-label={`${h.label} のアダプタのバージョン`}
+            placeholder="バージョン (例 0.100.2)"
+            value={versionDraft}
+            spellCheck={false}
+            onChange={(e) => onVersionDraft(e.target.value)}
+          />
+          <IconButton type="submit" icon="check" size={15} className="icon-button-outline" label="版を保存" disabled={busy} />
+        </form>
+      ) : null}
+      <p className="harness-running">
+        <span className="harness-command">使う版</span>
+        <code className="harness-path" aria-label={`${h.label} が使うアダプタ`}>
+          {running}
+        </code>
+        <span className="chip">{ADAPTER_SOURCE_LABELS[adapter.source]}</span>
+      </p>
+      {adapter.note ? (
+        <p className="agent-warning" role="status">
+          <Icon name="alert" size={14} />
+          <span>{adapter.note}</span>
+        </p>
+      ) : null}
+      {claude ? (
+        <>
+          <div className="harness-adapter-row">
+            <span className="harness-command">Claude Code</span>
+            <select
+              className="agent-search"
+              aria-label={`${h.label} の Claude Code 本体`}
+              value={options.claude_source}
+              disabled={busy}
+              onChange={(e) => onSetOptions({ ...options, claude_source: e.target.value as ClaudeSource })}
+            >
+              {(Object.keys(CLAUDE_SOURCE_LABELS) as ClaudeSource[]).map((c) => (
+                <option key={c} value={c}>
+                  {CLAUDE_SOURCE_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="harness-running">
+            <span className="harness-command">使う本体</span>
+            <code className="harness-path" aria-label={`${h.label} が使う Claude Code`}>
+              {claude.using ?? "アダプタ同梱"}
+            </code>
+            {claude.using ? <span className="chip">{PATH_SOURCE_LABELS[claude.path_source]}</span> : null}
+          </p>
+          {claude.note ? (
+            <p className="agent-warning" role="status">
+              <Icon name="alert" size={14} />
+              <span>{claude.note}</span>
+            </p>
+          ) : null}
+        </>
+      ) : null}
+    </div>
   );
 }

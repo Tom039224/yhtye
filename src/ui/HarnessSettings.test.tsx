@@ -234,4 +234,97 @@ describe("harness settings", () => {
     expect(within(dialog).queryByText(/設定 › ハーネス を開いて/)).toBeNull();
     expect(within(dialog).getByRole("group", { name: "設定の範囲" })).toBeTruthy();
   });
+
+  describe("adapter", () => {
+    const running = (r: HTMLElement, label: string) => within(r).getByLabelText(label).textContent;
+
+    it("shows the verified adapter and the user's claude by default", async () => {
+      const { dialog } = await openHarnesses();
+      const claude = row(dialog, "Claude Code");
+      expect((within(claude).getByRole("combobox", { name: "Claude Code のアダプタの版" }) as HTMLSelectElement).value).toBe(
+        "verified",
+      );
+      expect(running(claude, "Claude Code が使うアダプタ")).toBe("@agentclientprotocol/claude-agent-acp@0.84.0");
+      expect(running(claude, "Claude Code が使う Claude Code")).toBe("/home/u/.local/bin/claude");
+      expect((within(claude).getByRole("combobox", { name: "Claude Code の Claude Code 本体" }) as HTMLSelectElement).value).toBe(
+        "user",
+      );
+      const codex = row(dialog, "Codex");
+      expect(running(codex, "Codex が使うアダプタ")).toBe("@agentclientprotocol/codex-acp@2.0.0");
+      expect(within(codex).queryByRole("combobox", { name: /Claude Code 本体/ })).toBeNull();
+      expect(within(row(dialog, "Devin")).queryByRole("group", { name: /アダプタ/ })).toBeNull();
+    });
+
+    it("runs the latest version, and says why when it cannot be looked up", async () => {
+      const { user, dialog, core } = await openHarnesses();
+      const select = () => within(row(dialog, "Claude Code")).getByRole("combobox", { name: "Claude Code のアダプタの版" });
+      await user.selectOptions(select(), "latest");
+      await waitFor(() =>
+        expect(running(row(dialog, "Claude Code"), "Claude Code が使うアダプタ")).toBe(
+          "@agentclientprotocol/claude-agent-acp@0.109.0",
+        ),
+      );
+      expect(core.harnesses.options["claude-code"]?.adapter).toBe("latest");
+      expect(within(row(dialog, "Claude Code")).getByText("最新", { selector: ".chip" })).toBeTruthy();
+
+      core.harnesses.latest = null;
+      await user.selectOptions(select(), "verified");
+      await user.selectOptions(select(), "latest");
+      expect((await within(row(dialog, "Claude Code")).findByRole("status")).textContent).toContain("検証済みの 0.84.0 で起動します");
+      expect(running(row(dialog, "Claude Code"), "Claude Code が使うアダプタ")).toBe(
+        "@agentclientprotocol/claude-agent-acp@0.84.0",
+      );
+    });
+
+    it("pins a version typed by hand and shows a rejected one on the row", async () => {
+      const { user, dialog, core } = await openHarnesses();
+      const codex = () => row(dialog, "Codex");
+      await user.selectOptions(within(codex()).getByRole("combobox", { name: "Codex のアダプタの版" }), "pinned");
+      const box = await within(codex()).findByRole("textbox", { name: "Codex のアダプタのバージョン" });
+      expect((box as HTMLInputElement).value).toBe("2.0.0");
+
+      await user.clear(box);
+      await user.type(box, "latest");
+      await user.click(within(codex()).getByRole("button", { name: "版を保存" }));
+      expect((await within(codex()).findByRole("alert")).textContent).toContain("is not a version");
+      expect(core.harnesses.options.codex?.adapter_version).toBe("2.0.0");
+      expect((within(codex()).getByRole("textbox", { name: "Codex のアダプタのバージョン" }) as HTMLInputElement).value).toBe("latest");
+
+      await user.clear(within(codex()).getByRole("textbox", { name: "Codex のアダプタのバージョン" }));
+      await user.type(within(codex()).getByRole("textbox", { name: "Codex のアダプタのバージョン" }), " 2.5.0 ");
+      await user.click(within(codex()).getByRole("button", { name: "版を保存" }));
+      await waitFor(() => expect(running(codex(), "Codex が使うアダプタ")).toBe("@agentclientprotocol/codex-acp@2.5.0"));
+      expect(core.harnesses.options.codex).toEqual({ adapter: "pinned", adapter_version: "2.5.0", claude_source: "user" });
+      expect(within(codex()).queryByRole("alert")).toBeNull();
+    });
+
+    it("offers a global install only when one is on the PATH", async () => {
+      const { user, dialog, core } = await openHarnesses();
+      const select = () => within(row(dialog, "Claude Code")).getByRole("combobox", { name: "Claude Code のアダプタの版" });
+      const global = () => within(select()).getByRole("option", { name: /グローバル導入/ }) as HTMLOptionElement;
+      expect(global().disabled).toBe(true);
+      expect(global().textContent).toContain("見つかりません");
+
+      core.harnesses.globalAdapters["claude-agent-acp"] = "/home/u/.npm/bin/claude-agent-acp";
+      await user.click(within(dialog).getByRole("button", { name: "再検出" }));
+      await waitFor(() => expect(global().disabled).toBe(false));
+      await user.selectOptions(select(), "global");
+      await waitFor(() =>
+        expect(running(row(dialog, "Claude Code"), "Claude Code が使うアダプタ")).toBe("/home/u/.npm/bin/claude-agent-acp"),
+      );
+    });
+
+    it("switches to the Claude Code bundled with the adapter, and says when no claude was found", async () => {
+      const { user, dialog, core } = await openHarnesses();
+      const select = () => within(row(dialog, "Claude Code")).getByRole("combobox", { name: "Claude Code の Claude Code 本体" });
+      await user.selectOptions(select(), "bundled");
+      await waitFor(() => expect(running(row(dialog, "Claude Code"), "Claude Code が使う Claude Code")).toBe("アダプタ同梱"));
+      expect(core.harnesses.options["claude-code"]?.claude_source).toBe("bundled");
+
+      core.harnesses.claude = null;
+      await user.selectOptions(select(), "user");
+      expect((await within(row(dialog, "Claude Code")).findByRole("status")).textContent).toContain("claude が見つからない");
+      expect(running(row(dialog, "Claude Code"), "Claude Code が使う Claude Code")).toBe("アダプタ同梱");
+    });
+  });
 });

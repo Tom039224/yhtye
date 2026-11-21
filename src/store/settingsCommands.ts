@@ -10,6 +10,7 @@ import type {
   ApiEventBody,
   ApiResponse,
   HarnessDetection,
+  HarnessOptions,
   HarnessModels,
   ModelEfforts,
   PairingCode,
@@ -105,6 +106,11 @@ export class SettingsCommands {
   /** Sets the path of a harness's main executable (`null`: detect it automatically). */
   async setHarnessPath(harness: string, path: string | null): Promise<HarnessDetection[]> {
     return (await this.invoke({ type: "set_harness_path", harness, path }, "harnesses")).harnesses;
+  }
+
+  /** Sets the adapter version and, for Claude Code, whose `claude` runs. */
+  async setHarnessOptions(harness: string, options: HarnessOptions): Promise<HarnessDetection[]> {
+    return (await this.invoke({ type: "set_harness_options", harness, options }, "harnesses")).harnesses;
   }
 
   // ---- secret environment variables (Stage 7e) ------------------------------

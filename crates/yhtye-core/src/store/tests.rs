@@ -161,7 +161,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&store.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 12);
+    assert_eq!(applied, 13);
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' ORDER BY name",
     )
@@ -176,6 +176,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
             "app_settings",
             "chats",
             "events",
+            "harness_options",
             "harness_paths",
             "harness_prompt_caps",
             "helps",
@@ -198,7 +199,7 @@ async fn migrations_create_the_schema_on_an_empty_database() {
         .fetch_one(&again.pool)
         .await
         .expect("migrations table");
-    assert_eq!(applied, 12);
+    assert_eq!(applied, 13);
 }
 
 #[tokio::test]
@@ -628,6 +629,48 @@ async fn harness_paths_round_trip_and_are_removed_with_none() {
         .expect("remove again");
     let paths = store.harness_paths().await.expect("list");
     assert_eq!(paths.keys().collect::<Vec<_>>(), ["codex"]);
+}
+
+#[tokio::test]
+async fn harness_options_round_trip_and_the_defaults_remove_the_row() {
+    use crate::agents::{AdapterChannel, ClaudeSource, HarnessOptions};
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(&db(dir.path())).await.expect("open");
+    assert!(
+        store.harness_options().await.expect("empty").is_empty(),
+        "a database from before the options reads as the defaults"
+    );
+    let pinned = HarnessOptions {
+        adapter: AdapterChannel::Pinned,
+        adapter_version: Some("0.100.2".into()),
+        claude_source: ClaudeSource::Bundled,
+    };
+    store
+        .set_harness_options("claude-code", &pinned, 1)
+        .await
+        .expect("set");
+    let latest = HarnessOptions {
+        adapter: AdapterChannel::Latest,
+        ..HarnessOptions::default()
+    };
+    store
+        .set_harness_options("codex", &latest, 2)
+        .await
+        .expect("set");
+    store
+        .set_harness_options("codex", &HarnessOptions::default(), 3)
+        .await
+        .expect("defaults");
+    store
+        .set_harness_options("claude-code", &latest, 4)
+        .await
+        .expect("replace");
+    drop(store);
+    let store = Store::open(&db(dir.path())).await.expect("reopen");
+    let options = store.harness_options().await.expect("list");
+    assert_eq!(options.keys().collect::<Vec<_>>(), ["claude-code"]);
+    assert_eq!(options["claude-code"], latest, "the second write wins");
+    assert_eq!(options["claude-code"].adapter_version, None);
 }
 
 #[tokio::test]

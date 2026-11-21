@@ -37,6 +37,18 @@ data class HarnessDetection(
     val overrideError: String? = null,
     val requirements: List<HarnessRequirement>,
     /**
+     * What the user chose besides the path (the defaults when nothing is stored).
+     */
+    val options: HarnessOptions,
+    /**
+     * The adapter that will run; `None` for a harness without one.
+     */
+    val adapter: AdapterStatus? = null,
+    /**
+     * Which `claude` the adapter drives; `None` but for Claude Code.
+     */
+    val claude: ClaudeExecutable? = null,
+    /**
      * What an absolute path of the main executable looks like on the host
      * (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
      * of the manual path. Empty from a core that predates it.

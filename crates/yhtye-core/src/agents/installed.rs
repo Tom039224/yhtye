@@ -5,6 +5,7 @@
 
 use std::ffi::OsString;
 
+use super::adapter::{AdapterKind, AdapterSource, launch_note};
 use super::catalog::{
     ANTIGRAVITY, CLAUDE_CODE, CLAUDE_CODE_API, CODEX, DEVIN, GROK_BUILD, HarnessPreset,
     MINIMAX_CODE, OPENCODE, PI,
@@ -12,7 +13,9 @@ use super::catalog::{
 use super::claude_subscription::claude_code_label;
 use super::detect::HarnessDetection;
 use super::settings::AgentChoice;
-use crate::acp::{ANTIGRAVITY_DEFAULT_MODEL, MINIMAX_CODE_DEFAULT_MODEL};
+use crate::acp::{
+    ANTIGRAVITY_DEFAULT_MODEL, CLAUDE_CODE_EXECUTABLE_ENV, MINIMAX_CODE_DEFAULT_MODEL,
+};
 
 /// Model OpenCode runs if a setting without a model ever reaches it (settings
 /// are validated to name one): a free model, never OpenCode's own last-used
@@ -101,25 +104,41 @@ fn presets_of(
     };
     let one = match d.id.as_str() {
         CLAUDE_CODE => {
-            return vec![
-                HarnessPreset::claude_code(claude_model)
-                    .with_command(main)
-                    .with_label(claude_code_label(env)),
-                HarnessPreset::claude_code_api(claude_model).with_command(main),
-            ];
+            // Both billings run the same adapter (and the same `claude`), so
+            // the adapter version and the executable the user chose apply to
+            // both; only the credentials differ (`acp-harnesses.md` §5.4).
+            let subscription = HarnessPreset::claude_code(claude_model)
+                .with_command(main)
+                .with_label(claude_code_label(env));
+            let api = HarnessPreset::claude_code_api(claude_model).with_command(main);
+            return [subscription, api]
+                .into_iter()
+                .map(|preset| with_adapter(preset, d, AdapterKind::ClaudeAgent))
+                .collect();
         }
         OPENCODE => {
             HarnessPreset::opencode(OPENCODE_FALLBACK_MODEL, inherited_opencode_env_remove(env))
                 .with_command(main)
         }
-        CODEX => match d.found("npx") {
-            Some(npx) => HarnessPreset::codex(Some(main)).with_command(npx),
-            None => return Vec::new(),
-        },
+        CODEX => {
+            let preset = HarnessPreset::codex(Some(main));
+            // A global install of the adapter does not need `npx` at all.
+            let global = d
+                .adapter
+                .as_ref()
+                .is_some_and(|a| a.source == AdapterSource::Global);
+            let preset = match d.found("npx") {
+                Some(npx) => preset.with_command(npx),
+                None if global => preset,
+                None => return Vec::new(),
+            };
+            with_adapter(preset, d, AdapterKind::Codex)
+        }
         DEVIN => HarnessPreset::devin(main),
         MINIMAX_CODE => HarnessPreset::minimax_code(main),
         ANTIGRAVITY => HarnessPreset::antigravity(main),
         GROK_BUILD => HarnessPreset::grok_build(main),
+        // pi's adapter has no version to choose: it stays on the verified one.
         PI => match d.found("npx") {
             Some(npx) => HarnessPreset::pi().with_command(npx),
             None => return Vec::new(),
@@ -127,6 +146,32 @@ fn presets_of(
         _ => return Vec::new(),
     };
     vec![one]
+}
+
+/// `preset` launched as the detection's adapter says (`npx -y <package>@<version>`,
+/// or the global install), with the user's `claude` for Claude Code and the
+/// note that follows an error of the launch. A detection without adapter
+/// information (a hand-made one) keeps the preset as it is.
+fn with_adapter(preset: HarnessPreset, d: &HarnessDetection, kind: AdapterKind) -> HarnessPreset {
+    let Some(adapter) = &d.adapter else {
+        return preset;
+    };
+    let mut preset = match (
+        adapter.source,
+        adapter.global_path.as_deref(),
+        &adapter.spec,
+    ) {
+        (AdapterSource::Global, Some(path), _) => preset.with_launch(path, &[]),
+        (_, _, Some(spec)) => {
+            let npx = preset.implementer.command.clone();
+            preset.with_launch(&npx, &["-y".to_string(), spec.clone()])
+        }
+        _ => preset,
+    };
+    if let Some(claude) = d.claude.as_ref().and_then(|c| c.using.as_deref()) {
+        preset = preset.with_env(CLAUDE_CODE_EXECUTABLE_ENV, claude);
+    }
+    preset.with_launch_note(&launch_note(kind, adapter, d.claude.as_ref()))
 }
 
 /// What a role runs when its settings do not say: the first of Claude Code,
@@ -159,6 +204,7 @@ pub fn default_choice(presets: &[HarnessPreset], claude_model: &str) -> AgentCho
 mod tests {
     use std::collections::HashMap;
 
+    use super::super::adapter::{HarnessOptions, adapter_status, claude_executable};
     use super::super::detect::{HarnessRequirement, PathSource, harness_spec};
     use super::*;
     use crate::acp::HarnessConfig;
@@ -195,6 +241,9 @@ mod tests {
             override_path: None,
             override_error: None,
             requirements,
+            options: HarnessOptions::default(),
+            adapter: None,
+            claude: None,
             path_example: String::new(),
         }
     }
@@ -304,6 +353,191 @@ mod tests {
         assert!(presets_from(&[], "haiku", env(&[])).is_empty());
     }
 
+    /// `detection(id, ...)` as `detect` would build it for `options`.
+    fn with_options(
+        mut d: HarnessDetection,
+        options: HarnessOptions,
+        global: Option<&str>,
+        latest: Option<&str>,
+        claude: Option<&str>,
+    ) -> HarnessDetection {
+        let kind = AdapterKind::of_harness(&d.id).expect("a harness with an adapter");
+        d.adapter = Some(adapter_status(kind, &options, global, latest));
+        if d.id == "claude-code" {
+            d.claude = Some(claude_executable(
+                &options,
+                claude.map(|p| (p.to_string(), PathSource::Path)),
+            ));
+        }
+        d.options = options;
+        d
+    }
+
+    fn channel(adapter: super::super::adapter::AdapterChannel) -> HarnessOptions {
+        HarnessOptions {
+            adapter,
+            ..HarnessOptions::default()
+        }
+    }
+
+    #[test]
+    fn claude_code_runs_the_chosen_adapter_with_the_users_claude() {
+        use super::super::adapter::AdapterChannel;
+        let cc = |options: HarnessOptions, claude: Option<&str>| {
+            let d = with_options(
+                detection("claude-code", true, Some("/n/npx"), None),
+                options,
+                None,
+                Some("0.109.0"),
+                claude,
+            );
+            let presets = presets_from(&[d], "haiku", env(&[]));
+            presets[0].config(super::super::AgentRole::Implementer, None, None)
+        };
+        let verified = cc(HarnessOptions::default(), Some("/u/bin/claude"));
+        assert_eq!(verified.command, "/n/npx");
+        assert_eq!(
+            verified.args,
+            ["-y", "@agentclientprotocol/claude-agent-acp@0.84.0"]
+        );
+        assert_eq!(
+            verified
+                .env
+                .get("CLAUDE_CODE_EXECUTABLE")
+                .map(String::as_str),
+            Some("/u/bin/claude"),
+            "the user's claude is the default"
+        );
+        let note = verified.launch_note.as_deref().expect("a note");
+        assert!(
+            note.contains("0.84.0") && note.contains("/u/bin/claude"),
+            "{note}"
+        );
+
+        let latest = cc(channel(AdapterChannel::Latest), None);
+        assert_eq!(
+            latest.args,
+            ["-y", "@agentclientprotocol/claude-agent-acp@0.109.0"]
+        );
+        assert!(
+            !latest.env.contains_key("CLAUDE_CODE_EXECUTABLE"),
+            "no claude found: the adapter's own"
+        );
+
+        let bundled = cc(
+            HarnessOptions {
+                claude_source: super::super::adapter::ClaudeSource::Bundled,
+                ..HarnessOptions::default()
+            },
+            Some("/u/bin/claude"),
+        );
+        assert!(!bundled.env.contains_key("CLAUDE_CODE_EXECUTABLE"));
+
+        // The model listing session runs the same adapter and claude.
+        let d = with_options(
+            detection("claude-code", true, Some("/n/npx"), None),
+            channel(AdapterChannel::Latest),
+            None,
+            Some("0.109.0"),
+            Some("/u/bin/claude"),
+        );
+        let presets = presets_from(&[d], "haiku", env(&[]));
+        let probe = presets[0].probe_config();
+        assert_eq!(
+            probe.args[1],
+            "@agentclientprotocol/claude-agent-acp@0.109.0"
+        );
+        assert_eq!(
+            probe.env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
+            Some("/u/bin/claude")
+        );
+        assert!(probe.launch_note.is_some());
+    }
+
+    #[test]
+    fn claude_code_api_runs_the_same_adapter_and_claude_as_the_subscription() {
+        use super::super::adapter::AdapterChannel;
+        let d = with_options(
+            detection("claude-code", true, Some("/n/npx"), None),
+            channel(AdapterChannel::Latest),
+            None,
+            Some("0.109.0"),
+            Some("/u/bin/claude"),
+        );
+        let presets = presets_from(&[d], "haiku", env(&[]));
+        assert_eq!(ids(&presets), ["claude-code", "claude-code-api"]);
+        for preset in &presets {
+            for h in [
+                preset.config(super::super::AgentRole::Implementer, None, None),
+                preset.probe_config(),
+            ] {
+                assert_eq!(
+                    h.args,
+                    ["-y", "@agentclientprotocol/claude-agent-acp@0.109.0"]
+                );
+                assert_eq!(
+                    h.env.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
+                    Some("/u/bin/claude")
+                );
+                assert!(h.launch_note.is_some());
+            }
+        }
+        // The billing stays apart whichever `claude` runs: the API key is
+        // bound to the API preset only, and the credentials of the other
+        // billing are removed from each.
+        let sub = presets[0].config(super::super::AgentRole::Implementer, None, None);
+        let api = presets[1].config(super::super::AgentRole::Implementer, None, None);
+        assert!(sub.secret_bindings.is_empty() && !api.secret_bindings.is_empty());
+        assert!(sub.env_remove.contains(&"ANTHROPIC_API_KEY".to_string()));
+        assert!(!api.env_remove.contains(&"ANTHROPIC_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn codex_runs_the_chosen_adapter_or_the_global_one_without_npx() {
+        use super::super::adapter::AdapterChannel;
+        let codex = |options: HarnessOptions, npx: Option<&str>| {
+            let d = with_options(
+                detection("codex", true, Some("/c/codex"), npx),
+                options,
+                Some("/g/codex-acp"),
+                Some("2.8.0"),
+                None,
+            );
+            presets_from(&[d], "haiku", env(&[]))
+                .first()
+                .map(|p| p.config(super::super::AgentRole::Implementer, Some("m"), None))
+        };
+        let pinned = codex(
+            HarnessOptions {
+                adapter: AdapterChannel::Pinned,
+                adapter_version: Some("2.5.0".into()),
+                ..HarnessOptions::default()
+            },
+            Some("/n/npx"),
+        )
+        .expect("registered");
+        assert_eq!(pinned.command, "/n/npx");
+        assert_eq!(pinned.args, ["-y", "@agentclientprotocol/codex-acp@2.5.0"]);
+        assert_eq!(
+            pinned.env.get("CODEX_PATH").map(String::as_str),
+            Some("/c/codex"),
+            "the user's codex still runs"
+        );
+
+        let global = codex(channel(AdapterChannel::Global), Some("/n/npx")).expect("registered");
+        assert_eq!(global.command, "/g/codex-acp");
+        assert!(global.args.is_empty());
+        assert!(global.env.contains_key("CODEX_PATH"));
+        assert!(
+            codex(channel(AdapterChannel::Global), None).is_some(),
+            "a global adapter needs no npx"
+        );
+        assert!(
+            codex(channel(AdapterChannel::Latest), None).is_none(),
+            "the others still do"
+        );
+    }
+
     fn label_of<'a>(presets: &'a [HarnessPreset], id: &str) -> &'a str {
         &presets
             .iter()
@@ -378,6 +612,14 @@ mod tests {
             AgentChoice::new("claude-code", Some("haiku")),
             "the subscription stays the built-in default"
         );
+    }
+
+    #[test]
+    fn a_detection_without_adapter_information_launches_as_the_preset_says() {
+        let presets = presets_from(&all_installed()[..1], "haiku", env(&[]));
+        let h = presets[0].config(super::super::AgentRole::Implementer, None, None);
+        assert_eq!(h.args, HarnessConfig::claude_code("haiku").args);
+        assert!(h.launch_note.is_none() && !h.env.contains_key("CLAUDE_CODE_EXECUTABLE"));
     }
 
     #[test]

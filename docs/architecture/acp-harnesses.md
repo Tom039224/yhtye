@@ -175,7 +175,7 @@ Claude Code は `claude` CLI ではなく SDK 同梱のバイナリなので、�
 | 項目 | 結論 |
 |---|---|
 | 起動 | `npx -y @agentclientprotocol/claude-agent-acp` またはグローバル導入した `claude-agent-acp`。stdout は ACP 専用、ログは stderr |
-| 認証 | ローカルの Claude Code ログイン (`~/.claude`) をそのまま使う。`claude` CLI ではなく SDK 同梱バイナリを使う (`CLAUDE_CODE_EXECUTABLE` で上書き可、`acp-agent.js:377-400`) |
+| 認証 | ローカルの Claude Code ログイン (`~/.claude`) をそのまま使う。既定では SDK 同梱バイナリを使うが、`CLAUDE_CODE_EXECUTABLE` で上書きできる (`acp-agent.js:377-400`、0.109.0 でも `claude-cli.js` に残っている)。**Yhtye は見つけたユーザーの `claude` をここに渡す** (§5.5) |
 | **モデル** | `session/set_model` は**無い** (-32601)。初期値は adapter プロセスの env **`ANTHROPIC_MODEL=haiku`** が最優先 (`session-model.js:296-318`)。セッション後は `session/set_config_option {configId:"model", value:"haiku"}` で変更可 (実測で成功)。選択肢: `default` / `opus[1m]` / `sonnet` / `haiku` ほか |
 | **権限モード** | `default` / `acceptEdits` / `plan` / `auto` / `bypassPermissions` (`session-mode.js:77-113`)。session/new 時にモードは指定できない (`_meta` の `permissionMode` は上書きされる、`acp-agent.js:6115`)ので、**session/new 直後に `session/set_mode {modeId:"bypassPermissions"}`**。root 実行時は `IS_SANDBOX` が無いと bypass 不可 (`permissions/modes.js:2-3`) |
 | permission の選択肢 | `allow-once` (allow_once) / `allow-with-updates` (allow_always、条件付き) / `reject` (reject_once) ほか。id ではなく kind で選ぶ |
@@ -190,7 +190,7 @@ Yhtye での Claude Code 用 `HarnessConfig` (初期値):
 ```toml
 [harness.claude-code]
 command = "npx"
-args = ["-y", "@agentclientprotocol/claude-agent-acp@0.84.0"]   # Stage 6b で完全一致に固定 (npx -y は解決したものを実行するため)
+args = ["-y", "@agentclientprotocol/claude-agent-acp@0.84.0"]   # 既定は検証済みの完全一致 (npx -y は解決したものを実行するため)。設定で最新・指定・グローバル導入も選べる (§5.5)
 env = { ANTHROPIC_MODEL = "haiku", ENABLE_TOOL_SEARCH = "false", ENABLE_CLAUDEAI_MCP_SERVERS = "false", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = "1" }  # §5.2
 mode_after_new = "bypassPermissions"
 model = { config_id = "model", value = "haiku" }   # set_config_option。応答の現在値で検証する
@@ -214,8 +214,9 @@ startup_timeout = 120                  # 秒。各起動段ごと
 `haiku` (Haiku 4.5) に加え、旧版の `claude-sonnet-5` / `claude-opus-5` / `claude-fable-5` / `claude-opus-4-8` /
 `claude-opus-4-7` / `claude-opus-4-6` / `claude-sonnet-4-6` の計 12 個。
 - **値から `[1m]` が消えた。** `opus[1m]` を `ANTHROPIC_MODEL` / `set_config_option` で渡すと現在値は `opus` と返る
-  (`claude-fable-5-1[1m]` はそのまま返る)。Yhtye は要求した値と現在値の完全一致で検証する (`startup.rs`) ので、
-  `opus[1m]` を保存した設定は起動エラーになる。移行処理は入れず、アプリの設定で選び直す (2026-09-30 決定)。
+  (`claude-fable-5-1[1m]` はそのまま返る)。当初 Yhtye は要求した値と現在値の完全一致で検証していたので、
+  `opus[1m]` を保存した設定は起動エラーになった (移行処理は入れず、設定で選び直す、2026-09-30 決定)。
+  アダプタの版を選べるようにしたあとは §5.5 の扱い: 末尾の `[…]` だけが違う値は同じモデルとして許し、別のモデルが返ったときは選び直しを案内する。
 - 12 個は `EAGER_EFFORT_MODELS` (12) ちょうどなので全モデルの effort をまとめて読み、一覧の取得に約 30〜50 秒かかる
   (1 モデル約 2.5 秒)。一覧は 10 分キャッシュされる。モデルが 1 つ増えると effort は選んだときの個別読み取りに切り替わる。
 
@@ -318,6 +319,44 @@ Haiku が迷ううえ、エージェントがユーザーの外部サービス�
   登録しても 1 ターン応答した (キーは届いていない)。API 版は登録済みのキーで 1 ターン応答し、モデル一覧も読めた。
   無効なキーでは `Invalid API key · Fix external API key` と `session/prompt` の `Authentication required` で失敗し、
   サブスクのログインには**フォールバックしない** (= 本当にキーで動いている)。
+
+### 5.5 アダプタの版と Claude Code 本体を選ぶ (設定 › ハーネス、`agents/adapter.rs`・`adapter_latest.rs`)
+
+アダプタを完全一致で固定すると、Yhtye の中の Claude Code が古いまま止まる (アダプタ 0.84.0 の同梱は Claude Code 2.1.284、
+ユーザーの `claude` は 2.1.328 だった。npm 最新のアダプタは 0.109.0)。そこで 2 つを設定で選べるようにした
+(Codex のアダプタの版も同じ仕組み、§9.1)。設定は `harness_options` テーブル (1 ハーネス 1 行、行が無い = 既定)。API は `set_harness_options{harness, options}`、
+検出結果 (`HarnessDetection`) の `options` / `adapter` / `claude` に現在の選択と実際に使うものが載る。
+
+- **Claude Code 本体** (`claude_source`): 「自分の claude (既定)」は `PATH`・既知の場所 (`~/.local/bin` ほか)・`~/.claude/local` で見つけた `claude` の絶対パスを
+  アダプタの環境変数 **`CLAUDE_CODE_EXECUTABLE`** に渡す (Codex の `CODEX_PATH` と同じ作り)。見つからなければ従来どおりアダプタ同梱で、その理由を設定画面に出す。
+  「同梱の Claude Code」を選ぶと `CLAUDE_CODE_EXECUTABLE` を渡さない。`claude` の有無は `installed` に影響しない (必須は従来どおり `npx` だけ)。
+  手動パス (`SetHarnessPath`) が置き換えるのは従来どおり主実行ファイル `npx` で、`claude` のパスは手動指定できない (自動検出のみ)。
+- **アダプタの版** (`adapter` / `adapter_version`):
+
+  | 選択 | 起動 |
+  |---|---|
+  | `verified` (既定) | `npx -y <pkg>@<検証済み版>` (`CLAUDE_AGENT_ACP` = 0.84.0。定数を上げるかは別判断) |
+  | `latest` | `npm view <pkg> version` で解決した版 (`npx -y <pkg>@<解決した版>`)。解決は起動時にバックグラウンドで 1 回と、設定を開いたとき・選んだときに行い、結果は 6 時間キャッシュ (失敗は 10 分)。「再検出」は必ず聞き直す。解決できなければ**検証済みにフォールバック**し、理由を設定画面に出す。以前に解決できた版は、あとで失敗しても保つ |
+  | `pinned` | 入力した版。**厳密な semver** (`1.2.3` / `1.2.3-beta.1`、先頭ゼロ・`v` 接頭辞・範囲・タグ・ビルドメタデータ・空白や記号は拒否) を検証してから `<pkg>@<版>` にする。任意の文字列をそのまま引数にしない |
+  | `global` | `PATH` にあるグローバル導入の `claude-agent-acp` / `codex-acp` をそのまま実行 (`npx` を使わない。版は問い合わせない)。見つからなければ検証済みにフォールバック |
+- **API 版 (`claude-code-api`) にも同じに効く**: 設定の対象は検出される `claude-code` の 1 行 (`SetHarnessOptions` に `claude-code-api` を指定すると `SetHarnessPath` と同じく `not_found`)。
+  サブスク版と API 版は同じアダプタ・同じ `npx` なので、選んだ版と `CLAUDE_CODE_EXECUTABLE` は両方に渡す (`installed::presets_of` が両方を `with_adapter` に通す。モデル一覧のプローブも同じ)。
+  **課金の分離 (§5.4) は壊れない**: 分離は `env_remove` と `secret_bindings` (環境変数) でしていて、どの `claude` 本体が動くかには依らない。`ANTHROPIC_API_KEY` は API 版にだけ渡り、
+  `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN` は API 版から、`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` はサブスク版から取り除かれる。ユーザーの `claude` もアダプタ同梱のものも、
+  同じ `~/.claude` の設定を読む (同梱でも `settingSources` で読まれる) ので、設定ファイル側の資格情報の混ざり方も本体の選択では変わらない。このため API 版の既定も「自分の claude」のまま (安全側に倒す必要は無いと判断)。
+  使用量 (`/usage`) のプローブはサブスク版のものだけで、従来どおり検証済みのアダプタ・同梱の本体。
+- **pi は対象外**: pi のアダプタ (`@openma/pi-acp`) は §14 のとおり検証済みの版に固定のまま。選べるのは `AdapterKind` のある Claude Code と Codex だけ。
+- **使われる版の表示**: 設定 › ハーネスの各行に、実際に動かすアダプタ (`<pkg>@<版>` かグローバルの実行ファイル) と Claude Code 本体のパス (または「アダプタ同梱」) を出す。
+  モデル一覧のプローブも同じアダプタ・同じ `claude` で動く (一覧が実際に動くものと一致するように)。**使用量 (`/usage`) のプローブだけは従来どおり検証済みのアダプタ・同梱の Claude Code**
+  (出力の解析を検証済みの版で確かめているため)。
+- **起動の失敗**: `HarnessConfig::launch_note` に「アダプタ: … (最新) / Claude Code: … (自分の claude)」と、検証済み以外のとき
+  「設定 › ハーネス でアダプタを『検証済み』(0.84.0)、Claude Code を『同梱』に戻すと直ることがあります」を持たせ、起動・初期化の失敗とタイムアウトの
+  エラーメッセージに付ける (`acp/handle.rs`)。
+- **モデル値の検証** (`acp/startup.rs`): `set_config_option` のあと、要求したモデルと応答の現在値を、末尾の `[…]` の違い (`opus[1m]` と `opus`) だけは同じモデルとして許す。
+  それ以外の違いはエラーで、「アダプタの版によってモデルの値は変わります。設定 › エージェント でモデルを選び直すか、アダプタを『検証済み』に戻してください」を付ける。
+  (応答の現在値と要求が完全一致するときは従来どおり `set_config_option` を送らない。)
+- 他のハーネス (OpenCode / Devin / MiniMax / Grok / Antigravity) はアダプタを使わないので対象外 (`set_harness_options` は `invalid_argument`)。
+  Android には設定 UI を足していない (検出結果の新しいフィールドを読めるだけ)。
 
 ## 6. フォールバック: Claude Code が ACP から脱退した場合
 
@@ -556,8 +595,10 @@ Codex 本体は ACP を話さない (`codex app-server` は独自の JSON-RPC)�
 
 ### 9.1 起動 (`HarnessConfig::codex` / `HarnessPreset::codex`)
 
-- コマンド: `npx -y @agentclientprotocol/codex-acp@2.0.0` (**バージョン完全固定**、`claude-agent-acp` と同じ理由)。初回は約 440 MB のダウンロード
-  (`startup_timeout` 120 秒)。
+- コマンド: 既定は `npx -y @agentclientprotocol/codex-acp@2.0.0` (**検証済みの版を完全固定**、`claude-agent-acp` と同じ理由)。設定 › ハーネスで
+  最新 (`npm view` で解決、失敗なら検証済み)・版の指定 (semver を検証)・グローバル導入の `codex-acp` も選べる (§5.5 と同じ仕組み。最新は 2.8.0 で確認、`bin` は `codex-acp`)。
+  グローバル導入を選んだときは `npx` を使わないので、`npx` が無くても登録できる (ただし検出の「インストール済み」は従来どおり `codex` と `npx` の両方を要する)。
+  初回は約 440 MB のダウンロード (`startup_timeout` 120 秒)。
 - **`CODEX_PATH`** = `PATH` で見つけたユーザーの `codex` (アダプタ同梱の 0.158 ではなくユーザーの 0.159。`config.toml` との互換が取れる)。
 - **`codex` と `npx` の両方が見つかったときだけ** preset を登録する (T-6 で一般化した検出、`agents/detect.rs`。当初は `codex` が `PATH` にあるときだけだった。
   `CODEX_PATH` には見つけた `codex`、起動するコマンドには見つけた `npx` の絶対パスを使う。無ければ UI に出ない)。

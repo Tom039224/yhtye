@@ -65,6 +65,13 @@ pub struct HarnessConfig {
     /// to do from here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_hint: Option<String>,
+    /// Which adapter version and which Claude Code / Codex executable this
+    /// config runs, appended to a launch or startup error together with how to
+    /// go back to the verified ones (`docs/architecture/acp-harnesses.md` §5):
+    /// the adapter is no longer pinned to one version, so a failure has to say
+    /// what ran. `None` for the harnesses without an adapter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_note: Option<String>,
     /// Secret environment variables that go to this harness only, each under
     /// the name the harness reads (see [`SecretBinding`]). The secret is not
     /// part of the variables every agent gets, and the harness does not start
@@ -98,9 +105,22 @@ impl SecretBinding {
     }
 }
 
-/// The Claude Code ACP adapter run through `npx` (an exact version).
+/// The Claude Code ACP adapter run through `npx` (the verified version; the
+/// settings can choose another, `crate::agents::AdapterChannel`).
 pub const CLAUDE_AGENT_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.84.0";
 
+/// The npm package of [`CLAUDE_AGENT_ACP`].
+pub const CLAUDE_AGENT_ACP_PACKAGE: &str = "@agentclientprotocol/claude-agent-acp";
+
+/// The version of [`CLAUDE_AGENT_ACP`].
+pub const CLAUDE_AGENT_ACP_VERIFIED: &str = "0.84.0";
+
+/// The executable the Claude Code adapter installs (a global install of it).
+pub const CLAUDE_AGENT_ACP_BIN: &str = "claude-agent-acp";
+
+/// The adapter's environment variable naming the `claude` executable to use
+/// (it runs the Claude Code bundled with its SDK otherwise).
+pub const CLAUDE_CODE_EXECUTABLE_ENV: &str = "CLAUDE_CODE_EXECUTABLE";
 /// The secret that holds the Anthropic API key of `Claude Code (API)`. Only
 /// that harness receives it, as `ANTHROPIC_API_KEY`
 /// ([`HarnessConfig::claude_code_api`]); no other agent process gets it.
@@ -132,9 +152,18 @@ pub const OPENCODE_BUILD_MODE: &str = "build";
 /// OpenCode's variant). A preset may name another one (Codex: `reasoning_effort`).
 pub const EFFORT_CONFIG_ID: &str = "effort";
 
-/// The Codex ACP adapter run through `npx` (an exact version, like
+/// The Codex ACP adapter run through `npx` (the verified version, like
 /// [`CLAUDE_AGENT_ACP`]; `docs/architecture/acp-harnesses.md` §9).
 pub const CODEX_ACP: &str = "@agentclientprotocol/codex-acp@2.0.0";
+
+/// The npm package of [`CODEX_ACP`].
+pub const CODEX_ACP_PACKAGE: &str = "@agentclientprotocol/codex-acp";
+
+/// The version of [`CODEX_ACP`].
+pub const CODEX_ACP_VERIFIED: &str = "2.0.0";
+
+/// The executable the Codex adapter installs (a global install of it).
+pub const CODEX_ACP_BIN: &str = "codex-acp";
 
 /// Codex's mode without approvals and without a sandbox (the "yolo" of
 /// Claude Code's `bypassPermissions` / OpenCode's `build`).
@@ -354,6 +383,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -435,6 +465,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -470,6 +501,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -501,6 +533,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(DEVIN_MCP_NOTE.into()),
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -536,6 +569,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -572,6 +606,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: Some(ANTIGRAVITY_LOGIN_HINT.into()),
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -606,6 +641,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -640,6 +676,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::OnceOnly,
             system_prompt_note: Some(PI_MCP_NOTE.into()),
             login_hint: Some(PI_LOGIN_HINT.into()),
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -662,6 +699,7 @@ impl HarnessConfig {
             permission_policy: PermissionPolicy::Default,
             system_prompt_note: None,
             login_hint: None,
+            launch_note: None,
             secret_bindings: Vec::new(),
         }
     }
@@ -982,6 +1020,18 @@ mod tests {
         )
         .expect("round trip");
         assert_eq!(back, HarnessConfig::devin("devin"));
+    }
+
+    #[test]
+    fn the_verified_adapter_constants_agree_with_the_full_specs() {
+        assert_eq!(
+            format!("{CLAUDE_AGENT_ACP_PACKAGE}@{CLAUDE_AGENT_ACP_VERIFIED}"),
+            CLAUDE_AGENT_ACP
+        );
+        assert_eq!(
+            format!("{CODEX_ACP_PACKAGE}@{CODEX_ACP_VERIFIED}"),
+            CODEX_ACP
+        );
     }
 
     #[test]

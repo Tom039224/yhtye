@@ -131,7 +131,8 @@ pub struct CoreConfig {
   `cancel_task{project, task, reason?}` / `cancel_group{project, group, reason?}` /
   `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b) /
   `get_agent_settings{project?}` / `set_agent_settings{project?, role, settings}` / `list_harness_models{harness, refresh?}` (Stage 7b、§15)。
-  **T-6 (§15.2、§15.7)**: `get_harnesses` / `detect_harnesses` / `set_harness_path{harness, path?}` (ハーネスの検出状態・再検出・手動パス)。
+  **T-6 (§15.2、§15.7)**: `get_harnesses` / `detect_harnesses` / `set_harness_path{harness, path?}` (ハーネスの検出状態・再検出・手動パス)、
+  `set_harness_options{harness, options}` (アダプタの版・Claude Code 本体の選択、`acp-harnesses.md` §5.5)。
   **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
   `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
   **T-48 (§17.11)**: `open_chat{project, chat}` (チャットを開いた: 未起動なら復元して起動、応答 `chat_opened{starting}`)。
@@ -365,7 +366,7 @@ Stage 7b: ハーネスは `HarnessPreset` (§15) として登録し、役割ご�
 プロジェクトで起動すると、信頼できないリポジトリの `.npmrc` (registry の差し替え) や `node_modules` の
 同名パッケージを `npx` が読み、エージェントが動く前に任意コードが走りうるため。偽エージェントも
 `session/new` / `session/load` の `cwd` に `chdir` する (実エージェントと同じ振る舞い)。
-アダプタは `@agentclientprotocol/claude-agent-acp@0.84.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`)。
+アダプタは既定で `@agentclientprotocol/claude-agent-acp@0.84.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`、検証済みの版)。設定で最新・指定・グローバル導入も選べる (`acp-harnesses.md` §5.5)。
 Yhtye 自身の秘密 (`YHTYE_BRIDGE_TOKEN` / `VITE_YHTYE_BRIDGE_TOKEN`) はエージェントの環境から除く。
 回帰テスト `tests/acp_launch.rs`。
 `HarnessConfig::claude_code_usage_probe()` は §14 の使用量取得用 (ツールなし・`persistSession: false`・`TZ=UTC`)。
@@ -557,6 +558,10 @@ Stage 3b で実装。
 - **`harness_paths`** (T-6、マイグレーション `0008_harness_paths.sql`): `(harness TEXT PRIMARY KEY, path TEXT, updated_ms)`。ユーザーが指定したハーネスの主実行ファイルの
   手動パス。行が無い = 自動検出。`Store::harness_paths()` (全行を `HashMap<id, path>` で) と `Store::set_harness_path(harness, Option<path>, now_ms)`
   (`None` は行の削除)。既存データは壊さない (追加のみ)。使い方は §15.2。
+- **`harness_options`** (マイグレーション `0013_harness_options.sql`): `(harness TEXT PRIMARY KEY, adapter TEXT, adapter_version TEXT, claude_source TEXT, updated_ms)`。
+  Claude Code と Codex のアダプタの版の選択 (`verified` / `latest` / `pinned` / `global`) と、Claude Code が動かす `claude` (`user` / `bundled`)。
+  行が無い = 既定 (検証済みのアダプタ、ユーザーの `claude`)。既定に戻す書き込みは行を消す。`Store::harness_options()` / `Store::set_harness_options(harness, &HarnessOptions, now_ms)`。
+  古いデータベースは追加のテーブルが空なだけで既定で読める。使い方は `acp-harnesses.md` §5.5。
 
 ## 7. `git` モジュール
 
@@ -1169,6 +1174,9 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
   - `DetectHarnesses` (「再検出」ボタン) は同じことに加えて、全ハーネスのモデル一覧のキャッシュを捨てる。
   - `SetHarnessPath{harness, path?}` は未知のハーネスを `not_found`、絶対パスの実行可能な通常ファイルでないものを `invalid_argument` で拒み、`harness_paths` に保存 (`None` は削除) して
     再検出し (そのハーネスのキャッシュは上のとおり捨てられる)、一覧を返す。
+  - `SetHarnessOptions{harness, options}` は未知のハーネスを `not_found`、アダプタの無いハーネス・semver でない版・Claude Code 以外への `claude_source` を `invalid_argument` で拒み、
+    `harness_options` に保存して再検出し、一覧を返す (対象は `claude-code` の 1 行で、同じアダプタで動く `claude-code-api` にも同じに効く。`claude-code-api` を直接指定すると `not_found`、`acp-harnesses.md` §5.5)。最新版の問い合わせ (`npm view`) は `DetectionConfig` の `LatestVersions` (6 時間 / 失敗は 10 分キャッシュ、「再検出」は強制) で、
+    `Core::start` では最新を選んだハーネスがあるときだけ**起動後にバックグラウンドで**行う (それまでは検証済みの版を登録する。ネットワークで起動を待たせない)。
   - 並行する検出は `Inner::detecting` (`tokio::sync::Mutex`) で直列化する (最後に終わる検出が最新の手動パスを読んでいる)。
   - `CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses` / `default_agent` を登録し、3 つのコマンドは空の一覧を返す (`set_harness_path` は保存して検査する)。
 

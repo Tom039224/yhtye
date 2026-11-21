@@ -42,7 +42,9 @@ pub async fn spawn_agent(
     options: SpawnOptions,
     events: mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<AgentHandle, AgentError> {
-    let process = spawn_process(harness, cwd, &options.secret_env, events.clone())?;
+    let note = harness.launch_note.as_deref();
+    let process = spawn_process(harness, cwd, &options.secret_env, events.clone())
+        .map_err(|e| with_launch_note(e, note))?;
     let pid = process.child.id();
     let params = StartupParams {
         harness: harness.clone(),
@@ -67,7 +69,8 @@ pub async fn spawn_agent(
             step: "connect".into(),
             message: "the session actor stopped unexpectedly".into(),
         })
-    })?;
+    });
+    let info = info.map_err(|e| with_launch_note(e, note))?;
     Ok(AgentHandle {
         cmd_tx,
         turn,
@@ -75,6 +78,32 @@ pub async fn spawn_agent(
         pid,
         task: Some(task),
     })
+}
+
+/// `error` of a launch or startup step with the harness's
+/// [`launch_note`](HarnessConfig::launch_note) (which adapter version and
+/// executable ran, and how to go back to the verified ones) appended. A
+/// timeout becomes a startup error so it can carry the note; without a note
+/// every error stays as it is.
+fn with_launch_note(error: AgentError, note: Option<&str>) -> AgentError {
+    let Some(note) = note else {
+        return error;
+    };
+    match error {
+        AgentError::Spawn { command, message } => AgentError::Spawn {
+            command,
+            message: format!("{message}\n{note}"),
+        },
+        AgentError::Startup { step, message } => AgentError::Startup {
+            step,
+            message: format!("{message}\n{note}"),
+        },
+        AgentError::Timeout { step, millis } => AgentError::Startup {
+            step,
+            message: format!("timed out after {millis} ms\n{note}"),
+        },
+        other => other,
+    }
 }
 
 /// Controls one running agent session. Dropping it shuts the agent down
@@ -205,5 +234,56 @@ impl AgentHandle {
 
     fn send(&self, cmd: AgentCmd) -> Result<(), AgentError> {
         self.cmd_tx.send(cmd).map_err(|_| AgentError::Closed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_launch_note_follows_the_startup_errors_and_a_timeout_becomes_one() {
+        let startup = AgentError::Startup {
+            step: "initialize".into(),
+            message: "boom".into(),
+        };
+        assert_eq!(
+            with_launch_note(startup.clone(), Some("NOTE")),
+            AgentError::Startup {
+                step: "initialize".into(),
+                message: "boom\nNOTE".into()
+            }
+        );
+        assert_eq!(
+            with_launch_note(
+                AgentError::Spawn {
+                    command: "npx".into(),
+                    message: "no such file".into()
+                },
+                Some("NOTE")
+            ),
+            AgentError::Spawn {
+                command: "npx".into(),
+                message: "no such file\nNOTE".into()
+            }
+        );
+        let timeout = AgentError::Timeout {
+            step: "session/new".into(),
+            millis: 1500,
+        };
+        assert_eq!(
+            with_launch_note(timeout.clone(), Some("NOTE")),
+            AgentError::Startup {
+                step: "session/new".into(),
+                message: "timed out after 1500 ms\nNOTE".into()
+            }
+        );
+        // No note: nothing changes. Errors that are not about launching stay.
+        assert_eq!(with_launch_note(timeout.clone(), None), timeout);
+        assert_eq!(with_launch_note(startup.clone(), None), startup);
+        assert_eq!(
+            with_launch_note(AgentError::Closed, Some("NOTE")),
+            AgentError::Closed
+        );
     }
 }

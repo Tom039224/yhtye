@@ -189,9 +189,16 @@ impl Core {
             cfg.secret_backend.clone(),
             store.secret_names().await?,
         ));
+        let harness_options = store.harness_options().await?;
+        // The latest adapter version needs the network: it is looked up after
+        // the start (until then the verified version is registered).
+        let looks_up_latest = cfg
+            .detection
+            .as_ref()
+            .is_some_and(|d| d.wants_latest(&harness_options));
         let (presets, builtin, usage_probe) = match &cfg.detection {
             Some(detection) => {
-                let found = detection.detect(&store.harness_paths().await?);
+                let found = detection.detect(&store.harness_paths().await?, &harness_options);
                 found.log();
                 let probe = cfg.usage.clone().map(|u| found.with_found_npx(u));
                 (found.presets, found.builtin, probe)
@@ -239,6 +246,14 @@ impl Core {
                 closed: AtomicBool::new(false),
             }),
         };
+        if looks_up_latest {
+            let looking = core.clone();
+            tokio::spawn(async move {
+                if let Err(e) = looking.detect_and_register(false).await {
+                    tracing::warn!("looking up the latest adapter versions failed: {e:?}");
+                }
+            });
+        }
         if warm_up {
             let warming = core.clone();
             tokio::spawn(async move { warming.inner.stats.warm_up().await });
@@ -555,6 +570,9 @@ impl Core {
             ApiCommand::DetectHarnesses => self.detect_harnesses().await,
             ApiCommand::SetHarnessPath { harness, path } => {
                 self.set_harness_path(harness, path).await
+            }
+            ApiCommand::SetHarnessOptions { harness, options } => {
+                self.set_harness_options(harness, options).await
             }
             ApiCommand::ListSecretEnv => Ok(ApiResponse::SecretEnv {
                 names: self.inner.secrets.names(),

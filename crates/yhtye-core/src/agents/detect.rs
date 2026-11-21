@@ -11,10 +11,21 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
+use super::adapter::{
+    AdapterKind, AdapterStatus, ClaudeExecutable, HarnessOptions, adapter_status, claude_executable,
+};
 use super::catalog::{
     ANTIGRAVITY, CLAUDE_CODE, CODEX, DEVIN, GROK_BUILD, MINIMAX_CODE, OPENCODE, PI,
 };
 use crate::home::{home_dir_for, home_dir_in};
+
+/// The Claude Code executable (the adapter runs it through
+/// `CLAUDE_CODE_EXECUTABLE` instead of the one bundled with it).
+pub const CLAUDE_COMMAND: &str = "claude";
+
+/// Where Claude Code's older "local" install puts `claude`, besides
+/// [`KNOWN_DIRS`] (`~/.local/bin` is where the current installer puts it).
+pub const CLAUDE_INSTALL_DIR: &str = "~/.claude/local";
 
 /// The OpenCode executable.
 pub const OPENCODE_COMMAND: &str = "opencode";
@@ -143,6 +154,8 @@ pub struct HarnessSpec {
     /// Directories only this harness's installer uses (`~` is the `HOME` of the
     /// environment), searched after [`KNOWN_DIRS`].
     pub extra_dirs: &'static [&'static str],
+    /// The ACP adapter it runs through `npx`, whose version can be chosen.
+    pub adapter: Option<AdapterKind>,
     /// More of those on Windows (written as [`WINDOWS_KNOWN_DIRS`] is).
     pub windows_dirs: &'static [&'static str],
 }
@@ -159,6 +172,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        adapter: Some(AdapterKind::ClaudeAgent),
         windows_dirs: &[],
     },
     HarnessSpec {
@@ -170,6 +184,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        adapter: None,
         windows_dirs: &[
             "%LOCALAPPDATA%/Programs/opencode",
             "%LOCALAPPDATA%/Programs/opencode/bin",
@@ -185,6 +200,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        adapter: Some(AdapterKind::Codex),
         windows_dirs: &[
             "%LOCALAPPDATA%/Programs/codex",
             "%LOCALAPPDATA%/Programs/codex/bin",
@@ -199,6 +215,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: None,
         root_subdirs: &[],
         extra_dirs: &[],
+        adapter: None,
         windows_dirs: &[
             "%LOCALAPPDATA%/Programs/devin",
             "%LOCALAPPDATA%/Programs/devin/bin",
@@ -213,6 +230,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(MINIMAX_CODE_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[MINIMAX_CODE_INSTALL_DIR],
+        adapter: None,
         windows_dirs: &[],
     },
     HarnessSpec {
@@ -228,6 +246,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(ANTIGRAVITY_ROOT_ENV),
         root_subdirs: &["", "bin"],
         extra_dirs: &ANTIGRAVITY_INSTALL_DIRS,
+        adapter: None,
         windows_dirs: &[],
     },
     HarnessSpec {
@@ -239,6 +258,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(GROK_BUILD_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[GROK_BUILD_INSTALL_DIR],
+        adapter: None,
         windows_dirs: &[],
     },
     HarnessSpec {
@@ -250,6 +270,7 @@ pub const HARNESS_SPECS: [HarnessSpec; 8] = [
         root_env: Some(PI_ROOT_ENV),
         root_subdirs: &["bin"],
         extra_dirs: &[PI_INSTALL_DIR],
+        adapter: None,
         windows_dirs: &[],
     },
 ];
@@ -294,6 +315,12 @@ pub struct HarnessDetection {
     /// the search does not replace a manual path that is wrong.
     pub override_error: Option<String>,
     pub requirements: Vec<HarnessRequirement>,
+    /// What the user chose besides the path (the defaults when nothing is stored).
+    pub options: HarnessOptions,
+    /// The adapter that will run; `None` for a harness without one.
+    pub adapter: Option<AdapterStatus>,
+    /// Which `claude` the adapter drives; `None` but for Claude Code.
+    pub claude: Option<ClaudeExecutable>,
     /// What an absolute path of the main executable looks like on the host
     /// (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
     /// of the manual path. Empty from a core that predates it.
@@ -573,18 +600,69 @@ pub fn detect_harnesses(
     known_dirs: &[PathBuf],
     overrides: &HashMap<String, String>,
 ) -> Vec<HarnessDetection> {
+    detect_harnesses_with(env, known_dirs, overrides, &HashMap::new(), &HashMap::new())
+}
+
+/// [`detect_harnesses`] with the options the user chose (by harness id; none:
+/// the defaults) and the latest adapter versions known (by npm package).
+pub fn detect_harnesses_with(
+    env: impl Fn(&str) -> Option<OsString>,
+    known_dirs: &[PathBuf],
+    overrides: &HashMap<String, String>,
+    options: &HashMap<String, HarnessOptions>,
+    latest: &HashMap<String, String>,
+) -> Vec<HarnessDetection> {
+    let ctx = Context {
+        env: &env,
+        known_dirs,
+        options,
+        latest,
+    };
     HARNESS_SPECS
         .iter()
-        .map(|spec| detect(spec, &env, known_dirs, overrides.get(spec.id)))
+        .map(|spec| detect(spec, &ctx, overrides.get(spec.id)))
         .collect()
 }
 
-fn detect(
-    spec: &HarnessSpec,
+/// What a detection reads besides the spec.
+struct Context<'a, E: Fn(&str) -> Option<OsString>> {
+    env: &'a E,
+    known_dirs: &'a [PathBuf],
+    options: &'a HashMap<String, HarnessOptions>,
+    latest: &'a HashMap<String, String>,
+}
+
+/// The `claude` the user has: `PATH`, the known directories, then Claude
+/// Code's own install directory.
+fn find_claude(
     env: &impl Fn(&str) -> Option<OsString>,
     known_dirs: &[PathBuf],
+) -> Option<(String, PathSource)> {
+    let dirs: Vec<PathBuf> = known_dirs
+        .iter()
+        .cloned()
+        .chain(expand_dirs(&[CLAUDE_INSTALL_DIR], env, home_dir_in(env)))
+        .collect();
+    let (path, source) = find_command_as(&[CLAUDE_COMMAND], env, &dirs)?;
+    Some((path.to_str()?.to_string(), source))
+}
+
+/// The global install of `kind`'s adapter on `PATH` (or the known directories).
+fn find_global_adapter(
+    kind: AdapterKind,
+    env: &impl Fn(&str) -> Option<OsString>,
+    known_dirs: &[PathBuf],
+) -> Option<String> {
+    let (path, _) = find_command(kind.global_command(), env, known_dirs)?;
+    path.to_str().map(str::to_string)
+}
+
+fn detect<E: Fn(&str) -> Option<OsString>>(
+    spec: &HarnessSpec,
+    ctx: &Context<'_, E>,
     override_path: Option<&String>,
 ) -> HarnessDetection {
+    let (env, known_dirs) = (ctx.env, ctx.known_dirs);
     let (main, path_source, override_error) = match override_path {
         Some(path) => match check_executable_path(path) {
             Ok(()) => (Some(path.clone()), PathSource::Override, None),
@@ -611,6 +689,17 @@ fn detect(
                 .and_then(|(path, _)| path.to_str().map(str::to_string)),
         }
     }));
+    let options = ctx.options.get(spec.id).cloned().unwrap_or_default();
+    let adapter = spec.adapter.map(|kind| {
+        adapter_status(
+            kind,
+            &options,
+            find_global_adapter(kind, env, known_dirs).as_deref(),
+            ctx.latest.get(kind.package()).map(String::as_str),
+        )
+    });
+    let claude =
+        (spec.id == CLAUDE_CODE).then(|| claude_executable(&options, find_claude(env, known_dirs)));
     HarnessDetection {
         id: spec.id.to_string(),
         label: spec.label.to_string(),
@@ -620,6 +709,9 @@ fn detect(
         override_path: override_path.cloned(),
         override_error,
         requirements,
+        options,
+        adapter,
+        claude,
         path_example: path_example(spec, cfg!(windows)),
     }
 }
@@ -1361,6 +1453,83 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn the_users_claude_is_found_for_the_adapter_but_never_required() {
+        use crate::agents::adapter::{AdapterChannel, AdapterSource, ClaudeSource};
+        let home = tempfile::tempdir().expect("tempdir");
+        let bin = tempfile::tempdir().expect("tempdir");
+        fake_bin(bin.path(), "npx", 0o755);
+        let vars = [
+            ("PATH", path_of(&bin)),
+            ("HOME", home.path().display().to_string()),
+        ];
+        let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        let run = |options: &HashMap<String, HarnessOptions>| {
+            let dirs = known_dirs(env(&vars));
+            detect_harnesses_with(env(&vars), &dirs, &HashMap::new(), options, &HashMap::new())
+        };
+        let none = HashMap::new();
+
+        // No claude: Claude Code is still installed and runs the adapter's own.
+        let all = run(&none);
+        let cc = by_id(&all, "claude-code");
+        assert!(cc.installed);
+        let exe = cc.claude.as_ref().expect("a claude entry");
+        assert_eq!((exe.found.as_deref(), exe.using.as_deref()), (None, None));
+        assert_eq!(exe.path_source, PathSource::None);
+        assert!(
+            by_id(&all, "codex").claude.is_none(),
+            "only Claude Code has one"
+        );
+
+        // ~/.local/bin is a known directory.
+        let local = home.path().join(".local/bin");
+        std::fs::create_dir_all(&local).expect("mkdir");
+        let claude = fake_bin(&local, "claude", 0o755);
+        let all = run(&none);
+        let exe = by_id(&all, "claude-code").claude.clone().expect("claude");
+        assert_eq!(exe.found.as_deref(), claude.to_str());
+        assert_eq!(exe.using, exe.found, "the user's claude is the default");
+        assert_eq!(exe.path_source, PathSource::KnownDir);
+
+        // Claude Code's own install directory; the PATH wins over both.
+        std::fs::remove_file(&claude).expect("rm");
+        let own = home.path().join(".claude/local");
+        std::fs::create_dir_all(&own).expect("mkdir");
+        let own_claude = fake_bin(&own, "claude", 0o755);
+        let exe = by_id(&run(&none), "claude-code")
+            .claude
+            .clone()
+            .expect("claude");
+        assert_eq!(exe.found.as_deref(), own_claude.to_str());
+        let on_path = fake_bin(bin.path(), "claude", 0o755);
+        let exe = by_id(&run(&none), "claude-code")
+            .claude
+            .clone()
+            .expect("claude");
+        assert_eq!(exe.found.as_deref(), on_path.to_str());
+        assert_eq!(exe.path_source, PathSource::Path);
+
+        // The bundled one can be chosen; the options and the adapter are reported.
+        let options = HashMap::from([(
+            "claude-code".to_string(),
+            HarnessOptions {
+                adapter: AdapterChannel::Global,
+                adapter_version: None,
+                claude_source: ClaudeSource::Bundled,
+            },
+        )]);
+        let global = fake_bin(bin.path(), "claude-agent-acp", 0o755);
+        let all = run(&options);
+        let cc = by_id(&all, "claude-code");
+        assert_eq!(cc.claude.as_ref().expect("claude").using, None);
+        let adapter = cc.adapter.as_ref().expect("adapter");
+        assert_eq!(adapter.source, AdapterSource::Global);
+        assert_eq!(adapter.global_path.as_deref(), global.to_str());
+        assert_eq!(cc.options.claude_source, ClaudeSource::Bundled);
+        assert!(by_id(&all, "devin").adapter.is_none());
+    }
 }
 
 /// The pure parts of the search, on either platform.
@@ -1577,7 +1746,13 @@ mod windows_tests {
         let exe = write(dir.path(), "agy_acp_server.exe");
         write(dir.path(), "localharness_external.exe");
         let spec = harness_spec(ANTIGRAVITY).expect("spec");
-        let d = detect(spec, &env(vec![("PATH", dir.path().into())]), &[], None);
+        let ctx = Context {
+            env: &env(vec![("PATH", dir.path().into())]),
+            known_dirs: &[],
+            options: &HashMap::new(),
+            latest: &HashMap::new(),
+        };
+        let d = detect(spec, &ctx, None);
         assert!(d.installed);
         assert_eq!(d.resolved_path.as_deref(), exe.to_str());
         assert_eq!(d.requirements[0].command, "agy_acp_server");

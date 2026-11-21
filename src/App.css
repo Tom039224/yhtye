@@ -838,6 +838,10 @@ body.resizing-row, body.resizing-row * { cursor: row-resize !important; user-sel
 .harness-command { min-width: 64px; color: var(--text-muted); }
 .harness-path { color: var(--text-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .harness-note { font: 400 10.5px/1.4 var(--font-mono); color: var(--text-faint); white-space: nowrap; }
+.harness-adapter { display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid var(--border-subtle); }
+.harness-adapter-row, .harness-running { display: flex; align-items: center; gap: 10px; margin: 0; min-width: 0; }
+.harness-adapter-row .agent-search { flex: 0 1 220px; }
+.harness-running { font: 400 11.5px/1.5 var(--font-mono); color: var(--text-dim); }
 
 /* Settings › リモート接続 (RemoteSettingsSection). */
 .text-button {

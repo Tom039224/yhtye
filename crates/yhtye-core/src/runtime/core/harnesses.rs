@@ -6,14 +6,15 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::{Core, now_ms};
 use crate::acp::HarnessConfig;
 use crate::agents::{
-    AgentChoice, CLAUDE_CODE, HARNESS_SPECS, HarnessDetection, HarnessPreset, NPX_COMMAND,
-    PRESET_IDS, check_executable_path, default_choice, detect_harnesses, harness_spec, known_dirs,
+    AdapterChannel, AdapterKind, AgentChoice, CLAUDE_CODE, HARNESS_SPECS, HarnessDetection,
+    HarnessOptions, HarnessPreset, LatestVersions, NPX_COMMAND, NpmView, PRESET_IDS, VersionLookup,
+    check_executable_path, default_choice, detect_harnesses_with, harness_spec, known_dirs,
     presets_from,
 };
 use crate::api::{ApiError, ApiResponse, SettingsKind};
@@ -31,6 +32,8 @@ pub struct DetectionConfig {
     env: EnvLookup,
     known_dirs: Vec<PathBuf>,
     claude_model: String,
+    /// The latest adapter versions npm answered (shared by the clones).
+    latest: Arc<LatestVersions>,
 }
 
 impl DetectionConfig {
@@ -41,9 +44,12 @@ impl DetectionConfig {
         claude_model: &str,
         env: impl Fn(&str) -> Option<OsString> + Send + Sync + 'static,
     ) -> Self {
+        let env: EnvLookup = Arc::new(env);
+        let known_dirs = known_dirs(&*env);
         Self {
-            known_dirs: known_dirs(&env),
-            env: Arc::new(env),
+            latest: npm_latest(&env, &known_dirs),
+            known_dirs,
+            env,
             claude_model: claude_model.to_string(),
         }
     }
@@ -57,14 +63,68 @@ impl DetectionConfig {
     /// Searches `dirs` after `PATH` instead of the well-known directories.
     #[must_use]
     pub fn with_known_dirs(mut self, dirs: Vec<PathBuf>) -> Self {
+        self.latest = npm_latest(&self.env, &dirs);
         self.known_dirs = dirs;
         self
     }
 
+    /// Asks `lookup` for the latest adapter versions instead of `npm view`
+    /// (tests do not use the network).
+    #[must_use]
+    pub fn with_version_lookup(mut self, lookup: Arc<dyn VersionLookup>) -> Self {
+        self.latest = Arc::new(LatestVersions::new(lookup));
+        self
+    }
+
+    /// The adapters whose harness runs the latest version.
+    fn latest_adapters(options: &HashMap<String, HarnessOptions>) -> Vec<AdapterKind> {
+        AdapterKind::ALL
+            .into_iter()
+            .filter(|kind| {
+                options
+                    .get(kind.harness())
+                    .is_some_and(|o| o.adapter == AdapterChannel::Latest)
+            })
+            .collect()
+    }
+
+    /// Whether a harness runs the latest adapter version (so it has to be
+    /// looked up).
+    pub(super) fn wants_latest(&self, options: &HashMap<String, HarnessOptions>) -> bool {
+        !Self::latest_adapters(options).is_empty()
+    }
+
+    /// Looks up the latest version of the adapters that run it, unless an
+    /// answer from the last hours is known (`force`: always).
+    pub(super) async fn refresh_latest(
+        &self,
+        overrides: &HashMap<String, String>,
+        options: &HashMap<String, HarnessOptions>,
+        force: bool,
+    ) {
+        let kinds = Self::latest_adapters(options);
+        if kinds.is_empty() {
+            return;
+        }
+        // The npm next to the `npx` the user named, if they named one.
+        let near = overrides.get(CLAUDE_CODE).map(Path::new);
+        self.latest.refresh(&kinds, near, force).await;
+    }
+
     /// The state of every harness, the presets of the installed ones and the
     /// built-in default among them.
-    pub(super) fn detect(&self, overrides: &HashMap<String, String>) -> Detected {
-        let detections = detect_harnesses(&*self.env, &self.known_dirs, overrides);
+    pub(super) fn detect(
+        &self,
+        overrides: &HashMap<String, String>,
+        options: &HashMap<String, HarnessOptions>,
+    ) -> Detected {
+        let detections = detect_harnesses_with(
+            &*self.env,
+            &self.known_dirs,
+            overrides,
+            options,
+            &self.latest.known(),
+        );
         let presets = presets_from(&detections, &self.claude_model, &*self.env);
         let builtin = default_choice(&presets, &self.claude_model);
         Detected {
@@ -73,6 +133,15 @@ impl DetectionConfig {
             builtin,
         }
     }
+}
+
+/// The latest versions asked of the `npm` found in `env`.
+fn npm_latest(env: &EnvLookup, known_dirs: &[PathBuf]) -> Arc<LatestVersions> {
+    let env = Arc::clone(env);
+    Arc::new(LatestVersions::new(Arc::new(NpmView::new(
+        move |k| env(k),
+        known_dirs.to_vec(),
+    ))))
 }
 
 impl fmt::Debug for DetectionConfig {
@@ -129,13 +198,21 @@ impl Core {
     /// was read from a harness that now runs another executable (its models
     /// and efforts) is forgotten, and Claude Code's usage probe follows the
     /// `npx` that was found. `None` without a detection config.
-    async fn detect_and_register(&self) -> Result<Option<Vec<HarnessDetection>>, ApiError> {
+    ///
+    /// The latest adapter versions are looked up first (with the network, so
+    /// at most every few hours, or always with `force`).
+    pub(super) async fn detect_and_register(
+        &self,
+        force: bool,
+    ) -> Result<Option<Vec<HarnessDetection>>, ApiError> {
         let Some(detection) = &self.inner.cfg.detection else {
             return Ok(None);
         };
         let _serial = self.inner.detecting.lock().await;
         let overrides = self.inner.store.harness_paths().await?;
-        let found = detection.detect(&overrides);
+        let options = self.inner.store.harness_options().await?;
+        detection.refresh_latest(&overrides, &options, force).await;
+        let found = detection.detect(&overrides, &options);
         found.log();
         let changed = self.changed_harnesses(&found.presets);
         let usage = self
@@ -175,14 +252,14 @@ impl Core {
     /// `GetHarnesses`: detects again (the settings were opened). The models
     /// of a harness whose executable changed are forgotten.
     pub(super) async fn get_harnesses(&self) -> Result<ApiResponse, ApiError> {
-        let harnesses = self.detect_and_register().await?.unwrap_or_default();
+        let harnesses = self.detect_and_register(false).await?.unwrap_or_default();
         Ok(ApiResponse::Harnesses { harnesses })
     }
 
     /// `DetectHarnesses`: detects again and forgets the models read from every
     /// harness (the user asked for a fresh look).
     pub(super) async fn detect_harnesses(&self) -> Result<ApiResponse, ApiError> {
-        let harnesses = self.detect_and_register().await?.unwrap_or_default();
+        let harnesses = self.detect_and_register(true).await?.unwrap_or_default();
         for id in PRESET_IDS {
             self.inner.models.invalidate(id);
         }
@@ -213,8 +290,35 @@ impl Core {
             .store
             .set_harness_path(&harness, path.as_deref(), now_ms())
             .await?;
-        let harnesses = self.detect_and_register().await?.unwrap_or_default();
+        let harnesses = self.detect_and_register(false).await?.unwrap_or_default();
         // The stored path changed even when the same executable is found.
+        self.settings_changed(SettingsKind::Harnesses, None, None);
+        Ok(ApiResponse::Harnesses { harnesses })
+    }
+
+    /// `SetHarnessOptions`: checks, stores and applies the adapter version and
+    /// the `claude` of a harness. The models read from the harness before are
+    /// forgotten when what it runs changed (detecting again compares).
+    pub(super) async fn set_harness_options(
+        &self,
+        harness: String,
+        options: HarnessOptions,
+    ) -> Result<ApiResponse, ApiError> {
+        if harness_spec(&harness).is_none() {
+            let known: Vec<&str> = HARNESS_SPECS.iter().map(|s| s.id).collect();
+            return Err(ApiError::not_found(format!(
+                "unknown harness {harness} (known: {})",
+                known.join(", ")
+            )));
+        }
+        let options = options
+            .validated(&harness)
+            .map_err(|e| ApiError::invalid_argument(format!("{harness}: {e}")))?;
+        self.inner
+            .store
+            .set_harness_options(&harness, &options, now_ms())
+            .await?;
+        let harnesses = self.detect_and_register(false).await?.unwrap_or_default();
         self.settings_changed(SettingsKind::Harnesses, None, None);
         Ok(ApiResponse::Harnesses { harnesses })
     }
