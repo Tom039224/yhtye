@@ -470,6 +470,22 @@ sealed interface ApiCommand {
     ) : ApiCommand
 
     /**
+     * Sets what a harness runs besides its executable: the version of the ACP
+     * adapter (`verified`: the tested one, `latest`, `pinned` with
+     * `adapter_version` as semver, `global`: the adapter installed on `PATH`)
+     * and, for Claude Code, whether the adapter drives the user's `claude` or
+     * the one bundled with it. `invalid_argument` for a version that is not
+     * semver, a harness without an adapter, or a `claude` source for another
+     * harness; `not_found` for an unknown harness. Detects again and returns
+     * the harnesses like `get_harnesses`.
+     */
+    @Serializable
+    data class SetHarnessOptions(
+        val harness: String,
+        val options: HarnessOptions,
+    ) : ApiCommand
+
+    /**
      * The names of the secret environment variables (Stage 7e). Values are
      * never returned.
      */
@@ -594,6 +610,7 @@ sealed interface ApiCommand {
             TaggedVariant<ApiCommand>("get_harnesses", GetHarnesses.serializer()) { it is GetHarnesses },
             TaggedVariant<ApiCommand>("detect_harnesses", DetectHarnesses.serializer()) { it is DetectHarnesses },
             TaggedVariant<ApiCommand>("set_harness_path", SetHarnessPath.serializer()) { it is SetHarnessPath },
+            TaggedVariant<ApiCommand>("set_harness_options", SetHarnessOptions.serializer()) { it is SetHarnessOptions },
             TaggedVariant<ApiCommand>("list_secret_env", ListSecretEnv.serializer()) { it is ListSecretEnv },
             TaggedVariant<ApiCommand>("set_secret_env", SetSecretEnv.serializer()) { it is SetSecretEnv },
             TaggedVariant<ApiCommand>("delete_secret_env", DeleteSecretEnv.serializer()) { it is DeleteSecretEnv },

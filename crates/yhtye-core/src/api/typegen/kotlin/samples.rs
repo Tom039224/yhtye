@@ -12,8 +12,9 @@ use serde_json::{Value, json};
 
 use crate::acp::{AgentError, AgentEvent, AgentInfo, AgentOutput};
 use crate::agents::{
-    AgentChoice, AgentSettings, AgentSettingsLayer, EffortOption, HarnessDetection, HarnessInfo,
-    HarnessModels, HarnessRequirement, ModelEfforts, ModelOption, PathSource, RoleSettings,
+    AdapterChannel, AdapterKind, AgentChoice, AgentSettings, AgentSettingsLayer, ClaudeSource,
+    EffortOption, HarnessDetection, HarnessInfo, HarnessModels, HarnessOptions, HarnessRequirement,
+    ModelEfforts, ModelOption, PathSource, RoleSettings, adapter_status, claude_executable,
 };
 use crate::api::{
     AgentSettingsView, ApiCommand, ApiError, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse,
@@ -267,6 +268,30 @@ fn commands() -> Vec<Sample> {
             "set_harness_path/auto",
             json!({"type": "set_harness_path", "harness": "codex", "path": null}),
         ),
+        (
+            "set_harness_options",
+            json!({
+                "type": "set_harness_options",
+                "harness": "claude-code",
+                "options": {
+                    "adapter": "pinned",
+                    "adapter_version": "0.100.2",
+                    "claude_source": "bundled"
+                }
+            }),
+        ),
+        (
+            "set_harness_options/default",
+            json!({
+                "type": "set_harness_options",
+                "harness": "codex",
+                "options": {
+                    "adapter": "verified",
+                    "adapter_version": null,
+                    "claude_source": "user"
+                }
+            }),
+        ),
         ("list_secret_env", json!({"type": "list_secret_env"})),
         (
             "set_secret_env",
@@ -490,15 +515,63 @@ fn harness_detections() -> Vec<HarnessDetection> {
             command: id.into(),
             found: installed.then(|| format!("/usr/bin/{id}")),
         }],
+        options: HarnessOptions::default(),
+        adapter: None,
+        claude: None,
     };
     let mut bad = detection("devin", PathSource::None, false);
     bad.override_error = Some("not an executable".into());
-    vec![
-        detection("claude-code", PathSource::Override, true),
-        detection("codex", PathSource::Path, true),
-        detection("grok", PathSource::KnownDir, true),
-        bad,
-    ]
+    // Claude Code runs the latest adapter with the user's `claude`; Codex falls
+    // back to the verified adapter, with the reason.
+    let mut claude = detection("claude-code", PathSource::Override, true);
+    claude.options = HarnessOptions {
+        adapter: AdapterChannel::Latest,
+        adapter_version: None,
+        claude_source: ClaudeSource::User,
+    };
+    claude.adapter = Some(adapter_status(
+        AdapterKind::ClaudeAgent,
+        &claude.options,
+        None,
+        Some("0.109.0"),
+    ));
+    claude.claude = Some(claude_executable(
+        &claude.options,
+        Some(("/home/u/.local/bin/claude".into(), PathSource::KnownDir)),
+    ));
+    let mut codex = detection("codex", PathSource::Path, true);
+    codex.options = HarnessOptions {
+        adapter: AdapterChannel::Global,
+        adapter_version: None,
+        claude_source: ClaudeSource::User,
+    };
+    codex.adapter = Some(adapter_status(
+        AdapterKind::Codex,
+        &codex.options,
+        Some("/usr/local/bin/codex-acp"),
+        None,
+    ));
+    // The verified adapter, and a pinned version (the contract only needs
+    // every variant once).
+    bad.adapter = Some(adapter_status(
+        AdapterKind::Codex,
+        &HarnessOptions::default(),
+        None,
+        None,
+    ));
+    let mut pinned = detection("grok", PathSource::KnownDir, true);
+    pinned.options = HarnessOptions {
+        adapter: AdapterChannel::Pinned,
+        adapter_version: Some("2.5.0".into()),
+        claude_source: ClaudeSource::User,
+    };
+    pinned.adapter = Some(adapter_status(
+        AdapterKind::Codex,
+        &pinned.options,
+        None,
+        None,
+    ));
+    vec![claude, codex, pinned, bad]
 }
 
 fn effort(value: &str) -> EffortOption {

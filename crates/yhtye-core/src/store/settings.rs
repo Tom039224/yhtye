@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use super::StoreError;
 use super::codec::{from_json, int, json, name, parse};
-use crate::agents::{AgentRole, RoleSettings};
+use crate::agents::{AgentRole, HarnessOptions, RoleSettings};
 
 /// Scope of the global layer.
 const GLOBAL: &str = "";
@@ -140,5 +140,60 @@ pub(super) async fn set_harness_path(
                 .await?;
         }
     }
+    Ok(())
+}
+
+/// The harness options, by harness id (the `harness_options` table). A harness
+/// without a row has the defaults.
+pub(super) async fn harness_options(
+    pool: &SqlitePool,
+) -> Result<HashMap<String, HarnessOptions>, StoreError> {
+    let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT harness, adapter, adapter_version, claude_source FROM harness_options",
+    )
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter()
+        .map(|(harness, adapter, adapter_version, claude_source)| {
+            Ok((
+                harness,
+                HarnessOptions {
+                    adapter: parse(&adapter)?,
+                    adapter_version,
+                    claude_source: parse(&claude_source)?,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Stores the options of `harness`; the defaults remove its row.
+pub(super) async fn set_harness_options(
+    pool: &SqlitePool,
+    harness: &str,
+    options: &HarnessOptions,
+    now_ms: u64,
+) -> Result<(), StoreError> {
+    if *options == HarnessOptions::default() {
+        sqlx::query("DELETE FROM harness_options WHERE harness = ?")
+            .bind(harness)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO harness_options (harness, adapter, adapter_version, claude_source, updated_ms) \
+         VALUES (?, ?, ?, ?, ?) \
+         ON CONFLICT (harness) DO UPDATE SET adapter = excluded.adapter, \
+         adapter_version = excluded.adapter_version, claude_source = excluded.claude_source, \
+         updated_ms = excluded.updated_ms",
+    )
+    .bind(harness)
+    .bind(name(&options.adapter)?)
+    .bind(options.adapter_version.as_deref())
+    .bind(name(&options.claude_source)?)
+    .bind(int(now_ms)?)
+    .execute(pool)
+    .await?;
     Ok(())
 }

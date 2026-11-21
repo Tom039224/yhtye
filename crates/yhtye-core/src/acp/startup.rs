@@ -17,6 +17,7 @@ use agent_client_protocol::{Agent, ConnectionTo, ErrorCode};
 use super::config::{HarnessConfig, SystemPromptStyle};
 use super::events::{AgentError, AgentInfo, config_value, effort_option};
 use super::steering;
+use crate::agents::MODEL_CONFIG_ID;
 
 /// Everything needed to open the session.
 pub(crate) struct StartupParams {
@@ -266,14 +267,44 @@ pub(crate) async fn set_config_option(
     )
     .await?;
     match config_value(&res.config_options, config_id) {
-        Some(current) if current == value => Ok(res.config_options),
+        Some(current) if option_values_match(config_id, value, current) => Ok(res.config_options),
         current => Err(AgentError::Startup {
             step: "session/set_config_option".into(),
             message: format!(
-                "requested {config_id}={value} but the agent reports {}",
-                current.unwrap_or("<no such option>")
+                "requested {config_id}={value} but the agent reports {}{}",
+                current.unwrap_or("<no such option>"),
+                if config_id == MODEL_CONFIG_ID {
+                    MODEL_MISMATCH_HINT
+                } else {
+                    ""
+                }
             ),
         }),
+    }
+}
+
+/// Appended to a model that came back as another one: the adapter's version
+/// decides how a model is named (`opus[1m]` became `opus`), and a model stored
+/// in the settings under the old name is no longer found.
+const MODEL_MISMATCH_HINT: &str = "\n\
+    アダプタの版によってモデルの値は変わります。設定 › エージェント でモデルを選び直すか、\
+    設定 › ハーネス でアダプタを「検証済み」に戻してください。";
+
+/// Whether the agent's `reported` value is the `requested` one. Exact, except
+/// for the model: the context-window suffix that adapter versions add or drop
+/// (`opus[1m]` and `opus`) names the same model.
+fn option_values_match(config_id: &str, requested: &str, reported: &str) -> bool {
+    requested == reported
+        || (config_id == MODEL_CONFIG_ID
+            && strip_model_suffix(requested) == strip_model_suffix(reported))
+}
+
+/// `opus[1m]` → `opus`: a model id without its trailing `[...]` suffix (not an
+/// empty base, so a value that is only a bracket stays as it is).
+fn strip_model_suffix(model: &str) -> &str {
+    match model.strip_suffix(']').and_then(|m| m.rsplit_once('[')) {
+        Some((base, _)) if !base.is_empty() => base,
+        _ => model,
     }
 }
 
@@ -367,6 +398,30 @@ mod tests {
             (overridden.name.as_str(), overridden.version.as_str()),
             ("other-client", "9.9.9")
         );
+    }
+
+    #[test]
+    fn a_model_that_differs_only_by_its_bracket_suffix_is_the_same_model() {
+        assert!(option_values_match("model", "opus[1m]", "opus"));
+        assert!(option_values_match("model", "opus", "opus[1m]"));
+        assert!(option_values_match("model", "sonnet[1m]", "sonnet[1m]"));
+        assert!(option_values_match("model", "haiku", "haiku"));
+        assert!(!option_values_match("model", "opus[1m]", "sonnet"));
+        assert!(!option_values_match("model", "opus", "opus-4"));
+        assert!(!option_values_match("model", "opus[1m]", "opus[2m]x"));
+        assert!(!option_values_match("model", "[1m]", "opus"));
+        // Only the model is compared loosely.
+        assert!(!option_values_match("effort", "high[1m]", "high"));
+        assert!(option_values_match("effort", "high", "high"));
+    }
+
+    #[test]
+    fn strip_model_suffix_only_drops_a_trailing_bracket_with_a_base() {
+        assert_eq!(strip_model_suffix("opus[1m]"), "opus");
+        assert_eq!(strip_model_suffix("opus"), "opus");
+        assert_eq!(strip_model_suffix("a/b[x]"), "a/b");
+        assert_eq!(strip_model_suffix("[1m]"), "[1m]");
+        assert_eq!(strip_model_suffix("opus]"), "opus]");
     }
 
     #[test]

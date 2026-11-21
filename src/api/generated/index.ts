@@ -1,4 +1,7 @@
 // Generated from yhtye-core (ts-rs). Do not edit; run `pnpm gen:types`.
+export type * from "./AdapterChannel";
+export type * from "./AdapterSource";
+export type * from "./AdapterStatus";
 export type * from "./AgentChoice";
 export type * from "./AgentError";
 export type * from "./AgentEvent";
@@ -23,6 +26,8 @@ export type * from "./BranchStatuses";
 export type * from "./Candidate";
 export type * from "./Chat";
 export type * from "./ChatInfo";
+export type * from "./ClaudeExecutable";
+export type * from "./ClaudeSource";
 export type * from "./ClientDevice";
 export type * from "./ClientKind";
 export type * from "./ClientServer";
@@ -43,6 +48,7 @@ export type * from "./GroupStatus";
 export type * from "./HarnessDetection";
 export type * from "./HarnessInfo";
 export type * from "./HarnessModels";
+export type * from "./HarnessOptions";
 export type * from "./HarnessPathSource";
 export type * from "./HarnessRequirement";
 export type * from "./Help";
