@@ -1,10 +1,10 @@
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 import type { State } from "../api/generated";
 import type { TranscriptItem } from "../store/transcript";
 import { Icon, type IconName } from "./Icon";
 import { formatTime, taskTone } from "./labels";
-import { Markdown } from "./Markdown";
+import { Markdown, StreamingMarkdown } from "./Markdown";
 import { type LoadAttachment, SentAttachments } from "./SentAttachments";
 import { ToolStatus, toneIcon } from "./statusIcons";
 
@@ -27,28 +27,55 @@ export function TranscriptView({ items, streaming, agentLabel, queued, state, be
   return (
     <div className="transcript">
       {before}
-      {items.map((item) => (
-        // Items are appended, or prepended when older history loads; a durable
-        // event yields at most one item per session, so seq identifies it.
-        <Item
-          key={`${item.seq}-${item.kind}`}
-          item={item}
-          agentLabel={agentLabel}
-          queued={queued}
-          state={state ?? null}
-          loadAttachment={loadAttachment}
-        />
-      ))}
+      <Items items={items} agentLabel={agentLabel} queued={queued} state={state} loadAttachment={loadAttachment} />
+      <Streamed streaming={streaming} agentLabel={agentLabel} />
+    </div>
+  );
+}
+
+/**
+ * The stored items. Rendering a long conversation is the costly part of the
+ * screen, so it is skipped while nothing it shows has changed (a chunk of the
+ * text being streamed below it, a git refresh): the list is memoized, and so is
+ * each item, which is given only the props its kind reads (`waiting` for a user
+ * message, `state` for a group card) so that a change of the state or of the
+ * inbox does not render the others again.
+ */
+const Items = memo(function Items({
+  items,
+  agentLabel,
+  queued,
+  state,
+  loadAttachment,
+}: Pick<Props, "items" | "agentLabel" | "queued" | "state" | "loadAttachment">) {
+  return items.map((item) => (
+    // Items are appended, or prepended when older history loads; a durable
+    // event yields at most one item per session, so seq identifies it.
+    <Item
+      key={`${item.seq}-${item.kind}`}
+      item={item}
+      agentLabel={agentLabel}
+      waiting={item.kind === "user" && (queued?.has(item.inboxId) ?? false)}
+      state={item.kind === "group" ? (state ?? null) : null}
+      loadAttachment={item.kind === "user" ? loadAttachment : undefined}
+    />
+  ));
+});
+
+/** The text of the agent's turn that is not stored yet. */
+function Streamed({ streaming, agentLabel }: { streaming: Props["streaming"]; agentLabel: string }) {
+  return (
+    <>
       {streaming?.thought ? <Thought text={streaming.thought} streaming /> : null}
       {streaming?.message ? (
         <div className="msg msg-agent" data-testid="streaming">
           <Mark icon="bot" label={agentLabel} streaming />
           <div className="msg-body msg-md">
-            <Markdown text={streaming.message} />
+            <StreamingMarkdown text={streaming.message} />
           </div>
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -110,24 +137,26 @@ function GroupCard({ id, title, state }: { id: string; title: string; state: Sta
   );
 }
 
-function Item({
+const Item = memo(function Item({
   item,
   agentLabel,
-  queued,
+  waiting,
   state,
   loadAttachment,
 }: {
   item: TranscriptItem;
   agentLabel: string;
-  queued?: ReadonlySet<number>;
+  /** A user message that is still queued (not delivered yet). */
+  waiting: boolean;
+  /** The group cards' state (`null` for any other item). */
   state: State | null;
+  /** The user messages' attachments (`undefined` for any other item). */
   loadAttachment?: LoadAttachment;
 }) {
   switch (item.kind) {
     case "group":
       return <GroupCard id={item.groupId} title={item.title} state={state} />;
     case "user": {
-      const waiting = queued?.has(item.inboxId) ?? false;
       const mark = waiting ? (
         <span className="queued" title="待機中 (オーケストレータの手が空いたら届く)">
           <Icon name="clock" size={12} />
@@ -259,4 +288,4 @@ function Item({
         </div>
       );
   }
-}
+});

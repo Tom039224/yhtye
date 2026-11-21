@@ -35,7 +35,8 @@ pub fn fake_agent_bin() -> PathBuf {
     assert!(status.success(), "building yhtye-fake-agent failed");
     std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| workspace_root().join("target"), PathBuf::from)
-        .join("debug/yhtye-fake-agent")
+        .join("debug")
+        .join(format!("yhtye-fake-agent{}", std::env::consts::EXE_SUFFIX))
 }
 
 pub fn fake_harness(bin: &Path, script: Value) -> HarnessConfig {
@@ -70,6 +71,8 @@ pub fn temp_repo(root: &Path) -> (PathBuf, PathBuf) {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["config", "user.name", "Test"]);
     git(&repo, &["config", "user.email", "test@example.com"]);
+    // Not CRLF on Windows (`core.autocrlf=true` there by default).
+    git(&repo, &["config", "core.autocrlf", "false"]);
     std::fs::write(repo.join("README.md"), "# test\n").expect("write");
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-qm", "initial"]);

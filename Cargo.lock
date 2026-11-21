@@ -6760,7 +6760,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "dirs",
@@ -6780,17 +6780,19 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
  "yhtye-core",
 ]
 
 [[package]]
 name = "yhtye-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "dunce",
  "futures",
  "gethostname",
  "getrandom 0.3.4",
@@ -6814,11 +6816,12 @@ dependencies = [
  "tracing",
  "ts-rs",
  "url",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "yhtye-dev-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "futures",
@@ -6836,7 +6839,7 @@ dependencies = [
 
 [[package]]
 name = "yhtye-fake-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "rmcp",

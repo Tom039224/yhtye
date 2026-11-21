@@ -181,7 +181,10 @@ describe("App", () => {
     const conversation = screen.getByRole("region", { name: "orchestrator" });
     const meter = within(conversation).getByTestId("context-meter");
     expect(meter).toHaveTextContent("—");
-    act(() => transport.emit(usage(LAST, ORCHESTRATOR, { used: 84_000, size: 200_000 })));
+    act(() => {
+      transport.emit(usage(LAST, ORCHESTRATOR, { used: 84_000, size: 200_000 }));
+      store.flushLive(); // live events are shown once per frame; this is that frame
+    });
     expect(meter).toHaveTextContent("42% · 84k / 200k");
 
     // During an ordinary turn there is nothing to compact.
@@ -217,6 +220,7 @@ describe("App", () => {
     act(() => {
       transport.emit({ ...chunk(LAST + 2, ORCHESTRATOR, "Work"), seq: LAST + 2 });
       transport.emit({ ...chunk(LAST + 2, ORCHESTRATOR, "ing on it"), seq: LAST + 2 });
+      store.flushLive();
     });
     expect(screen.getByTestId("streaming")).toHaveTextContent("Working on it");
 

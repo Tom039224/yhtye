@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import type { ProjectView } from "../store/project";
+import { useAppState } from "../store/useStore";
 import { EmptyState } from "./EmptyState";
 import { Icon } from "./Icon";
 import { OlderHistory } from "./OlderHistory";
@@ -19,9 +20,11 @@ export function AgentOutput({ view, task }: { view: ProjectView; task: string })
   const sessions = taskSessions(view, task);
   const session = chosen && sessions.includes(chosen) ? chosen : (sessions[sessions.length - 1] ?? null);
   const items = session ? view.transcripts[session] : undefined;
-  const streaming = session ? view.streaming[session] : undefined;
-  useAutoScroll(scroller, [items, streaming], items?.[0]?.seq, session);
+  // Only this session's text: a chunk of another one does not render this again.
+  const streaming = useAppState((s) => (session ? s.live.streaming[session] : undefined));
   const owner = view.state?.tasks.find((t) => t.id === task);
+  // `owner`: the step results above the transcript come and go with the task, with no change of the items.
+  useAutoScroll(scroller, [items, streaming, owner], items?.[0]?.seq, session);
   const results = owner?.steps.filter((s) => s.result) ?? [];
 
   return (

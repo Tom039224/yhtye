@@ -518,6 +518,7 @@ fn harness_detections() -> Vec<HarnessDetection> {
         options: HarnessOptions::default(),
         adapter: None,
         claude: None,
+        path_example: format!("/opt/bin/{id}"),
     };
     let mut bad = detection("devin", PathSource::None, false);
     bad.override_error = Some("not an executable".into());

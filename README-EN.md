@@ -28,15 +28,15 @@ What works:
   and per project.
 - Harnesses: Claude Code, OpenCode, Codex (with the OpenRouter model list), Devin (basic operation verified against the
   real Devin on the free plan), MiniMax Code (basic operation verified against mcode 0.6.2), Google Antigravity (only
-  startup and the logged-out failure verified against the real server), and Grok Build (basic operation verified against grok 1.0.46). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok`) are found on
-  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
+  startup and the logged-out failure verified against the real server), Grok Build (basic operation verified against grok 1.0.46), and pi (through the third-party adapter `@openma/pi-acp`; startup, the model list, efforts and the MCP wiring verified, and a turn, an implementer's `report_step_done` and resuming with a local LM Studio model; cloud models and the orchestrator role not yet). A harness is offered only when its executables (`npx` / `opencode` / `codex` / `devin` / `mcode` / `agy_acp_server.par` / `grok` / `pi` + `npx`) are found on
+  `PATH` or in `~/.local/bin` etc. (`mcode` is also looked for in `~/.minimax-code/bin`, `agy_acp_server.par` in `~/.local/share/agy-acp-server` and a few more, `grok` in `~/.grok/bin`, `pi` in `~/.pi/agent/bin`); the settings' "ハーネス" (Harnesses) tab shows the detection state, takes a manual
   path, and detects again.
 - Resuming interrupted tasks, cancelling tasks, and the orchestrator handling problems such as merge conflicts.
 - Secret environment variables (API keys), stored in the OS keyring.
 
 What is not done, and limitations:
 
-- Linux only (see below). No installers, no auto-update.
+- Linux and Windows 10 / 11 (see below). No auto-update. Headless mode is not available on Windows.
 - Codex cannot be the orchestrator
   ([codex#13746](https://github.com/openai/codex/issues/13746)); it works as implementer / reviewer.
 - Codex has only been verified with OpenRouter.
@@ -60,15 +60,26 @@ What is not done, and limitations:
   startup, the model list, setting the model and effort, and an implementer task completing through `report_step_done`
   (only two prompts were sent). Answering permission requests, the orchestrator role, the logged-out error and resuming
   are unverified ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §12, Japanese).
+- pi (pi coding agent 1.3.0) has no ACP of its own, so Yhtye runs the third-party adapter `@openma/pi-acp` 0.1.8 through `npx` (it embeds the pi SDK, which is 1.4.0, and uses your `~/.pi/agent`;
+  it needs Node 22.19+). From Yhtye's ACP layer, against the real adapter, we verified startup, the model list (197 models), reading the efforts of a model, starting on a chosen model, and that
+  Yhtye's MCP is wired (pi lists MCP tools only after a `tool_search`, so the role prompt carries a note about it). The three prompts sent to cloud models (orcarouter) failed with provider billing errors (402) before reaching the model, but with the
+  pi package `npm:pi-lmstudio` and **LFM3 1.7B (`lmstudio/lfm3-1.7b`) loaded in a local LM Studio (no cost)** we also verified one turn (`EndTurn`, with the thought stream), an implementer finishing through `tool_search` →
+  `mcp__yhtye__report_step_done` (2 of 2 runs), resuming with `session/load`, `session/cancel`, and steering (running and idle). **A turn with a cloud model, the orchestrator role and extension permission dialogs are unverified**
+  ([`docs/architecture/acp-harnesses.md`](docs/architecture/acp-harnesses.md) §14, Japanese). **A model must be chosen** (pi has no built-in default; otherwise it would start on the first, often the priciest, model of its list).
+  The model and effort are passed in the `PI_ACP_MODEL` environment variable, never as config options, because the adapter would save those to your `~/.pi/agent/settings.json`; Yhtye does not log in for you (log in with `pi` and `/login`, or set the provider's API key).
 
 The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
 
 ## Supported platforms
 
-- **Linux only.** Tested on Arch / CachyOS (Wayland) only; other distributions are untested.
+- **Linux.** Tested on Arch / CachyOS (Wayland) only; other distributions are untested.
+- **Windows 10 / 11 (x64 and ARM64).** An installer (NSIS; x64 and ARM64) and an MSI (x64 only) will be published on GitHub Releases under `windows-v…` tags
+  (none yet; until then, build from source). On release, CI builds them and runs the installer silently (install, then uninstall; this has not run yet), and **running agents on a real Windows
+  machine is untested**. The installers are not signed, so SmartScreen warns on the first run. On a Windows 10 without WebView2 the
+  installer fetches it (an internet connection is needed).
+  **Headless mode (`--headless`, `yhtye remote …`) is not supported on Windows** (it relies on Unix domain sockets and process groups);
+  the Windows app can still connect as a client to a headless Yhtye on another machine. Install and build steps are in [`SETUP.md`](SETUP.md) (Japanese).
 - macOS is untested.
-- Windows is not supported: agent process management relies on Unix process groups
-  ([`crates/yhtye-core/src/acp/process.rs`](crates/yhtye-core/src/acp/process.rs)).
 
 ## Warnings
 
@@ -78,18 +89,25 @@ The staged plan and results are in [`docs/PLAN.md`](docs/PLAN.md) (Japanese).
   `agent-full-access`, Devin with `bypass`; MiniMax Code runs on mcode's own default `auto`: writes inside the working
   directory and MCP need no confirmation, and on the real mcode so did shell writes and deletes outside it; Google
   Antigravity stays in its `default` mode (unverified against the real server); Grok Build has no modes and follows the
-  permission setting of your `~/.grok/config.toml`; a confirmation that does arrive is answered "allow once"
-  automatically). There is no sandbox.
-- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity and Grok Build usage is billed to you, or counted against your quota, by
+  permission setting of your `~/.grok/config.toml`; pi asks for no tool approvals at all, and a dialog that one of your pi extensions raises is answered "allow once"
+  automatically; a confirmation that does arrive elsewhere is answered "allow once"
+  automatically). There is no sandbox. Your pi extensions (`~/.pi/agent/extensions`, the `packages` of `settings.json`) are all loaded, and so is the `AGENTS.md` / `CLAUDE.md` of the worktree; the project's own `.pi/` is not (Yhtye does not trust it).
+- Claude Code, OpenCode, Codex (OpenRouter), Devin, MiniMax Code, Google Antigravity, Grok Build and pi usage is billed to you, or counted against your quota, by
   those services. Yhtye does not manage billing.
 - Secret environment variable values are stored only in the OS keyring (Secret Service etc.); Yhtye's database
-  keeps only the names. A registered variable is passed to **every** agent.
+  keeps only the names. A registered variable is passed to **every** agent (exception: `YHTYE_ANTHROPIC_API_KEY`).
+- Claude Code is offered as two harnesses: `Claude Code (Claude Max)` etc. (`claude-code`), which uses the claude.ai subscription you are logged in to,
+  and `Claude Code (API)` (`claude-code-api`), which is billed to an Anthropic API key. To use the API one, register the key as the secret environment
+  variable **`YHTYE_ANTHROPIC_API_KEY`**: it is passed only to the API harness, as `ANTHROPIC_API_KEY`, and the subscription harness starts with
+  `ANTHROPIC_API_KEY` removed from its environment, so it never bills the API. See [SETUP.md](SETUP.md) (Japanese).
 
 ## Getting started
 
 Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
 
 1. Prerequisites (Linux): WebKitGTK 4.1, git, Node 22+ (with `npx`), Rust 1.98+, pnpm 11+.
+   On Windows 10 / 11 the prerequisites are git, Node 22+, Rust 1.98+ (MSVC toolchain), pnpm 11+ and the Visual Studio Build Tools ("Desktop development with
+   C++"; WebView2 comes with Windows 11, see `SETUP.md`); build with `pnpm tauri build`.
    - Arch: `sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl appmenu-gtk-module libappindicator-gtk3 librsvg`
    - Debian / Ubuntu (package names copied from CI, otherwise untested): `build-essential pkg-config libdbus-1-dev libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libayatana-appindicator3-dev librsvg2-dev`
 2. Log in to the agents you want, before starting Yhtye:
@@ -103,11 +121,12 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
    | MiniMax Code (partly verified) | MiniMax Code CLI (`mcode`), logged in with `mcode login` | `mcode acp` |
    | Google Antigravity (startup verified only) | the ACP server zip `agy-acp-server-<version>-linux-x86_64.zip` (`agy_acp_server.par` + `localharness_external`, in one directory), signed in as described in SETUP.md | `agy_acp_server` (no arguments) |
    | Grok Build (partly verified) | Grok Build CLI (`grok`, installed to `~/.grok/bin`), logged in with `grok login` | `grok agent --no-leader stdio` |
+   | pi (partly verified) | pi coding agent (`pi`, e.g. in `~/.pi/agent/bin`), `npx` with **Node 22.19+**, logged in with `/login` in `pi` or the provider's API key in the environment | `npx -y @openma/pi-acp@0.1.8` |
 
    At least one harness is needed. Yhtye registers only the harnesses whose executables it finds: on `PATH`, then in
    `~/.local/bin`, `~/.cargo/bin`, `~/.bun/bin` and `/usr/local/bin` (`mcode` is also looked for in `~/.minimax-code/bin`,
    or `$MCODE_INSTALL_ROOT/bin`; `agy_acp_server.par`, or `agy_acp_server`, in `$AGY_ACP_SERVER_HOME`, `~/.local/share/agy-acp-server`
-   and `~/.gemini/antigravity-acp/bin`; `grok` in `~/.grok/bin`, or `$GROK_HOME/bin`). Claude Code is registered when `npx` is found; the
+   and `~/.gemini/antigravity-acp/bin`; `grok` in `~/.grok/bin`, or `$GROK_HOME/bin`; `pi` in `~/.pi/agent/bin`, or `$PI_CODING_AGENT_DIR/bin`, and pi also needs `npx`). Claude Code is registered when `npx` is found; the
    others are optional. If you installed something elsewhere, or after starting Yhtye, open the settings' "ハーネス" tab
    to see what was found, give an absolute path by hand, and press "再検出" (detect again); no restart is needed.
    If your Codex config gets its OpenRouter key from an environment variable, register that variable under
@@ -128,7 +147,7 @@ Details are in [`SETUP.md`](SETUP.md) (Japanese). The essentials:
 
 ## Headless mode (no GUI)
 
-On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
+Linux only (not supported on Windows). On a machine without a display, `yhtye --headless` runs only the core and remote access (it opens no window; it is a run-time
 option of the same binary). It is for working with that machine from the Android app.
 
 ```sh

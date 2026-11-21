@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use yhtye_core::console::NoConsoleWindow;
+
 /// Identifier (and so data directory name) used before the rename.
 pub const LEGACY_IDENTIFIER: &str = "com.tom039224.yhtye";
 
@@ -61,6 +63,7 @@ fn repair_worktrees(data_dir: &Path) {
         match Command::new("git")
             .args(["worktree", "repair"])
             .current_dir(&worktree)
+            .no_console_window()
             .output()
         {
             Ok(out) if out.status.success() => {}
@@ -175,11 +178,15 @@ mod tests {
 
         let new_wt = new.join("worktrees/proj/group/task");
         let list = git(&repo, &["worktree", "list", "--porcelain"]);
+        // git prints `/`-separated paths (`C:/…` on Windows) where Rust's canonical form has
+        // `\\?\` and `\`, so compare the canonicalized paths, not the text.
         let new_wt_real = fs::canonicalize(&new_wt).unwrap();
-        assert!(
-            list.contains(new_wt_real.to_str().unwrap()),
-            "worktree list: {list}"
-        );
+        let listed: Vec<PathBuf> = list
+            .lines()
+            .filter_map(|l| l.strip_prefix("worktree "))
+            .filter_map(|p| fs::canonicalize(p).ok())
+            .collect();
+        assert!(listed.contains(&new_wt_real), "worktree list: {list}");
         git(&new_wt, &["status"]);
     }
 }

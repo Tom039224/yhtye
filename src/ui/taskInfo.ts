@@ -5,7 +5,7 @@
 
 import type { Group, Help, State, Task } from "../api/generated";
 import type { ProjectView } from "../store/project";
-import type { TranscriptItem } from "../store/transcript";
+import type { Streaming, TranscriptItem } from "../store/transcript";
 import type { IconName } from "./Icon";
 import { GROUP_LABEL, isTerminal, type Tone, taskTone } from "./labels";
 
@@ -113,14 +113,31 @@ function logLine(item: TranscriptItem): LogLine | null {
   }
 }
 
-/** The latest activity lines of the task's newest session (at most `n`). */
-export function taskLog(view: ProjectView, task: string, n = 2): LogLine[] {
+/** The task's newest session: the one its card describes (`null`: no agent has started). */
+export function latestSession(view: ProjectView, task: string): string | null {
   const sessions = taskSessions(view, task);
-  const key = sessions[sessions.length - 1];
+  return sessions[sessions.length - 1] ?? null;
+}
+
+/**
+ * The first line of the message `session` is streaming (what a card's log
+ * shows of it); `null` when it streams none. A string, so that a card reading
+ * it renders again only when the line changes, not with every chunk.
+ */
+export function streamedLine(streaming: Streaming, session: string | null): string | null {
+  const text = session ? streaming[session]?.message : undefined;
+  return text ? firstLine(text) : null;
+}
+
+/**
+ * The latest activity lines of the task's newest session (at most `n`);
+ * `streamed` is what that session is streaming now (see `streamedLine`).
+ */
+export function taskLog(view: ProjectView, task: string, streamed: string | null, n = 2): LogLine[] {
+  const key = latestSession(view, task);
   if (!key) return [];
   const lines: LogLine[] = [];
-  const streamed = view.streaming[key]?.message;
-  if (streamed) lines.push({ kind: "message", text: firstLine(streamed) });
+  if (streamed !== null) lines.push({ kind: "message", text: streamed });
   const items = view.transcripts[key] ?? [];
   for (let i = items.length - 1; i >= 0 && lines.length < n; i--) {
     const line = logLine(items[i]);
@@ -131,8 +148,7 @@ export function taskLog(view: ProjectView, task: string, n = 2): LogLine[] {
 
 /** The session working on the task now (or last), e.g. `implementer`. */
 export function taskAgent(view: ProjectView, task: Task): string | null {
-  const sessions = taskSessions(view, task.id);
-  const key = sessions[sessions.length - 1];
+  const key = latestSession(view, task.id);
   return key ? (key.split("/")[1] ?? key) : null;
 }
 

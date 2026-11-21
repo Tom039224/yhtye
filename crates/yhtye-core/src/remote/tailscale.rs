@@ -9,6 +9,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::console::NoConsoleWindow;
+
 /// How long one `tailscale` command may take.
 const CLI_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -62,7 +64,8 @@ impl TailscaleCli {
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .kill_on_drop(true);
+                .kill_on_drop(true)
+                .no_console_window();
             let output = match tokio::time::timeout(CLI_TIMEOUT, cmd.output()).await {
                 Err(_) => {
                     return Err(TailscaleError(format!(

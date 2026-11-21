@@ -37,4 +37,10 @@ adapter: AdapterStatus | null,
 /**
  * Which `claude` the adapter drives; `None` but for Claude Code.
  */
-claude: ClaudeExecutable | null, };
+claude: ClaudeExecutable | null, 
+/**
+ * What an absolute path of the main executable looks like on the host
+ * (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
+ * of the manual path. Empty from a core that predates it.
+ */
+path_example: string, };

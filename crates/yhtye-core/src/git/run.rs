@@ -6,6 +6,8 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::console::NoConsoleWindow;
+
 /// Longest a single git command may take (git runs inside the runtime loop).
 pub(super) const GIT_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -76,6 +78,7 @@ pub(super) async fn git_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
+        .no_console_window()
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_EDITOR", "true")

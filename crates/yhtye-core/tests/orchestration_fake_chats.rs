@@ -7,6 +7,7 @@
 mod common;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use common::chats::{
     Hold, Rx, TIMEOUT, branch_worktree, canonical, cwd_of, is_domain, is_stopped, new_chat, none,
@@ -567,9 +568,21 @@ async fn a_chat_whose_worktree_disappeared_refuses_messages_but_keeps_its_histor
     let chat = new_chat(&orch, "topic").await;
     say(&orch, &chat, "hello").await;
     wait(&mut rx, &mut events, said("orchestrator:C-1", "hi")).await;
-    // Removed behind Yhtye's back; the branch itself is still there.
+    // Removed behind Yhtye's back; the branch itself is still there. The orchestrator is put to
+    // sleep first: Windows does not delete a directory a process still has as its working directory.
+    wait(&mut rx, &mut events, orch_turn_ended).await;
+    orch.sleep_chat(&chat).await.expect("sleep");
+    wait(&mut rx, &mut events, |e| is_stopped(e, "orchestrator:C-1")).await;
     let wt = branch_worktree(&r, "topic");
-    r.git(&["worktree", "remove", "--force", &wt.to_string_lossy()]);
+    let mut removed = false;
+    for _ in 0..50 {
+        removed = r.git_status(&["worktree", "remove", "--force", &wt.to_string_lossy()]);
+        if removed {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(removed, "the worktree could not be removed");
     assert!(r.branch_exists("topic"));
 
     let err = orch

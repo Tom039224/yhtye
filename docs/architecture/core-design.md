@@ -75,7 +75,7 @@ pub struct CoreConfig {
   - `Core` は 1 つの DB を共有し、開いたプロジェクトごとに `Orchestration` (git は `GitCli`) を持つ。
     `OpenProject{path}` はパスを正規化し、**git リポジトリの最上位ディレクトリ**であることを検査
     (`git rev-parse --show-toplevel`) してから、`projects` テーブルでパスを引いて ID を再利用する。
-    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。起動時に自動では開かない。
+    新規の ID はディレクトリ名から作る (`my-app`、衝突したら `my-app-2`)。名前に ASCII の英字が無ければ (`日本`、`テスト2`) `project-` と名前の SHA-256 の先頭 6 桁を付ける (`project-1a2b3c`、`project-2-1a2b3c`)。既存の ID は変えない。起動時に自動では開かない。
   - `ListEvents` は開いていないプロジェクトでも DB から読める (履歴の閲覧)。
   - ユーザーによる中止 `CancelTask` / `CancelGroup` は、オーケストレータの `cancel_task` /
     `cancel_group` と同じ規則で状態機械に通し (セッションキー `user` の `tool_called` として記録)、
@@ -132,7 +132,7 @@ pub struct CoreConfig {
   `retry_group_merge{project, group}` (Stage 5) / `get_git_overview{project, limit?}` (Stage 6a) / `get_usage{refresh?}` (Stage 6b) /
   `get_agent_settings{project?}` / `set_agent_settings{project?, role, settings}` / `list_harness_models{harness, refresh?}` (Stage 7b、§15)。
   **T-6 (§15.2、§15.7)**: `get_harnesses` / `detect_harnesses` / `set_harness_path{harness, path?}` (ハーネスの検出状態・再検出・手動パス)、
-  `set_harness_options{harness, options}` (アダプタの版・Claude Code 本体の選択、`acp-harnesses.md` §5.4)。
+  `set_harness_options{harness, options}` (アダプタの版・Claude Code 本体の選択、`acp-harnesses.md` §5.5)。
   **Stage 8 (§17)**: `send_user_message{project, chat, text}` / `cancel_orchestrator_turn{project, chat}` にチャットが付き、
   `list_chats{project}` / `create_chat{project, branch}` / `create_branch{project, name, from?}` が加わる。
   **T-48 (§17.11)**: `open_chat{project, chat}` (チャットを開いた: 未起動なら復元して起動、応答 `chat_opened{starting}`)。
@@ -290,6 +290,13 @@ impl AgentHandle {
      まだ生きている (別インスタンス・終了処理中) 記録は触らない。判定は純関数 `orphan::judge`。
   グループを抜けて `setsid` した孫はグループ kill では落ちない (従来どおり)。Linux 以外では 1〜3 は
   何もしない (従来どおり stdin の EOF に頼る)。
+- **Windows** (`acp/process/windows.rs`): エージェントは `CREATE_SUSPENDED` で起動し、
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 付きの Job Object に入れてから再開する (入れる前に子孫が増えない)。
+  Job のハンドルは Yhtye だけが持ち、Yhtye がどう死んでも OS がハンドルを閉じて子孫ごと終了する
+  (上の 1〜3 に当たるもので、起動時の孤児掃除も要らない)。停止は stdin の EOF → 猶予 →
+  `TerminateJobObject` (SIGTERM 相当の穏当な段は無い。`CTRL_BREAK_EVENT` は同じコンソールを共有する
+  プロセスにしか届かず、エージェントは `CREATE_NO_WINDOW` で自前の隠しコンソールを持つため)。
+  クラッシュ (`NTSTATUS` エラー値) の終了コードは `Exited.signal` に載せる。
 - **終了処理**: `Shutdown` (または handle の drop) → ターン中なら `Cancel` し最大 10 秒
   `TurnEnded` を待つ → 接続クロージャを抜ける (stdin が閉じる) → 1 秒待って出なければ
   グループに SIGTERM → 2 秒後 SIGKILL → 最後にグループ全体へ SIGKILL (残党掃除)。
@@ -328,8 +335,8 @@ pub enum AgentOutput {
 `fn outcome_for(Option<&PermissionOption>) -> RequestPermissionOutcome` は純粋関数。
 `allow_always` → `allow_once` の順に kind で選び、どちらも無ければ `Cancelled`。
 **配列の先頭を選ぶことはしない。** ハンドラ内で即応答する (ブロックしない)。
-**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin、MiniMax Code、Google Antigravity、Grok Build) は kind が `allow_once` で
-id が `switch_` / `plan_` で始まらず `always` / `for_session` を含まないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6・§11・§12.2。
+**T-5**: `choose_permission(options, policy)` は `HarnessConfig::permission_policy` を取る。`Default` は上のとおり。`OnceOnly` (Devin、MiniMax Code、Google Antigravity、Grok Build、pi) は kind が `allow_once` で
+id が `switch_` / `plan_` で始まらず `always` / `for_session` を含まないものだけを選ぶ (無ければ `Cancelled`。[`acp-harnesses.md`](acp-harnesses.md) §10.6・§11・§12.2・§13.4・§14.4。
 `always` / `for_session` を含む、への拡張は T-29。以前は `_always` で終わるもの。MiniMax Code の `allow-once` / `allow-always` のようなハイフン形の id も kind と含む語で同じく判定される)。
 
 ### 3.4 `HarnessConfig`
@@ -344,7 +351,7 @@ pub struct HarnessConfig {
     pub startup_timeout: Duration,             // 既定 120 秒 (npx の初回ダウンロードを見込む)
     pub client_info: Option<ClientInfoOverride>,   // T-5: initialize の clientInfo の上書き。None (既定) = "yhtye" (acp-harnesses.md §10.4)
     pub permission_policy: PermissionPolicy,   // T-5: Default | OnceOnly (§3.3)
-    pub login_hint: Option<String>,            // T-34: session/new・session/load が認証エラー (-32000) のとき起動エラーの後ろに付ける案内 (Antigravity だけ。acp-harnesses.md §13.7)
+    pub login_hint: Option<String>,            // T-34: session/new・session/load が認証エラー (-32000) のとき起動エラーの後ろに付ける案内 (Antigravity と pi。acp-harnesses.md §13.7・§14.7)
 }
 // HarnessConfig::claude_code("haiku") が Claude Code 用の既定値、
 // オーケストレータも同じ設定 (Stage 8d で組み込みツールの制限 = `claude_code_orchestrator` を廃止。`orchestration-model.md` §8.1)。
@@ -359,7 +366,7 @@ Stage 7b: ハーネスは `HarnessPreset` (§15) として登録し、役割ご�
 プロジェクトで起動すると、信頼できないリポジトリの `.npmrc` (registry の差し替え) や `node_modules` の
 同名パッケージを `npx` が読み、エージェントが動く前に任意コードが走りうるため。偽エージェントも
 `session/new` / `session/load` の `cwd` に `chdir` する (実エージェントと同じ振る舞い)。
-アダプタは既定で `@agentclientprotocol/claude-agent-acp@0.84.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`、検証済みの版)。設定で最新・指定・グローバル導入も選べる (`acp-harnesses.md` §5.4)。
+アダプタは既定で `@agentclientprotocol/claude-agent-acp@0.84.0` に完全一致で固定 (`CLAUDE_AGENT_ACP`、検証済みの版)。設定で最新・指定・グローバル導入も選べる (`acp-harnesses.md` §5.5)。
 Yhtye 自身の秘密 (`YHTYE_BRIDGE_TOKEN` / `VITE_YHTYE_BRIDGE_TOKEN`) はエージェントの環境から除く。
 回帰テスト `tests/acp_launch.rs`。
 `HarnessConfig::claude_code_usage_probe()` は §14 の使用量取得用 (ツールなし・`persistSession: false`・`TZ=UTC`)。
@@ -554,7 +561,7 @@ Stage 3b で実装。
 - **`harness_options`** (マイグレーション `0013_harness_options.sql`): `(harness TEXT PRIMARY KEY, adapter TEXT, adapter_version TEXT, claude_source TEXT, updated_ms)`。
   Claude Code と Codex のアダプタの版の選択 (`verified` / `latest` / `pinned` / `global`) と、Claude Code が動かす `claude` (`user` / `bundled`)。
   行が無い = 既定 (検証済みのアダプタ、ユーザーの `claude`)。既定に戻す書き込みは行を消す。`Store::harness_options()` / `Store::set_harness_options(harness, &HarnessOptions, now_ms)`。
-  古いデータベースは追加のテーブルが空なだけで既定で読める。使い方は `acp-harnesses.md` §5.4。
+  古いデータベースは追加のテーブルが空なだけで既定で読める。使い方は `acp-harnesses.md` §5.5。
 
 ## 7. `git` モジュール
 
@@ -973,7 +980,7 @@ Stage 4 の構成 (`src/`):
   `sleep(ms)` (キャンセルで中断) / `wait_cancel` / `wait_file(path)` (そのファイルができるまで
   ターンを止める。テストが進めるタイミングを決める。`sleep` でテストの操作を待たない) /
   `end(stop_reason)` / `crash(code)` /
-  `spawn_child` (同じプロセスグループに `sleep 600` を起こす。後始末の検証用) /
+  `spawn_child` (同じプロセスツリーに、自分自身を `--sleep` で起動した 10 分眠る子を起こす。後始末の検証用) /
   `report_state` (mode・model・systemPrompt・受け取った prompt を返す) / `report_meta`
   (`session/new` の `_meta` 全体を返す) / `write_file{path,text}` /
   `mcp_call{tool, args}` (Stage 2: rmcp クライアントで `session/new` に渡された最初の HTTP
@@ -1118,28 +1125,37 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
 `set_config_option` を呼ばず、`get_efforts` はサーバーを起動せず空を返し、`HarnessPreset::config` は effort を送らない (保存は既存の `check_efforts` が「このモデルには effort が無い」と拒否する)。
 `startup.rs` の `session/new` / `session/load` は、`-32000` (認証が必要) のエラーに `HarnessConfig::login_hint` を付ける (ほかのエラー、ほかのハーネスは従来どおり)。
 
+**pi (`@openma/pi-acp`)**: `HarnessPreset::pi()` ([`acp-harnesses.md`](acp-harnesses.md) §14): 全役割 `HarnessConfig::pi` (`npx -y @openma/pi-acp@0.1.8` (`PI_ACP`、完全固定)、環境は `PI_ACP_QUIET_STARTUP=1` だけ、
+**mode・model・effort のどれも `HarnessConfig` に入れない** (`set_config_option` はアダプタがユーザーの `~/.pi/agent/settings.json` に保存するため)、`FirstPrompt`、`PermissionPolicy::OnceOnly`、
+`system_prompt_note` = `PI_MCP_NOTE` (MCP のツールは遅延公開なので `tool_search` で読み込んでから `mcp__yhtye__<name>`)、`client_info` なし、`login_hint` = `PI_LOGIN_HINT`)、
+`requires_model = true` (組み込みの既定のモデルは無い。Codex と同じ扱いで、選ばなければ `設定 › ハーネス でモデルを選んでください` で始まらない)、`model_source = Acp`、`effort_config_id = Some("thinking")` (`PI_EFFORT_CONFIG_ID`)。
+**preset に `model_effort_env: Option<String>` を新設** (pi は `PI_ACP_MODEL`): モデルと effort を `<model>[:<effort>]` で入れる環境変数で、設定すると `HarnessPreset::config` は**その環境変数だけを入れ**
+(`model` / `effort` / モードは設定しない。モデル無しの effort は無視)、option としては何も送らない。`model_config_env` (Codex の JSON の `CODEX_CONFIG`) とは別のフィールドで、同時には使わない。
+モデル一覧の読み取り (§15.6) も何も選ばない。effort は `probe_models` では読まず (`efforts: None`)、`get_efforts` / `probe_efforts` が**そのモデルを `PI_ACP_MODEL` で起動し直した一覧用のセッション**
+(`HarnessPreset::probe_config_for(model)`) の `session/new` の `thinking` option から読む (約 1.5 秒 / モデル。`thinking` が無いモデルは空、`auto_compaction` は effort ではない)。
+
 **ハーネス検出の一般化と登録簿の動的化 (Devin 対応, T-6、`agents/detect.rs` / `agents/installed.rs` / `runtime/core/harnesses.rs`)**:
 登録は「インストール済みのものだけ」に一般化した。
 
 - **検出** (`detect_harnesses`、純粋関数): 実行ファイルの検索だけで `--version` は実行しない。`PATH` (絶対パスの項目、実行可能な通常ファイル) →
   既知の場所 (`KNOWN_DIRS` = `~/.local/bin`・`~/.cargo/bin`・`~/.bun/bin`・`/usr/local/bin`、`~` は環境の `HOME`) の順。必要なコマンドは `HARNESS_SPECS`:
-  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin`、minimax-code = `mcode`、antigravity = `agy_acp_server.par`、grok-build = `grok` (claude CLI は不要)。UTF-8 でないパスは数えない。
+  claude-code = `npx`、opencode = `opencode`、codex = `codex` + `npx`、devin = `devin`、minimax-code = `mcode`、antigravity = `agy_acp_server.par`、grok-build = `grok`、pi = `pi` + `npx` (claude CLI は不要。pi の `pi` は起動しない: アダプタが pi の SDK を組み込むので、ユーザーが `pi` でログインと設定をする印として要り、起動は `npx`)。UTF-8 でないパスは数えない。
   `HarnessSpec` の `root_env` / `extra_dirs` でハーネス専用の探す場所を足せる (T-26。T-29 の grok-build も同じ形を使う): minimax-code は `PATH` → `$MCODE_INSTALL_ROOT/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.minimax-code/bin`、
-  grok-build は `PATH` → `$GROK_HOME/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.grok/bin` (どちらもインストーラの標準の場所で、fish などでは `PATH` に入らない)。ほかのハーネスは足さない (antigravity は下記)。`root_env` の下で探すディレクトリは `root_subdirs` (minimax-code・grok-build = `bin`、
+  grok-build は `PATH` → `$GROK_HOME/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.grok/bin` (どちらもインストーラの標準の場所で、fish などでは `PATH` に入らない)。pi は `PATH` → `$PI_CODING_AGENT_DIR/bin` (絶対パスのとき) → 共通の既知の場所 → `~/.pi/agent/bin` (`PI_ROOT_ENV` / `PI_INSTALL_DIR`、同じ形。`npx` は共通の場所だけ)。ほかのハーネスは足さない (antigravity は下記)。`root_env` の下で探すディレクトリは `root_subdirs` (minimax-code・grok-build・pi = `bin`、
   antigravity = `""` (展開したディレクトリそのもの) と `bin`)。`HarnessSpec::aliases` は主実行ファイルの別名で、同じディレクトリでは主の名前の次に見る
   (`PATH` が先、の順は名前によらない): antigravity は `agy_acp_server.par` (主) と `agy_acp_server`、探す場所は `PATH` → `$AGY_ACP_SERVER_HOME` と `$AGY_ACP_SERVER_HOME/bin` (絶対パスのとき) →
   共通の既知の場所 → `~/.local/share/agy-acp-server` → `~/.gemini/antigravity-acp/bin`。拡張子付きの名前でも「実行可能な通常ファイル」かだけを見る。
 - **`HarnessDetection { id, label, installed, resolved_path, path_source (override|path|known_dir|none), override_path, override_error, requirements: [{command, found}] }`**
   (ts-rs で `src/api/generated/`)。`installed` = 必要なコマンドがすべて見つかった (手動パスがあるならそれが使える)。`resolved_path` は主実行ファイル (`HarnessSpec::main`)。
-- **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code / codex は npx のパス、
-  opencode / devin / minimax-code / antigravity / grok-build は本体。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
+- **preset** (`presets_from`): installed なものだけ preset にする。見つけた絶対パスが `HarnessConfig.command` になる (`HarnessPreset::with_command`。claude-code (同じ `npx` で `claude-code-api` も登録する、[`acp-harnesses.md`](acp-harnesses.md) §5.4) / codex は npx のパス、
+  opencode / devin / minimax-code / antigravity / grok-build は本体、pi も `npx` (`HarnessPreset::pi().with_command(<見つけた npx>)`、`npx` が見つからなければ登録しない)。codex は `CODEX_PATH` にも見つけた `codex` を渡す)。起動時の使用量取得 (`/usage`) のエージェントも、見つけた `npx` で起動する
   (`Detected::with_found_npx`。使用量のプローブは起動時に 1 回だけ作り、再検出では作り直さない)。
-- **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx) **だけ**を置き換える (codex の `npx` は自動検出のみ)。
+- **手動パス** (テーブル `harness_paths`、マイグレーション `0008`、§6): 各ハーネスの主実行ファイル (claude-code は npx。`claude-code-api` はこれに従い、指定すると `not_found`) **だけ**を置き換える (codex と pi の `npx` は自動検出のみ)。
   保存時に「絶対パスかつ実行可能な通常ファイル」を検査する (`check_executable_path`、`invalid_argument`)。保存後は検索より優先し、後で壊れたらそのハーネスは
   未インストール扱い (`override_error` に理由。検索にはフォールバックしない)。
-- **組み込みの既定** (`default_choice`): claude-code > opencode > devin > minimax-code > antigravity > grok-build > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
+- **組み込みの既定** (`default_choice`): claude-code (サブスク版。`claude-code-api` は既定にならない) > opencode > devin > minimax-code > antigravity > grok-build > pi > codex の最初のインストール済み (モデルは opencode = `OPENCODE_FALLBACK_MODEL`、devin・grok-build = 未指定、
   minimax-code = `MINIMAX_CODE_DEFAULT_MODEL` (最も安い Flash Preview thinking)、antigravity = `ANTIGRAVITY_DEFAULT_MODEL` (Flash の `low`)、
-  codex は他に無いときだけで、起動時に「設定でモデルを選んで」と案内して失敗する)。1 つも無くても Core は起動し、エージェント開始時に
+  pi と codex は**モデルの指定が要る**ので最後で、他に無いときだけ既定になり、起動時に「設定でモデルを選んで」と案内して失敗する。pi は codex の前)。1 つも無くても Core は起動し、エージェント開始時に
   「使えるハーネスがありません (設定 › ハーネス を確認)」を出す (`AgentError::Setup`、`NO_HARNESS_MESSAGE`)。
 - **登録簿の動的化**: `AgentCatalog` の登録簿 (`Registry { presets, builtin }`) は `RwLock` に入り、`AgentCatalog::refresh(presets, builtin)` が**丸ごと入れ替える**
   (動いているセッションには影響しない: 新しく起動するセッションから効く)。`harnesses()` / `harness_ids()` / `preset()` / `builtin()` / `resolve()` / `validate()` は呼んだ時点の登録簿を読む。
@@ -1159,7 +1175,7 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
   - `SetHarnessPath{harness, path?}` は未知のハーネスを `not_found`、絶対パスの実行可能な通常ファイルでないものを `invalid_argument` で拒み、`harness_paths` に保存 (`None` は削除) して
     再検出し (そのハーネスのキャッシュは上のとおり捨てられる)、一覧を返す。
   - `SetHarnessOptions{harness, options}` は未知のハーネスを `not_found`、アダプタの無いハーネス・semver でない版・Claude Code 以外への `claude_source` を `invalid_argument` で拒み、
-    `harness_options` に保存して再検出し、一覧を返す。最新版の問い合わせ (`npm view`) は `DetectionConfig` の `LatestVersions` (6 時間 / 失敗は 10 分キャッシュ、「再検出」は強制) で、
+    `harness_options` に保存して再検出し、一覧を返す (対象は `claude-code` の 1 行で、同じアダプタで動く `claude-code-api` にも同じに効く。`claude-code-api` を直接指定すると `not_found`、`acp-harnesses.md` §5.5)。最新版の問い合わせ (`npm view`) は `DetectionConfig` の `LatestVersions` (6 時間 / 失敗は 10 分キャッシュ、「再検出」は強制) で、
     `Core::start` では最新を選んだハーネスがあるときだけ**起動後にバックグラウンドで**行う (それまでは検証済みの版を登録する。ネットワークで起動を待たせない)。
   - 並行する検出は `Inner::detecting` (`tokio::sync::Mutex`) で直列化する (最後に終わる検出が最新の手動パスを読んでいる)。
   - `CoreConfig::detection` が `None` (テスト) なら従来どおり静的な `harnesses` / `default_agent` を登録し、3 つのコマンドは空の一覧を返す (`set_harness_path` は保存して検査する)。
@@ -1228,6 +1244,10 @@ Yhtye の MCP 経由の `report_step_done` まで確認した。
     結果は (ハーネス, モデル) ごとに 10 分 (失敗 10 秒) キャッシュし、モデル一覧のキャッシュに載っていればそれを返す。
     480 個を全部読むと 480 回の `set_config_option` になるので避けた。
   - ハーネスが拒否するモデルは `efforts = None` のまま (一覧のプローブ) / `unavailable` (`list_model_efforts`)。
+  - **モデルを環境変数で渡すハーネス (pi、`HarnessPreset::model_effort_env`)**: モデルを `set_config_option` で選べない (選ぶとハーネスがユーザーの設定に保存する) ので、一覧のプローブ (`probe_models`) は
+    モデルの数によらず effort を読まず (`efforts = None`)、`list_model_efforts` / `probe_efforts` は**そのモデルを環境変数 (`PI_ACP_MODEL`) で指定して起動した一覧用のセッション**
+    (`HarnessPreset::probe_config_for(model)`) の `session/new` の option から effort を読む (何も選ばない。約 1.5 秒 / モデル。推論しないモデルは option が無く空)。
+    ほかのハーネスの一覧用の設定 (`probe_config`) は変わらない。詳細は [`acp-harnesses.md`](acp-harnesses.md) §14.3。
 
 - **モデルの出どころ (7e、`ModelSource`)**: `Acp` (上のとおり) か `Codex`。`Codex` の preset は一覧を取る時に**ユーザーの Codex 設定** (`$CODEX_HOME/config.toml`、
   `agents/codex_config.rs`) のトップレベル `model_provider` を読み、`openrouter` なら OpenRouter の公開 API (`agents/openrouter.rs`、認証なし、`tools` 対応のモデルだけ、
@@ -1272,13 +1292,19 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   `LD_*` / `DYLD_*` は拒否。DB の行を手で書き換えて禁止名を入れても、`Secrets::env` が飛ばす。値は空でなく NUL を含まず 64 KiB まで。ストアを触る前に検査する。
 - **注入**: `spawn_agent_with_secrets(secrets, harness, cwd, options, events)` が全登録変数の値を読んで `SpawnOptions.secret_env` に入れ、`acp/process.rs` が
   子プロセスの環境に足す。**適用順は 秘密 → 削除 (`PRIVATE_ENV` と `HarnessConfig.env_remove`) → ハーネスの `env`** なので、ハーネスの `env`
-  (`ANTHROPIC_MODEL`、`CODEX_PATH`、`CODEX_CONFIG` …) も削除も衝突時は秘密に勝つ (秘密が起動設定を壊せず、消した変数を復活させられない)。サブエージェント・オーケストレータ (`runtime/launch.rs`・`sessions.rs`)、モデル一覧のプローブ (`agents/models.rs`)、
+  (`ANTHROPIC_MODEL`、`CODEX_PATH`、`CODEX_CONFIG`、`PI_ACP_MODEL` …) も削除も衝突時は秘密に勝つ (秘密が起動設定を壊せず、消した変数を復活させられない)。サブエージェント・オーケストレータ (`runtime/launch.rs`・`sessions.rs`)、モデル一覧のプローブ (`agents/models.rs`)、
   使用量のプローブ (`usage/probe.rs`) の**すべて**が通る (`AgentCatalog::secrets()` / `ModelService` / `UsageService` が `Arc<Secrets>` を持つ)。
   値が読めない (キーリングが使えない・ロック中) ときは、登録が 1 つでもあれば**起動を失敗させる** (`AgentError::Startup`、step `secret environment variables`、
   メッセージにキーリングのエラー)。キーが黙って抜けたエージェントが後から分かりにくい失敗をするより明確なため。登録があるのに値が無い名前は警告ログだけで飛ばす。
 - **整合**: `set_secret_env` は名前を DB に登録してから値をキーリングに保存し、後者が失敗したら前者を取り消す (もともと登録済みの名前は残す)。
   `delete_secret_env` は DB から消してからキーリングを消し、失敗したら名前を戻す。DB とメモリ / キーリングが食い違わない。
-- **既知の限界 (レビューで確認、今回は対応しない)**: すべての秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
+- **ハーネス専用の秘密**: `HARNESS_ONLY_SECRETS` (`YHTYE_ANTHROPIC_API_KEY`) は上の一般の注入から**外す** (`Secrets::env` が飛ばす)。代わりに
+  `HarnessConfig::secret_bindings` (`SecretBinding { secret, env, needed_by }`) を持つハーネスだけが、`spawn_agent_with_secrets` で
+  その秘密を `env` の名前 (`ANTHROPIC_API_KEY`) で受け取る (`Secrets::get`、同名の一般の秘密より優先)。Yhtye が継承した環境にある
+  `HARNESS_ONLY_SECRETS` の変数も、`acp/process.rs` の `spawn_process` が全ハーネスの子プロセスから取り除く (`PRIVATE_ENV` と同じ段)。未登録・値なしなら起動前に
+  `AgentError::Setup` で「`needed_by` には秘密の環境変数 … の登録が必要です」と失敗する。`claude-code-api` だけがこれを使う
+  ([`acp-harnesses.md`](acp-harnesses.md) §5.4)。
+- **既知の限界 (レビューで確認、今回は対応しない)**: 上のハーネス専用のもの以外の秘密が**すべてのエージェント**に渡る (ハーネスごとの絞り込みは無い。UI の説明にも書いた)。エージェントが
   自分の環境を stderr に出すと、その行が Yhtye のログ・エラーに載りうる (値の伏せ字化はしていない)。メモリ上の値の zeroize はしない。
   キーリングが使えないと、登録が 1 つでもあれば**全エージェントの起動が失敗する** (フェイルクローズ、ユーザー決定の範囲内)。
 - **API**: `list_secret_env` → `secret_env{names}` (ソート済み)。`set_secret_env{name, value}` (キーリングに保存してから名前を DB に登録。上書き可) と
@@ -1462,7 +1488,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   - ターン終了時・配達前・`RetryGroupMerge` 前の追跡・取り直しは削除。
 - **API**: `create_chat { project, branch?, worktree? }` (どちらか 1 つ。両方・どちらも無しは `invalid_argument`)。`Snapshot.chats` / `list_chats` は `ChatInfo` (worktree)。
   イベント `domain { group_base_changed }` を追加、`chat_branch_changed` を削除。`pnpm gen:types`。
-- **フロントエンド**: ツリー (`ui/branchTree.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
+- **フロントエンド**: ツリー (`ui/branchTreeModel.ts`) = `GitOverview.worktrees` (Yhtye 内部の `yhtye/*` をチェックアウト中のもの・チャットの無い消えたものを除く) → チャット。
   表示名 = ブランチ / `detached @<sha7>` / 見つからない。チャットの作業ツリーが一覧に無ければ「(見つからない作業ツリー)」の下 (送信不可)。
   作業ツリーの無いローカルブランチは末尾の折りたたみ「他のブランチ」(そこからの「+ 新しいチャット」で Yhtye の作業ツリーを作る)。
   会話ヘッダ・ピルも作業ツリーの今のブランチ。git の概要は従来の契機に加えて、ウィンドウのフォーカスとオーケストレータのターン終了で読み直す (外部の改名・オーケストレータ自身の改名が表示に出るように)。
@@ -1574,7 +1600,7 @@ Codex の認証キーのように、**エージェントプロセスの環境**�
   対象は、左のレールの開いているプロジェクトの行 (`RailProjects`。Alt+↑/↓ は行にフォーカスして。出ている行だけを `fillSlots` で全体の順に戻す)、ブランチの木の作業ツリーと他のブランチ。
   (プロジェクトのプルダウンとバックグラウンドのチップは、ダッシュボード導入でレールに置き換わった。)
 - **Android**: `sync/Order.kt` (PC の `order.ts` の移植)、`AppState.branchOrder`、`buildTree(..., order)`。プロジェクトの選択肢・チップ・表示中プロジェクトのボタン・作業ツリー・他のブランチの行を**長押し**すると「上へ移動 / 下へ移動」のメニューが開く (プロジェクトのものは T-102 のスリープと同じメニュー。`ReorderMenuItems`)。
-- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTree.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
+- テスト: `tests/core_order.rs` と `order.rs` の単体テスト、vitest (`store/order.test.ts` `ui/branchTreeModel.test.ts` `ui/IconRail.test.tsx` `ui/BranchTree.test.tsx` `store/multiClient.test.ts`)、Kotlin (`OrderTest` `LeftPanelTest`)。
 
 ## 18. リモート接続 (Tailscale 経由の Android クライアント、T-55。PC のクライアントは §18.9)
 
@@ -1863,6 +1889,18 @@ PC の GUI と Android (リモート WS)、開発用ブリッジのブラウザ�
   再接続でも設定画面に `kind: null` を知らせる。設定画面向けのコマンドは `store/settingsCommands.ts` (`AppStore` の基底クラス) に分けた。
 - 起動中: `applySnapshot` が `Snapshot.starting` のオーケストレータを `resuming` に、`applyLive` が `session_starting` で
   `resuming` を立てる (終わりは従来の `settleResuming`)。
+- ライブイベント (ストリーミングのチャンク・`usage_update`・`session_starting`) は 1 件ごとに画面を描き直さない。
+  `onEvent` は `cursor` との比較 (古いものは捨てる / 新しいものは `requestCatchUp`) を届いたときに済ませ、残りを
+  `LiveBatch` (`store/liveBatch.ts`) に溜めて、次の `requestAnimationFrame` (来なければ `LIVE_FLUSH_MAX_MS` = 50 ms 後) に
+  1 回の `set()` でまとめて反映する (`AppStoreOptions.liveScheduler` で差し替え、`flushLive()` で即時)。
+  順序は保つ: `updateProject` (永続イベントの適用、再読み込み、切断) は、先に溜まったライブ分を flush してから動く。
+  プロジェクトを開き直すと溜まった分は捨てる。
+- ライブで変わる部分 (`streaming` と `contextUsage`) は `ProjectView` から出して `AppState.live` (`LiveView`) に置いた。
+  純粋な畳み込み (`project.ts`) は両方を持つ `ProjectModel` に対して動き、ストア (`splitModel`) が公開するときに分ける
+  (`viewOf` / `liveOf`: 変わらなかった側は前と同じオブジェクト)。チャンクだけの更新では `AppState.project` の参照が変わらないので、
+  `useAppState((s) => s.project)` の購読者は描き直されない。会話・出力パネルは自分のセッションの `live.streaming[key]` だけを購読し、
+  タスクカードは最新セッションのストリーミング先頭行 (文字列) だけを購読する。`TranscriptView` は項目の列 (`Items`) と各 `Item`、
+  git の `GraphRows`、`ChatRow` を `memo` にし、`useAutoScroll` は `content` の要素が変わったときだけ動く。
 - チャットの増減 (`updateChats`): 削除されたチャットの下書きを消し、表示中のチャットが変わった (他のクライアントが消した、
   チャットの無いプロジェクトに作られた) ときは、新しく表示するチャットを記憶 (`prefs`) して `open_chat` する (ユーザーが選んだのと同じ)。
   チャットの無いプロジェクトに作られたチャットは `applyDurable` が選ぶ。
