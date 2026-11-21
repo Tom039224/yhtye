@@ -1746,7 +1746,13 @@ mod windows_tests {
         let exe = write(dir.path(), "agy_acp_server.exe");
         write(dir.path(), "localharness_external.exe");
         let spec = harness_spec(ANTIGRAVITY).expect("spec");
-        let d = detect(spec, &env(vec![("PATH", dir.path().into())]), &[], None);
+        let ctx = Context {
+            env: &env(vec![("PATH", dir.path().into())]),
+            known_dirs: &[],
+            options: &HashMap::new(),
+            latest: &HashMap::new(),
+        };
+        let d = detect(spec, &ctx, None);
         assert!(d.installed);
         assert_eq!(d.resolved_path.as_deref(), exe.to_str());
         assert_eq!(d.requirements[0].command, "agy_acp_server");
