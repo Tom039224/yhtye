@@ -170,15 +170,21 @@ pub fn models_from_options(
     (models, Some(select.current_value.0.to_string()))
 }
 
-/// Opens a listing session of `preset` in `cwd`; gives up (stopping the agent)
-/// when `cancel` fires.
+/// Opens a listing session of `preset` in `cwd` (started on `model` when the
+/// harness takes its model from the environment, see
+/// [`HarnessPreset::probe_config_for`]); gives up (stopping the agent) when
+/// `cancel` fires.
 async fn open_probe(
     secrets: &Secrets,
     preset: &HarnessPreset,
+    model: Option<&str>,
     cwd: &Path,
     cancel: &CancellationToken,
 ) -> Result<AgentHandle, String> {
-    let harness = preset.probe_config();
+    let harness = match model {
+        Some(model) => preset.probe_config_for(model),
+        None => preset.probe_config(),
+    };
     let (tx, _rx) = mpsc::unbounded_channel();
     // Dropping a pending spawn kills the new process group (GroupKillGuard).
     let started = tokio::select! {
@@ -204,16 +210,25 @@ async fn efforts_of(
     .await
     .map_err(|_| format!("selecting {model} timed out"))?
     .map_err(|e| format!("could not select {model}: {e}"))?;
-    Ok(preset
+    Ok(preset_efforts(preset, &options))
+}
+
+/// The efforts `preset` offers in `options` (none for a harness without an
+/// effort option).
+fn preset_efforts(preset: &HarnessPreset, options: &[SessionConfigOption]) -> Vec<EffortOption> {
+    preset
         .effort_config_id
         .as_deref()
-        .map_or_else(Vec::new, |id| efforts_from_options(&options, id)))
+        .map_or_else(Vec::new, |id| efforts_from_options(options, id))
 }
 
 /// Opens a session of `preset`'s listing harness in `cwd`, reads its models and
 /// stops it. Harnesses with at most [`EAGER_EFFORT_MODELS`] models also get
 /// every model's efforts read (a model the harness refuses keeps `efforts:
-/// None`). A harness without an effort option
+/// None`), except one that takes its model from the environment
+/// ([`HarnessPreset::model_effort_env`]): reading a model's efforts takes a
+/// session of its own, so they are read per model on demand
+/// ([`probe_efforts`]). A harness without an effort option
 /// ([`HarnessPreset::effort_config_id`]) has none read: no model has an effort.
 /// A model the harness lists but cannot run
 /// ([`HarnessPreset::unusable_models`]) is left out. Gives up (stopping the
@@ -224,7 +239,7 @@ pub async fn probe_models(
     cwd: &Path,
     cancel: &CancellationToken,
 ) -> Result<HarnessModels, String> {
-    let handle = open_probe(secrets, preset, cwd, cancel).await?;
+    let handle = open_probe(secrets, preset, None, cwd, cancel).await?;
     let config_id = preset.model_config_id();
     let (mut models, current) = models_from_options(&handle.info().config_options, config_id);
     models.retain(|m| !preset.unusable_models.contains(&m.value));
@@ -232,7 +247,7 @@ pub async fn probe_models(
         for m in &mut models {
             m.efforts = Some(Vec::new());
         }
-    } else if models.len() <= EAGER_EFFORT_MODELS {
+    } else if models.len() <= EAGER_EFFORT_MODELS && preset.model_effort_env.is_none() {
         for m in &mut models {
             if cancel.is_cancelled() {
                 break;
@@ -252,7 +267,10 @@ pub async fn probe_models(
     })
 }
 
-/// Opens a listing session, selects `model` and reads its efforts.
+/// Opens a listing session, selects `model` and reads its efforts. A harness
+/// that takes its model from the environment is started on `model` instead and
+/// its efforts are the ones in the options of the session that opens: nothing
+/// is selected, as the harness would save the choice to the user's settings.
 pub async fn probe_efforts(
     secrets: &Secrets,
     preset: &HarnessPreset,
@@ -260,8 +278,12 @@ pub async fn probe_efforts(
     cwd: &Path,
     cancel: &CancellationToken,
 ) -> Result<Vec<EffortOption>, String> {
-    let handle = open_probe(secrets, preset, cwd, cancel).await?;
-    let efforts = efforts_of(&handle, preset, model).await;
+    let handle = open_probe(secrets, preset, Some(model), cwd, cancel).await?;
+    let efforts = if preset.model_effort_env.is_some() {
+        Ok(preset_efforts(preset, &handle.info().config_options))
+    } else {
+        efforts_of(&handle, preset, model).await
+    };
     handle.shutdown().await;
     efforts
 }

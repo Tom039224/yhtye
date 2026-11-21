@@ -48,4 +48,11 @@ data class HarnessDetection(
      * Which `claude` the adapter drives; `None` but for Claude Code.
      */
     val claude: ClaudeExecutable? = null,
+    /**
+     * What an absolute path of the main executable looks like on the host
+     * (`/opt/bin/opencode`, `C:\Program Files\nodejs\npx.cmd`), for the box
+     * of the manual path. Empty from a core that predates it.
+     */
+    @SerialName("path_example")
+    val pathExample: String = "",
 )

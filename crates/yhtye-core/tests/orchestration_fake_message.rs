@@ -2,6 +2,9 @@
 //! running step something, by steering where the harness supports it and by
 //! interrupting the turn where it does not (`core-design.md` §8).
 
+// Unix only: the fake agent runs a `sh` script.
+#![cfg(unix)]
+
 mod common;
 
 use std::path::Path;

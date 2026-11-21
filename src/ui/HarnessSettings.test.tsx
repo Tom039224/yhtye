@@ -96,6 +96,19 @@ describe("harness settings", () => {
     expect(within(agy).getByRole("textbox", { name: "Google Antigravity の agy_acp_server.par のパス" })).toBeTruthy();
   });
 
+  it("gives an example of a manual path as the host writes one", async () => {
+    const { dialog } = await openHarnesses((c) => {
+      c.harnesses.pathExample = (main) => (main === "npx" ? "C:\\Program Files\\nodejs\\npx.cmd" : "");
+    });
+    const box = (label: string, main: string) =>
+      within(row(dialog, label)).getByRole("textbox", { name: `${label} の ${main} のパス` });
+    expect(box("Claude Code", "npx").getAttribute("placeholder")).toBe(
+      "npx の絶対パス (例 C:\\Program Files\\nodejs\\npx.cmd)",
+    );
+    // A core that predates the example gets the Unix one.
+    expect(box("Devin", "devin").getAttribute("placeholder")).toBe("devin の絶対パス (例 /opt/bin/devin)");
+  });
+
   it("shows Grok Build found in its own install directory", async () => {
     const { dialog } = await openHarnesses((c) => {
       c.harnesses.found.grok = { path: "/home/u/.grok/bin/grok", source: "known_dir" };
@@ -104,6 +117,16 @@ describe("harness settings", () => {
     expect(within(grok).getByText("インストール済み")).toBeTruthy();
     expect(requirements(grok)).toEqual(["grok/home/u/.grok/bin/grok既知の場所"]);
     expect(within(grok).getByRole("textbox", { name: "Grok Build の grok のパス" })).toBeTruthy();
+  });
+
+  it("shows pi found in its agent directory, with npx that runs its adapter", async () => {
+    const { dialog } = await openHarnesses((c) => {
+      c.harnesses.found.pi = { path: "/home/u/.pi/agent/bin/pi", source: "known_dir" };
+    });
+    const pi = row(dialog, "pi");
+    expect(within(pi).getByText("インストール済み")).toBeTruthy();
+    expect(requirements(pi)).toEqual(["pi/home/u/.pi/agent/bin/pi既知の場所", "npx/usr/bin/npx自動検出のみ"]);
+    expect(within(pi).getByRole("textbox", { name: "pi の pi のパス" })).toBeTruthy();
   });
 
   it("saves a manual path, then goes back to the automatic search", async () => {

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Linked into the MSI by `bundle.windows.wix.fragmentPaths` / `componentGroupRefs` in tauri.conf.json. -->
+<?if $(sys.BUILDARCH)="x86"?>
+    <?define ProgramFiles = "ProgramFilesFolder" ?>
+<?else?>
+    <?define ProgramFiles = "ProgramFiles64Folder" ?>
+<?endif?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <!-- Tauri's MSI takes its install directory from HKCU\Software\<publisher>\<product>, where the NSIS
+             installer (per user) also keeps its own (in %LOCALAPPDATA%), and its uninstaller may leave it
+             behind. The MSI installs for all users, so a directory under %LOCALAPPDATA% found there is
+             replaced by the default one in Program Files. Only on a first install (not when the product is
+             already installed: uninstall, repair); after AppSearch, in both sequences, as AppSearch runs in
+             both. -->
+        <SetProperty Id="INSTALLDIR" Value="[$(var.ProgramFiles)]Yhtye\" After="AppSearch" Sequence="both">
+            <![CDATA[NOT Installed AND INSTALLDIR ~<< LocalAppDataFolder]]>
+        </SetProperty>
+        <ComponentGroup Id="InstallDirNotInLocalAppData" />
+    </Fragment>
+</Wix>

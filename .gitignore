@@ -28,3 +28,6 @@ dist-ssr
 
 # Rust workspace build output
 /target
+
+# Output of `pnpm bench:long-chat` (JSON results and the harness build)
+bench-results

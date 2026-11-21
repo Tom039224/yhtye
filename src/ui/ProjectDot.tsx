@@ -1,4 +1,4 @@
-import type { Ring } from "./branchTree";
+import type { Ring } from "./branchTreeModel";
 
 /**
  * A project's status dot (the rail, the dashboard): lit green while work is on

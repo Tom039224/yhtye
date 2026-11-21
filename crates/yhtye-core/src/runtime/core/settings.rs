@@ -8,7 +8,8 @@
 use std::sync::atomic::Ordering;
 
 use super::{Core, now_ms};
-use crate::agents::{AgentRole, RoleSettings};
+use crate::acp::CLAUDE_API_KEY_SECRET;
+use crate::agents::{AgentRole, CLAUDE_CODE_API, RoleSettings};
 use crate::api::{AgentSettingsView, ApiError, ApiEvent, ApiEventBody, SettingsKind};
 use crate::secrets::{SecretError, SecretValue, validate_secret_name, validate_secret_value};
 
@@ -140,7 +141,7 @@ impl Core {
             }
             return Err(secret_error(e));
         }
-        self.settings_changed(SettingsKind::Secrets, None, None);
+        self.secret_changed(name);
         Ok(())
     }
 
@@ -156,8 +157,20 @@ impl Core {
             }
             return Err(secret_error(e));
         }
-        self.settings_changed(SettingsKind::Secrets, None, None);
+        self.secret_changed(name);
         Ok(())
+    }
+}
+
+impl Core {
+    /// A secret was stored or removed: announced to every client, and what
+    /// was read from the harness that uses it is forgotten (the models of
+    /// `Claude Code (API)` could not be listed before its key was registered).
+    fn secret_changed(&self, name: &str) {
+        self.settings_changed(SettingsKind::Secrets, None, None);
+        if name == CLAUDE_API_KEY_SECRET {
+            self.inner.models.invalidate(CLAUDE_CODE_API);
+        }
     }
 }
 

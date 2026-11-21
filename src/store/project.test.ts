@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { ApiEventBody } from "../api/generated";
 import { durable, FULL_RUN, PROJECT } from "../test/fixtures";
 import { agentText, chunk, ev, prompted, turnEnded, usage } from "../test/events";
-import { applyDurable, applyLive, applySnapshot, forgetChat, markResuming, newProjectView, type ProjectView, removeChatNow } from "./project";
+import { applyDurable, applyLive, applySnapshot, forgetChat, liveOf, markResuming, modelOf, newProjectView, NO_LIVE, type ProjectModel, removeChatNow, viewOf } from "./project";
 import { ORCHESTRATOR } from "../test/events";
 import { CHAT_INFOS, chatSnapshot } from "../test/chats";
 import { orchestratorKey } from "./chats";
 
-function fold(view: ProjectView, events = FULL_RUN.events): ProjectView {
+function fold(view: ProjectModel, events = FULL_RUN.events): ProjectModel {
   return events.reduce((v, e) => (e.live ? applyLive(v, e) : e.seq === v.cursor + 1 ? applyDurable(v, e) : v), view);
 }
 
@@ -39,6 +39,23 @@ describe("project view", () => {
     expect(v.transcripts[ORCHESTRATOR]).toHaveLength(1);
     v = applyDurable(v, turnEnded(2, ORCHESTRATOR));
     expect(v.streaming[ORCHESTRATOR]).toEqual({ message: "", thought: "" });
+  });
+
+  it("tells the view from its live part: a chunk changes only the live part", () => {
+    const view = viewOf(applySnapshot(newProjectView(PROJECT), FULL_RUN.start), null);
+    const model = modelOf(view, NO_LIVE);
+    const chunked = applyLive(model, chunk(0, ORCHESTRATOR, "Hel"));
+    expect(viewOf(chunked, view)).toBe(view);
+    expect(liveOf(chunked, NO_LIVE)).not.toBe(NO_LIVE);
+    expect(liveOf(chunked, NO_LIVE).streaming[ORCHESTRATOR]).toEqual({ message: "Hel", thought: "" });
+    // Usage is live too; a stored event changes the view and not the live part (nothing to settle).
+    const used = applyLive(model, usage(0, ORCHESTRATOR, { used: 5, size: 10 }));
+    expect(viewOf(used, view)).toBe(view);
+    const stored = applyDurable(model, prompted(model.cursor + 1, ORCHESTRATOR));
+    expect(viewOf(stored, view)).not.toBe(view);
+    expect(liveOf(stored, NO_LIVE)).toBe(NO_LIVE);
+    expect(viewOf(chunked, view)).not.toHaveProperty("streaming");
+    expect(viewOf(chunked, view)).not.toHaveProperty("contextUsage");
   });
 
   it("ignores malformed usage updates and shows other live events without folding them", () => {
@@ -74,7 +91,7 @@ describe("a deleted chat", () => {
   const deleted = (seq: number, chat: string) => ev(seq, { type: "domain", event: { type: "chat_deleted", chat } });
 
   /** Both chats loaded, C-2 selected, C-1 with a notification, a sub-agent session and text of each. */
-  function twoChats(): ProjectView {
+  function twoChats(): ProjectModel {
     let v = applySnapshot(newProjectView(PROJECT), chatSnapshot());
     v = {
       ...v,

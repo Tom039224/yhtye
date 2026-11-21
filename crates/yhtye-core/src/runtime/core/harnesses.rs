@@ -13,7 +13,7 @@ use super::{Core, now_ms};
 use crate::acp::HarnessConfig;
 use crate::agents::{
     AdapterChannel, AdapterKind, AgentChoice, CLAUDE_CODE, HARNESS_SPECS, HarnessDetection,
-    HarnessOptions, HarnessPreset, LatestVersions, NPX_COMMAND, NpmView, VersionLookup,
+    HarnessOptions, HarnessPreset, LatestVersions, NPX_COMMAND, NpmView, PRESET_IDS, VersionLookup,
     check_executable_path, default_choice, detect_harnesses_with, harness_spec, known_dirs,
     presets_from,
 };
@@ -241,13 +241,11 @@ impl Core {
     /// The harnesses whose registered preset is not the one in `presets`
     /// (found again, no longer found, or newly found).
     fn changed_harnesses(&self, presets: &[HarnessPreset]) -> Vec<&'static str> {
-        HARNESS_SPECS
-            .iter()
-            .filter(|spec| {
-                self.inner.agents.preset(spec.id).as_ref()
-                    != presets.iter().find(|p| p.id == spec.id)
+        PRESET_IDS
+            .into_iter()
+            .filter(|id| {
+                self.inner.agents.preset(id).as_ref() != presets.iter().find(|p| p.id == *id)
             })
-            .map(|spec| spec.id)
             .collect()
     }
 
@@ -262,8 +260,8 @@ impl Core {
     /// harness (the user asked for a fresh look).
     pub(super) async fn detect_harnesses(&self) -> Result<ApiResponse, ApiError> {
         let harnesses = self.detect_and_register(true).await?.unwrap_or_default();
-        for spec in &HARNESS_SPECS {
-            self.inner.models.invalidate(spec.id);
+        for id in PRESET_IDS {
+            self.inner.models.invalidate(id);
         }
         Ok(ApiResponse::Harnesses { harnesses })
     }

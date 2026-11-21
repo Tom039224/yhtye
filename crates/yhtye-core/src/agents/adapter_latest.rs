@@ -13,6 +13,7 @@ use async_trait::async_trait;
 
 use super::adapter::{AdapterKind, parse_semver};
 use super::detect::find_command;
+use crate::console::NoConsoleWindow;
 
 /// How long an answer of npm is kept.
 pub const LATEST_TTL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -26,6 +27,10 @@ const NPM_VIEW_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The npm executable next to `npx`.
 const NPM_COMMAND: &str = "npm";
+
+/// The file of [`NPM_COMMAND`] next to `npx`: npm installs a `.cmd` shim on
+/// Windows, where `npx.cmd` is what the search finds.
+const NPM_SIBLING: &str = if cfg!(windows) { "npm.cmd" } else { "npm" };
 
 /// Asks for the newest version of an npm package.
 #[async_trait]
@@ -59,7 +64,7 @@ impl NpmView {
     fn npm(&self, near: Option<&Path>) -> Option<PathBuf> {
         let sibling = near
             .and_then(Path::parent)
-            .map(|dir| dir.join(NPM_COMMAND))
+            .map(|dir| dir.join(NPM_SIBLING))
             .filter(|p| p.is_file());
         sibling.or_else(|| {
             find_command(NPM_COMMAND, &*self.env, &self.known_dirs).map(|(path, _)| path)
@@ -77,6 +82,7 @@ impl VersionLookup for NpmView {
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true)
+            .no_console_window()
             .output();
         let output = match tokio::time::timeout(NPM_VIEW_TIMEOUT, run).await {
             Ok(Ok(output)) if output.status.success() => output,

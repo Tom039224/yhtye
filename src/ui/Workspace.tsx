@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import type { ProjectView } from "../store/project";
+import { useAppState } from "../store/useStore";
 import { BottomPanel } from "./BottomPanel";
 import { useBottomTabs } from "./bottomTabs";
 import { Conversation } from "./Conversation";
@@ -15,9 +16,18 @@ const BOTTOM_HEIGHT = "--bottom-height";
 
 /**
  * The open project: conversation | tasks over git / agent output (design §2).
+ * It reads the view itself, so that the app around it (the title bar, the rail,
+ * the status bar) does not render again with every event of the project.
+ */
+export function Workspace() {
+  const view = useAppState((s) => s.project);
+  return view ? <ProjectWorkspace view={view} /> : null;
+}
+
+/**
  * The boundaries can be dragged; the sizes are kept (see layout.ts).
  */
-export function Workspace({ view }: { view: ProjectView }) {
+function ProjectWorkspace({ view }: { view: ProjectView }) {
   // Mentions belong to the chat whose composer they are in.
   const [mentionsByChat, setMentionsByChat] = useState<Record<string, Mention[]>>({});
   const chat = view.selectedChat ?? "";

@@ -5,14 +5,17 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::home::home_dir_in;
+
 /// File name of Codex's configuration inside `CODEX_HOME`.
 const CONFIG_FILE: &str = "config.toml";
 
-/// Codex's home: `CODEX_HOME` when set and non-empty, else `~/.codex`.
+/// Codex's home: `CODEX_HOME` when set and non-empty, else `.codex` in the
+/// user's home directory ([`home_dir_in`]).
 pub fn codex_home(env: &(impl Fn(&str) -> Option<OsString> + ?Sized)) -> Option<PathBuf> {
     let non_empty = |k: &str| env(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     non_empty("CODEX_HOME")
-        .or_else(|| non_empty("HOME").map(|home| home.join(".codex")))
+        .or_else(|| home_dir_in(env).map(|home| home.join(".codex")))
         .filter(|p| p.is_absolute())
 }
 
@@ -40,31 +43,19 @@ pub async fn configured_provider(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
-
-    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> + use<> {
-        let map: HashMap<String, OsString> = vars
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), OsString::from(v)))
-            .collect();
-        move |k| map.get(k).cloned()
-    }
+    use crate::home::test_support::{abs, env};
 
     #[test]
     fn the_home_is_codex_home_else_dot_codex() {
         assert_eq!(
             codex_home(&env(&[("CODEX_HOME", "/x/codex"), ("HOME", "/h")])),
-            Some(PathBuf::from("/x/codex"))
+            Some(abs("/x/codex"))
         );
-        assert_eq!(
-            codex_home(&env(&[("HOME", "/h")])),
-            Some(PathBuf::from("/h/.codex"))
-        );
+        assert_eq!(codex_home(&env(&[("HOME", "/h")])), Some(abs("/h/.codex")));
         assert_eq!(
             codex_home(&env(&[("CODEX_HOME", ""), ("HOME", "/h")])),
-            Some(PathBuf::from("/h/.codex")),
+            Some(abs("/h/.codex")),
             "an empty CODEX_HOME counts as unset"
         );
         assert_eq!(codex_home(&env(&[])), None);

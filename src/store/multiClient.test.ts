@@ -10,7 +10,7 @@ import { CHAT_LOG, chatSnapshot, MAIN_WT } from "../test/chats";
 import { ev } from "../test/events";
 import { PROJECT } from "../test/fixtures";
 import { FakeCore, MemoryTransport } from "../test/memoryTransport";
-import { placeOf } from "../ui/branchTree";
+import { placeOf } from "../ui/branchTreeModel";
 import { AppStore, chatPrefKey, type SettingsChange } from "./app";
 import { orchestratorKey } from "./chats";
 import { memoryPrefs, type Prefs } from "./prefs";
@@ -170,6 +170,7 @@ describe("a chat starting", () => {
     await open(s);
     expect(view(s).resuming).toEqual({});
     transport.emit(ev(CHAT_LOG.length, { type: "session_starting", session: orchestratorKey("C-1") }, true));
+    s.flushLive(); // live events are shown once per frame; this is that frame
     expect(view(s).resuming).toEqual({ "C-1": true });
     // Its start ends it.
     const started = ev(CHAT_LOG.length + 1, {

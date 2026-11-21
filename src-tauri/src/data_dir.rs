@@ -121,8 +121,17 @@ fn pick_model(flag: Option<&str>, env: Option<&str>) -> String {
 mod tests {
     use super::*;
 
+    /// An absolute path on this OS (`/a/b` on Unix, `C:\a\b` on Windows): a Unix-style
+    /// literal is relative to the current drive on Windows, so it would be changed by `absolute`.
+    fn abs(parts: &[&str]) -> PathBuf {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        parts
+            .iter()
+            .fold(PathBuf::from(root), |p, part| p.join(part))
+    }
+
     fn home() -> Option<PathBuf> {
-        Some(PathBuf::from("/home/u/.local/share"))
+        Some(abs(&["home", "u", ".local", "share"]))
     }
 
     #[test]
@@ -130,19 +139,22 @@ mod tests {
         let dir = DataDir::resolve_from(None, None, home()).expect("dir");
         assert_eq!(
             dir.path,
-            Path::new("/home/u/.local/share/io.github.tom039224.yhtye")
+            abs(&["home", "u", ".local", "share", "io.github.tom039224.yhtye"])
         );
         assert!(dir.is_default);
     }
 
     #[test]
     fn the_flag_beats_the_environment_which_beats_the_default() {
-        let flag = Path::new("/srv/a");
-        let env = Path::new("/srv/b");
-        let by_flag = DataDir::resolve_from(Some(flag), Some(env), home()).expect("dir");
-        assert_eq!((by_flag.path.as_path(), by_flag.is_default), (flag, false));
-        let by_env = DataDir::resolve_from(None, Some(env), home()).expect("dir");
-        assert_eq!((by_env.path.as_path(), by_env.is_default), (env, false));
+        let flag = abs(&["srv", "a"]);
+        let env = abs(&["srv", "b"]);
+        let by_flag = DataDir::resolve_from(Some(&flag), Some(&env), home()).expect("dir");
+        assert_eq!(
+            (by_flag.path.as_path(), by_flag.is_default),
+            (&*flag, false)
+        );
+        let by_env = DataDir::resolve_from(None, Some(&env), home()).expect("dir");
+        assert_eq!((by_env.path.as_path(), by_env.is_default), (&*env, false));
     }
 
     #[test]
@@ -150,8 +162,8 @@ mod tests {
         let empty = Path::new("");
         let dir = DataDir::resolve_from(Some(empty), Some(empty), home()).expect("dir");
         assert!(dir.is_default);
-        let env = Path::new("/srv/b");
-        let dir = DataDir::resolve_from(Some(empty), Some(env), home()).expect("dir");
+        let env = abs(&["srv", "b"]);
+        let dir = DataDir::resolve_from(Some(empty), Some(&env), home()).expect("dir");
         assert_eq!(dir.path, env);
     }
 
@@ -168,7 +180,7 @@ mod tests {
             DataDir::resolve_from(None, None, None),
             Err(DataDirError::NoHome)
         );
-        assert!(DataDir::resolve_from(Some(Path::new("/srv/a")), None, None).is_ok());
+        assert!(DataDir::resolve_from(Some(&abs(&["srv", "a"])), None, None).is_ok());
     }
 
     #[test]

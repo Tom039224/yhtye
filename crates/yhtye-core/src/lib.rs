@@ -2,11 +2,13 @@
 //!
 //! - [`acp`]: ACP client (agent processes and sessions)
 //! - [`agents`]: which harness × model runs each role (settings, registry, model lists)
+//! - [`console`]: helper programs (git, gh, tailscale) started without a console window
 //! - [`attachments`]: files attached to a user message (saving, delivery to the agent)
 //! - [`mcp`]: the Yhtye MCP server agents call back into
 //! - [`order`]: the recently-used order of projects and branches
 //! - [`domain`]: the orchestration state machine (pure)
 //! - [`git`]: git operations behind a trait
+//! - [`home`]: the user's home directory, per platform, from an injected environment
 //! - [`api`]: the UI-facing event stream and snapshot
 //! - [`prompts`]: role system prompts
 //! - [`store`]: SQLite persistence (event log + current-state tables)
@@ -24,9 +26,11 @@ pub mod agents;
 pub mod api;
 pub mod attachments;
 mod clock;
+pub mod console;
 pub mod directory;
 pub mod domain;
 pub mod git;
+pub mod home;
 pub mod mcp;
 pub mod order;
 pub mod prompts;

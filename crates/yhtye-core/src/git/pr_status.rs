@@ -14,6 +14,7 @@ use ts_rs::TS;
 
 use super::repo;
 use super::run::git;
+use crate::console::NoConsoleWindow;
 
 /// Longest the single `gh pr list` call may take (it uses the network).
 const GH_TIMEOUT: Duration = Duration::from_secs(20);
@@ -184,6 +185,7 @@ async fn fetch_prs(dir: &Path) -> Option<HashMap<String, Vec<GhPr>>> {
     .stdout(Stdio::piped())
     .stderr(Stdio::null())
     .kill_on_drop(true)
+    .no_console_window()
     .env("LC_ALL", "C")
     .env("GH_PROMPT_DISABLED", "1");
     let output = tokio::time::timeout(GH_TIMEOUT, cmd.output())

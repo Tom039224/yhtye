@@ -6,7 +6,7 @@
 import type { ProjectInfo } from "../api/generated";
 import { hasLiveOrchestrator, hasRunningWork } from "../store/activity";
 import type { ProjectView } from "../store/project";
-import type { Ring } from "./branchTree";
+import type { Ring } from "./branchTreeModel";
 
 /**
  * Running: work is on in the project (a turn or a task); ready: it is not,

@@ -548,6 +548,7 @@ const HARNESS_SPECS = [
   { id: "minimax-code", label: "MiniMax Code", main: "mcode", also: [] },
   { id: "antigravity", label: "Google Antigravity", main: "agy_acp_server.par", also: [] },
   { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
+  { id: "pi", label: "pi", main: "pi", also: ["npx"] },
 ];
 
 /** The harnesses that run through an ACP adapter, with the version that was tested. */
@@ -576,6 +577,8 @@ export class FakeHarnesses {
   executables = new Set<string>(["/usr/bin/npx"]);
   /** Stored manual paths of the main executables, by harness. */
   overrides: Record<string, string> = {};
+  /** The host's example of a manual path of a main executable (empty: a core that predates it). */
+  pathExample: (main: string) => string = (main) => `/opt/bin/${main}`;
 
   setPath(harness: string, path: string | null): void {
     if (!HARNESS_SPECS.some((s) => s.id === harness)) throw new CommandError("not_found", `unknown harness ${harness}`);
@@ -672,6 +675,7 @@ export class FakeHarnesses {
         options,
         adapter: this.adapterOf(spec.id, options),
         claude: spec.id === "claude-code" ? this.claudeOf(options) : null,
+        path_example: this.pathExample(spec.main),
       };
     });
   }
