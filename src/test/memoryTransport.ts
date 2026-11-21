@@ -18,9 +18,12 @@ import type {
   Clients,
   DirectoryListing,
   GitOverview,
+  AdapterStatus,
+  ClaudeExecutable,
   HarnessDetection,
   HarnessInfo,
   HarnessModels,
+  HarnessOptions,
   RoleSettings,
   LoggedEvent,
   PairingCode,
@@ -323,6 +326,9 @@ export class FakeCore {
       case "set_harness_path":
         this.harnesses.setPath(cmd.harness, cmd.path);
         return this.detected();
+      case "set_harness_options":
+        this.harnesses.setOptions(cmd.harness, cmd.options);
+        return this.detected();
       case "list_secret_env":
         return { type: "secret_env", names: [...this.secretNames] };
       case "set_secret_env":
@@ -544,8 +550,24 @@ const HARNESS_SPECS = [
   { id: "grok-build", label: "Grok Build", main: "grok", also: [] },
 ];
 
+/** The harnesses that run through an ACP adapter, with the version that was tested. */
+const ADAPTERS: Record<string, { pkg: string; verified: string; bin: string }> = {
+  "claude-code": { pkg: "@agentclientprotocol/claude-agent-acp", verified: "0.84.0", bin: "claude-agent-acp" },
+  codex: { pkg: "@agentclientprotocol/codex-acp", verified: "2.0.0", bin: "codex-acp" },
+};
+
+const DEFAULT_OPTIONS: HarnessOptions = { adapter: "verified", adapter_version: null, claude_source: "user" };
+
 /** The core's harness detection in miniature: a search result per command, and manual paths. */
 export class FakeHarnesses {
+  /** Stored adapter choices, by harness (a missing one is the defaults). */
+  options: Record<string, HarnessOptions> = {};
+  /** What `npm view` answers for every adapter (`null`: it cannot be asked). */
+  latest: string | null = "0.109.0";
+  /** The user's `claude` that the search finds (`null`: none). */
+  claude: string | null = "/home/u/.local/bin/claude";
+  /** Globally installed adapters, by their command (`claude-agent-acp`). */
+  globalAdapters: Record<string, string> = {};
   /** What the automatic search finds, by command (a missing command is not found). */
   found: Record<string, { path: string; source: "path" | "known_dir" }> = {
     npx: { path: "/usr/bin/npx", source: "path" },
@@ -567,8 +589,66 @@ export class FakeHarnesses {
     this.overrides[harness] = p;
   }
 
+  setOptions(harness: string, options: HarnessOptions): void {
+    if (!HARNESS_SPECS.some((s) => s.id === harness)) throw new CommandError("not_found", `unknown harness ${harness}`);
+    if (!ADAPTERS[harness]) {
+      throw new CommandError("invalid_argument", `${harness}: ${harness} runs without an adapter: there is nothing to choose`);
+    }
+    if (harness !== "claude-code" && options.claude_source !== "user") {
+      throw new CommandError("invalid_argument", `${harness}: ${harness} has no Claude Code to choose`);
+    }
+    let version: string | null = null;
+    if (options.adapter === "pinned") {
+      version = (options.adapter_version ?? "").trim();
+      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/.test(version)) {
+        throw new CommandError("invalid_argument", `${harness}: "${version}" is not a version (expected like 1.2.3 or 1.2.3-beta.1)`);
+      }
+    }
+    this.options[harness] = { ...options, adapter_version: version };
+  }
+
+  private adapterOf(id: string, options: HarnessOptions): AdapterStatus | null {
+    const kind = ADAPTERS[id];
+    if (!kind) return null;
+    const globalPath = this.globalAdapters[kind.bin] ?? null;
+    const run = (source: AdapterStatus["source"], version: string, note: string | null): AdapterStatus => ({
+      package: kind.pkg,
+      verified_version: kind.verified,
+      source,
+      version,
+      spec: `${kind.pkg}@${version}`,
+      global_path: globalPath,
+      note,
+    });
+    const verified = (note: string | null) => run("verified", kind.verified, note);
+    if (options.adapter === "latest") {
+      return this.latest
+        ? run("latest", this.latest, null)
+        : verified(`最新の版を npm で調べられなかったので、検証済みの ${kind.verified} で起動します`);
+    }
+    if (options.adapter === "pinned" && options.adapter_version) return run("pinned", options.adapter_version, null);
+    if (options.adapter === "global") {
+      return globalPath
+        ? { ...verified(null), source: "global", version: null, spec: null }
+        : verified(`PATH に ${kind.bin} が見つからないので、検証済みの ${kind.verified} で起動します`);
+    }
+    return verified(null);
+  }
+
+  private claudeOf(options: HarnessOptions): ClaudeExecutable {
+    const found = this.claude;
+    const using = options.claude_source === "user" ? found : null;
+    return {
+      found,
+      path_source: found ? "known_dir" : "none",
+      using,
+      note: options.claude_source === "user" && !found ? "claude が見つからないので、アダプタ同梱の Claude Code を使います" : null,
+    };
+  }
+
   detect(): HarnessDetection[] {
     return HARNESS_SPECS.map((spec) => {
+      const options = this.options[spec.id] ?? DEFAULT_OPTIONS;
       const override = this.overrides[spec.id] ?? null;
       const overrideError = override !== null && !this.executables.has(override) ? `not an executable file: ${override}` : null;
       const auto = this.found[spec.main];
@@ -589,6 +669,9 @@ export class FakeHarnesses {
         override_path: override,
         override_error: overrideError,
         requirements,
+        options,
+        adapter: this.adapterOf(spec.id, options),
+        claude: spec.id === "claude-code" ? this.claudeOf(options) : null,
       };
     });
   }

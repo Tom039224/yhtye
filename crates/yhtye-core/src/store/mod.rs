@@ -28,7 +28,7 @@ use std::time::Duration;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use crate::agents::{AgentRole, RoleSettings};
+use crate::agents::{AgentRole, HarnessOptions, RoleSettings};
 use crate::api::ApiEvent;
 use crate::attachments::PromptCaps;
 use crate::domain::{DomainConfig, State};
@@ -258,6 +258,22 @@ impl Store {
         now_ms: u64,
     ) -> Result<(), StoreError> {
         settings::set_harness_path(&self.pool, harness, path, now_ms).await
+    }
+
+    /// The options of the harnesses (adapter version, whose `claude`), by
+    /// harness id; a harness without an entry has the defaults.
+    pub async fn harness_options(&self) -> Result<HashMap<String, HarnessOptions>, StoreError> {
+        settings::harness_options(&self.pool).await
+    }
+
+    /// Stores the options of `harness` (the defaults remove them).
+    pub async fn set_harness_options(
+        &self,
+        harness: &str,
+        options: &HarnessOptions,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        settings::set_harness_options(&self.pool, harness, options, now_ms).await
     }
 
     /// Every paired remote device, oldest first.

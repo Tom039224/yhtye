@@ -12,7 +12,7 @@ use ts_rs::TS;
 use super::{ApiEventBody, Snapshot};
 use crate::agents::{
     AgentChoice, AgentRole, AgentSettings, AgentSettingsLayer, HarnessDetection, HarnessInfo,
-    HarnessModels, ModelEfforts, RoleSettings,
+    HarnessModels, HarnessOptions, ModelEfforts, RoleSettings,
 };
 use crate::attachments::AttachmentMeta;
 use crate::directory::DirectoryListing;
@@ -371,6 +371,18 @@ pub enum ApiCommand {
     SetHarnessPath {
         harness: String,
         path: Option<String>,
+    },
+    /// Sets what a harness runs besides its executable: the version of the ACP
+    /// adapter (`verified`: the tested one, `latest`, `pinned` with
+    /// `adapter_version` as semver, `global`: the adapter installed on `PATH`)
+    /// and, for Claude Code, whether the adapter drives the user's `claude` or
+    /// the one bundled with it. `invalid_argument` for a version that is not
+    /// semver, a harness without an adapter, or a `claude` source for another
+    /// harness; `not_found` for an unknown harness. Detects again and returns
+    /// the harnesses like `get_harnesses`.
+    SetHarnessOptions {
+        harness: String,
+        options: HarnessOptions,
     },
     /// The names of the secret environment variables (Stage 7e). Values are
     /// never returned.

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use async_trait::async_trait;
 use common::gate::Gate;
 use common::orch::ORCHESTRATOR_SESSION;
 use common::repo::TempRepo;
@@ -24,8 +25,9 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast;
 use yhtye_core::acp::HarnessConfig;
 use yhtye_core::agents::{
-    AgentChoice, AgentRole, Candidate, HarnessDetection, HarnessModels, HarnessPreset,
-    ModelService, OPENCODE_FALLBACK_MODEL, PathSource, RoleSettings,
+    AdapterChannel, AdapterSource, AgentChoice, AgentRole, Candidate, ClaudeSource,
+    HarnessDetection, HarnessModels, HarnessOptions, HarnessPreset, ModelService,
+    OPENCODE_FALLBACK_MODEL, PathSource, RoleSettings, VersionLookup,
 };
 use yhtye_core::api::{
     AgentSettingsView, ApiCommand, ApiErrorCode, ApiEvent, ApiEventBody, ApiResponse, TextKind,
@@ -979,5 +981,367 @@ async fn rows_of_a_harness_that_is_not_installed_are_hidden_from_the_orchestrato
         )),
         "the task ran on Devin"
     );
+    core.shutdown().await;
+}
+
+/// Answers the latest-version question from a value the test sets (no
+/// network) and counts the questions.
+struct FakeNpm {
+    answer: Mutex<Option<String>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeNpm {
+    fn new(answer: Option<&str>) -> Arc<Self> {
+        Arc::new(Self {
+            answer: Mutex::new(answer.map(str::to_string)),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
+    fn calls(&self) -> usize {
+        self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl VersionLookup for FakeNpm {
+    async fn latest(&self, _package: &str, _near: Option<&Path>) -> Option<String> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.answer.lock().expect("lock").clone()
+    }
+}
+
+fn config_with(r: &TempRepo, bin: &Bin, npm: &Arc<FakeNpm>) -> CoreConfig {
+    let mut cfg = config(r, bin);
+    cfg.detection = cfg
+        .detection
+        .map(|d| d.with_version_lookup(npm.clone() as Arc<dyn VersionLookup>));
+    cfg
+}
+
+async fn set_options(
+    core: &Core,
+    harness: &str,
+    adapter: AdapterChannel,
+    version: Option<&str>,
+    claude_source: ClaudeSource,
+) -> Result<Vec<HarnessDetection>, yhtye_core::api::ApiError> {
+    let cmd = ApiCommand::SetHarnessOptions {
+        harness: harness.into(),
+        options: HarnessOptions {
+            adapter,
+            adapter_version: version.map(str::to_string),
+            claude_source,
+        },
+    };
+    match core.command(cmd).await? {
+        ApiResponse::Harnesses { harnesses } => Ok(harnesses),
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn by_default_the_verified_adapter_runs_the_users_claude() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let claude = bin.install("claude");
+    let npm = FakeNpm::new(Some("0.109.0"));
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+
+    let all = get(&core).await;
+    let cc = by_id(&all, "claude-code");
+    assert_eq!(cc.options, HarnessOptions::default());
+    let adapter = cc.adapter.as_ref().expect("an adapter");
+    assert_eq!(adapter.source, AdapterSource::Verified);
+    assert_eq!(adapter.version.as_deref(), Some("0.84.0"));
+    assert_eq!(adapter.note, None);
+    let exe = cc.claude.as_ref().expect("a claude");
+    assert_eq!(exe.found.as_deref(), Some(text(&claude)));
+    assert_eq!(exe.using.as_deref(), Some(text(&claude)));
+    assert!(by_id(&all, "devin").adapter.is_none() && by_id(&all, "devin").claude.is_none());
+    assert_eq!(npm.calls(), 0, "the network is not used unless asked for");
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_adapter_version_is_chosen_stored_and_kept_across_a_restart() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    bin.install("claude");
+    bin.install("codex");
+    let npm = FakeNpm::new(Some("0.109.0"));
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+
+    let all = set_options(
+        &core,
+        "claude-code",
+        AdapterChannel::Latest,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect("latest");
+    let adapter = by_id(&all, "claude-code").adapter.clone().expect("adapter");
+    assert_eq!(adapter.source, AdapterSource::Latest);
+    assert_eq!(
+        adapter.spec.as_deref(),
+        Some("@agentclientprotocol/claude-agent-acp@0.109.0")
+    );
+    assert_eq!(npm.calls(), 1);
+    get(&core).await;
+    assert_eq!(npm.calls(), 1, "an answer is remembered for hours");
+    detect(&core).await;
+    assert_eq!(npm.calls(), 2, "detecting again asks again");
+
+    let all = set_options(
+        &core,
+        "codex",
+        AdapterChannel::Pinned,
+        Some(" 2.5.0 "),
+        ClaudeSource::User,
+    )
+    .await
+    .expect("pinned");
+    let codex = by_id(&all, "codex");
+    assert_eq!(codex.options.adapter_version.as_deref(), Some("2.5.0"));
+    assert_eq!(
+        codex.adapter.as_ref().and_then(|a| a.spec.as_deref()),
+        Some("@agentclientprotocol/codex-acp@2.5.0")
+    );
+    let all = set_options(
+        &core,
+        "claude-code",
+        AdapterChannel::Verified,
+        None,
+        ClaudeSource::Bundled,
+    )
+    .await
+    .expect("bundled");
+    let cc = by_id(&all, "claude-code");
+    assert_eq!(cc.claude.as_ref().map(|c| c.using.clone()), Some(None));
+    assert!(cc.claude.as_ref().is_some_and(|c| c.found.is_some()));
+    core.shutdown().await;
+
+    // After a restart the choices are in effect.
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("restarted");
+    let all = get(&core).await;
+    let cc = by_id(&all, "claude-code");
+    assert_eq!(cc.options.adapter, AdapterChannel::Verified);
+    assert_eq!(cc.options.claude_source, ClaudeSource::Bundled);
+    assert_eq!(
+        by_id(&all, "codex").options.adapter_version.as_deref(),
+        Some("2.5.0")
+    );
+    // Back to the defaults.
+    let all = set_options(
+        &core,
+        "codex",
+        AdapterChannel::Verified,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect("defaults");
+    assert_eq!(by_id(&all, "codex").options, HarnessOptions::default());
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn the_latest_version_is_looked_up_in_the_background_after_a_restart() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let npm = FakeNpm::new(Some("0.109.0"));
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+    set_options(
+        &core,
+        "claude-code",
+        AdapterChannel::Latest,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect("latest");
+    core.shutdown().await;
+
+    let npm = FakeNpm::new(Some("0.110.0"));
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("restarted");
+    let spec = || async {
+        let all = core
+            .command(ApiCommand::GetHarnesses)
+            .await
+            .expect("harnesses");
+        let ApiResponse::Harnesses { harnesses } = all else {
+            panic!("unexpected response")
+        };
+        by_id(&harnesses, "claude-code")
+            .adapter
+            .as_ref()
+            .and_then(|a| a.version.clone())
+    };
+    // The lookup started with the core; wait for it (the settings open in the meantime).
+    let mut version = spec().await;
+    for _ in 0..200 {
+        if version.as_deref() == Some("0.110.0") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        version = spec().await;
+    }
+    assert_eq!(version.as_deref(), Some("0.110.0"));
+    assert_eq!(npm.calls(), 1, "one question, not one per reader");
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn when_the_latest_version_cannot_be_looked_up_the_verified_one_runs_with_the_reason() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let npm = FakeNpm::new(None);
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+    let all = set_options(
+        &core,
+        "claude-code",
+        AdapterChannel::Latest,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect("latest");
+    let cc = by_id(&all, "claude-code");
+    let adapter = cc.adapter.as_ref().expect("adapter");
+    assert_eq!(
+        cc.options.adapter,
+        AdapterChannel::Latest,
+        "the choice stays"
+    );
+    assert_eq!(adapter.source, AdapterSource::Verified);
+    assert_eq!(adapter.version.as_deref(), Some("0.84.0"));
+    assert!(adapter.note.is_some(), "the settings say why");
+    assert!(
+        cc.claude
+            .as_ref()
+            .is_some_and(|c| c.using.is_none() && c.note.is_some())
+    );
+    assert!(cc.installed, "still usable");
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_global_adapter_is_used_when_it_is_on_the_path() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let npm = FakeNpm::new(None);
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+    let all = set_options(
+        &core,
+        "claude-code",
+        AdapterChannel::Global,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect("global");
+    let adapter = by_id(&all, "claude-code").adapter.clone().expect("adapter");
+    assert_eq!(
+        adapter.source,
+        AdapterSource::Verified,
+        "none installed yet"
+    );
+    assert_eq!(adapter.global_path, None);
+
+    let global = bin.install("claude-agent-acp");
+    let all = get(&core).await;
+    let adapter = by_id(&all, "claude-code").adapter.clone().expect("adapter");
+    assert_eq!(adapter.source, AdapterSource::Global);
+    assert_eq!(adapter.global_path.as_deref(), Some(text(&global)));
+    assert_eq!(adapter.spec, None);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn options_that_make_no_sense_are_refused_and_change_nothing() {
+    let r = TempRepo::new();
+    let bin = Bin::new();
+    bin.install("npx");
+    let npm = FakeNpm::new(None);
+    let core = Core::start(config_with(&r, &bin, &npm))
+        .await
+        .expect("core");
+    let refused = [
+        (
+            "claude-code",
+            AdapterChannel::Pinned,
+            Some("latest"),
+            ClaudeSource::User,
+        ),
+        (
+            "claude-code",
+            AdapterChannel::Pinned,
+            Some("1.2.3 --yes"),
+            ClaudeSource::User,
+        ),
+        (
+            "claude-code",
+            AdapterChannel::Pinned,
+            Some("^1.2.3"),
+            ClaudeSource::User,
+        ),
+        (
+            "claude-code",
+            AdapterChannel::Pinned,
+            None,
+            ClaudeSource::User,
+        ),
+        (
+            "codex",
+            AdapterChannel::Verified,
+            None,
+            ClaudeSource::Bundled,
+        ),
+        ("devin", AdapterChannel::Latest, None, ClaudeSource::User),
+    ];
+    for (harness, channel, version, source) in refused {
+        let e = set_options(&core, harness, channel, version, source)
+            .await
+            .expect_err(harness);
+        assert_eq!(
+            e.code,
+            ApiErrorCode::InvalidArgument,
+            "{harness} {version:?}: {e}"
+        );
+    }
+    let e = set_options(
+        &core,
+        "nope",
+        AdapterChannel::Latest,
+        None,
+        ClaudeSource::User,
+    )
+    .await
+    .expect_err("unknown");
+    assert_eq!(e.code, ApiErrorCode::NotFound);
+    let all = get(&core).await;
+    assert!(all.iter().all(|d| d.options == HarnessOptions::default()));
+    assert_eq!(npm.calls(), 0);
     core.shutdown().await;
 }

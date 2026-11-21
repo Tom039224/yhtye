@@ -36,4 +36,16 @@ data class HarnessDetection(
     @SerialName("override_error")
     val overrideError: String? = null,
     val requirements: List<HarnessRequirement>,
+    /**
+     * What the user chose besides the path (the defaults when nothing is stored).
+     */
+    val options: HarnessOptions,
+    /**
+     * The adapter that will run; `None` for a harness without one.
+     */
+    val adapter: AdapterStatus? = null,
+    /**
+     * Which `claude` the adapter drives; `None` but for Claude Code.
+     */
+    val claude: ClaudeExecutable? = null,
 )

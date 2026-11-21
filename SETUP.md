@@ -40,16 +40,17 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
 
 | ハーネス | 入れるもの | Yhtye の起動方法 | 認証 |
 |---|---|---|---|
-| Claude Code | Node 22+ (`npx`) だけ。`claude` CLI は不要 (アダプタが SDK 同梱のバイナリを使う) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく |
+| Claude Code | Node 22+ (`npx`)。`claude` CLI は任意 (あれば Yhtye がそれを使う。無ければアダプタ同梱のバイナリ) | `npx -y @agentclientprotocol/claude-agent-acp@0.84.0` (版は設定で変えられる。下記)、`CLAUDE_CODE_EXECUTABLE` にあなたの `claude` を渡す | Claude Code のローカルログイン (`~/.claude`) を使う。先に一度ログインしておく |
 | OpenCode | `opencode` | `opencode acp` | `opencode auth login` 済みのログイン (`~/.local/share/opencode/auth.json`) を使う |
-| Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (`CODEX_PATH` にあなたの `codex` を渡す) | あなたの `~/.codex/config.toml` の設定に従う。下記 |
+| Codex | `codex` と Node 22+ (`npx`) | `npx -y @agentclientprotocol/codex-acp@2.0.0` (版は設定で変えられる。下記)、`CODEX_PATH` にあなたの `codex` を渡す | あなたの `~/.codex/config.toml` の設定に従う。下記 |
 | Devin (基本動作は実機確認済み・一部未検証) | Devin CLI (`devin`)。[公式の手順](https://docs.devin.ai/cli) (`curl -fsSL https://cli.devin.ai/install.sh \| bash`) | `devin acp` | `devin auth login` で先にログインしておく。任意で環境変数 `WINDSURF_API_KEY` (下記) |
 | MiniMax Code (基本動作は実機確認済み・一部未検証) | MiniMax Code CLI (`mcode`)。標準のインストール先は `~/.minimax-code/bin/mcode` | `mcode acp` | `mcode login` で先にログインしておく (下記) |
 | Google Antigravity (基本動作は実機確認済み・一部未検証) | ACP サーバーの zip (`agy_acp_server.par` と `localharness_external`、同じディレクトリに置く)。Linux x86_64 で確認 | `agy_acp_server` (引数なし) | 先に `settings.json` で認証方式を選ぶ。Yhtye はログインしない (下記) |
 | Grok Build (基本動作は実機確認済み・一部未検証) | xAI の Grok Build CLI (`grok`)。標準のインストール先は `~/.grok/bin/grok` | `grok agent --no-leader stdio` | `grok login` で先にログインしておく (下記) |
 
 - 入れた後は、設定 › **ハーネス** タブの「再検出」で見つけ直す (アプリの再起動は要らない)。検出の範囲と手動でパスを指定する方法は下の「ハーネスの検出」。
-- Claude Code は SDK 同梱のバイナリで動くため、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
+- Claude Code は、`claude` が見つかればそれ (あなたが更新した版) で動く。見つからないとき、または設定 › ハーネスで「同梱の Claude Code」を選んだときは、
+  アダプタ同梱のバイナリで動き、使えるモデルはアダプタのバージョンで決まる (0.84.0 で Sonnet 5.5 まで)。
 - ユーザー自身の `~/.claude` の CLAUDE.md・フック・スキルは Yhtye のエージェントにも効く。MCP サーバーだけは隔離している。
 - 初回の `npx` はアダプタのダウンロードに時間がかかる (Codex のアダプタは約 440 MB)。起動のタイムアウトは 120 秒。
 
@@ -70,6 +71,12 @@ Claude Code は `npx` が見つかれば登録される (最初に試すなら�
   **絶対パス**を入力して「保存」する。保存すると自動検出より優先される。実行可能な通常ファイルでなければ保存できない。
   後でそのファイルが壊れたり消えたりすると、そのハーネスは未インストール扱いになり、理由が表示される (自動検出には**戻らない**)。「自動検出に戻す」で消せる。
   手動パスで置き換えるのは主実行ファイルだけで、Codex の `npx` は常に自動検出。
+- **アダプタの版** (Claude Code と Codex): 既定は動作確認済みの版 (Claude Code 0.84.0 / Codex 2.0.0)。ハーネスの行の「アダプタ」で
+  「最新」(`npm view` で調べた最新版。調べられなければ検証済みの版で動き、理由が出る。結果は数時間キャッシュ)、
+  「バージョン指定」(`0.100.2` や `1.2.3-beta.1` のような semver だけ受け付ける)、「グローバル導入」(`npm i -g` した `claude-agent-acp` / `codex-acp` が `PATH` にあるとき) を選べる。
+  今動かす版は同じ行の「使う版」に出る。新しい版で起動できない・モデルの名前が合わないときは、「検証済み」に戻す (起動エラーにもこの案内が付く)。
+- **Claude Code 本体** (Claude Code の行): 「自分の claude (既定)」は上の自動検出の範囲で見つけた `claude` を使い、「同梱の Claude Code」はアダプタ付属のバイナリを使う。
+  使う `claude` のパスは「使う本体」に出る (`claude` の手動パス指定はできない。見つからないときは同梱を使う)。
 - **再検出**: タブを開いたとき、「再検出」ボタン、手動パスの保存のたびに見つけ直す。「再検出」はモデル一覧のキャッシュも捨てる。
   すでに動いているエージェントには影響せず、新しく起動するエージェントから反映される。
 

@@ -21,7 +21,10 @@ import io.github.tom039224.yhtye.shared.api.generated.ApiErrorCode
 import io.github.tom039224.yhtye.shared.api.generated.ApiEventBody
 import io.github.tom039224.yhtye.shared.api.generated.Candidate
 import io.github.tom039224.yhtye.shared.api.generated.EffortOption
+import io.github.tom039224.yhtye.shared.api.generated.AdapterChannel
+import io.github.tom039224.yhtye.shared.api.generated.ClaudeSource
 import io.github.tom039224.yhtye.shared.api.generated.HarnessDetection
+import io.github.tom039224.yhtye.shared.api.generated.HarnessOptions
 import io.github.tom039224.yhtye.shared.api.generated.HarnessModels
 import io.github.tom039224.yhtye.shared.api.generated.HarnessPathSource
 import io.github.tom039224.yhtye.shared.api.generated.HarnessRequirement
@@ -70,10 +73,12 @@ class SettingsScreenTest {
             HarnessDetection(
                 "claude-code", "Claude Code", true, "/usr/bin/npx", HarnessPathSource.Path, null, null,
                 listOf(HarnessRequirement("npx", "/usr/bin/npx")),
+                defaultOptions,
             ),
             HarnessDetection(
                 "devin", "Devin", false, null, HarnessPathSource.None, null, null,
                 listOf(HarnessRequirement("devin", null)),
+                defaultOptions,
             ),
         )
         secrets += "STRIPE_TEST_KEY"
@@ -479,3 +484,5 @@ class SettingsScreenTest {
         assertTrue(h.exists("secret-row-ANOTHER"))
     }
 }
+
+private val defaultOptions = HarnessOptions(AdapterChannel.Verified, null, ClaudeSource.User)
