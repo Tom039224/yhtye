@@ -1010,18 +1010,27 @@ Stage 4 の構成 (`src/`):
 |---|---|---|
 | ACP `usage_update` (live で既に配信) | コンテキストの `used` / `size` とターンの `cost` のみ | quota ではない |
 | `usage_update._meta["_claude/rateLimit"]` | SDK の `rate_limit_event` (`status`, `rateLimitType`, `utilization?`, `resetsAt?`)。**変化したときだけ**・1 窓ずつ | 実機の 1 ターンでは来なかった。常時表示の源にならない (補助には使える) |
-| **`/usage` (ローカルコマンド)** | アダプタが SDK の `usage_EXPERIMENTAL…()` を Markdown に整形: プラン名・5 時間・週 (全モデル)・モデル別週・リセット時刻 | **採用**。モデルを呼ばない。実機で 5〜7 秒 |
-| `~/.claude/.credentials.json` の OAuth トークンで `api/oauth/usage` | 非公開 API + 資格情報の読み出し | 不採用 |
+| **`/usage` (ローカルコマンド)** | アダプタが SDK の `usage_EXPERIMENTAL…()` を Markdown に整形: プラン名・5 時間・週 (全モデル)・モデル別週・リセット時刻 | **フォールバック**。モデルを呼ばない。実機で 5〜7 秒。アダプタ内部の SDK 取得に 5 秒の打ち切りがあり、超えると Claude Code のプレーンテキストが返って読めない (`Unreadable`) |
+| `~/.claude/.credentials.json` の OAuth トークンで `GET api/oauth/usage` | 非公開 API + 資格情報の読み出し (Orca と同じ方式) | **採用 (主)**。1 リクエスト・エージェント不要。macOS の Keychain は未対応 (フォールバックが動く) |
 | statusline の `rate_limits` | 対話 UI の statusline にだけ渡る | 使えない |
 
 実装 (`crates/yhtye-core/src/usage/`):
+- `oauth.rs` (`OAuthUsage`): `$CLAUDE_CONFIG_DIR` (無ければ `~/.claude`) の `.credentials.json` の
+  `claudeAiOauth.accessToken` で `GET https://api.anthropic.com/api/oauth/usage` (`anthropic-beta: oauth-2025-04-20`、10 秒)。
+  `five_hour` / `seven_day` / `limits[kind=weekly_scoped]` を窓にし (`null` は出さない、ラベルは Markdown 経路と同じ
+  `5-hour limit` / `Weekly · all models` / `Weekly · <モデル>`)、`resets_at` は RFC 3339 と epoch 秒・ミリ秒を読む。
+  トークンは更新せず、ログにも出さない。資格情報なし・401/403・5xx・ネットワーク・JSON 不正は `probe_usage` へ
+  フォールバック、**429 はフォールバックせず** `UsageError::RateLimited` (`Retry-After`、無ければ 5 分、最大 24 時間) の間は再取得しない。
+  `CoreConfig::usage_oauth` はアプリ (`installed`) だけが有効にする (テストは実機のログインにもネットワークにも触れない)。
 - `probe_usage`: `HarnessConfig::claude_code_usage_probe()` (ツール `[]`・MCP なし・`persistSession: false` で
   `~/.claude/projects` に会話を残さない・mode / model を切り替えない・`TZ=UTC`) を `data_dir/usage-probe` で起動 →
   `/usage` → 返答の Markdown を `parse_usage_markdown` で読む → 停止。
 - `parse_usage_markdown`: `> Claude <plan> subscription usage` と `**<label>** — **<n>%** · Resets <Mon D, h:mm AM UTC>`。
   年は表示されないので「今に最も近い年」。読めない行は捨て、何も読めなければ `Unreadable` (**推測しない**)。
   書式はアダプタのバージョン (固定) に依存する。実機テスト `acp_claude_real::real_usage_command_reports_the_subscription` で検知。
-- `UsageService`: 単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
+  読めなかったときの warn には返答の先頭 160 文字 (改行は `\n`・メールアドレス等は伏せる) と、
+  アダプタの stderr の `Structured /usage` を含む行を添える。成功時は取得経路・所要時間・窓の数を info に出す。
+- `UsageService`: まず `OAuthUsage`、フォールバックで `probe_usage`。単一実行 + キャッシュ (成功 60 秒、失敗と明示の再取得は 10 秒)、`close()` で実行中のプローブを止める。
   プローブするハーネスは `set_harness` で差し替えられる (ハーネスの再検出で `npx` の解決済みパスが変わったとき。変わらなければ何もしない)。
   差し替えるとキャッシュ済みの結果を捨てる。状態は await をまたいでロックしないので、実行中のプローブを待たず、
   差し替え前に始まったプローブの結果は (呼び出し元には返るが) キャッシュしない (世代番号)。
