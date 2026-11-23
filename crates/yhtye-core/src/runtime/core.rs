@@ -45,7 +45,7 @@ use crate::stats::{
     StatsSources,
 };
 use crate::store::{ProjectRecord, Store, db_path};
-use crate::usage::UsageService;
+use crate::usage::{OAuthUsage, UsageService};
 
 /// How many events a slow subscriber may fall behind before it misses some
 /// (it then sees a `seq` gap and catches up with `ListEvents`).
@@ -85,6 +85,10 @@ pub struct CoreConfig {
     /// Harness asked for subscription usage (`ApiCommand::GetUsage`); `None`
     /// answers `unavailable`.
     pub usage: Option<HarnessConfig>,
+    /// Reads the usage from the OAuth endpoint first, with the login of
+    /// Claude Code on this machine (the app does; tests leave it `None`, so
+    /// they never touch the real login or the network).
+    pub usage_oauth: Option<OAuthUsage>,
     /// Where the values of the secret environment variables live (the OS
     /// credential store; tests use an in-memory one).
     pub secret_backend: Arc<dyn SecretBackend>,
@@ -116,6 +120,7 @@ impl CoreConfig {
             mcp_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             domain: DomainConfig::default(),
             usage: Some(HarnessConfig::claude_code_usage_probe()),
+            usage_oauth: None,
             secret_backend: Arc::new(KeyringBackend::new()),
             tailscale: Arc::new(TailscaleCli),
             headless: false,
@@ -133,6 +138,7 @@ impl CoreConfig {
         let mut cfg = Self::claude_code(data_dir, model);
         cfg.detection = Some(DetectionConfig::from_process(model));
         cfg.stats_warm_up = true;
+        cfg.usage_oauth = Some(OAuthUsage::new());
         cfg
     }
 }
@@ -209,8 +215,11 @@ impl Core {
                 cfg.usage.clone(),
             ),
         };
-        let usage = UsageService::new(usage_probe, cfg.data_dir.join(USAGE_PROBE_DIR))
+        let mut usage = UsageService::new(usage_probe, cfg.data_dir.join(USAGE_PROBE_DIR))
             .with_secrets(secrets.clone());
+        if let Some(oauth) = cfg.usage_oauth.clone() {
+            usage = usage.with_oauth(oauth);
+        }
         let agents = Arc::new(AgentCatalog::new(presets, builtin).with_secrets(secrets.clone()));
         for row in store.agent_settings().await? {
             agents.set(row.project.as_deref(), row.role, Some(row.settings));
