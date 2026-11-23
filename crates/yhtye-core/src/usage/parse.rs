@@ -127,7 +127,7 @@ fn parse_reset(when: &str, now_ms: u64) -> Option<u64> {
     u64::try_from(best).ok()
 }
 
-fn month_number(name: &str) -> Option<u32> {
+pub(super) fn month_number(name: &str) -> Option<u32> {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
@@ -155,7 +155,7 @@ fn zone_offset_minutes(zone: &str) -> Option<i64> {
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+pub(super) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let y = if month <= 2 { year - 1 } else { year };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -283,5 +283,38 @@ mod tests {
         assert_eq!(r.windows[0].kind, UsageWindowKind::Week);
         assert_eq!(r.windows[0].resets_at_ms, None, "unknown zone name");
         assert_eq!(r.plan, None);
+    }
+
+    /// Real `/usage` Markdown of claude-agent-acp (`testdata/`): the weekly windows
+    /// only, as the 5-hour limit was `null` then.
+    #[test]
+    fn reads_the_structured_markdown_fixture() {
+        // 2026-11-23T00:00:00Z
+        let now = 1_795_392_000_000;
+        let r =
+            parse_usage_markdown(include_str!("testdata/usage-structured.md"), now).expect("usage");
+        assert_eq!(r.plan.as_deref(), Some("max"));
+        let windows: Vec<_> = r
+            .windows
+            .iter()
+            .map(|w| (w.label.as_str(), w.percent, w.resets_at_ms))
+            .collect();
+        // Nov 26, 4:59 PM UTC
+        let resets = Some(1_795_712_340_000);
+        assert_eq!(
+            windows,
+            [
+                ("Weekly · all models", 43.0, resets),
+                ("Weekly · Fable", 0.0, resets)
+            ]
+        );
+    }
+
+    /// What the adapter returns when its structured `/usage` fails: Claude
+    /// Code's own plain text, which is not guessed at.
+    #[test]
+    fn the_plain_text_fallback_fixture_is_unreadable() {
+        let text = include_str!("testdata/usage-plain-fallback.txt");
+        assert_eq!(parse_usage_markdown(text, NOW), None);
     }
 }

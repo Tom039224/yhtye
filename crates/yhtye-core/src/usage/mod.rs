@@ -1,13 +1,16 @@
 //! Subscription usage / quota for the status bar (Stage 6b, `core-design.md` §14).
 //!
-//! Source: Claude Code's local `/usage` command, run in a short-lived ACP
-//! session of the pinned `claude-agent-acp` adapter ([`probe`]). The adapter
+//! Source: Anthropic's OAuth usage endpoint with the login of Claude Code
+//! ([`oauth`]); when that gives nothing (no login, a stale token, the network),
+//! Claude Code's local `/usage` command, run in a short-lived ACP session of
+//! the pinned `claude-agent-acp` adapter ([`probe`]). The adapter
 //! answers it with Markdown rendered from the Agent SDK's structured usage
 //! response (`usage-markdown.js`: plan name, 5-hour and weekly windows with
 //! utilization and reset time). `/usage` is a local command: it does not call
 //! the model. [`parse_usage_markdown`] reads that Markdown; anything it cannot
 //! read is left out — values are never guessed.
 
+mod oauth;
 mod parse;
 mod probe;
 
@@ -15,6 +18,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use ts_rs::TS;
 
+pub use oauth::{OAuthError, OAuthUsage};
 pub use parse::parse_usage_markdown;
 pub use probe::{UsageError, UsageService, probe_usage};
 
